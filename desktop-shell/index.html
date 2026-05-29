@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>YuntaoCode</title>
+  </head>
+  <body>
+    <div id="app">
+      <section class="boot-panel" id="boot-panel">
+        <div class="brand">YuntaoCode</div>
+        <h1>正在启动本地运行时</h1>
+        <p id="status-text">准备启动 Python sidecar...</p>
+        <pre id="runtime-log"></pre>
+      </section>
+      <iframe id="runtime-frame" title="YuntaoCode 面板"></iframe>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

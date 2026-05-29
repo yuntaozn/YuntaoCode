@@ -1,0 +1,88 @@
+:root {
+  --bg: #f6f7f4;
+  --panel: #ffffff;
+  --line: #e3e5df;
+  --text: #24272e;
+  --muted: #858a91;
+  --primary: #2f6f62;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  color: var(--text);
+  background: var(--bg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  overflow: hidden;
+}
+
+#app {
+  position: relative;
+}
+
+.boot-panel {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 12px;
+  padding: 28px;
+  background: linear-gradient(180deg, #eef8fb 0%, #f6f1e7 64%, #e8f7f1 100%);
+  text-align: center;
+}
+
+.boot-panel.hidden {
+  display: none;
+}
+
+.brand {
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+p {
+  margin: 0;
+  color: var(--muted);
+}
+
+#runtime-log {
+  width: min(760px, calc(100vw - 48px));
+  max-height: 180px;
+  margin: 14px 0 0;
+  overflow: auto;
+  padding: 12px;
+  color: #4b5563;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+#runtime-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  opacity: 0;
+}
+
+#runtime-frame.ready {
+  opacity: 1;
+}

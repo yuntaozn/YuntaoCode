@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="settings_page.title">设置 - YuntaoCode</title>
+    <link rel="stylesheet" href="/static/panel.css?v=20260525-3">
+    <style>
+        .settings-page-shell {
+            padding: 20px;
+            overflow: auto;
+        }
+
+        .settings-page {
+            display: grid;
+            gap: 16px;
+            max-width: 980px;
+        }
+
+        .settings-page[hidden] {
+            display: none;
+        }
+
+        .settings-page-title {
+            display: grid;
+            gap: 6px;
+            margin-bottom: 2px;
+        }
+
+        .settings-page-title h2 {
+            margin: 0;
+            font-size: 20px;
+            letter-spacing: 0;
+        }
+
+        .settings-page-title p {
+            max-width: 760px;
+            margin: 0;
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .settings-card {
+            display: grid;
+            gap: 14px;
+            padding: 18px 20px;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+
+        .settings-card h3 {
+            margin: 0;
+            font-size: 15px;
+        }
+
+        .settings-card p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .settings-form-row {
+            display: grid;
+            gap: 7px;
+        }
+
+        .settings-form-row label {
+            color: #525861;
+            font-size: 13px;
+            font-weight: 650;
+        }
+
+        .settings-form-row input,
+        .settings-form-row select,
+        .settings-form-row textarea {
+            width: 100%;
+            min-width: 0;
+            padding: 9px 10px;
+            color: var(--text);
+            background: rgba(255, 255, 255, 0.72);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            outline: none;
+        }
+
+        .settings-form-row input:focus,
+        .settings-form-row select:focus,
+        .settings-form-row textarea:focus {
+            background: #fff;
+            border-color: var(--primary);
+        }
+
+        .settings-form-row textarea {
+            min-height: 74px;
+            resize: vertical;
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .settings-inline {
+            display: grid;
+            grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr);
+            gap: 12px;
+        }
+
+        .settings-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            justify-content: flex-end;
+            max-width: 980px;
+            margin-top: 16px;
+        }
+
+        .settings-warning {
+            padding: 10px 12px;
+            color: #8a4b00;
+            background: #fff8e6;
+            border: 1px solid #f4d28a;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .settings-subhead {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-top: 4px;
+        }
+
+        .settings-subhead h4 {
+            margin: 0;
+            font-size: 13px;
+        }
+
+        .settings-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .settings-item {
+            display: grid;
+            gap: 10px;
+            padding: 12px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.55);
+        }
+
+        .settings-item-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .settings-item-title {
+            display: grid;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .settings-item-title strong {
+            font-size: 13px;
+        }
+
+        .settings-item-title span {
+            color: var(--muted);
+            font-size: 12px;
+            word-break: break-all;
+        }
+
+        .checkbox-line.compact {
+            margin: 0;
+        }
+
+        .plugin-group-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            padding: 8px 12px;
+            color: var(--text);
+            text-align: left;
+            background: transparent;
+            border: 0;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background 0.15s;
+        }
+
+        .plugin-group-item:hover {
+            background: var(--soft);
+        }
+
+        .plugin-group-item.active {
+            color: #fff;
+            background: var(--primary);
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            z-index: 9999;
+            padding: 8px 20px;
+            color: white;
+            background: var(--text);
+            border-radius: 6px;
+            font-size: 13px;
+            transform: translateX(-50%);
+            animation: toast-in 0.2s ease;
+        }
+
+        @keyframes toast-in {
+            from {
+                opacity: 0;
+                transform: translateX(-50%) translateY(10px);
+            }
+        }
+
+        @media (max-width: 900px) {
+            .settings-inline {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="nav-rail" aria-label="主导航" data-i18n-aria-label="nav.main_nav">
+            <button class="rail-action" id="back-btn" title="返回对话" data-i18n-title="nav.back">←<span data-i18n="nav.back">返回</span></button>
+            <button class="rail-action active" id="settings-main-btn" title="设置" data-i18n-title="nav.settings">⚙<span data-i18n="nav.settings">设置</span></button>
+        </aside>
+
+        <aside class="sidebar" style="width: 240px;">
+            <section class="account-block">
+                <div>
+                    <div class="block-title" data-i18n="settings_page.overview">设置总览</div>
+                    <div class="status-line" id="settings-summary" data-i18n="settings_page.loading">读取中...</div>
+                </div>
+            </section>
+            <section class="sidebar-section">
+                <div class="section-title" data-i18n="settings_page.groups">设置分组</div>
+                <div class="plugin-group-list">
+                    <button class="plugin-group-item active" data-settings-page-button="models" data-i18n="settings_page.group_models">模型接口</button>
+                    <button class="plugin-group-item" data-settings-page-button="runtime" data-i18n="settings_page.group_runtime">执行与权限</button>
+                    <button class="plugin-group-item" data-settings-page-button="memories" data-i18n="settings_page.group_memories">记忆管理</button>
+                    <button class="plugin-group-item" data-settings-page-button="backups" data-i18n="settings_page.group_backups">备份与回退</button>
+                </div>
+            </section>
+        </aside>
+
+        <main class="main-panel">
+            <header class="topbar">
+                <div>
+                    <div class="workspace-name" data-i18n="settings_page.heading">设置</div>
+                    <div class="workspace-path" data-i18n="settings_page.subtitle">管理本地模型配置、执行模式、访问权限、用户记忆和回退备份</div>
+                </div>
+                <div class="topbar-right">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);">
+                        <span data-i18n="settings_page.language">语言</span>
+                        <select id="language-select" style="padding:4px 8px;border-radius:4px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:13px;">
+                            <option value="zh-CN">中文</option>
+                            <option value="en">English</option>
+                        </select>
+                    </label>
+                    <button class="secondary-button" id="refresh-settings-btn" data-i18n="settings_page.refresh">刷新</button>
+                </div>
+            </header>
+
+            <section class="chat-panel settings-page-shell">
+                <div class="settings-page" data-settings-page="models">
+                    <div class="settings-page-title">
+                        <h2 data-i18n="settings_page.models_title">模型接口</h2>
+                        <p data-i18n="settings_page.models_desc">管理默认模型、OpenAI-compatible 接口和每个模型的上下文、工具调用、思考参数。Ollama、vLLM、火山方舟和通义千问都可以放在这里。</p>
+                    </div>
+                    <section class="settings-card" id="model-card">
+                        <div class="settings-form-row">
+                            <label for="default-model-input" data-i18n="settings_page.default_model">默认模型</label>
+                            <select id="default-model-input"></select>
+                        </div>
+                        <div class="settings-subhead">
+                            <h4 data-i18n="settings_page.provider">接口 Provider</h4>
+                            <button class="secondary-button" id="add-provider-btn" type="button" data-i18n="settings_page.add_provider">新增接口</button>
+                        </div>
+                        <div class="settings-list" id="provider-list"></div>
+                        <div class="settings-subhead">
+                            <h4 data-i18n="settings_page.model_list">模型列表</h4>
+                            <button class="secondary-button" id="add-model-btn" type="button" data-i18n="settings_page.add_model">新增模型</button>
+                        </div>
+                        <div class="settings-list" id="model-list"></div>
+                    </section>
+                </div>
+
+                <div class="settings-page" data-settings-page="runtime" hidden>
+                    <div class="settings-page-title">
+                        <h2 data-i18n="settings_page.runtime_title">执行与权限</h2>
+                        <p data-i18n="settings_page.runtime_desc">控制本地工具对文件系统的访问范围，以及 AI 在任务中推进计划、执行和验证的主动程度。</p>
+                    </div>
+                    <section class="settings-card" id="runtime-card">
+                        <div class="settings-form-row">
+                            <label for="access-scope-input" data-i18n="settings.file_access">文件访问权限</label>
+                            <select id="access-scope-input">
+                                <option value="project_only" data-i18n="settings.access_project">当前项目目录</option>
+                                <option value="full_local" data-i18n="settings.access_full">完全本机权限</option>
+                            </select>
+                            <div class="settings-warning" data-i18n="settings_page.access_warning">完全本机权限会允许 AI 访问本机当前用户可访问的路径。写入类工具仍会创建备份，但请只在信任当前任务时开启。</div>
+                        </div>
+                        <div class="settings-form-row">
+                            <label for="execution-mode-input" data-i18n="settings.exec_mode">执行模式</label>
+                            <select id="execution-mode-input">
+                                <option value="conservative" data-i18n="settings.exec_conservative">保守：少自动执行</option>
+                                <option value="auto" data-i18n="settings.exec_auto">自动：系统判断</option>
+                                <option value="aggressive" data-i18n="settings.exec_aggressive">激进：强制计划与验证</option>
+                            </select>
+                        </div>
+                        <div class="settings-form-row">
+                            <label data-i18n="settings_page.config_location">配置文件位置</label>
+                            <div class="hint-line" id="settings-path" data-i18n="settings_page.loading">读取中...</div>
+                        </div>
+                    </section>
+                </div>
+
+                <div class="settings-page" data-settings-page="backups" hidden>
+                    <div class="settings-page-title">
+                        <h2 data-i18n="settings_page.backups_title">备份与回退</h2>
+                        <p data-i18n="settings_page.backups_desc">写入工具执行前会保存受影响文件，便于非 Git 项目在修改失误后回退。一次任务改多个文件时，记录会列出本次触及的文件名。</p>
+                    </div>
+                    <section class="settings-card" id="backup-card">
+                        <label class="checkbox-line">
+                            <input id="backup-enabled-input" type="checkbox">
+                            <span data-i18n="settings.auto_checkpoint">写入前自动创建回退点</span>
+                        </label>
+                        <div class="settings-form-row">
+                            <label for="backup-keep-input" data-i18n="settings.keep_recent">保留最近批次</label>
+                            <input id="backup-keep-input" type="number" min="1" max="100" step="1">
+                        </div>
+                        <div class="backup-actions">
+                            <button class="secondary-button" id="refresh-backups-btn" type="button" data-i18n="settings_page.refresh_backups">刷新备份</button>
+                            <button class="secondary-button" id="restore-latest-backup-btn" type="button" data-i18n="settings.restore_latest">恢复最近一次</button>
+                            <button class="secondary-button danger-button" id="clear-backups-btn" type="button" data-i18n="settings.clear_backups">清空备份</button>
+                        </div>
+                        <div class="hint-line" id="backup-storage-hint" data-i18n="settings_page.loading">读取中...</div>
+                        <div class="backup-list" id="backup-list"></div>
+                    </section>
+                </div>
+
+                <div class="settings-page" data-settings-page="memories" hidden>
+                    <div class="settings-page-title">
+                        <h2 data-i18n="settings_page.memories_title">记忆管理</h2>
+                        <p data-i18n="settings_page.memories_desc">记忆用于让 AI 参考你的长期偏好和工作习惯。系统会在对话结束后自动提取值得记住的信息，你也可以手动管理。启用的记忆会按相关性注入上下文。</p>
+                    </div>
+                    <section class="settings-card" id="memory-card">
+                        <label class="checkbox-line">
+                            <input id="memory-enabled-input" type="checkbox">
+                            <span data-i18n="settings_page.enable_memories">启用用户记忆</span>
+                        </label>
+                        <label class="checkbox-line">
+                            <input id="memory-auto-extract-input" type="checkbox">
+                            <span data-i18n="settings_page.auto_extract">对话结束后自动提取记忆（AI 会从对话中学习值得记住的信息）</span>
+                        </label>
+                        <div class="settings-inline">
+                            <div class="settings-form-row">
+                                <label for="memory-max-active-input" data-i18n="settings_page.max_inject">每次最多注入</label>
+                                <input id="memory-max-active-input" type="number" min="0" max="50" step="1">
+                            </div>
+                            <div class="settings-form-row">
+                                <label data-i18n="settings_page.current_memories">当前记忆</label>
+                                <div class="hint-line" id="memory-storage-hint" data-i18n="settings_page.loading">读取中...</div>
+                            </div>
+                        </div>
+                        <div class="settings-subhead">
+                            <h4 data-i18n="settings_page.memory_entries">记忆条目</h4>
+                            <div style="display:flex;gap:8px;">
+                                <select id="memory-filter-input" style="padding:6px 8px;font-size:12px;border:1px solid var(--line);border-radius:6px;">
+                                    <option value="" data-i18n="settings_page.all_sources">全部来源</option>
+                                    <option value="manual" data-i18n="settings_page.source_manual">手动添加</option>
+                                    <option value="auto" data-i18n="settings_page.source_auto">自动提取</option>
+                                    <option value="conversation" data-i18n="settings_page.source_conversation">AI 保存</option>
+                                </select>
+                                <button class="secondary-button" id="add-memory-btn" type="button" data-i18n="settings_page.add_memory">新增记忆</button>
+                            </div>
+                        </div>
+                        <div class="settings-list" id="memory-list"></div>
+                    </section>
+                </div>
+
+                <div class="settings-actions">
+                    <button class="secondary-button" id="cancel-btn" type="button" data-i18n="settings_page.return">返回</button>
+                    <button class="primary-button" id="save-settings-btn" type="button" data-i18n="settings_page.save_settings">保存设置</button>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/i18n.js?v=20260528-2"></script>
+    <script src="/static/settings.js?v=20260528-2"></script>
+</body>
+</html>

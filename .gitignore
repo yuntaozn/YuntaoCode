@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.sqlite
+*.db
+.env/
+.venv/
+venv/
+
+# Node / Tauri
+node_modules/
+dist/
+build/
+desktop-shell/dist/
+desktop-shell/src-tauri/target/
+desktop-shell/src-tauri/binaries/*.exe
+desktop-shell/src-tauri/binaries/*.pdb
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+*.spec

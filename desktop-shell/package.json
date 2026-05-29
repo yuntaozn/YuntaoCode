@@ -1,0 +1,26 @@
+{
+  "name": "yuntaocode",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "author": "沈阳云涛智能科技有限公司 <wutaoplay@outlook.com>",
+  "description": "YuntaoCode - 云涛智能终端，面向开发者与办公场景的本地 AI 辅助工具",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev:ui": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "build:ui": "vite build",
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "sidecar:windows": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\build_sidecar_windows.ps1",
+    "build:windows": "npm run sidecar:windows && npm run build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "vite": "^5.4.0"
+  }
+}

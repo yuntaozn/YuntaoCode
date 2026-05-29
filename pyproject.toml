@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yuntaocode"
+version = "0.1.0"
+description = "YuntaoCode - 云涛智能终端，面向开发者与办公场景的本地 AI 辅助工具"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+authors = [
+    {name = "沈阳云涛智能科技有限公司", email = "wutaoplay@outlook.com"}
+]
+keywords = ["ai", "local", "terminal", "code", "automation", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "tornado>=6.4",
+    "tiktoken>=0.7",
+    "httpx>=0.27",
+]
+
+[project.urls]
+Homepage = "https://github.com/yuntao-code/yuntaocode"
+Repository = "https://github.com/yuntao-code/yuntaocode"
+Issues = "https://github.com/yuntao-code/yuntaocode/issues"
+
+[project.scripts]
+yuntaocode = "runtime.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["runtime*"]
