@@ -106,10 +106,12 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
     try:
         process_kwargs: dict[str, Any] = {}
         if sys.platform.startswith("win"):
+            # PowerShell v5 doesn't support &&, replace with ;
+            safe_command = command.replace("&&", ";")
             ps_command = (
                 "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
                 "$OutputEncoding = [System.Text.Encoding]::UTF8; "
-                f"{command}"
+                f"{safe_command}"
             )
             process = await asyncio.create_subprocess_exec(
                 "powershell.exe",

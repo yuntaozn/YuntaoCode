@@ -8,7 +8,7 @@ from typing import Any
 from runtime.tool_registry import ToolRegistry, ToolSpec
 
 
-def _memory_save_handler(args: dict[str, Any], context: Any) -> dict[str, Any]:
+async def _memory_save_handler(args: dict[str, Any], context: Any) -> dict[str, Any]:
     """AI saves a memory item."""
     text = str(args.get("text") or "").strip()
     if not text:
@@ -41,7 +41,7 @@ def _memory_save_handler(args: dict[str, Any], context: Any) -> dict[str, Any]:
     }
 
 
-def _memory_recall_handler(args: dict[str, Any], context: Any) -> dict[str, Any]:
+async def _memory_recall_handler(args: dict[str, Any], context: Any) -> dict[str, Any]:
     """AI recalls relevant memories."""
     query = str(args.get("query") or "").strip()
     limit = min(int(args.get("limit") or 10), 50)
