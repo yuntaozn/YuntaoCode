@@ -16,6 +16,17 @@ Developed by [Shenyang Yuntao Intelligent Technology Co., Ltd.](mailto:wutaoplay
 
 ## Quick Start
 
+### Configure API Key
+
+After starting the service, open the settings page to configure model providers and API keys. **You cannot chat without configuring an API key.**
+
+- **Local models (Ollama/vLLM)**: Can disable the "Require API Key" option in settings
+- **Cloud models**: Must fill in the corresponding provider's API key
+
+### Login
+
+**Login is not mandatory in the current version.** You can use the panel directly for conversations without logging in.
+
 ### Development Mode
 
 ```powershell

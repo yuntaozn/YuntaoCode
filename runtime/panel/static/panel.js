@@ -2000,7 +2000,13 @@ loadAll().catch((error) => {
 });
 
 function showToast(message) {
-    $("model-summary").textContent = message;
+    const existing = document.querySelector(".toast");
+    if (existing) existing.remove();
+    const toast = document.createElement("div");
+    toast.className = "toast";
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
 }
 
 function handleImageFile(file) {
