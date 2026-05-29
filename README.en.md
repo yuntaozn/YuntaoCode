@@ -19,7 +19,7 @@ Developed by [Shenyang Yuntao Intelligent Technology Co., Ltd.](mailto:wutaoplay
 ### Development Mode
 
 ```powershell
-cd local-intelligent-terminal
+cd YuntaoCode
 pip install -r requirements.txt
 python -m runtime.app --host 127.0.0.1 --port 8765 --workspace D:\code
 ```

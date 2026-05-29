@@ -19,7 +19,7 @@
 ### 开发模式
 
 ```powershell
-cd local-intelligent-terminal
+cd YuntaoCode
 pip install -r requirements.txt
 python -m runtime.app --host 127.0.0.1 --port 8765 --workspace D:\code
 ```
