@@ -1,109 +1,156 @@
-# YuntaoCode
+# YuntaoCode — 云涛智能终端
 
-**云涛智能终端** — 面向开发者与办公场景的本地 AI 辅助工具。
+**Local-First AI Runtime & 智能终端平台**  
+由真实工程项目实践演化而来，YuntaoCode 将大语言模型与本地工具、文件系统、Shell、Git、文档处理、记忆管理及任务调度深度融合，为本地 AI Agent 提供稳定、可扩展的运行环境。
 
-由 [沈阳云涛智能科技有限公司](mailto:wutaoplay@outlook.com) 开发，基于 Tauri + Python sidecar 架构，将大语言模型能力与本地文件、代码、文档、终端深度集成。
+---
 
-> [English Version](README.en.md)
+## 为什么选择 YuntaoCode
 
-## 特性
+YuntaoCode 并非从宏大产品规划开始，而是从多个真实项目积累演化而来：
 
-- **本地优先**：文件读写、代码编辑、文档处理均在用户电脑执行，数据不出本机
-- **智能对话**：流式对话 + 多轮工具调用，支持记忆管理、上下文压缩
-- **工具生态**：文件系统、代码编辑、Shell、Git、文档处理、网页浏览等内置技能，支持插件扩展
-- **记忆系统**：自动从对话中提取长期记忆，相关性过滤注入上下文
-- **多模型支持**：兼容 OpenAI API 协议，支持火山方舟、通义千问、Ollama 等
+- SaaS 系统、知识库、智能评分、BIM/工程应用
+- 机器人巡检与本地模型实践
+- 本地 AI Agent 与多轮工具调用
 
-## 快速开始
+在这些工程实践中，我们发现：
 
-### 配置 API Key
+- 模型和工具不断演进  
+- 稳定的本地 Runtime 和工具协同能力是长期价值核心  
+- 高校教学和工程实验场景需要可控、本地化、可扩展的平台  
 
-启动服务后，打开设置页面配置模型接口和 API Key。**未配置 API Key 时无法进行对话。**
+因此，YuntaoCode 并非一个简单的聊天终端，而是 **Local-First AI Runtime 平台**。
 
-- **本地模型（Ollama/vLLM）**：可在设置中关闭“要求 API Key”选项
-- **云端模型**：需要填写对应服务商的 API Key
+---
 
-### 登录说明
+## 核心特性
 
-**当前版本登录功能不是强制的**，可以直接使用面板进行对话，无需登录。
+### 本地优先
+- 所有文件读写、代码执行、文档处理均在用户本机完成  
+- 用户数据完全本地化
 
-### 开发模式
+### 工具生态
+- 内置工具：文件系统、Shell、Git、文档处理、网页访问  
+- 支持插件扩展，开发者可自定义技能
 
-```powershell
+### 记忆系统
+- 自动从对话和操作中提取长期记忆  
+- 支持相关性检索和上下文压缩注入
+
+### 多模型支持
+- OpenAI API 兼容  
+- 支持 Ollama、火山方舟、通义千问等本地/远程模型
+
+### 可扩展与自我进化预设
+- 记录工具调用和操作结果  
+- 生成经验、提示词、任务优化建议  
+- 支持受控的自我优化策略（用户确认执行）
+
+---
+
+## 架构概览
+
+```text
+                YuntaoCode Runtime
+
+┌─────────────────────────────────────┐
+│ Memory                              │
+│ Context Manager                     │
+│ Tool Registry                       │
+│ Conversation Runner                 │
+│ Task Scheduler                      │
+└──────────────────┬──────────────────┘
+                   │
+
+      ┌────────────┼────────────┐
+      │            │            │
+
+      ▼            ▼            ▼
+
+   Desktop      Browser       API
+
+      │            │            │
+
+      └─────── UI Layer ────────┘
+
+Tools:
+- Filesystem
+- Shell
+- Git
+- Document
+- Web
+- Memory
+- Models
+
+Python Runtime 是核心，Tauri 桌面壳只是界面层。
+
+快速开始
+克隆仓库
+git clone https://github.com/yuntaozn/YuntaoCode.git
 cd YuntaoCode
+安装依赖
 pip install -r requirements.txt
-python -m runtime.app --host 127.0.0.1 --port 8765 --workspace D:\code
-```
+启动 Runtime
+python -m runtime.app --host 127.0.0.1 --port 8765
 
-启动后浏览器打开 `http://127.0.0.1:8765/` 即可使用本地面板。
+浏览器访问：
 
-### 桌面版打包
-
-```powershell
+http://127.0.0.1:8765
+打包桌面版
 cd desktop-shell
 npm install
 npm run build:windows
-```
+扩展指南
+添加新工具
 
-## 架构
+在 runtime/skills/ 下创建模块，定义 handler 和 ToolSpec，并在 __init__.py 注册：
 
-YuntaoCode 的 Python Runtime 采用 Tornado 构建。相比偏向标准 API 服务的框架，Tornado 更适合作为本地异步运行时，承载 WebSocket 流式通信、工具调度、文件系统访问、Shell 执行和插件扩展等能力。
-
-```text
-yuntaocode/
-  runtime/                 Python Tornado 本地运行时
-    app.py                 服务入口
-    config.py              运行配置
-    conversation_runner.py 对话执行循环
-    memory_store.py        记忆持久化存储
-    memory_service.py      记忆相关性过滤
-    memory_extractor.py    对话自动记忆提取
-    tool_registry.py       工具注册中心
-    context_manager.py     上下文压缩
-    security.py            路径安全边界
-    api/                   HTTP / WebSocket 接口
-    skills/                本地技能（filesystem/code/shell/git/web/document/memory）
-  desktop-shell/           Tauri 桌面壳
-  docs/                    架构与工具协议说明
-  requirements.txt         Python 运行时依赖
-```
-
-## 扩展指南
-
-### 添加新工具
-
-在 `runtime/skills/` 下新建模块，定义 handler 和 ToolSpec，然后在 `runtime/skills/__init__.py` 注册：
-
-```python
 from runtime.tool_registry import ToolRegistry, ToolSpec
 
 def my_tool_handler(args, context):
-    # context 包含 settings、path_guard 等
     return {"result": "..."}
 
 def register_my_tools(registry: ToolRegistry):
     registry.register(
-        ToolSpec(id="my.tool", name="我的工具", description="...", input_schema={...}),
+        ToolSpec(id="my.tool", name="我的工具", description="...", input_schema={}),
         my_tool_handler,
     )
-```
+添加新 API
 
-### 添加新 API
+在 runtime/api/ 下创建 handler，继承 ApiHandler，并在 runtime/app.py 注册路由。
 
-在 `runtime/api/` 下新建 handler，继承 `ApiHandler`，然后在 `runtime/app.py` 注册路由。
+开发计划（Roadmap）
+v0.1
+ 本地 AI 对话
+ 工具调用
+ 文件系统 / Shell / Git
+ 记忆系统
+v0.2
+ MCP 支持
+ 插件系统
+ 多工作区
+v0.3
+ 本地知识库
+ 工作流编排
+ Agent 自动任务
+v1.0
+ 企业部署
+ 团队协作
+ 插件市场
+教育场景
 
-## 项目信息
+YuntaoCode 适合高校教学和工程实验：
 
-| 项目 | 说明 |
-|------|------|
-| 名称 | YuntaoCode (云涛智能终端) |
-| 公司 | 沈阳云涛智能科技有限公司 |
-| 邮箱 | wutaoplay@outlook.com |
-| 版本 | 0.1.0 |
-| 协议 | Apache License 2.0 |
+AI Agent 实训
+MCP 教学
+RAG 教学
+本地大模型部署实验
+软件工程课程案例
+项目状态
+当前版本：0.1.0
+状态：活跃开发中
+API 和插件接口可能在 v1.0 前调整
+License
 
-## License
-
-[Apache License 2.0](LICENSE)
-
-Copyright 2024-2026 沈阳云涛智能科技有限公司
+Apache License 2.0
+LICENSE
