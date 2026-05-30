@@ -5,6 +5,9 @@ __pycache__/
 *.pyd
 *.sqlite
 *.db
+.pytest_cache/
+.coverage
+htmlcov/
 .env/
 .venv/
 venv/
@@ -15,6 +18,7 @@ dist/
 build/
 desktop-shell/dist/
 desktop-shell/src-tauri/target/
+desktop-shell/src-tauri/icons/icon.ico
 desktop-shell/src-tauri/binaries/*.exe
 desktop-shell/src-tauri/binaries/*.pdb
 

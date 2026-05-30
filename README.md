@@ -131,7 +131,13 @@ cd YuntaoCode
 ### 安装依赖
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+```
+
+如果你只想安装 Runtime 核心与测试依赖：
+
+```bash
+python -m pip install -e ".[dev]"
 ```
 
 ### 启动 Runtime
@@ -153,9 +159,44 @@ http://127.0.0.1:8765
 ```bash
 cd desktop-shell
 
-npm install
+npm ci
 
 npm run build:windows
+```
+
+---
+
+## 开发与验证
+
+推荐在提交变更前至少运行：
+
+```bash
+python -m pip install -e ".[dev]"
+pytest
+python scripts/smoke_core.py
+```
+
+桌面前端验证：
+
+```bash
+npm --prefix desktop-shell ci
+npm --prefix desktop-shell run build:ui
+node --check desktop-shell/src/main.js
+```
+
+Tauri 壳验证：
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/prepare_tauri_check.ps1
+cargo check --manifest-path desktop-shell/src-tauri/Cargo.toml
+```
+
+`cargo check` 需要 Tauri `externalBin` 和 Windows 图标路径存在；上面的脚本只生成检查用占位文件，正式打包仍使用 `npm run build:windows` 构建真实 sidecar。
+
+Windows 如果没有 `python` 命令，可以使用 Python Launcher：
+
+```powershell
+py -3.11 -m runtime.app --host 127.0.0.1 --port 8765
 ```
 
 ---
@@ -187,6 +228,26 @@ def register_my_tools(registry: ToolRegistry):
 ### 添加新 API
 
 在 `runtime/api/` 下创建 Handler，并在 `runtime/app.py` 注册路由。
+
+### 插件系统状态
+
+当前版本已经有基于工具 ID 前缀的插件分组、启停和依赖状态展示。
+
+真正面向第三方扩展的插件 manifest、动态加载、权限声明和隔离机制仍属于 v0.2 重点工作。
+
+插件协议草案见 [docs/plugin-system.md](docs/plugin-system.md)。
+
+---
+
+## 开源协作
+
+欢迎参与开发。开始前建议阅读：
+
+* [CONTRIBUTING.md](CONTRIBUTING.md)
+* [SECURITY.md](SECURITY.md)
+* [CHANGELOG.md](CHANGELOG.md)
+
+请不要提交 API Key、本地对话记录、用户数据、打包产物或 `node_modules`。
 
 ---
 
@@ -221,12 +282,20 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 * [x] Git
 * [x] Memory
 
+### v0.1.1
+
+* [ ] 开源协作流程
+* [ ] CI 与自动化测试
+* [ ] 安全文档与问题模板
+* [ ] 安装与构建文档修正
+
 ### v0.2
 
 * [ ] MCP Support
-* [ ] Plugin System
+* [ ] Plugin Manifest
+* [ ] Dynamic Plugin Loading
+* [ ] Plugin Permission Model
 * [ ] Multi Workspace
-* [ ] Tool Marketplace
 
 ### v0.3
 
@@ -234,8 +303,16 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 * [ ] Workflow Engine
 * [ ] Autonomous Tasks
 
+### v0.4
+
+* [ ] Tool Marketplace
+* [ ] Signed Plugin Distribution
+* [ ] Release Packaging
+
 ### v1.0
 
+* [ ] Stable Runtime API
+* [ ] Stable Plugin Compatibility
 * [ ] Enterprise Deployment
 * [ ] Team Collaboration
 * [ ] Plugin Marketplace

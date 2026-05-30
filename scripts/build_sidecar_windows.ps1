@@ -11,6 +11,8 @@ $sidecarName = "local-runtime-$TargetTriple"
 
 Set-Location $root
 
+& (Join-Path $PSScriptRoot "prepare_tauri_check.ps1") -TargetTriple $TargetTriple | Out-Host
+
 Write-Host "Checking PyInstaller..."
 & $Python -m PyInstaller --version | Out-Host
 

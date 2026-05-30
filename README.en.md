@@ -131,7 +131,13 @@ cd YuntaoCode
 ### Install Dependencies
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+```
+
+If you only need the core runtime and test dependencies:
+
+```bash
+python -m pip install -e ".[dev]"
 ```
 
 ### Start Runtime
@@ -153,9 +159,44 @@ http://127.0.0.1:8765
 ```bash
 cd desktop-shell
 
-npm install
+npm ci
 
 npm run build:windows
+```
+
+---
+
+## Development & Verification
+
+Before submitting changes, run at least:
+
+```bash
+python -m pip install -e ".[dev]"
+pytest
+python scripts/smoke_core.py
+```
+
+Desktop frontend checks:
+
+```bash
+npm --prefix desktop-shell ci
+npm --prefix desktop-shell run build:ui
+node --check desktop-shell/src/main.js
+```
+
+Tauri shell check:
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/prepare_tauri_check.ps1
+cargo check --manifest-path desktop-shell/src-tauri/Cargo.toml
+```
+
+`cargo check` needs the Tauri `externalBin` and Windows icon paths to exist. The script above creates check-only placeholders; release packaging still uses `npm run build:windows` to build the real sidecar.
+
+On Windows, if `python` is not available on PATH, use Python Launcher:
+
+```powershell
+py -3.11 -m runtime.app --host 127.0.0.1 --port 8765
 ```
 
 ---
@@ -188,6 +229,26 @@ def register_my_tools(registry: ToolRegistry):
 
 Create a Handler under `runtime/api/` and register it in `runtime/app.py`.
 
+### Plugin System Status
+
+The current version already groups built-in tools by tool ID prefix and supports plugin-style enablement and dependency status display.
+
+The third-party plugin manifest, dynamic loading, permission declarations, and isolation model remain core v0.2 work.
+
+See the plugin protocol draft in [docs/plugin-system.md](docs/plugin-system.md).
+
+---
+
+## Open Source Collaboration
+
+Contributions are welcome. Please read:
+
+* [CONTRIBUTING.md](CONTRIBUTING.md)
+* [SECURITY.md](SECURITY.md)
+* [CHANGELOG.md](CHANGELOG.md)
+
+Do not commit API keys, local conversation data, user data, packaged binaries, or `node_modules`.
+
 ---
 
 ## Philosophy
@@ -217,12 +278,20 @@ We believe that models will continue to change, but a stable, open, and extensib
 * [x] Git
 * [x] Memory
 
+### v0.1.1
+
+* [ ] Open-source contribution flow
+* [ ] CI and automated tests
+* [ ] Security docs and issue templates
+* [ ] Install and build documentation fixes
+
 ### v0.2
 
 * [ ] MCP Support
-* [ ] Plugin System
+* [ ] Plugin Manifest
+* [ ] Dynamic Plugin Loading
+* [ ] Plugin Permission Model
 * [ ] Multi-Workspace
-* [ ] Tool Marketplace
 
 ### v0.3
 
@@ -230,8 +299,16 @@ We believe that models will continue to change, but a stable, open, and extensib
 * [ ] Workflow Engine
 * [ ] Autonomous Tasks
 
+### v0.4
+
+* [ ] Tool Marketplace
+* [ ] Signed Plugin Distribution
+* [ ] Release Packaging
+
 ### v1.0
 
+* [ ] Stable Runtime API
+* [ ] Stable Plugin Compatibility
 * [ ] Enterprise Deployment
 * [ ] Team Collaboration
 * [ ] Plugin Marketplace

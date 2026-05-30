@@ -25,12 +25,12 @@ Rust/Cargo 当前机器如果还没装，先按 Tauri 官方 prerequisites 安�
 ## 安装依赖
 
 ```powershell
-cd D:\code\aiagent\二十二冶\local-intelligent-terminal
+cd YuntaoCode
 python -m pip install -r requirements.txt
 python -m pip install -r requirements-build.txt
 
 cd desktop-shell
-npm install
+npm ci
 ```
 
 ## 构建 Python sidecar
@@ -44,7 +44,7 @@ local-runtime-x86_64-pc-windows-msvc.exe
 运行：
 
 ```powershell
-cd D:\code\aiagent\二十二冶\local-intelligent-terminal\desktop-shell
+cd YuntaoCode\desktop-shell
 npm run sidecar:windows
 ```
 
@@ -57,7 +57,7 @@ desktop-shell/src-tauri/binaries/local-runtime-x86_64-pc-windows-msvc.exe
 ## 开发运行
 
 ```powershell
-cd D:\code\aiagent\二十二冶\local-intelligent-terminal\desktop-shell
+cd YuntaoCode\desktop-shell
 npm run dev
 ```
 
@@ -66,7 +66,7 @@ npm run dev
 ## 构建 Windows 安装包
 
 ```powershell
-cd D:\code\aiagent\二十二冶\local-intelligent-terminal\desktop-shell
+cd YuntaoCode\desktop-shell
 npm run build:windows
 ```
 
