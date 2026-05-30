@@ -191,7 +191,9 @@ powershell -ExecutionPolicy Bypass -File scripts/prepare_tauri_check.ps1
 cargo check --manifest-path desktop-shell/src-tauri/Cargo.toml
 ```
 
-`cargo check` 需要 Tauri `externalBin` 和 Windows 图标路径存在；上面的脚本只生成检查用占位文件，正式打包仍使用 `npm run build:windows` 构建真实 sidecar。
+`cargo check` 需要 Tauri `externalBin` 和 Windows 图标路径存在；上面的脚本会生成检查用 sidecar 占位文件，并确认图标路径存在。正式打包仍使用 `npm run build:windows` 构建真实 sidecar。
+
+桌面应用图标位于 `desktop-shell/src-tauri/icons/icon.ico`，建议提交正式 `.ico` 文件。检查脚本只会在该文件缺失时生成临时图标。
 
 Windows 如果没有 `python` 命令，可以使用 Python Launcher：
 

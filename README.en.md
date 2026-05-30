@@ -191,7 +191,9 @@ powershell -ExecutionPolicy Bypass -File scripts/prepare_tauri_check.ps1
 cargo check --manifest-path desktop-shell/src-tauri/Cargo.toml
 ```
 
-`cargo check` needs the Tauri `externalBin` and Windows icon paths to exist. The script above creates check-only placeholders; release packaging still uses `npm run build:windows` to build the real sidecar.
+`cargo check` needs the Tauri `externalBin` and Windows icon paths to exist. The script above creates a check-only sidecar placeholder and verifies the icon path. Release packaging still uses `npm run build:windows` to build the real sidecar.
+
+The desktop app icon lives at `desktop-shell/src-tauri/icons/icon.ico`. Commit the real `.ico` file; the check script only creates a temporary icon when that file is missing.
 
 On Windows, if `python` is not available on PATH, use Python Launcher:
 

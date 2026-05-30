@@ -9,6 +9,12 @@
 
 Python runtime 仍然负责本地工具、模型调用、对话存储、项目目录和设置。
 
+桌面应用图标位于：
+
+```text
+desktop-shell/src-tauri/icons/icon.ico
+```
+
 ## 开发环境
 
 Windows 首次开发需要安装：

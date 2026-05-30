@@ -18,7 +18,6 @@ dist/
 build/
 desktop-shell/dist/
 desktop-shell/src-tauri/target/
-desktop-shell/src-tauri/icons/icon.ico
 desktop-shell/src-tauri/binaries/*.exe
 desktop-shell/src-tauri/binaries/*.pdb
 

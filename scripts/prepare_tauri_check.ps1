@@ -20,8 +20,8 @@ if (-not (Test-Path $binaryPath)) {
 }
 
 if (-not (Test-Path $iconPath)) {
-    # Minimal 1x1 ICO. This keeps cargo check and local packaging reproducible
-    # until the project ships branded icon assets.
+    # Minimal 1x1 ICO fallback. Real releases should keep a branded icon.ico
+    # checked into desktop-shell/src-tauri/icons/.
     [byte[]]$iconBytes = @(
         0x00,0x00,0x01,0x00,0x01,0x00,
         0x01,0x01,0x00,0x00,0x01,0x00,0x20,0x00,0x30,0x00,0x00,0x00,0x16,0x00,0x00,0x00,
@@ -35,4 +35,4 @@ if (-not (Test-Path $iconPath)) {
 }
 
 Write-Host "Prepared Tauri check placeholder: $binaryPath"
-Write-Host "Prepared Tauri icon placeholder: $iconPath"
+Write-Host "Verified Tauri icon path: $iconPath"
