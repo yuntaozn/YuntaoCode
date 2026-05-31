@@ -22,6 +22,7 @@ const LOCALES = {
         "sidebar.model": "模型",
         "sidebar.project_dirs": "项目目录",
         "sidebar.select_folder": "选择工作空间",
+        "sidebar.select_short": "选择",
         "sidebar.conversations": "对话",
         "sidebar.search_history": "搜索历史对话",
 
@@ -415,6 +416,7 @@ const LOCALES = {
         "sidebar.model": "Model",
         "sidebar.project_dirs": "Projects",
         "sidebar.select_folder": "Choose workspace",
+        "sidebar.select_short": "Select",
         "sidebar.conversations": "Chats",
         "sidebar.search_history": "Search history",
 
