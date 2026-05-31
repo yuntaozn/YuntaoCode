@@ -52,6 +52,7 @@ build = [
 ]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
 ]
 all = [
     "python-docx>=0.8.11",
@@ -65,6 +66,7 @@ all = [
     "playwright>=1.40.0",
     "pyinstaller>=6.0",
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
 ]
 
 [project.urls]
@@ -83,3 +85,4 @@ include = ["runtime*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+asyncio_mode = "auto"

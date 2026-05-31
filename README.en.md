@@ -89,19 +89,18 @@ Compatible with OpenAI-style APIs:
  └──────────────┬───────────────┘
                 │
 
-    ┌───────────┼───────────┐
+    ┌───────────┼───────────┬──────────────┐
 
-    ▼           ▼           ▼
+    ▼           ▼           ▼              ▼
 
- Context     Memory      Tools
+ Strategy   Context     Memory          Tools
 
-                             │
+    │                                      │
 
-          ┌──────────────────┼──────────────────┐
+ Profiles / Policy /              ┌───────┼───────┐
+ Prompts / Plan Tracker           ▼       ▼       ▼
 
-          ▼                  ▼                  ▼
-
-      Filesystem          Shell               Git
+                              Filesystem  Shell    Git
 
                              ...
 
@@ -115,6 +114,8 @@ Compatible with OpenAI-style APIs:
 The Python Runtime is the core of the system.
 
 The Tauri desktop application is only one possible interface layer. The Runtime itself can operate independently.
+
+The Agent Runtime strategy layer lives in `runtime/agent_strategy/`. It owns intent classification, internal profiles, planning policy, stage prompts, and execution-plan lifecycle helpers so that `conversation_runner.py` can remain an orchestration layer.
 
 ---
 
@@ -245,6 +246,7 @@ See the plugin protocol draft in [docs/plugin-system.md](docs/plugin-system.md).
 
 Contributions are welcome. Please read:
 
+* [AGENTS.md](AGENTS.md)
 * [CONTRIBUTING.md](CONTRIBUTING.md)
 * [SECURITY.md](SECURITY.md)
 * [CHANGELOG.md](CHANGELOG.md)

@@ -33,3 +33,36 @@ Tauri 是壳，真正的产品壁垒是本地技能运行时。先把 Python sid
 - 工具只能访问启动参数 `--workspace` 指定的目录。
 - 当前没有开放任意 shell 执行接口。
 - 模型 Key 和对话记录保存在本机用户配置目录，不写入项目目录。
+
+## Agent Runtime 策略层
+
+当前界面保持一个统一终端，但 Runtime 内部需要区分不同类型任务：
+
+```text
+User Request
+  -> Intent Classifier
+  -> Agent Profile
+  -> Planning Policy
+  -> Conversation Runner
+  -> Tools / Model Providers
+  -> Streamed Process Trace
+```
+
+这层策略目前集中在 `runtime/agent_strategy/`：
+
+- `classifiers.py`：意图分类、工具分类、进度观察和阶段判断。
+- `profiles.py`：内部执行 Profile，例如直接问答、项目分析、代码修改、文档工作流、论文工作流。
+- `policy.py`：请求路由和计划执行开关，先做确定性判断，只有模糊请求才交给模型裁决。
+- `prompts.py`：阶段提示、修复提示、最终回答提示等 prompt 构建。
+- `plan_tracker.py`：执行计划的提取、归一化、推进和收尾。
+
+新增能力时优先扩展这些模块，而不是继续向 `conversation_runner.py`
+主循环里堆分支。`conversation_runner.py` 应尽量保持为编排层：
+它负责串起上下文压缩、计划、模型流、工具调用、确认机制和最终消息落库。
+
+## 扩展原则
+
+- 用户侧保持统一终端，内部通过 Profile 区分执行策略。
+- 新增任务类型先补 Profile / Policy / Prompt / Plan 测试，再接入主循环。
+- 工具权限、安全确认和路径边界留在执行层，不由 prompt 或 UI 文案代替。
+- 前端过程记录应展示 Runtime 的真实执行轨迹，而不是隐藏计划、推理、工具事件。

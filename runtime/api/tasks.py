@@ -3,6 +3,7 @@ from __future__ import annotations
 import tornado.web
 
 from .base import ApiHandler
+from runtime.agent_strategy.classifiers import canonical_tool_id
 
 
 class TasksHandler(ApiHandler):
@@ -11,6 +12,7 @@ class TasksHandler(ApiHandler):
         tool_id = payload.get("tool")
         if not tool_id:
             raise tornado.web.HTTPError(400, reason="tool is required")
+        tool_id = canonical_tool_id(tool_id)
         try:
             tool_spec = self.runtime.registry.get(tool_id).spec
         except KeyError:

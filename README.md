@@ -89,19 +89,18 @@ YuntaoCode 就是在这样的过程中自然演化出来的。
  └──────────────┬───────────────┘
                 │
 
-    ┌───────────┼───────────┐
+    ┌───────────┼───────────┬──────────────┐
 
-    ▼           ▼           ▼
+    ▼           ▼           ▼              ▼
 
- Context     Memory      Tools
+ Strategy   Context     Memory          Tools
 
-                             │
+    │                                      │
 
-          ┌──────────────────┼──────────────────┐
+ Profiles / Policy /              ┌───────┼───────┐
+ Prompts / Plan Tracker           ▼       ▼       ▼
 
-          ▼                  ▼                  ▼
-
-      Filesystem          Shell               Git
+                              Filesystem  Shell    Git
 
                              ...
 
@@ -115,6 +114,8 @@ YuntaoCode 就是在这样的过程中自然演化出来的。
 Python Runtime 是系统核心。
 
 Tauri 桌面端只是其中一种界面形式，Runtime 本身可以独立运行。
+
+Agent Runtime 的策略层位于 `runtime/agent_strategy/`。它负责意图分类、内部 Profile、计划策略、阶段提示和执行计划生命周期，让 `conversation_runner.py` 尽量保持为编排层。
 
 ---
 
@@ -245,6 +246,7 @@ def register_my_tools(registry: ToolRegistry):
 
 欢迎参与开发。开始前建议阅读：
 
+* [AGENTS.md](AGENTS.md)
 * [CONTRIBUTING.md](CONTRIBUTING.md)
 * [SECURITY.md](SECURITY.md)
 * [CHANGELOG.md](CHANGELOG.md)

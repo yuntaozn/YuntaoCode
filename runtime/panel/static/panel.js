@@ -18,6 +18,8 @@ const state = {
     currentConversationId: localStorage.getItem("lit_conversation_id") || "",
     currentMessages: [],
     activeStreams: new Map(),
+    pendingComposerSubmit: false,
+    submitSeq: 0,
     isSending: false,
     abortController: null,
     uploadedImage: null,
@@ -106,6 +108,11 @@ function hasActiveStreams() {
     return state.activeStreams.size > 0;
 }
 
+function updateSendingState() {
+    state.isSending = Boolean(state.pendingComposerSubmit || isConversationStreaming());
+    refreshComposerState();
+}
+
 function openAuxiliaryPage(url) {
     if (hasActiveStreams()) {
         const opened = window.open(url, "_blank", "noopener,noreferrer");
@@ -120,7 +127,7 @@ function openAuxiliaryPage(url) {
 }
 
 function refreshComposerState() {
-    setSendButtonState(isConversationStreaming());
+    setSendButtonState(Boolean(state.pendingComposerSubmit || isConversationStreaming()));
 }
 
 function elapsedSeconds(since) {
@@ -651,9 +658,10 @@ function getOrderedWorkspaces() {
 
 function renderMessages(messages) {
     state.currentMessages = messages || [];
+    const container = $("messages");
     const workspace = getCurrentWorkspace();
     if (!messages || !messages.length) {
-        $("messages").innerHTML = `
+        container.innerHTML = `
             <div class="empty-chat">
                 <div class="empty-title">${t('chat.empty_title', {name: escapeHtml(workspace?.name || "this project")})}</div>
                 <div class="prompt-suggestions">
@@ -665,14 +673,51 @@ function renderMessages(messages) {
         `;
         return;
     }
-    $("messages").innerHTML = messages.map(renderMessage).join("");
-    $("messages").scrollTop = $("messages").scrollHeight;
+    const wasNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 96;
+    const rendered = messages.map((message, index) => {
+        const key = messageRenderKey(message, index);
+        return { key, html: renderMessage(message, key) };
+    });
+    const children = Array.from(container.children);
+    const canPatch = children.length === rendered.length
+        && children.every((child, index) => child.dataset.messageKey === rendered[index].key);
+
+    if (!canPatch) {
+        container.innerHTML = rendered.map((item) => item.html).join("");
+        Array.from(container.children).forEach((child, index) => {
+            child.__renderHtml = rendered[index]?.html || "";
+        });
+    } else {
+        rendered.forEach((item, index) => {
+            const child = container.children[index];
+            if (!child || child.__renderHtml === item.html) return;
+            const template = document.createElement("template");
+            template.innerHTML = item.html.trim();
+            const next = template.content.firstElementChild;
+            if (!next) return;
+            next.__renderHtml = item.html;
+            child.replaceWith(next);
+        });
+    }
+    if (wasNearBottom) {
+        container.scrollTop = container.scrollHeight;
+    }
 }
 
-function renderMessage(message) {
+function messageRenderKey(message, index) {
+    const metadata = message.metadata || {};
+    return [
+        message.role || "message",
+        metadata.guidance ? "guidance" : "message",
+        index,
+    ].join(":");
+}
+
+function renderMessage(message, key = "") {
+    const keyAttr = key ? ` data-message-key="${escapeHtml(key)}"` : "";
     if (message.metadata?.guidance) {
         return `
-            <div class="message guidance ${message.metadata?.pending ? "pending" : ""}">
+            <div class="message guidance ${message.metadata?.pending ? "pending" : ""}"${keyAttr}>
                 <div class="message-bubble">
                     <div class="message-chip">${t('chat.guidance_chip')}</div>
                     ${message.content ? `<div class="message-content">${formatMessageContent(message.content)}</div>` : ""}
@@ -681,10 +726,12 @@ function renderMessage(message) {
         `;
     }
     return `
-        <div class="message ${message.role} ${message.metadata?.pending ? "pending" : ""} ${message.metadata?.guidance ? "guidance" : ""}">
+        <div class="message ${message.role} ${message.metadata?.pending ? "pending" : ""} ${message.metadata?.guidance ? "guidance" : ""}"${keyAttr}>
             <div class="message-bubble">
                 ${renderExecutionPlan(message)}
+                ${renderLiveStatus(message)}
                 ${renderReasoning(message)}
+                ${renderProcessHistory(message)}
                 ${renderToolEvents(message)}
                 ${renderExecutionNotice(message)}
                 ${renderChangeSummary(message)}
@@ -909,36 +956,90 @@ function mergeStreamGuidanceMessages(conversationId, streamingMessages) {
     activeStream.messages = streamingMessages;
 }
 
+function mergeFinalStreamMetadata(finalMessages, streamingAssistant) {
+    if (!Array.isArray(finalMessages) || !streamingAssistant?.metadata) return finalMessages || [];
+    const assistantIndex = [...finalMessages].map((message, index) => ({ message, index }))
+        .reverse()
+        .find((item) => item.message?.role === "assistant")?.index;
+    if (assistantIndex === undefined) return finalMessages;
+    const liveMetadata = streamingAssistant.metadata || {};
+    const merged = finalMessages.map((message) => ({
+        ...message,
+        metadata: { ...(message.metadata || {}) },
+    }));
+    for (const key of [
+        "reasoning",
+        "reasoning_history",
+        "response_revisions",
+        "guidance_events",
+        "tool_events",
+        "execution_plan",
+        "change_summary",
+    ]) {
+        if (liveMetadata[key] && !merged[assistantIndex].metadata[key]) {
+            merged[assistantIndex].metadata[key] = liveMetadata[key];
+        }
+    }
+    return merged;
+}
+
 async function sendMessage(event) {
     event.preventDefault();
-    if (!state.currentConversationId) {
-        await newConversation();
-    }
-    if (!state.currentConversationId) {
-        return;
-    }
-    const conversationId = state.currentConversationId;
-    const requestMode = state.currentMode;
     const input = $("message-input");
     const content = input.value.trim();
-    if (isConversationStreaming(conversationId)) {
+    const activeConversationId = state.currentConversationId;
+    if (activeConversationId && isConversationStreaming(activeConversationId)) {
         if (!content) return;
-        await sendGuidance(conversationId, content);
+        await sendGuidance(activeConversationId, content);
         input.value = "";
         refreshComposerState();
         return;
     }
     if (!content && !state.uploadedImage) return;
+    if (state.pendingComposerSubmit) {
+        console.debug("[YuntaoCode] duplicate composer submit suppressed");
+        return;
+    }
+    state.pendingComposerSubmit = true;
+    updateSendingState();
+    setSendButtonState(true);
+    try {
+        if (!state.currentConversationId) {
+            await newConversation();
+        }
+    } catch (error) {
+        state.pendingComposerSubmit = false;
+        updateSendingState();
+        throw error;
+    }
+    if (!state.currentConversationId) {
+        state.pendingComposerSubmit = false;
+        updateSendingState();
+        return;
+    }
+    const conversationId = state.currentConversationId;
+    const requestMode = state.currentMode;
+    const requestId = `stream-${Date.now()}-${++state.submitSeq}`;
     input.value = "";
-    state.isSending = true;
     const imageDataUrl = state.uploadedImageDataUrl;
     clearImageUpload();
-    setSendButtonState(true);
     const previousMessages = [...state.currentMessages];
     const streamingMessages = [
         ...previousMessages,
         { role: "user", content, metadata: {} },
-        { role: "assistant", content: "", metadata: { pending: true, statusText: t('status.thinking'), startedAt: Date.now(), lastEventAt: Date.now() } },
+        {
+            role: "assistant",
+            content: "",
+            metadata: {
+                pending: true,
+                requestId,
+                statusText: t('status.thinking'),
+                baseStatusText: t('status.thinking'),
+                startedAt: Date.now(),
+                lastEventAt: Date.now(),
+                elapsedSeconds: 0,
+            },
+        },
     ];
     const assistantIndex = streamingMessages.length - 1;
     streamingMessages[assistantIndex].metadata.baseStatusText = streamingMessages[assistantIndex].metadata.statusText || t('status.thinking');
@@ -1000,12 +1101,13 @@ async function sendMessage(event) {
     }
 
     showStatusBar(t('status.thinking'));
+    statusBarElapsed.textContent = formatElapsed(0);
 
     const abortController = new AbortController();
     state.activeStreams.set(conversationId, { abortController, messages: streamingMessages });
-    state.isSending = isConversationStreaming();
     state.abortController = abortController;
-    refreshComposerState();
+    state.pendingComposerSubmit = false;
+    updateSendingState();
     renderConversations();
     progressTimer = setInterval(() => {
         const metadata = streamingMessages[assistantIndex].metadata || {};
@@ -1023,10 +1125,8 @@ async function sendMessage(event) {
             : baseStatusText;
         statusBarElapsed.textContent = formatElapsed(metadata.elapsedSeconds);
         streamingMessages[assistantIndex].metadata = metadata;
-        if (now - lastProgressRenderAt >= 5000) {
-            lastProgressRenderAt = now;
-            renderStreamMessages();
-        }
+        lastProgressRenderAt = now;
+        renderStreamMessages();
     }, 1000);
 
     try {
@@ -1036,6 +1136,7 @@ async function sendMessage(event) {
             mode: requestMode,
             execution_mode: state.executionMode,
             plan_mode: planModeForExecutionMode(state.executionMode),
+            request_id: requestId,
         };
         if (imageDataUrl) {
             body.image_data = imageDataUrl;
@@ -1170,8 +1271,27 @@ async function sendMessage(event) {
                 if (eventData.event === "message_replace") {
                     touchProgress(t('status.correcting_tool'));
                     const metadata = streamingMessages[assistantIndex].metadata || {};
+                    const currentContent = streamingMessages[assistantIndex].content || "";
+                    const nextContent = eventData.message || "";
+                    if (currentContent && currentContent !== nextContent) {
+                        const revisions = metadata.response_revisions || [];
+                        revisions.push({
+                            content: currentContent,
+                            statusText: metadata.statusText || "",
+                            time: Date.now(),
+                        });
+                        metadata.response_revisions = revisions.slice(-8);
+                    }
                     streamingMessages[assistantIndex].content = eventData.message || "";
                     if (eventData.clear_reasoning) {
+                        if (metadata.reasoning && !eventData.discard_reasoning) {
+                            const history = metadata.reasoning_history || [];
+                            history.push({
+                                content: metadata.reasoning,
+                                time: Date.now(),
+                            });
+                            metadata.reasoning_history = history.slice(-8);
+                        }
                         delete metadata.reasoning;
                     }
                     metadata.pending = true;
@@ -1205,7 +1325,11 @@ async function sendMessage(event) {
                         renderCurrentWorkspace();
                     }
                     if (state.currentConversationId === conversationId) {
-                        renderMessages(eventData.conversation.messages);
+                        const finalMessages = mergeFinalStreamMetadata(
+                            eventData.conversation.messages,
+                            streamingMessages[assistantIndex],
+                        );
+                        renderMessages(finalMessages);
                     }
                     renderConversations();
                     if (state.currentConversationId === conversationId) {
@@ -1265,9 +1389,9 @@ async function sendMessage(event) {
         }
         hideStatusBar();
         state.activeStreams.delete(conversationId);
-        state.isSending = isConversationStreaming();
+        state.pendingComposerSubmit = false;
+        updateSendingState();
         state.abortController = state.activeStreams.get(state.currentConversationId)?.abortController || null;
-        refreshComposerState();
         renderConversations();
     }
 }
@@ -1541,6 +1665,22 @@ function renderExecutionPlan(message) {
     `;
 }
 
+function renderLiveStatus(message) {
+    const metadata = message.metadata || {};
+    if (!metadata.pending) return "";
+    const text = metadata.statusText || metadata.baseStatusText || t('status.thinking');
+    const elapsed = Number.isFinite(Number(metadata.elapsedSeconds))
+        ? Number(metadata.elapsedSeconds)
+        : elapsedSeconds(metadata.startedAt || Date.now());
+    return `
+        <div class="message-live-status">
+            <span class="message-live-dot"></span>
+            <span>${escapeHtml(text)}</span>
+            <em>${formatElapsed(elapsed)}</em>
+        </div>
+    `;
+}
+
 function renderReasoning(message) {
     const reasoning = message.metadata?.reasoning;
     if (!reasoning) return "";
@@ -1552,6 +1692,38 @@ function renderReasoning(message) {
                 ${isPending ? `<span class="reasoning-live">${t('status.reasoning_live')}</span>` : ""}
             </summary>
             <div class="reasoning-content">${formatMessageContent(reasoning)}</div>
+        </details>
+    `;
+}
+
+function renderProcessHistory(message) {
+    const revisions = message.metadata?.response_revisions || [];
+    const reasoningHistory = message.metadata?.reasoning_history || [];
+    if (!revisions.length && !reasoningHistory.length) return "";
+    const count = revisions.length + reasoningHistory.length;
+    const revisionRows = revisions.map((item, index) => `
+        <div class="process-history-item">
+            <strong>${t('process.draft', {n: index + 1})}</strong>
+            ${item.statusText ? `<em>${escapeHtml(item.statusText)}</em>` : ""}
+            <div class="process-history-content">${formatMessageContent(item.content || "")}</div>
+        </div>
+    `).join("");
+    const reasoningRows = reasoningHistory.map((item, index) => `
+        <div class="process-history-item">
+            <strong>${t('process.reasoning_snapshot', {n: index + 1})}</strong>
+            <div class="process-history-content">${formatMessageContent(item.content || "")}</div>
+        </div>
+    `).join("");
+    return `
+        <details class="process-history-block">
+            <summary>
+                <span>${t('process.history_title')}</span>
+                <em>${t('process.history_count', {count})}</em>
+            </summary>
+            <div class="process-history-list">
+                ${revisionRows}
+                ${reasoningRows}
+            </div>
         </details>
     `;
 }

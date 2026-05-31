@@ -53,6 +53,7 @@ cargo check --manifest-path desktop-shell/src-tauri/Cargo.toml
 
 - Keep changes scoped to one clear problem.
 - Prefer existing runtime patterns over new abstractions.
+- Read `AGENTS.md` before making AI-assisted runtime, tool, or frontend changes.
 - Add tests for path access, write tools, task execution, plugin behavior, and model-provider compatibility when those areas change.
 - Do not include API keys, user data, local conversation data, packaged binaries, or generated build output.
 - Document user-visible behavior changes in `CHANGELOG.md`.

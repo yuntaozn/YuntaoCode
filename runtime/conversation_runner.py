@@ -15,6 +15,8 @@ from runtime.conversation_interactions import (
     runtime_guidance as _runtime_guidance,
 )
 from runtime.model_providers.client import stream_chat_completion
+from runtime.agent_strategy.policy import deterministic_plan_gate, resolve_profile
+from runtime.agent_strategy.profiles import profile_to_public_dict
 from runtime import i18n
 
 
@@ -119,6 +121,18 @@ class ConversationRunExecutor:
         )
         hard_no_write_lock = self._has_no_write_instruction(content)
         code_change_intent = task_intent == "write_required"
+        agent_profile = resolve_profile(
+            task_intent,
+            effective_mode,
+            code_change_intent=code_change_intent,
+        )
+        plan_gate = deterministic_plan_gate(
+            content,
+            task_intent,
+            effective_mode,
+            plan_mode,
+            profile=agent_profile,
+        )
         task_contract = self._build_task_contract(
             task_intent=task_intent,
             mode=effective_mode,
@@ -140,6 +154,7 @@ class ConversationRunExecutor:
                 ),
             })
         metadata["task_intent"] = task_intent
+        metadata["agent_profile"] = profile_to_public_dict(agent_profile)
         metadata["hard_no_write_lock"] = hard_no_write_lock
         metadata["code_change_intent"] = code_change_intent
         metadata["execution_mode"] = execution_mode
@@ -197,14 +212,9 @@ class ConversationRunExecutor:
                 })
                 return True
 
-            if plan_mode == "always":
-                plan_execution = True
-                plan_decision = {
-                    "mode": plan_mode,
-                    "enabled": True,
-                    "reason": "已选择总是使用计划执行",
-                    "source": "user",
-                }
+            if not plan_gate.needs_model_judge:
+                plan_execution = bool(plan_gate.enabled)
+                plan_decision = plan_gate.to_public_dict(plan_mode)
             elif plan_mode == "auto":
                 self.write_event({"event": "status", "status": "plan_deciding", "message": "正在判断是否需要计划执行"})
                 await self.flush()
@@ -401,6 +411,11 @@ class ConversationRunExecutor:
                         round_tool_choice = None
                     round_enable_thinking = False
                     round_reasoning_effort = "low"
+                if agent_profile.id == "chat" and not plan_execution:
+                    round_tools = None
+                    round_tool_choice = None
+                    round_enable_thinking = enable_thinking
+                    round_reasoning_effort = reasoning_effort
                 self.write_event({"event": "status", "status": "thinking", "message": "正在连接模型"})
                 await self.flush()
                 tool_call_chunks: list[dict[str, Any]] = []
@@ -533,6 +548,29 @@ class ConversationRunExecutor:
                     continue
 
                 tool_calls = self._complete_tool_calls(tool_call_chunks, round_index)
+                if not tool_calls:
+                    native_tool_calls = self._extract_native_tool_calls(
+                        "".join(round_content_parts) + "\n" + "".join(round_reasoning_parts),
+                        round_index,
+                    )
+                    if native_tool_calls:
+                        tool_calls = native_tool_calls
+                        self._discard_parts(content_parts, round_content_parts)
+                        self._discard_parts(reasoning_parts, round_reasoning_parts)
+                        round_content_parts = []
+                        round_reasoning_parts = []
+                        self.write_event({
+                            "event": "message_replace",
+                            "message": "".join(content_parts),
+                            "clear_reasoning": True,
+                            "discard_reasoning": True,
+                        })
+                        self.write_event({
+                            "event": "status",
+                            "status": "native_tool_call",
+                            "message": "检测到模型原始工具调用，正在转为本地工具执行。",
+                        })
+                        await self.flush()
                 if not tool_calls:
                     round_text = "".join(round_content_parts).strip()
                     if (
