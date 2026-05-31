@@ -7,6 +7,7 @@ import locale
 import os
 import re
 import signal
+import subprocess
 import sys
 from typing import Any
 
@@ -52,6 +53,10 @@ def _decode_output(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+# On Windows, suppress the console window for child processes
+_WIN_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
+
+
 async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
     if process.returncode is not None:
         return
@@ -65,6 +70,7 @@ async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
                 "/F",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                creationflags=_WIN_NO_WINDOW,
             )
             await asyncio.wait_for(killer.communicate(), timeout=5)
             return
@@ -125,6 +131,7 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
+                creationflags=_WIN_NO_WINDOW,
             )
         else:
             process_kwargs["start_new_session"] = True

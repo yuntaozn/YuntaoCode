@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
 from typing import Any
 
 from runtime.tool_registry import ToolRegistry, ToolSpec
@@ -10,16 +12,24 @@ from runtime.tool_registry import ToolRegistry, ToolSpec
 MAX_DIFF_OUTPUT = 30_000
 MAX_LOG_ENTRIES = 30
 
+# On Windows, suppress the console window for child processes
+_WIN_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
+
 
 async def _run_git(args: list[str], cwd: str, max_output: int = 50_000) -> dict[str, Any]:
     """Run a git command and return structured output."""
     cmd = ["git"] + args
     try:
+        process_kwargs: dict[str, Any] = {
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.PIPE,
+            "cwd": cwd,
+        }
+        if sys.platform.startswith("win"):
+            process_kwargs["creationflags"] = _WIN_NO_WINDOW
         process = await asyncio.create_subprocess_exec(
             *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
+            **process_kwargs,
         )
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
             process.communicate(), timeout=30

@@ -198,7 +198,7 @@ The desktop app icon lives at `desktop-shell/src-tauri/icons/icon.ico`. Commit t
 On Windows, if `python` is not available on PATH, use Python Launcher:
 
 ```powershell
-py -3.11 -m runtime.app --host 127.0.0.1 --port 8765
+python -m runtime.app --host 127.0.0.1 --port 8765
 ```
 
 ---

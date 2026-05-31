@@ -205,27 +205,6 @@
             background: var(--primary);
         }
 
-        .toast {
-            position: fixed;
-            bottom: 24px;
-            left: 50%;
-            z-index: 9999;
-            padding: 8px 20px;
-            color: white;
-            background: var(--text);
-            border-radius: 6px;
-            font-size: 13px;
-            transform: translateX(-50%);
-            animation: toast-in 0.2s ease;
-        }
-
-        @keyframes toast-in {
-            from {
-                opacity: 0;
-                transform: translateX(-50%) translateY(10px);
-            }
-        }
-
         @media (max-width: 900px) {
             .settings-inline {
                 grid-template-columns: 1fr;

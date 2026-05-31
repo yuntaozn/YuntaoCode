@@ -15,6 +15,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -334,6 +335,7 @@ class DocxParser:
                 [soffice, "--headless", "--convert-to", "docx", "--outdir", tmpdir, str(file_path)],
                 capture_output=True,
                 timeout=60,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0,
             )
             if result.returncode != 0:
                 stderr = result.stderr.decode('utf-8', errors='ignore')

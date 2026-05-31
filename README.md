@@ -198,7 +198,7 @@ cargo check --manifest-path desktop-shell/src-tauri/Cargo.toml
 Windows 如果没有 `python` 命令，可以使用 Python Launcher：
 
 ```powershell
-py -3.11 -m runtime.app --host 127.0.0.1 --port 8765
+python -m runtime.app --host 127.0.0.1 --port 8765
 ```
 
 ---
