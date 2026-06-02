@@ -1,10 +1,10 @@
 # YuntaoCode
 
-**Local-First AI Runtime for Developers, Education and Engineering**
+**Local-First AI Task Runtime**
 
-YuntaoCode is a Local-First AI Runtime focused on context management, long-term memory, tool collaboration, and local execution.
+YuntaoCode is a local-first AI task execution foundation for developers, education, and engineering work.
 
-Rather than building yet another AI chat application, YuntaoCode explores how AI systems can operate, evolve, and collaborate with tools in a long-running local environment.
+Rather than building yet another AI chat application, YuntaoCode focuses on making local tasks plannable, executable, pausable, recoverable, verifiable, and auditable.
 
 ---
 
@@ -18,12 +18,12 @@ Instead of focusing on models themselves, we became increasingly interested in t
 
 * How should context be managed?
 * How can long-term memory be organized?
-* How can AI effectively use tools?
-* How can different capabilities work together?
+* How can AI use tools to complete real tasks?
+* How can task execution become observable, recoverable, and auditable?
 * How can AI run reliably in local environments?
 * How can systems remain extensible over time?
 
-As these questions were gradually addressed, an independent Runtime architecture began to take shape.
+As these questions were gradually addressed, a local Runtime architecture centered on tasks began to take shape.
 
 YuntaoCode is the result of that evolution.
 
@@ -32,6 +32,16 @@ It is not an answer to what the future AI terminal should look like, but an ongo
 ---
 
 ## Key Features
+
+### Task First
+
+YuntaoCode treats each request as a manageable task instead of a plain chat turn:
+
+* Task: user goal and runtime context
+* Plan: visible and executable plan
+* Step: current step, status, tool hints, and result
+* Trace: model output, tool calls, confirmations, errors, and recovery records
+* Result: final answer, change summary, verification, and remaining risks
 
 ### Local First
 
@@ -51,7 +61,7 @@ Built-in capabilities include:
 * Web Access
 * Memory
 
-Additional tools can be integrated through the plugin system.
+Tools are capability units for task execution. Additional tools can be integrated through the plugin system, but tools themselves are not the product boundary.
 
 ### Long-Term Memory
 
@@ -70,22 +80,22 @@ Compatible with OpenAI-style APIs:
 * Volcano Ark
 * Other OpenAI-compatible providers
 
-### Evolution-Oriented Design
+### Recoverable Execution
 
-* Tool execution tracking
-* Result recording
-* Experience accumulation
-* Foundations for future workflow optimization and self-improvement mechanisms
+* Task plans and stage transitions
+* Tool calls, confirmations, and errors
+* Pre-write backups and result verification
+* Foundations for task pause, resume, replay, and audit
 
 ---
 
 ## Architecture Overview
 
 ```text
-                YuntaoCode Runtime
+             YuntaoCode Task Runtime
 
  ┌──────────────────────────────┐
- │ Conversation Runner          │
+ │ Task Runtime Core            │
  └──────────────┬───────────────┘
                 │
 
@@ -93,14 +103,16 @@ Compatible with OpenAI-style APIs:
 
     ▼           ▼           ▼              ▼
 
- Strategy   Context     Memory          Tools
+ Task       Strategy    Context        Tools
+ Model
 
-    │                                      │
+    │           │                          │
 
- Profiles / Policy /              ┌───────┼───────┐
- Prompts / Plan Tracker           ▼       ▼       ▼
+ Lifecycle   Profiles / Policy /  ┌───────┼───────┐
+ Audit       Prompts / Plan       ▼       ▼       ▼
+ Recovery    Tracker          Filesystem Shell   Git
 
-                              Filesystem  Shell    Git
+                              Document  Web    Memory
 
                              ...
 
@@ -115,7 +127,11 @@ The Python Runtime is the core of the system.
 
 The Tauri desktop application is only one possible interface layer. The Runtime itself can operate independently.
 
+The current implementation already includes tool calling, plan generation, stage progression, confirmation, pre-write backups, and execution records. The next focus is to consolidate these capabilities into a clearer Task Model.
+
 The Agent Runtime strategy layer lives in `runtime/agent_strategy/`. It owns intent classification, internal profiles, planning policy, stage prompts, and execution-plan lifecycle helpers so that `conversation_runner.py` can remain an orchestration layer.
+
+See the Task Model draft in [docs/task-model.md](docs/task-model.md).
 
 ---
 
@@ -206,6 +222,18 @@ python -m runtime.app --host 127.0.0.1 --port 8765
 
 ## Extension Guide
 
+### Understand the Task Model
+
+Before contributing a new capability, read [docs/task-model.md](docs/task-model.md).
+
+At this stage, the project does not prioritize piling up application scenarios.
+More valuable contributions are changes that:
+
+* make task state clearer;
+* make plans, steps, and tool results easier to test;
+* make failure recovery, write rollback, and execution audit more stable;
+* turn a tool or skill into a reusable task capability.
+
 ### Add a New Tool
 
 Create a module under `runtime/skills/`:
@@ -232,13 +260,15 @@ def register_my_tools(registry: ToolRegistry):
 
 Create a Handler under `runtime/api/` and register it in `runtime/app.py`.
 
-### Plugin System Status
+### Plugins and Plugin Contract
 
-The current version already groups built-in tools by tool ID prefix and supports plugin-style enablement and dependency status display.
+The current version provides built-in plugin capability management. It groups tools by ID prefix, such as `filesystem`, `code`, `shell`, `git`, and `web`, and displays enablement and dependency status.
 
-The third-party plugin manifest, dynamic loading, permission declarations, and isolation model remain core v0.2 work.
+This is not a plugin marketplace or remote update system. The third-party manifest, dynamic loading, permission declarations, and isolation model remain future foundation work.
 
-See the plugin protocol draft in [docs/plugin-system.md](docs/plugin-system.md).
+See the extension contract draft in [docs/plugin-system.md](docs/plugin-system.md). The repository does not include external plugin sample directories at this stage; capability extension examples stay in documentation so experimental artifacts are not mistaken for built-in features.
+
+AI may help create plugin drafts, but drafts must stay isolated. After completion, test/dependency summaries plus one manual confirmation can move the draft into a future controlled registration or enablement path. See [docs/capability-governance.md](docs/capability-governance.md).
 
 ---
 
@@ -261,61 +291,58 @@ YuntaoCode is not trying to become the most powerful AI assistant.
 
 Instead, we focus on:
 
-* Runtime stability
-* Tool collaboration
-* Long-term memory organization
-* Local execution and user control
-* Continuous evolution
+* whether the Task lifecycle is clear;
+* whether execution is observable, pausable, and recoverable;
+* whether tool calls have boundaries, confirmations, and records;
+* whether results can be verified, rolled back, and reviewed;
+* whether the task execution system still works after replacing the model.
 
-We believe that models will continue to change, but a stable, open, and extensible Runtime will remain valuable.
+We believe that models will continue to change, but a stable, open, and extensible Task Runtime will remain valuable.
 
 ---
 
 ## Roadmap
 
-### v0.1
+### Phase 1: Task Foundation
 
-* [x] Local AI Chat
-* [x] Tool Calling
-* [x] Filesystem
-* [x] Shell
-* [x] Git
-* [x] Memory
+Goal: make the task execution system clear before expanding the feature list.
 
-### v0.1.1
+* [ ] Task Model: tasks, plans, steps, state, results, and metadata
+* [ ] Task Lifecycle: created, running, waiting, failed, completed, cancelled
+* [ ] Task Trace: model output, tool calls, confirmations, errors, verification, and final summary
+* [ ] Task Recovery: pause, resume, retry, and write rollback
+* [ ] Task Audit: readable execution records and testable state transitions
 
-* [ ] Open-source contribution flow
-* [ ] CI and automated tests
-* [ ] Security docs and issue templates
-* [ ] Install and build documentation fixes
+### Phase 2: Reusable Capabilities
 
-### v0.2
+Goal: turn tools into reusable task capabilities.
 
-* [ ] MCP Support
-* [ ] Plugin Manifest
-* [ ] Dynamic Plugin Loading
-* [ ] Plugin Permission Model
-* [ ] Multi-Workspace
+* [ ] Stable tool protocol and parameter conventions
+* [ ] Modular skill registration
+* [ ] Runtime Extension Contract: plugin manifest, permissions, dependencies, and task artifact conventions
+* [ ] AI-built plugin draft isolation, test summaries, and manual registration confirmation
+* [ ] Task-oriented wrappers for document parsing, code analysis, Git, and Shell
+* [ ] MCP as an external tool integration path, not the core positioning itself
 
-### v0.3
+### Phase 3: Task Templates
 
-* [ ] Local Knowledge Base
-* [ ] Workflow Engine
-* [ ] Autonomous Tasks
+Goal: preserve reusable task templates instead of prompt fragments only.
 
-### v0.4
+* [ ] Code modification task template
+* [ ] Project review task template
+* [ ] Document processing task template
+* [ ] Paper/research analysis task template
+* [ ] Task template import, export, and versioning
 
-* [ ] Tool Marketplace
-* [ ] Signed Plugin Distribution
-* [ ] Release Packaging
+### Phase 4: Ecosystem
 
-### v1.0
+Goal: expand the ecosystem after the Task Runtime stabilizes.
 
-* [ ] Stable Runtime API
-* [ ] Stable Plugin Compatibility
-* [ ] Enterprise Deployment
-* [ ] Team Collaboration
-* [ ] Plugin Marketplace
+* [ ] Multi-workspace and long-running tasks
+* [ ] Local knowledge base / RAG interfaces
+* [ ] Optional plugin index and signed distribution
+* [ ] Team sync and enterprise deployment
+* [ ] Stable Runtime API and plugin compatibility
 
 ---
 

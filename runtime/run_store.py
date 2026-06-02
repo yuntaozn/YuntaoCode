@@ -164,10 +164,19 @@ class RunStore:
         runs = value.get("runs") if isinstance(value, dict) else []
         if not isinstance(runs, list):
             return
+        changed = False
         for item in runs:
             if isinstance(item, dict):
                 record = RunRecord.from_dict(item)
+                if record.status in {"running", "waiting_confirmation"}:
+                    record.status = "stopped"
+                    record.stage = "interrupted"
+                    record.message = "run interrupted before runtime startup"
+                    record.updated_at = utc_now()
+                    changed = True
                 self._runs[record.id] = record
+        if changed:
+            self._save()
 
     def _save(self) -> None:
         if not self.store_path:

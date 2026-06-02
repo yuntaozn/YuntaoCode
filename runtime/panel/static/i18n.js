@@ -100,7 +100,7 @@ const LOCALES = {
 
         // === Plugins dialog (HTML) ===
         "plugins.title": "插件",
-        "plugins.desc": "本地技能会以插件形式管理，后续可扩展启停、权限和配置。",
+        "plugins.desc": "当前展示内置插件能力和 AI 自建插件草稿。",
         "plugins.recent_tasks": "最近任务",
         "plugins.no_tasks": "暂无任务",
 
@@ -160,8 +160,11 @@ const LOCALES = {
         "plugins_page.overview": "插件总览",
         "plugins_page.groups": "插件分组",
         "plugins_page.heading": "插件管理",
-        "plugins_page.subtitle": "查看和管理本地技能插件及其依赖状态",
+        "plugins_page.subtitle": "查看内置插件能力、启停状态和 AI 自建插件草稿",
         "plugins_page.refresh": "刷新",
+        "plugins_page.ai_draft_title": "AI 自建插件草稿",
+        "plugins_page.ai_draft_desc": "AI 可以在隔离目录创建插件草稿。草稿完成并通过可行验证后，可像执行命令确认一样由用户确认注册或启用。",
+        "plugins_page.ai_draft_example": "示例：请为 YuntaoCode 创建一个 AI 自建插件草稿，只写入草稿目录，不修改内置运行时代码，生成 manifest、README 和测试；完成后给出摘要并询问我是否注册。",
 
         // === Workspace (JS) ===
         "workspace.pinned": "置顶",
@@ -379,9 +382,16 @@ const LOCALES = {
         "plugins_js.op_failed": "操作失败: {error}",
         "plugins_js.enabled_count": "{enabled}/{total} 已启用",
         "plugins_js.dep_missing": " · ⚠️ 存在依赖缺失",
+        "plugins_js.ai_draft_count": " · {count} 个 AI 草稿",
+        "plugins_js.ai_draft_root": "草稿目录：{path}",
         "plugins_js.all_plugins": "全部插件",
         "plugins_js.no_data": "暂无插件数据",
         "plugins_js.deps_label": "依赖：",
+        "plugins_js.requirements_label": "需求：",
+        "plugins_js.ai_draft": "AI 草稿",
+        "plugins_js.ai_draft_short": "AI",
+        "plugins_js.contract_sample": "契约样板",
+        "plugins_js.contract_sample_short": "样板",
 
         // === Backend: Plugin descriptions ===
         "plugin.desc.filesystem": "本地文件与目录访问能力，用于扫描项目结构、读取和写入文件。",
@@ -494,7 +504,7 @@ const LOCALES = {
 
         // === Plugins dialog ===
         "plugins.title": "Plugins",
-        "plugins.desc": "Local skills are managed as plugins. Start/stop, permissions and config coming soon.",
+        "plugins.desc": "This page shows built-in plugin capabilities and AI-built plugin drafts.",
         "plugins.recent_tasks": "Recent Tasks",
         "plugins.no_tasks": "No tasks yet",
 
@@ -554,8 +564,11 @@ const LOCALES = {
         "plugins_page.overview": "Plugin Overview",
         "plugins_page.groups": "Plugin Groups",
         "plugins_page.heading": "Plugin Management",
-        "plugins_page.subtitle": "View and manage local skill plugins and their dependencies",
+        "plugins_page.subtitle": "View built-in plugin capabilities, enablement, and AI-built plugin drafts",
         "plugins_page.refresh": "Refresh",
+        "plugins_page.ai_draft_title": "AI-built Plugin Drafts",
+        "plugins_page.ai_draft_desc": "AI may create plugin drafts in an isolated directory. Once a draft is complete and passes feasible verification, the user can confirm registration or enablement just like command execution confirmation.",
+        "plugins_page.ai_draft_example": "Example: Create an AI-built plugin draft for YuntaoCode. Write only to the draft directory, do not modify built-in runtime code, generate the manifest, README, and tests; then summarize it and ask whether to register it.",
 
         // === Workspace ===
         "workspace.pinned": "Pinned",
@@ -773,9 +786,16 @@ const LOCALES = {
         "plugins_js.op_failed": "Operation failed: {error}",
         "plugins_js.enabled_count": "{enabled}/{total} enabled",
         "plugins_js.dep_missing": " · ⚠️ Missing dependencies",
+        "plugins_js.ai_draft_count": " · {count} AI draft(s)",
+        "plugins_js.ai_draft_root": "Draft root: {path}",
         "plugins_js.all_plugins": "All Plugins",
         "plugins_js.no_data": "No plugin data",
         "plugins_js.deps_label": "Dependencies: ",
+        "plugins_js.requirements_label": "Requirements: ",
+        "plugins_js.ai_draft": "AI Draft",
+        "plugins_js.ai_draft_short": "AI",
+        "plugins_js.contract_sample": "Contract Sample",
+        "plugins_js.contract_sample_short": "Sample",
 
         // === Backend: Plugin descriptions ===
         "plugin.desc.filesystem": "Local file and directory access for scanning project structure, reading and writing files.",

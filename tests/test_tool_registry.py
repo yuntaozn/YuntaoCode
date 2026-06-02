@@ -63,3 +63,21 @@ def test_list_specs_includes_public_metadata() -> None:
             "dependencies": {},
         }
     ]
+
+
+def test_registry_resolves_legacy_tool_aliases_without_listing_them() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            id="filesystem.scan_folder",
+            name="Scan Folder",
+            description="Scan folder",
+            input_schema={"type": "object"},
+        ),
+        _noop_handler,
+    )
+
+    assert registry.resolve_id("filesystem.list_dir") == "filesystem.scan_folder"
+    assert registry.resolve_id("filesystem__list_dir") == "filesystem.scan_folder"
+    assert registry.get("filesystem.list_dir").spec.id == "filesystem.scan_folder"
+    assert [spec["id"] for spec in registry.list_specs()] == ["filesystem.scan_folder"]

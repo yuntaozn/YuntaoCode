@@ -59,6 +59,18 @@ def test_confirmed_tool_runs_successfully(tmp_path: Path) -> None:
     assert any(log["message"] == "demo handler ran" for log in task.logs)
 
 
+def test_submit_uses_canonical_tool_id_for_alias(tmp_path: Path) -> None:
+    runner = _build_runner(tmp_path)
+    runner.registry.register_alias("demo.old_write", "demo.write")
+
+    task = asyncio.run(
+        runner.submit("demo.old_write", {"value": 4}, wait=True, confirmed=True)
+    )
+
+    assert task.tool == "demo.write"
+    assert task.status == "success"
+
+
 def test_disabled_plugin_blocks_submission(tmp_path: Path) -> None:
     class DisabledSettings:
         def is_tool_enabled(self, tool_id: str) -> bool:

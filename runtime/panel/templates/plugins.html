@@ -23,9 +23,57 @@
             transition: background 0.15s;
         }
         .plugin-group-item:hover { background: var(--soft); }
-        .plugin-group-item.active { background: var(--accent); color: white; }
+        .plugin-group-item.active {
+            background: var(--soft);
+            color: var(--text);
+            font-weight: 600;
+            box-shadow: inset 3px 0 0 var(--accent);
+        }
         .dep-badge { color: var(--danger); font-size: 11px; }
-        .plugin-group-item.active .dep-badge { color: rgba(255,255,255,0.8); }
+        .plugin-group-item.active .dep-badge { color: var(--danger); }
+        .sample-badge-mini {
+            color: var(--muted);
+            font-size: 11px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 1px 6px;
+        }
+
+        .plugin-guidance {
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 14px 16px;
+            margin-bottom: 14px;
+            background: var(--panel);
+        }
+        .plugin-guidance-title {
+            margin: 0 0 6px;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text);
+        }
+        .plugin-guidance-copy {
+            margin: 0;
+            font-size: 13px;
+            line-height: 1.55;
+            color: var(--muted);
+        }
+        .plugin-draft-path {
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--muted);
+            word-break: break-all;
+        }
+        .plugin-example-prompt {
+            margin: 10px 0 0;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: var(--soft);
+            color: var(--text);
+            font-size: 12px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
 
         .plugin-card {
             border: 1px solid var(--line);
@@ -44,6 +92,23 @@
         }
         .plugin-card-info h3 { margin: 0 0 4px; font-size: 15px; }
         .plugin-card-info p { margin: 0; font-size: 13px; color: var(--muted); }
+        .plugin-card-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .plugin-status-badge {
+            display: inline-flex;
+            align-items: center;
+            height: 20px;
+            padding: 0 8px;
+            border-radius: 999px;
+            background: var(--soft);
+            color: var(--muted);
+            border: 1px solid var(--line);
+            font-size: 11px;
+            font-weight: 500;
+        }
 
         .toggle-switch {
             position: relative;
@@ -91,6 +156,15 @@
         }
         .dep-item.ok { color: var(--success); }
         .dep-item.missing { color: var(--danger); background: #fff0f0; }
+        .dep-item.requirement { color: var(--muted); }
+
+        .plugin-meta {
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
 
         .plugin-tools {
             margin-top: 10px;
@@ -133,7 +207,7 @@
     <div class="app-shell">
         <aside class="nav-rail" aria-label="主导航" data-i18n-aria-label="nav.main_nav">
             <button class="rail-action" id="back-btn" title="返回对话" data-i18n-title="nav.back">←<span data-i18n="nav.back">返回</span></button>
-            <button class="rail-action active" id="plugins-main-btn" title="插件管理" data-i18n-title="nav.plugins">⌘<span data-i18n="nav.plugins">插件</span></button>
+            <button class="rail-action active" id="plugins-main-btn" title="插件" data-i18n-title="nav.plugins">⌘<span data-i18n="nav.plugins">插件</span></button>
         </aside>
 
         <aside class="sidebar" style="width: 240px;">
@@ -153,19 +227,25 @@
             <header class="topbar">
                 <div>
                     <div class="workspace-name" data-i18n="plugins_page.heading">插件管理</div>
-                    <div class="workspace-path" data-i18n="plugins_page.subtitle">查看和管理本地技能插件及其依赖状态</div>
+                    <div class="workspace-path" data-i18n="plugins_page.subtitle">查看内置插件能力、启停状态和 AI 自建插件草稿</div>
                 </div>
                 <div class="topbar-right">
                     <button class="secondary-button" id="refresh-plugins-btn" data-i18n="plugins_page.refresh">刷新</button>
                 </div>
             </header>
             <section class="chat-panel" style="padding: 20px; overflow: auto;">
+                <div class="plugin-guidance">
+                    <div class="plugin-guidance-title" data-i18n="plugins_page.ai_draft_title">AI 自建插件草稿</div>
+                    <p class="plugin-guidance-copy" data-i18n="plugins_page.ai_draft_desc">AI 可以在隔离目录创建插件草稿。草稿完成并通过可行验证后，可像执行命令确认一样由用户确认注册或启用。</p>
+                    <pre class="plugin-example-prompt" data-i18n="plugins_page.ai_draft_example">示例：请为 YuntaoCode 创建一个 AI 自建插件草稿，只写入草稿目录，不修改内置运行时代码，生成 manifest、README 和测试；完成后给出摘要并询问我是否注册。</pre>
+                    <div class="plugin-draft-path" id="ai-plugin-draft-root"></div>
+                </div>
                 <div id="plugin-list-full"></div>
             </section>
         </main>
     </div>
 
-    <script src="/static/i18n.js?v=20260528-2"></script>
-    <script src="/static/plugins.js?v=20260528-2"></script>
+    <script src="/static/i18n.js?v=20260531-2"></script>
+    <script src="/static/plugins.js?v=20260531-2"></script>
 </body>
 </html>

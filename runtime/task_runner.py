@@ -58,6 +58,7 @@ class TaskRunner:
         confirmed: bool = False,
         workspace_path: str | None = None,
     ) -> TaskRecord:
+        tool_id = self.registry.resolve_id(tool_id)
         tool = self.registry.get(tool_id)
         if self.settings and not self.settings.is_tool_enabled(tool_id):
             raise PermissionError(f"plugin is disabled for tool: {tool_id}")

@@ -362,7 +362,11 @@ class ConversationRunExecutor:
                             "progress": {
                                 "rounds": post_write_rounds,
                                 "idle_rounds": post_write_idle_rounds,
-                                "writes": len([e for e in tool_events if e.get("output", {}).get("type") == "file_write"]),
+                                "writes": len([
+                                    e for e in tool_events
+                                    if e.get("status") == "success"
+                                    and self._is_write_tool(str(e.get("tool") or ""))
+                                ]),
                             },
                         })
                         await self.flush()

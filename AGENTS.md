@@ -2,18 +2,21 @@
 
 Guidance for AI coding agents and contributors working on YuntaoCode.
 
-YuntaoCode is an open-source, local-first AI runtime. The main value of the
-project is not a single chat UI, but a clear runtime foundation for context,
-memory, tools, local execution, and future workflow extension. Changes should
-make that foundation easier to understand, test, and extend.
+YuntaoCode is an open-source, local-first AI Task Runtime. The main value of
+the project is not a single chat UI or a large tool list, but a clear
+foundation for task state, planning, execution, verification, audit, recovery,
+context, memory, tools, and local execution. Changes should make that
+foundation easier to understand, test, and extend.
 
 ## Project Priorities
 
-1. Keep the runtime architecture clear and extensible.
+1. Keep the Task Runtime architecture clear and extensible.
 2. Preserve local-first security boundaries.
 3. Prefer small, testable changes over large rewrites.
 4. Keep user-facing behavior stable unless the change explicitly improves it.
 5. Document new extension points when adding them.
+6. Prefer strengthening Task state, trace, recovery, and audit over adding new
+   application scenarios.
 
 ## Architecture Map
 
@@ -38,6 +41,18 @@ make that foundation easier to understand, test, and extend.
   - Desktop wrapper. The Python runtime should still work independently.
 - `docs/`
   - Architecture, plugin, and protocol notes for contributors.
+  - `task-model.md`: task, plan, step, trace, recovery, and template direction.
+
+## Task Runtime Rules
+
+- Treat tools as capabilities used by tasks, not as the product architecture.
+- New work should clarify one of: Task Model, lifecycle, trace, recovery,
+  verification, template, or tool capability boundaries.
+- Do not add a new scenario by hard-coding another branch in the runner.
+- A task-oriented change should include tests for state transitions, plan/step
+  behavior, tool result handling, or recovery behavior.
+- Keep task events understandable enough for a user to audit what happened and
+  precise enough for tests to assert.
 
 ## Agent Runtime Rules
 

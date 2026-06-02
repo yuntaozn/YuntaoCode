@@ -1382,6 +1382,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             if isinstance(execution_notice, dict) and execution_notice.get("reason") in {
                 "tool_contract_failed",
                 "write_tool_failed",
+                "partial_write_tool_failed",
                 "no_successful_write_tool",
                 "max_tool_rounds",
             }:
@@ -1696,10 +1697,28 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             event for event in tool_events
             if event.get("tool") in write_tools and event.get("status") == "failure"
         ]
+        claims_change = self._assistant_claims_code_changed(assistant_content)
+        if write_successes and write_failures:
+            failed_tools = [
+                {
+                    "tool": event.get("tool") or "",
+                    "name": event.get("name") or event.get("tool") or "",
+                    "path": ((event.get("input") or {}).get("path") if isinstance(event.get("input"), dict) else "") or "",
+                    "error": event.get("error") or "",
+                    "task_id": event.get("task_id") or "",
+                }
+                for event in write_failures
+            ]
+            return {
+                "reason": "partial_write_tool_failed",
+                "message": "注意：本轮已有写入工具成功执行，但也存在写入工具失败。请以变更清单和工具调用记录为准，失败项可能仍需继续处理。",
+                "failed_tools": failed_tools[:8],
+                "tool_event_count": len(tool_events),
+            }
+
         if write_successes:
             return None
 
-        claims_change = self._assistant_claims_code_changed(assistant_content)
         if not claims_change and not write_failures and not requires_code_write:
             return None
 

@@ -1,10 +1,10 @@
 # YuntaoCode — 云涛智能终端
 
-**Local-First AI Runtime for Developers, Education and Engineering**
+**Local-First AI Task Runtime**
 
-面向开发者、教学与工程实践的本地 AI Runtime。
+面向开发者、教学与工程实践的本地 AI 任务执行基座。
 
-YuntaoCode 专注于上下文管理、长期记忆、工具协同与本地运行能力，探索 AI 在终端环境中的长期运行与持续演进。
+YuntaoCode 关注的核心不是“再做一个 AI 聊天助手”，而是让本地任务可以被计划、执行、暂停、恢复、验证和审计。
 
 ---
 
@@ -18,12 +18,12 @@ YuntaoCode 并非从产品规划开始。
 
 * 如何管理上下文；
 * 如何组织长期记忆；
-* 如何让 AI 使用工具；
-* 如何让不同能力协同工作；
+* 如何让 AI 使用工具完成真实任务；
+* 如何让任务过程可观察、可恢复、可审计；
 * 如何在本地稳定运行；
 * 如何保持系统长期可扩展。
 
-随着这些问题不断被解决，一个独立的 Runtime 架构逐渐形成。
+随着这些问题不断被解决，一个围绕 Task 的本地 Runtime 架构逐渐形成。
 
 YuntaoCode 就是在这样的过程中自然演化出来的。
 
@@ -32,6 +32,16 @@ YuntaoCode 就是在这样的过程中自然演化出来的。
 ---
 
 ## 核心特性
+
+### 任务优先（Task First）
+
+YuntaoCode 把一次请求看作一个可管理的任务，而不是一次普通聊天：
+
+* Task：用户目标和运行上下文
+* Plan：可展示、可推进的执行计划
+* Step：当前步骤、状态、工具提示和结果
+* Trace：模型输出、工具调用、确认、错误和恢复记录
+* Result：最终回答、修改摘要、验证结果和剩余风险
 
 ### 本地优先（Local First）
 
@@ -51,7 +61,7 @@ YuntaoCode 就是在这样的过程中自然演化出来的。
 * Web Access
 * Memory
 
-支持通过插件扩展新的工具能力。
+工具是任务执行的能力单元。支持通过插件扩展新的工具能力，但工具本身不是产品边界。
 
 ### 长期记忆（Memory）
 
@@ -70,22 +80,22 @@ YuntaoCode 就是在这样的过程中自然演化出来的。
 * 火山方舟
 * 其它兼容 OpenAI API 的模型服务
 
-### 持续演进能力
+### 可恢复执行（Recoverable Execution）
 
-* 记录工具调用过程
-* 记录执行结果
-* 支持经验沉淀
-* 为未来工作流优化与自我改进机制预留扩展能力
+* 记录任务计划和阶段推进
+* 记录工具调用、确认和错误
+* 支持写入前备份和结果验证
+* 为后续任务暂停、恢复、回放和审计预留扩展能力
 
 ---
 
 ## 架构概览
 
 ```text
-                YuntaoCode Runtime
+             YuntaoCode Task Runtime
 
  ┌──────────────────────────────┐
- │ Conversation Runner          │
+ │ Task Runtime Core            │
  └──────────────┬───────────────┘
                 │
 
@@ -93,14 +103,16 @@ YuntaoCode 就是在这样的过程中自然演化出来的。
 
     ▼           ▼           ▼              ▼
 
- Strategy   Context     Memory          Tools
+ Task       Strategy    Context        Tools
+ Model
 
-    │                                      │
+    │           │                          │
 
- Profiles / Policy /              ┌───────┼───────┐
- Prompts / Plan Tracker           ▼       ▼       ▼
+ Lifecycle   Profiles / Policy /  ┌───────┼───────┐
+ Audit       Prompts / Plan       ▼       ▼       ▼
+ Recovery    Tracker          Filesystem Shell   Git
 
-                              Filesystem  Shell    Git
+                              Document  Web    Memory
 
                              ...
 
@@ -115,7 +127,11 @@ Python Runtime 是系统核心。
 
 Tauri 桌面端只是其中一种界面形式，Runtime 本身可以独立运行。
 
+当前实现已经包含工具调用、计划生成、阶段推进、确认、写入备份和执行记录。下一阶段的重点是把这些能力收束成更明确的 Task Model。
+
 Agent Runtime 的策略层位于 `runtime/agent_strategy/`。它负责意图分类、内部 Profile、计划策略、阶段提示和执行计划生命周期，让 `conversation_runner.py` 尽量保持为编排层。
+
+Task Model 草案见 [docs/task-model.md](docs/task-model.md)。
 
 ---
 
@@ -144,9 +160,7 @@ python -m pip install -e ".[dev]"
 ### 启动 Runtime
 
 ```bash
-python -m runtime.app \
-    --host 127.0.0.1 \
-    --port 8765
+python -m runtime.app --host 127.0.0.1 --port 8765
 ```
 
 浏览器访问：
@@ -206,6 +220,17 @@ python -m runtime.app --host 127.0.0.1 --port 8765
 
 ## 扩展指南
 
+### 理解任务模型
+
+贡献新能力前，建议先阅读 [docs/task-model.md](docs/task-model.md)。
+
+项目当前不鼓励优先堆叠应用场景。更推荐的贡献方向是：
+
+* 让任务状态更清晰；
+* 让计划、步骤和工具结果更容易测试；
+* 让失败恢复、写入回退和执行审计更稳定；
+* 让某个工具或技能成为可复用的任务能力。
+
 ### 添加新工具
 
 在 `runtime/skills/` 下创建模块：
@@ -232,13 +257,15 @@ def register_my_tools(registry: ToolRegistry):
 
 在 `runtime/api/` 下创建 Handler，并在 `runtime/app.py` 注册路由。
 
-### 插件系统状态
+### 插件与插件契约
 
-当前版本已经有基于工具 ID 前缀的插件分组、启停和依赖状态展示。
+当前版本提供的是内置插件能力管理：系统会按工具 ID 前缀展示 `filesystem`、`code`、`shell`、`git`、`web` 等能力分组，并支持启停和依赖状态展示。
 
-真正面向第三方扩展的插件 manifest、动态加载、权限声明和隔离机制仍属于 v0.2 重点工作。
+这还不是插件市场，也不是远程更新系统。真正面向第三方扩展的插件 manifest、动态加载、权限声明和隔离机制仍属于后续基座工作。
 
-插件协议草案见 [docs/plugin-system.md](docs/plugin-system.md)。
+插件契约草案见 [docs/plugin-system.md](docs/plugin-system.md)。当前仓库不包含外部插件样板目录；能力扩展示例只保留在文档中，避免把实验产物误认为已内置功能。
+
+AI 可以帮助创建插件草稿，但草稿必须写入隔离目录。完成后通过测试/依赖摘要和一次人工确认，再进入后续受控注册或启用流程。详见 [docs/capability-governance.md](docs/capability-governance.md)。
 
 ---
 
@@ -261,65 +288,62 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 
 相比追逐某一个模型或框架，我们更关注：
 
-* Runtime 的稳定性；
-* 工具之间的协同能力；
-* 长期记忆的组织方式；
-* 本地化运行与用户控制权；
-* 系统的持续演进能力。
+* Task 的生命周期是否清楚；
+* 执行过程是否可观察、可暂停、可恢复；
+* 工具调用是否有边界、有确认、有记录；
+* 结果是否能被验证、回滚和复盘；
+* 模型替换后，任务执行体系是否仍然成立。
 
 我们相信：
 
 未来的模型会不断变化，
 
-但稳定、开放、可扩展的 Runtime 仍然具有长期价值。
+但稳定、开放、可扩展的 Task Runtime 仍然具有长期价值。
 
 ---
 
 ## Roadmap
 
-### v0.1
+### Phase 1：Task Foundation
 
-* [x] Local AI Chat
-* [x] Tool Calling
-* [x] Filesystem
-* [x] Shell
-* [x] Git
-* [x] Memory
+目标：先把任务执行体系做清楚，而不是继续堆功能清单。
 
-### v0.1.1
+* [ ] Task Model：任务、计划、步骤、状态、结果和元数据
+* [ ] Task Lifecycle：created、running、waiting、failed、completed、cancelled
+* [ ] Task Trace：模型输出、工具调用、确认、错误、验证和最终摘要
+* [ ] Task Recovery：暂停、恢复、失败重试、写入回退
+* [ ] Task Audit：可读的执行记录和可测试的状态迁移
 
-* [ ] 开源协作流程
-* [ ] CI 与自动化测试
-* [ ] 安全文档与问题模板
-* [ ] 安装与构建文档修正
+### Phase 2：Reusable Capabilities
 
-### v0.2
+目标：把工具变成可复用的任务能力。
 
-* [ ] MCP Support
-* [ ] Plugin Manifest
-* [ ] Dynamic Plugin Loading
-* [ ] Plugin Permission Model
-* [ ] Multi Workspace
+* [ ] 稳定的工具协议和参数规范
+* [ ] 模块化技能注册
+* [ ] Runtime Extension Contract：插件 Manifest、权限声明、依赖声明和任务产物规范
+* [ ] AI 自建插件草稿隔离、测试摘要和人工确认注册流程
+* [ ] 文档解析、代码分析、Git、Shell 等能力的任务化封装
+* [ ] MCP 作为外部工具接入方式，而不是核心定位本身
 
-### v0.3
+### Phase 3：Task Templates
 
-* [ ] Local Knowledge Base
-* [ ] Workflow Engine
-* [ ] Autonomous Tasks
+目标：沉淀可复用的任务模板，而不是只沉淀 prompt。
 
-### v0.4
+* [ ] 代码修改任务模板
+* [ ] 项目审查任务模板
+* [ ] 文档处理任务模板
+* [ ] 论文/资料分析任务模板
+* [ ] 任务模板导入、导出和版本管理
 
-* [ ] Tool Marketplace
-* [ ] Signed Plugin Distribution
-* [ ] Release Packaging
+### Phase 4：Ecosystem
 
-### v1.0
+目标：在 Task Runtime 稳定后再扩展生态。
 
-* [ ] Stable Runtime API
-* [ ] Stable Plugin Compatibility
-* [ ] Enterprise Deployment
-* [ ] Team Collaboration
-* [ ] Plugin Marketplace
+* [ ] 多工作区和长期任务
+* [ ] 本地知识库 / RAG 接口
+* [ ] 可选插件索引和签名分发
+* [ ] 团队同步与企业部署
+* [ ] 稳定 Runtime API 和插件兼容性
 
 ---
 

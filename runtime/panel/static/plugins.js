@@ -33,6 +33,7 @@ async function api(path, options = {}) {
 
 // --- State ---
 let plugins = [];
+let pluginMeta = {};
 let activeGroup = null;
 
 // --- API ---
@@ -40,9 +41,11 @@ async function loadPlugins() {
     try {
         const result = await api("/plugins");
         plugins = result.data || [];
+        pluginMeta = result.meta || {};
         renderSidebar();
         renderPluginList();
         renderSummary();
+        renderGuidance();
     } catch (err) {
         showToast(t('plugins_js.load_failed', {error: err.message}));
     }
@@ -67,15 +70,25 @@ async function togglePlugin(pluginId, enabled) {
 
 // --- Render ---
 function renderSummary() {
-    const total = plugins.length;
-    const enabled = plugins.filter((p) => p.enabled).length;
+    const loadablePlugins = plugins.filter((p) => !isReadOnlyPlugin(p));
+    const draftCount = plugins.filter((p) => p.ai_draft).length;
+    const total = loadablePlugins.length;
+    const enabled = loadablePlugins.filter((p) => p.enabled).length;
     const hasDepIssue = plugins.some((p) => {
         const deps = p.dependencies || {};
         return Object.values(deps).some((ok) => !ok);
     });
     let text = t('plugins_js.enabled_count', {enabled, total});
+    if (draftCount) text += t('plugins_js.ai_draft_count', {count: draftCount});
     if (hasDepIssue) text += t('plugins_js.dep_missing');
     $("plugin-summary").textContent = text;
+}
+
+function renderGuidance() {
+    const target = $("ai-plugin-draft-root");
+    if (!target) return;
+    const root = pluginMeta.ai_plugin_draft_root || "";
+    target.textContent = root ? t('plugins_js.ai_draft_root', {path: root}) : "";
 }
 
 function renderSidebar() {
@@ -85,7 +98,9 @@ function renderSidebar() {
     for (const plugin of plugins) {
         const active = activeGroup === plugin.id ? "active" : "";
         const depOk = isDepsOk(plugin);
-        const badge = depOk ? "" : `<span class="dep-badge">⚠</span>`;
+        const badge = plugin.ai_draft
+            ? `<span class="sample-badge-mini">${t('plugins_js.ai_draft_short')}</span>`
+            : depOk ? "" : `<span class="dep-badge">⚠</span>`;
         html += `<button class="plugin-group-item ${active}" data-group="${plugin.id}">${escapeHtml(plugin.name)}${badge}</button>`;
     }
     container.innerHTML = html;
@@ -119,28 +134,42 @@ function renderPluginList() {
 function renderPluginCard(plugin) {
     const deps = plugin.dependencies || {};
     const depEntries = Object.entries(deps);
+    const requirementEntries = dependencyRequirementEntries(plugin.dependency_requirements || {});
     const depsHtml = depEntries.length
         ? `<div class="plugin-deps">
             <span class="deps-label">${t('plugins_js.deps_label')}</span>
             ${depEntries.map(([name, ok]) => `<span class="dep-item ${ok ? "ok" : "missing"}">${escapeHtml(name)} ${ok ? "✓" : "✗"}</span>`).join("")}
            </div>`
         : "";
+    const requirementsHtml = requirementEntries.length
+        ? `<div class="plugin-meta">
+            <span class="deps-label">${t('plugins_js.requirements_label')}</span>
+            ${requirementEntries.map((item) => `<span class="dep-item requirement">${escapeHtml(item)}</span>`).join("")}
+           </div>`
+        : "";
     const toolsHtml = (plugin.tools || [])
         .map((t) => `<span class="tool-chip">${escapeHtml(t.name || t.id)}</span>`)
         .join("");
+    const statusBadge = plugin.ai_draft
+        ? `<span class="plugin-status-badge">${t('plugins_js.ai_draft')}</span>`
+        : "";
+    const toggleHtml = isReadOnlyPlugin(plugin)
+        ? ""
+        : `<label class="toggle-switch">
+            <input type="checkbox" class="plugin-toggle" data-plugin="${plugin.id}" ${plugin.enabled ? "checked" : ""}>
+            <span class="toggle-slider"></span>
+        </label>`;
     return `
-        <div class="plugin-card ${plugin.enabled ? "" : "disabled"}">
+        <div class="plugin-card ${plugin.enabled || isReadOnlyPlugin(plugin) ? "" : "disabled"}">
             <div class="plugin-card-header">
                 <div class="plugin-card-info">
-                    <h3>${escapeHtml(plugin.name)}</h3>
+                    <h3 class="plugin-card-title">${escapeHtml(plugin.name)}${statusBadge}</h3>
                     <p>${escapeHtml(plugin.description)}</p>
                 </div>
-                <label class="toggle-switch">
-                    <input type="checkbox" class="plugin-toggle" data-plugin="${plugin.id}" ${plugin.enabled ? "checked" : ""}>
-                    <span class="toggle-slider"></span>
-                </label>
+                ${toggleHtml}
             </div>
             ${depsHtml}
+            ${requirementsHtml}
             <div class="plugin-tools">${toolsHtml}</div>
         </div>
     `;
@@ -149,6 +178,26 @@ function renderPluginCard(plugin) {
 function isDepsOk(plugin) {
     const deps = plugin.dependencies || {};
     return Object.values(deps).every((ok) => ok);
+}
+
+function isReadOnlyPlugin(plugin) {
+    return Boolean(plugin.ai_draft || plugin.contract_sample);
+}
+
+function dependencyRequirementEntries(requirements) {
+    const entries = [];
+    if (requirements.node) entries.push(`Node ${requirements.node}`);
+    if (requirements.python) entries.push(`Python ${requirements.python}`);
+    for (const binary of requirements.binaries || []) {
+        entries.push(binary);
+    }
+    for (const pkg of requirements.packages || []) {
+        entries.push(pkg);
+    }
+    for (const service of requirements.optional_system_services || []) {
+        entries.push(service);
+    }
+    return entries;
 }
 
 // --- Events ---

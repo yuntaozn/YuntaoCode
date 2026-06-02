@@ -27,6 +27,29 @@ Python Tornado sidecar
 
 Tauri 是壳，真正的产品壁垒是本地技能运行时。先把 Python sidecar 独立跑通，可以降低新技术栈风险，也方便后续接入 Tauri、命令行或 Web 调试面板。
 
+## 核心定位：Task Runtime
+
+YuntaoCode 不应只按工具清单扩展。Filesystem、Shell、Git、文档解析、浏览器和 MCP 都是工具入口；真正需要沉淀的是任务执行体系。
+
+```text
+Task
+  -> Plan
+  -> Step
+  -> Tool / Model Execution
+  -> Verification
+  -> Trace / Audit
+  -> Recovery
+```
+
+短期架构重点：
+
+- 定义清晰的 Task / Plan / Step / Trace 数据结构。
+- 让任务状态迁移可测试。
+- 让工具调用、确认、失败、验证和最终摘要进入统一 Trace。
+- 让写入回退、失败重试、暂停恢复成为 Runtime 能力，而不是某个 prompt 的偶然表现。
+
+Task Model 草案见 [task-model.md](task-model.md)。
+
 ## 当前运行边界
 
 - 只监听 `127.0.0.1`。
@@ -43,6 +66,7 @@ User Request
   -> Intent Classifier
   -> Agent Profile
   -> Planning Policy
+  -> Task / Plan / Step
   -> Conversation Runner
   -> Tools / Model Providers
   -> Streamed Process Trace
@@ -63,6 +87,7 @@ User Request
 ## 扩展原则
 
 - 用户侧保持统一终端，内部通过 Profile 区分执行策略。
+- 基建优先级高于功能清单：先让 Task 状态、Trace 和 Recovery 清楚。
 - 新增任务类型先补 Profile / Policy / Prompt / Plan 测试，再接入主循环。
 - 工具权限、安全确认和路径边界留在执行层，不由 prompt 或 UI 文案代替。
 - 前端过程记录应展示 Runtime 的真实执行轨迹，而不是隐藏计划、推理、工具事件。

@@ -9,6 +9,25 @@ from typing import Any, Awaitable, Callable
 ToolHandler = Callable[[dict[str, Any], Any], Awaitable[dict[str, Any]]]
 
 
+DEFAULT_TOOL_ID_ALIASES: dict[str, str] = {
+    "code.search": "code.search_text",
+    "code.find": "code.search_text",
+    "code.grep": "code.search_text",
+    "code.list_files": "code.list_project_files",
+    "code.list_project": "code.list_project_files",
+    "filesystem.list_dir": "filesystem.scan_folder",
+    "filesystem.list_directory": "filesystem.scan_folder",
+    "filesystem.listdir": "filesystem.scan_folder",
+    "filesystem.scan": "filesystem.scan_folder",
+    "filesystem.read": "filesystem.read_file",
+    "filesystem.read_text": "filesystem.read_file",
+    "filesystem.write": "filesystem.write_file",
+    "shell.execute": "shell.run_command",
+    "shell.run": "shell.run_command",
+    "git.show_diff": "git.diff",
+}
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     id: str
@@ -54,15 +73,24 @@ class Tool:
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
+        self._aliases: dict[str, str] = dict(DEFAULT_TOOL_ID_ALIASES)
 
     def register(self, spec: ToolSpec, handler: ToolHandler) -> None:
         if spec.id in self._tools:
             raise ValueError(f"tool already registered: {spec.id}")
         self._tools[spec.id] = Tool(spec=spec, handler=handler)
 
+    def register_alias(self, alias: str, tool_id: str) -> None:
+        self._aliases[str(alias or "").strip().replace("__", ".")] = str(tool_id or "").strip().replace("__", ".")
+
+    def resolve_id(self, tool_id: str) -> str:
+        value = str(tool_id or "").strip().replace("__", ".")
+        return self._aliases.get(value, value)
+
     def get(self, tool_id: str) -> Tool:
+        resolved_id = self.resolve_id(tool_id)
         try:
-            return self._tools[tool_id]
+            return self._tools[resolved_id]
         except KeyError as exc:
             raise KeyError(f"unknown tool: {tool_id}") from exc
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from .base import ApiHandler
@@ -30,7 +32,15 @@ class PluginsHandler(ApiHandler):
                 "dependencies": dependency_status,
                 "tools": tools,
             })
-        self.finish_json({"success": True, "data": plugins})
+        ai_plugin_root = self.runtime.settings.data_dir / "ai-plugins"
+        plugins.extend(load_ai_plugin_drafts(ai_plugin_root, lang))
+        self.finish_json({
+            "success": True,
+            "data": plugins,
+            "meta": {
+                "ai_plugin_draft_root": str(ai_plugin_root),
+            },
+        })
 
     def post(self) -> None:
         payload = self.parse_json_body()
@@ -43,3 +53,62 @@ class PluginsHandler(ApiHandler):
 def plugin_id_to_name(plugin_id: str, lang: str = "") -> str:
     """Translate plugin ID to display name. Falls back to ID itself."""
     return i18n.t(f"plugin.name.{plugin_id}", lang) or plugin_id
+
+
+def load_ai_plugin_drafts(root: Path, lang: str = "") -> list[dict[str, Any]]:
+    if not root.exists():
+        return []
+
+    drafts: list[dict[str, Any]] = []
+    for manifest_path in sorted(root.glob("*/plugin.json")):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        draft = ai_plugin_draft_to_public_dict(manifest, manifest_path, lang)
+        if draft:
+            drafts.append(draft)
+    return drafts
+
+
+def ai_plugin_draft_to_public_dict(
+    manifest: dict[str, Any],
+    manifest_path: Path,
+    lang: str = "",
+) -> dict[str, Any] | None:
+    plugin_id = str(manifest.get("id") or "").strip()
+    if not plugin_id:
+        return None
+
+    zh = lang.lower().startswith("zh")
+    tools = []
+    for tool in manifest.get("tools") or []:
+        if not isinstance(tool, dict):
+            continue
+        tool_id = str(tool.get("id") or "").strip()
+        if not tool_id:
+            continue
+        tools.append({
+            "id": tool_id,
+            "name": tool.get("name_zh" if zh else "name") or tool.get("name") or tool_id,
+            "description": tool.get("description_zh" if zh else "description") or tool.get("description") or "",
+            "requires_confirmation": bool(tool.get("requires_confirmation", False)),
+            "local_only": bool(tool.get("local_only", True)),
+        })
+
+    runtime = manifest.get("runtime") if isinstance(manifest.get("runtime"), dict) else {}
+    return {
+        "id": plugin_id,
+        "name": manifest.get("name_zh" if zh else "name") or manifest.get("name") or plugin_id,
+        "description": manifest.get("description_zh" if zh else "description") or manifest.get("description") or "",
+        "enabled": False,
+        "loadable": bool(runtime.get("loadable", False)),
+        "ai_draft": True,
+        "stage": runtime.get("stage") or "draft",
+        "manifest_path": str(manifest_path),
+        "local_only": True,
+        "dependencies": {},
+        "dependency_requirements": manifest.get("dependencies") or {},
+        "permissions": manifest.get("permissions") or {},
+        "tools": tools,
+    }
