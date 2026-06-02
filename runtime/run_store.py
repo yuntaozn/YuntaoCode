@@ -8,6 +8,10 @@ from typing import Any
 from uuid import uuid4
 
 
+RUN_STORE_SCHEMA_VERSION = "0.1"
+RUN_RECORD_SCHEMA_VERSION = "0.1"
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -28,6 +32,8 @@ class RunRecord:
 
     def to_public_dict(self, include_events: bool = False) -> dict[str, Any]:
         data = {
+            "schema_version": RUN_RECORD_SCHEMA_VERSION,
+            "record_kind": "run",
             "id": self.id,
             "conversation_id": self.conversation_id,
             "workspace_id": self.workspace_id,
@@ -146,6 +152,11 @@ class RunStore:
             run.status = str(event.get("run_status") or "success")
             run.stage = "done"
             run.message = "run completed"
+        elif event_type == "result":
+            run.stage = "result"
+            result = event.get("result") if isinstance(event.get("result"), dict) else {}
+            status = str(result.get("status") or "").strip()
+            run.message = f"result {status}".strip()
         elif event_type in {"plan", "plan_decision", "plan_step", "changes"}:
             run.stage = event_type
             run.message = event_type
@@ -185,7 +196,11 @@ class RunStore:
         records = sorted(self._runs.values(), key=lambda item: item.created_at)[-self.keep_runs:]
         self.store_path.write_text(
             json.dumps(
-                {"runs": [item.to_public_dict(include_events=True) for item in records]},
+                {
+                    "schema_version": RUN_STORE_SCHEMA_VERSION,
+                    "record_kind": "run_store",
+                    "runs": [item.to_public_dict(include_events=True) for item in records],
+                },
                 ensure_ascii=False,
                 indent=2,
             ),

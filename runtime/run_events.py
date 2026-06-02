@@ -7,6 +7,8 @@ from typing import Any
 from .run_store import RunStore, utc_now
 
 
+RUN_EVENT_SCHEMA_VERSION = "0.1"
+
 RECORDED_EVENT_TYPES = {
     "status",
     "tool",
@@ -17,6 +19,7 @@ RECORDED_EVENT_TYPES = {
     "confirm",
     "guidance",
     "error",
+    "result",
     "done",
 }
 
@@ -75,9 +78,12 @@ class RunEventHub:
 
 def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
     event_type = payload.get("event")
+    event_name = canonical_run_event_name(payload)
     if event_type == "done":
         result: dict[str, Any] = {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
             "event": "done",
+            "event_name": event_name,
             "run_status": payload.get("run_status"),
             "context_tokens": payload.get("context_tokens"),
             "context_limit": payload.get("context_limit"),
@@ -87,7 +93,9 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
         return result
     if event_type == "tool":
         return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
             "event": "tool",
+            "event_name": event_name,
             "status": payload.get("status"),
             "tool": payload.get("tool"),
             "name": payload.get("name"),
@@ -98,35 +106,97 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
         }
     if event_type == "status":
         return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
             "event": "status",
+            "event_name": event_name,
             "status": payload.get("status"),
             "message": payload.get("message"),
         }
     if event_type == "guidance":
         return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
             "event": "guidance",
+            "event_name": event_name,
             "message": payload.get("message"),
         }
     if event_type == "error":
         return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
             "event": "error",
+            "event_name": event_name,
             "error": payload.get("error"),
         }
     if event_type == "changes":
         return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
             "event": "changes",
+            "event_name": event_name,
             "summary": payload.get("summary"),
         }
     if event_type == "plan_step":
         return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
             "event": "plan_step",
+            "event_name": event_name,
             "index": payload.get("index"),
             "step": payload.get("step"),
         }
     if event_type == "confirm":
         return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
             "event": "confirm",
+            "event_name": event_name,
             "message": payload.get("message"),
             "progress": payload.get("progress"),
         }
-    return {key: payload.get(key) for key in ("event", "decision", "plan") if key in payload}
+    if event_type == "result":
+        return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
+            "event": "result",
+            "event_name": event_name,
+            "result": payload.get("result"),
+        }
+    result = {
+        key: payload.get(key)
+        for key in ("event", "decision", "plan")
+        if key in payload
+    }
+    result["schema_version"] = RUN_EVENT_SCHEMA_VERSION
+    result["event_name"] = event_name
+    return result
+
+
+def canonical_run_event_name(payload: dict[str, Any]) -> str:
+    event_type = str(payload.get("event") or "")
+    if event_type == "tool":
+        status = str(payload.get("status") or "")
+        if status == "running":
+            return "tool.started"
+        if status == "success":
+            return "tool.completed"
+        if status == "failure":
+            return "tool.failed"
+        if status == "waiting_confirmation":
+            return "tool.waiting_confirmation"
+        return "tool.updated"
+    if event_type == "status":
+        return "run.status"
+    if event_type == "plan_decision":
+        return "plan.decision"
+    if event_type == "plan":
+        return "plan.generated"
+    if event_type == "plan_step":
+        return "plan.step.updated"
+    if event_type == "changes":
+        return "run.changes"
+    if event_type == "confirm":
+        return "confirmation.requested"
+    if event_type == "guidance":
+        return "run.guidance"
+    if event_type == "error":
+        return "run.failed"
+    if event_type == "result":
+        return "run.result"
+    if event_type == "done":
+        return "run.completed"
+    return event_type or "run.event"

@@ -93,6 +93,83 @@ async def extract_pdf_text_preview(input_data: dict[str, Any], context: Any) -> 
     return output
 
 
+def _resolve_pdf_docx_output_path(input_data: dict[str, Any], context: Any, pdf_path: Path) -> Path:
+    raw_path = (
+        input_data.get("output_path")
+        or input_data.get("target_path")
+        or input_data.get("docx_path")
+    )
+    if not raw_path:
+        raw_path = str(pdf_path.with_name(f"{pdf_path.stem}_extracted.docx"))
+    path = context.path_guard.resolve(raw_path)
+    if path.suffix.lower() != ".docx":
+        path = path.with_suffix(".docx")
+    return path
+
+
+async def extract_pdf_to_docx(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    pdf_path = context.path_guard.resolve(input_data.get("path"))
+    if pdf_path.suffix.lower() != ".pdf":
+        raise ValueError("only .pdf files are supported")
+
+    output_path = _resolve_pdf_docx_output_path(input_data, context, pdf_path)
+    max_pages = int(input_data.get("max_pages", 0))
+    title = str(input_data.get("title") or f"{pdf_path.stem} 提取文本").strip()
+
+    from .pdf_parser import PDFParser, ParseResult
+    parser = PDFParser()
+    result: ParseResult = await parser.parse(pdf_path, max_pages=max_pages, context=context)
+
+    try:
+        from docx import Document
+        from docx.oxml.ns import qn
+        from docx.shared import Pt
+    except ImportError as exc:
+        raise RuntimeError("python-docx is required for document.extract_pdf_to_docx") from exc
+
+    doc = Document()
+    normal = doc.styles["Normal"]
+    normal.font.name = "Microsoft YaHei"
+    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
+    normal.font.size = Pt(10.5)
+
+    doc.add_heading(title, level=1)
+    meta = doc.add_paragraph()
+    meta.add_run(f"源文件：{pdf_path.name}\n")
+    meta.add_run(f"页数：{result.total_pages}；已解析：{result.pages_parsed}；策略：{result.strategy}")
+    if result.ocr_used:
+        meta.add_run(f"；OCR 页数：{result.ocr_pages}")
+
+    text = (result.text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        doc.add_paragraph("未提取到可写入的文本内容。")
+    else:
+        for block in text.split("\n\n"):
+            block = block.strip()
+            if not block:
+                continue
+            for start in range(0, len(block), 3000):
+                doc.add_paragraph(block[start:start + 3000])
+
+    _backup_output(output_path, context)
+    doc.save(str(output_path))
+
+    output: dict[str, Any] = {
+        "path": str(output_path.resolve()),
+        "source_path": str(pdf_path.resolve()),
+        "page_count": result.total_pages,
+        "pages_parsed": result.pages_parsed,
+        "strategy": result.strategy,
+        "garbled_ratio": round(result.garbled_ratio, 4),
+        "ocr_used": result.ocr_used,
+    }
+    if result.ocr_pages > 0:
+        output["ocr_pages"] = result.ocr_pages
+    if result.warnings:
+        output["warnings"] = result.warnings
+    return output
+
+
 async def export_markdown(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
     title = input_data.get("title", "AI生成文档")
     path = _resolve_output_path(input_data, context, title, ".md")
@@ -582,6 +659,26 @@ def register_document_tools(registry: ToolRegistry) -> None:
             optional_dependencies=["PyPDF2"],
         ),
         extract_pdf_text_preview,
+    )
+    registry.register(
+        ToolSpec(
+            id="document.extract_pdf_to_docx",
+            name="PDF 文本转存 Word",
+            description="提取 PDF 文本并直接保存为 .docx，适合 PDF 转 Word、PDF 文本转存 Word 等任务。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "PDF 文件路径"},
+                    "output_path": {"type": "string", "description": "输出 Word 路径（可选，默认在 PDF 同目录生成 *_extracted.docx）"},
+                    "max_pages": {"type": "integer", "default": 0, "description": "最大解析页数，0表示不限"},
+                    "title": {"type": "string", "description": "Word 文档标题（可选）"},
+                },
+                "required": ["path"],
+            },
+            requires_confirmation=True,
+            optional_dependencies=["PyPDF2", "docx"],
+        ),
+        extract_pdf_to_docx,
     )
     registry.register(
         ToolSpec(

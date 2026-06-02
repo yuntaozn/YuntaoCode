@@ -6,6 +6,7 @@ import asyncio
 import locale
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -53,6 +54,30 @@ def _decode_output(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def _quote_windows_arg(value: Any) -> str:
+    text = str(value)
+    if not text:
+        return "''"
+    return "'" + text.replace("'", "''") + "'"
+
+
+def _normalize_args(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def _compose_command(command: str, args: Any) -> str:
+    argv = _normalize_args(args)
+    if not argv:
+        return command
+    if sys.platform.startswith("win"):
+        return " ".join([command, *(_quote_windows_arg(arg) for arg in argv)])
+    return " ".join([command, *(shlex.quote(arg) for arg in argv)])
+
+
 # On Windows, suppress the console window for child processes
 _WIN_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
 
@@ -92,6 +117,7 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
     command = (input_data.get("command") or "").strip()
     if not command:
         raise ValueError("command is required")
+    command = _compose_command(command, input_data.get("args"))
 
     if _is_dangerous(command):
         raise ValueError(f"command rejected as potentially destructive: {command[:100]}")
@@ -197,6 +223,11 @@ def register_shell_tools(registry: ToolRegistry) -> None:
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "要执行的命令"},
+                    "args": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "可选命令参数数组，会安全拼接到 command 后执行",
+                    },
                     "cwd": {"type": "string", "description": "工作目录（可选，默认当前workspace）"},
                     "timeout": {"type": "integer", "default": 30, "description": "超时秒数（最大120）"},
                 },

@@ -8,12 +8,23 @@ from typing import Any
 from uuid import uuid4
 
 
+TOOL_TASK_STORE_SCHEMA_VERSION = "0.1"
+TOOL_TASK_RECORD_SCHEMA_VERSION = "0.1"
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 @dataclass
 class TaskRecord:
+    """A persisted tool invocation record.
+
+    This is intentionally narrower than the product-level Task Model described
+    in docs/task-model.md. The public API keeps the historical "task" wording
+    for compatibility, while records declare themselves as "tool_task".
+    """
+
     id: str
     tool: str
     input: dict[str, Any]
@@ -26,8 +37,12 @@ class TaskRecord:
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": TOOL_TASK_RECORD_SCHEMA_VERSION,
+            "record_kind": "tool_task",
+            "kind": "tool_task",
             "id": self.id,
             "tool": self.tool,
+            "tool_id": self.tool,
             "input": self.input,
             "status": self.status,
             "output": self.output,
@@ -138,6 +153,18 @@ class TaskStore:
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         records = sorted(self._tasks.values(), key=lambda item: item.created_at)[-200:]
         self.storage_path.write_text(
-            json.dumps({"tasks": [item.to_public_dict() for item in records]}, ensure_ascii=False, indent=2),
+            json.dumps(
+                {
+                    "schema_version": TOOL_TASK_STORE_SCHEMA_VERSION,
+                    "record_kind": "tool_task_store",
+                    "tasks": [item.to_public_dict() for item in records],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
             encoding="utf-8",
         )
+
+
+ToolTaskRecord = TaskRecord
+ToolTaskStore = TaskStore

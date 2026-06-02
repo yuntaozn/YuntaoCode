@@ -37,9 +37,15 @@ jobs:
             runtime/app.py \
             runtime/task_runner.py \
             runtime/tool_registry.py \
+            runtime/task_store.py \
+            runtime/run_store.py \
+            runtime/run_events.py \
+            runtime/run_result.py \
             runtime/security.py \
             runtime/api/tasks.py \
             runtime/api/plugins.py \
+            runtime/api/conversations.py \
+            runtime/conversation_runner.py \
             runtime/model_providers/client.py
 
   frontend:
@@ -63,7 +69,12 @@ jobs:
         run: npm ci
 
       - name: Check JavaScript syntax
-        run: node --check src/main.js
+        run: |
+          node --check src/main.js
+          node --check ../runtime/panel/static/panel.js
+          node --check ../runtime/panel/static/settings.js
+          node --check ../runtime/panel/static/plugins.js
+          node --check ../runtime/panel/static/i18n.js
 
       - name: Build frontend
         run: npm run build:ui

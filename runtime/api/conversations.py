@@ -881,9 +881,10 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
             output = event.get("output") if isinstance(event.get("output"), dict) else {}
             path = (
-                event_input.get("path")
+                output.get("path")
+                or output.get("output_path")
                 or event_input.get("output_path")
-                or output.get("path")
+                or event_input.get("path")
                 or ""
             )
             rel_path = self._relative_workspace_path(workspace_path, path) if path else ""
@@ -1012,6 +1013,18 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             # Try to fix common JSON issues from streaming (unclosed braces/brackets)
             arguments = self._try_fix_json(arguments_text)
 
+        try:
+            tool_id = self.runtime.registry.resolve_id(tool_id)
+            self.runtime.registry.get(tool_id)
+        except KeyError:
+            return self._skipped_tool_call(
+                tool_call,
+                tool_id,
+                arguments,
+                reason="unknown_tool",
+                message=f"未知工具：{tool_id}。请改用当前工具列表中的规范工具 ID。",
+            )
+
         if not self.runtime.settings.is_tool_enabled(tool_id):
             return self._skipped_tool_call(
                 tool_call,
@@ -1131,6 +1144,14 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "path": output.get("path"),
                 "created": bool(output.get("created")),
                 "size": output.get("size"),
+                "backup": output.get("_backup"),
+            }
+        elif tool_id == "document.extract_pdf_to_docx":
+            preview = {
+                "type": "file_write",
+                "path": output.get("path"),
+                "created": True,
+                "size": output.get("pages_parsed"),
                 "backup": output.get("_backup"),
             }
         elif tool_id == "filesystem.read_file":
@@ -1255,7 +1276,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             if event.get("status") != "success":
                 continue
             tool_id = event.get("tool")
-            if tool_id not in {"code.edit_file", "code.replace_text", "filesystem.write_file"}:
+            if not self._is_write_tool(str(tool_id or "")):
                 continue
             output = event.get("output") if isinstance(event.get("output"), dict) else {}
             input_data = event.get("input") if isinstance(event.get("input"), dict) else {}
@@ -1268,7 +1289,12 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 if not candidates:
                     candidates.append(root)
             else:
-                candidates.append(output.get("path") or input_data.get("path"))
+                candidates.append(
+                    output.get("path")
+                    or output.get("output_path")
+                    or input_data.get("output_path")
+                    or input_data.get("path")
+                )
             for candidate in candidates:
                 rel = self._relative_workspace_path(workspace_path, candidate)
                 if rel and rel not in paths:
@@ -1398,6 +1424,37 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 return True
         return False
 
+    def _previous_document_export_context(self, conversation: Any | None, current_content: str) -> bool:
+        if conversation is None:
+            return False
+        current = current_content.strip()
+        for message in reversed(getattr(conversation, "messages", [])[-16:]):
+            if self._is_runtime_guidance_message(message):
+                continue
+            role = str(getattr(message, "role", "") or "")
+            previous_content = str(getattr(message, "content", "") or "")
+            if previous_content.strip() == current:
+                continue
+            metadata = getattr(message, "metadata", {}) or {}
+            if role == "user":
+                if self._has_no_write_instruction(previous_content):
+                    return False
+                if self._looks_like_document_export_request(previous_content):
+                    return True
+                continue
+            if role != "assistant":
+                continue
+            if isinstance(metadata, dict):
+                contract = metadata.get("task_contract")
+                if isinstance(contract, dict) and contract.get("intent") == "document_export":
+                    return True
+                if metadata.get("task_intent") == "document_export":
+                    return True
+            content_hint = previous_content.lower()
+            if "pdf" in content_hint and any(term in content_hint for term in ("word", "docx", "转存", "转换", "提取")):
+                return True
+        return False
+
     def _plan_has_pending_write_step(self, execution_plan: Any) -> bool:
         return _clf.plan_has_pending_write_step(execution_plan)
 
@@ -1409,6 +1466,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     ) -> str:
         if self._has_no_write_instruction(content):
             return "read_only_analysis"
+        if self._looks_like_follow_up_execution(content) and self._previous_document_export_context(conversation, content):
+            return "document_export"
         if self._looks_like_follow_up_execution(content) and self._previous_write_context(conversation, content):
             return "write_required"
         if self._user_requests_code_change(content, "coding"):
@@ -1462,6 +1521,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return "coding"
         if requested_mode == "paper":
             return "paper"
+        if self._looks_like_follow_up_execution(content) and self._previous_document_export_context(conversation, content):
+            return "document"
         if self._looks_like_follow_up_execution(content) and self._previous_write_context(conversation, content):
             return "coding"
         if self._user_requests_code_change(content, "coding"):

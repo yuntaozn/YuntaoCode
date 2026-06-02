@@ -105,7 +105,7 @@ def fallback_execution_plan(mode: str | None) -> dict[str, Any]:
     else:
         steps = [
             ("识别资料范围", "扫描当前项目目录，确定需要读取的文档和附件。", "filesystem.scan_folder"),
-            ("读取核心内容", "提取 Word、PDF 或文本中的标题、大纲和关键段落。", "document.extract_docx_outline / document.extract_pdf_text_preview"),
+            ("读取核心内容", "提取 Word、PDF 或文本中的标题、大纲和关键段落；PDF 转 Word 时直接使用 document.extract_pdf_to_docx。", "document.extract_docx_outline / document.extract_pdf_text_preview / document.extract_pdf_to_docx"),
             ("分析和归纳", "按用户目标整理事实、问题、风险或结论。", "filesystem.read_file"),
             ("形成产出", "生成摘要、审查意见、清单或汇报内容。", "本地模型"),
             ("说明依据", "列出已读取资料、跳过项和不确定项。", "本地模型"),

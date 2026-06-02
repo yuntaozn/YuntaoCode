@@ -92,8 +92,9 @@ def stage_prompt(
             "1. 如果材料足够，直接调用导出工具；如果材料不足，只补充读取最小必要内容。\n"
             "2. generate_ppt 需要 slides 数组（每项含 title 和 content），path 可省略（会自动生成）。\n"
             "3. export_docx / export_markdown 需要 content（Markdown 格式文本）。\n"
-            "4. 如果工具调用成功，简短确认产出路径和文件大小即可。\n"
-            "5. 如果工具调用失败，说明失败原因，不要伪造成功结果。"
+            "4. PDF 转 Word / PDF 文本转存 Word 时，优先直接调用 document.extract_pdf_to_docx；只有用户需要先审阅文本时，才调用 document.extract_pdf_text_preview。\n"
+            "5. 如果工具调用成功，简短确认产出路径和文件大小即可。\n"
+            "6. 如果工具调用失败，说明失败原因，不要伪造成功结果。"
         )
     if stage == "verifier":
         return (

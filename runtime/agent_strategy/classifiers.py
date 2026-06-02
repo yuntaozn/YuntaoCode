@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from runtime.tool_aliases import TOOL_ID_ALIASES, normalize_tool_id
+
 from .profiles import (
     profile_for_task_intent,
     round_limit_for_profile,
@@ -25,6 +27,7 @@ from .profiles import (
 DOCUMENT_WRITE_TOOL_IDS: frozenset[str] = frozenset({
     "document.export_markdown",
     "document.export_docx",
+    "document.extract_pdf_to_docx",
     "document.generate_docx_from_outline",
     "document.export_pdf",
     "document.generate_ppt",
@@ -51,24 +54,6 @@ POST_WRITE_VERIFY_TOOL_IDS: frozenset[str] = frozenset({
 
 NATIVE_TOOL_CALL_BEGIN = "<|FunctionCallBegin|>"
 NATIVE_TOOL_CALL_END = "<|FunctionCallEnd|>"
-
-TOOL_ID_ALIASES: dict[str, str] = {
-    "code.search": "code.search_text",
-    "code.find": "code.search_text",
-    "code.grep": "code.search_text",
-    "code.list_files": "code.list_project_files",
-    "code.list_project": "code.list_project_files",
-    "filesystem.list_dir": "filesystem.scan_folder",
-    "filesystem.list_directory": "filesystem.scan_folder",
-    "filesystem.listdir": "filesystem.scan_folder",
-    "filesystem.scan": "filesystem.scan_folder",
-    "filesystem.read": "filesystem.read_file",
-    "filesystem.read_text": "filesystem.read_file",
-    "filesystem.write": "filesystem.write_file",
-    "shell.execute": "shell.run_command",
-    "shell.run": "shell.run_command",
-    "git.show_diff": "git.diff",
-}
 
 POST_WRITE_READ_TOOL_IDS: frozenset[str] = frozenset({
     "filesystem.read_file",
@@ -101,8 +86,7 @@ STATE_CHANGING_EXTRA_TOOL_IDS: frozenset[str] = frozenset({
 
 def canonical_tool_id(value: Any) -> str:
     """Convert model-emitted tool IDs to registered runtime tool IDs."""
-    tool_id = str(value or "").strip().replace("__", ".")
-    return TOOL_ID_ALIASES.get(tool_id, tool_id)
+    return normalize_tool_id(value)
 
 
 def explorer_tool_ids(mode: str | None) -> set[str]:
@@ -215,7 +199,14 @@ def looks_like_document_export_request(content: str) -> bool:
     export_terms = (
         "导出", "生成word", "生成 word", "生成docx", "生成 docx",
         "生成pdf", "生成 pdf", "生成ppt", "生成 ppt",
-        "保存为", "写成文件", "输出文件",
+        "保存为", "写成文件", "输出文件", "转存word", "转存 word",
+        "转成word", "转成 word", "转为word", "转为 word",
+        "转换成word", "转换成 word", "转换为word", "转换为 word",
+        "转存docx", "转存 docx", "转成docx", "转成 docx",
+        "转为docx", "转为 docx", "转换成docx", "转换成 docx",
+        "转换为docx", "转换为 docx",
+        "pdf转word", "pdf 转 word", "pdf转docx", "pdf 转 docx",
+        "pdf文字提取", "pdf 文本提取", "提取pdf", "提取 pdf",
         ".docx", ".pdf", ".pptx", ".md",
     )
     return any(term in text for term in export_terms)

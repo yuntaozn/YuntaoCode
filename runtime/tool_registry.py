@@ -5,27 +5,13 @@ import io
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from .tool_aliases import TOOL_ID_ALIASES, normalize_tool_id, normalize_tool_syntax
+
 
 ToolHandler = Callable[[dict[str, Any], Any], Awaitable[dict[str, Any]]]
 
 
-DEFAULT_TOOL_ID_ALIASES: dict[str, str] = {
-    "code.search": "code.search_text",
-    "code.find": "code.search_text",
-    "code.grep": "code.search_text",
-    "code.list_files": "code.list_project_files",
-    "code.list_project": "code.list_project_files",
-    "filesystem.list_dir": "filesystem.scan_folder",
-    "filesystem.list_directory": "filesystem.scan_folder",
-    "filesystem.listdir": "filesystem.scan_folder",
-    "filesystem.scan": "filesystem.scan_folder",
-    "filesystem.read": "filesystem.read_file",
-    "filesystem.read_text": "filesystem.read_file",
-    "filesystem.write": "filesystem.write_file",
-    "shell.execute": "shell.run_command",
-    "shell.run": "shell.run_command",
-    "git.show_diff": "git.diff",
-}
+DEFAULT_TOOL_ID_ALIASES: dict[str, str] = TOOL_ID_ALIASES
 
 
 @dataclass(frozen=True)
@@ -81,10 +67,12 @@ class ToolRegistry:
         self._tools[spec.id] = Tool(spec=spec, handler=handler)
 
     def register_alias(self, alias: str, tool_id: str) -> None:
-        self._aliases[str(alias or "").strip().replace("__", ".")] = str(tool_id or "").strip().replace("__", ".")
+        self._aliases[normalize_tool_syntax(alias)] = normalize_tool_syntax(tool_id)
 
     def resolve_id(self, tool_id: str) -> str:
-        value = str(tool_id or "").strip().replace("__", ".")
+        value = normalize_tool_syntax(tool_id)
+        if self._aliases == DEFAULT_TOOL_ID_ALIASES:
+            return normalize_tool_id(value)
         return self._aliases.get(value, value)
 
     def get(self, tool_id: str) -> Tool:

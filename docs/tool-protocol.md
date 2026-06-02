@@ -62,3 +62,20 @@ cancelled
 -> 本地生成审查报告
 -> 人工确认
 ```
+
+## ToolTask 与 Task 的边界
+
+当前 `/tasks` API 管理的是一次工具调用记录，也就是 `ToolTask`，不是未来产品层面的用户目标级 `Task`。
+
+为了保持兼容，API 路径和旧字段暂时保留；为了让贡献者理解边界，公开记录会包含：
+
+```json
+{
+  "schema_version": "0.1",
+  "record_kind": "tool_task",
+  "kind": "tool_task",
+  "tool_id": "filesystem.scan_folder"
+}
+```
+
+未来如果引入用户目标级 Task API，应独立建模 Task / Plan / Step / Trace / Result，不要继续把工具调用记录扩展成产品级任务。

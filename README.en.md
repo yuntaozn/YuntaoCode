@@ -131,7 +131,7 @@ The current implementation already includes tool calling, plan generation, stage
 
 The Agent Runtime strategy layer lives in `runtime/agent_strategy/`. It owns intent classification, internal profiles, planning policy, stage prompts, and execution-plan lifecycle helpers so that `conversation_runner.py` can remain an orchestration layer.
 
-See the Task Model draft in [docs/task-model.md](docs/task-model.md).
+See the Task Model draft in [docs/task-model.md](docs/task-model.md) and the current runtime foundation contract in [docs/runtime-foundation.md](docs/runtime-foundation.md).
 
 ---
 
@@ -199,6 +199,10 @@ Desktop frontend checks:
 npm --prefix desktop-shell ci
 npm --prefix desktop-shell run build:ui
 node --check desktop-shell/src/main.js
+node --check runtime/panel/static/panel.js
+node --check runtime/panel/static/settings.js
+node --check runtime/panel/static/plugins.js
+node --check runtime/panel/static/i18n.js
 ```
 
 Tauri shell check:
@@ -224,7 +228,7 @@ python -m runtime.app --host 127.0.0.1 --port 8765
 
 ### Understand the Task Model
 
-Before contributing a new capability, read [docs/task-model.md](docs/task-model.md).
+Before contributing a new capability, read [docs/task-model.md](docs/task-model.md) and [docs/runtime-foundation.md](docs/runtime-foundation.md).
 
 At this stage, the project does not prioritize piling up application scenarios.
 More valuable contributions are changes that:

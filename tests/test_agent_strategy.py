@@ -32,6 +32,7 @@ from runtime.agent_strategy.classifiers import (
     # Tool classification
     WRITE_TOOL_IDS,
     RECON_TOOL_IDS,
+    canonical_tool_id,
     explorer_tool_ids,
     is_recon_tool,
     is_state_changing_tool,
@@ -156,6 +157,12 @@ class TestLooksLikeDocumentExportRequest:
     def test_generate_docx(self):
         assert looks_like_document_export_request("生成 docx 文件")
 
+    def test_pdf_text_to_word(self):
+        assert looks_like_document_export_request("将pdf文件中文字提取出来转存word")
+
+    def test_pdf_to_docx(self):
+        assert looks_like_document_export_request("把 PDF 转成 docx")
+
     def test_not_export(self):
         assert not looks_like_document_export_request("修改 main.py 的内容")
 
@@ -254,6 +261,9 @@ class TestClassifyTaskIntent:
 
     def test_document_export(self):
         assert classify_task_intent("导出为 PDF", None) == "document_export"
+
+    def test_pdf_to_word_is_document_export(self):
+        assert classify_task_intent("将pdf文件中文字提取出来转存word", None) == "document_export"
 
     def test_paper_workflow(self):
         assert classify_task_intent("写文献综述", None) == "paper_workflow"
@@ -354,6 +364,9 @@ class TestIsWriteTool:
     def test_document_export(self):
         assert is_write_tool("document.export_pdf")
 
+    def test_pdf_to_docx(self):
+        assert is_write_tool("document.extract_pdf_to_docx")
+
 
 class TestIsReconTool:
     def test_read_file(self):
@@ -361,6 +374,10 @@ class TestIsReconTool:
 
     def test_search(self):
         assert is_recon_tool("code.search_text")
+
+    def test_pdf_alias(self):
+        assert canonical_tool_id("document.pdf_extract_text") == "document.extract_pdf_text_preview"
+        assert is_recon_tool("document.pdf_extract_text")
 
     def test_shell_not_recon(self):
         assert not is_recon_tool("shell.run_command")
@@ -703,6 +720,9 @@ class TestNormalizeToolId:
 
     def test_legacy_shell_execute_alias(self):
         assert normalize_tool_id("shell.execute") == "shell.run_command"
+
+    def test_legacy_pdf_extract_alias(self):
+        assert normalize_tool_id("document.pdf_extract_text") == "document.extract_pdf_text_preview"
 
     def test_none(self):
         assert normalize_tool_id(None) == ""

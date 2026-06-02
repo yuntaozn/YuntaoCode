@@ -81,3 +81,22 @@ def test_registry_resolves_legacy_tool_aliases_without_listing_them() -> None:
     assert registry.resolve_id("filesystem__list_dir") == "filesystem.scan_folder"
     assert registry.get("filesystem.list_dir").spec.id == "filesystem.scan_folder"
     assert [spec["id"] for spec in registry.list_specs()] == ["filesystem.scan_folder"]
+
+
+def test_registry_resolves_pdf_document_aliases_without_listing_them() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            id="document.extract_pdf_text_preview",
+            name="Extract PDF Text",
+            description="Extract PDF text",
+            input_schema={"type": "object"},
+        ),
+        _noop_handler,
+    )
+
+    assert registry.resolve_id("document.pdf_extract_text") == "document.extract_pdf_text_preview"
+    assert registry.resolve_id("document.extract_pdf_text") == "document.extract_pdf_text_preview"
+    assert registry.resolve_id("document.read_pdf") == "document.extract_pdf_text_preview"
+    assert registry.get("document.pdf_extract_text").spec.id == "document.extract_pdf_text_preview"
+    assert [spec["id"] for spec in registry.list_specs()] == ["document.extract_pdf_text_preview"]

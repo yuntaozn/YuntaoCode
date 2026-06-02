@@ -203,6 +203,8 @@ Task Template 是比 prompt 更稳定的复用单元。
 - `runtime/agent_strategy/policy.py`：计划执行策略。
 - `runtime/agent_strategy/plan_tracker.py`：计划生命周期辅助函数。
 - `runtime/task_store.py`：本地工具任务记录。
+- `runtime/run_events.py`：版本化运行事件与规范事件名。
+- `runtime/run_result.py`：基于工具事件生成确定性运行结果。
 - `runtime/panel/static/panel.js`：流式过程展示。
 
 下一步不是立即重写，而是逐步把隐含概念显式化：
@@ -211,3 +213,5 @@ Task Template 是比 prompt 更稳定的复用单元。
 2. 把 run events 向稳定事件名收敛。
 3. 为状态迁移补测试。
 4. 再考虑 Task Template 和恢复接口。
+
+当前代码层基础契约见 [runtime-foundation.md](runtime-foundation.md)。

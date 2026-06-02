@@ -17,6 +17,7 @@ from runtime.conversation_interactions import (
 from runtime.model_providers.client import stream_chat_completion
 from runtime.agent_strategy.policy import deterministic_plan_gate, resolve_profile
 from runtime.agent_strategy.profiles import profile_to_public_dict
+from runtime.run_result import build_run_result
 from runtime import i18n
 
 
@@ -1184,7 +1185,7 @@ class ConversationRunExecutor:
             assistant_content = self._max_rounds_message(max_rounds, tool_events)
         elif recon_budget_exceeded and tool_contract_failed:
             assistant_content = (
-                "未执行代码变更：模型一直停留在读取/搜索阶段，已经超过本轮允许的侦察预算，"
+                "未完成需要的写入/导出：模型一直停留在读取/搜索阶段，已经超过本轮允许的侦察预算，"
                 "系统已停止继续空转。本轮没有成功调用写入工具。"
             )
         elif tool_contract_failed and "missing_verification_tool_success" in contract_failures:
@@ -1200,8 +1201,8 @@ class ConversationRunExecutor:
             assistant_content = (
                 f"{model_content}\n\n" if model_content else ""
             ) + (
-                "未执行代码变更：模型没有成功调用本地写入工具，"
-                "因此本轮没有修改任何文件。"
+                "未完成需要的写入/导出：模型没有成功调用本地写入或导出工具，"
+                "因此本轮没有生成或修改目标文件。"
             )
         else:
             assistant_content = "".join(content_parts).strip() or "模型没有返回内容。"
@@ -1254,6 +1255,18 @@ class ConversationRunExecutor:
             metadata["change_summary"] = change_summary
             self.write_event({"event": "changes", "summary": change_summary})
             await self.flush()
+        run_result = build_run_result(
+            workspace_path=workspace.path,
+            tool_events=tool_events,
+            change_summary=change_summary,
+            mode=effective_mode,
+            requires_code_write=bool(task_contract.get("requires_write")),
+            contract_failed=tool_contract_failed,
+            max_rounds_exceeded=max_rounds_exceeded,
+        )
+        metadata["run_result"] = run_result
+        self.write_event({"event": "result", "result": run_result})
+        await self.flush()
         if self._needs_synthesized_final_answer(assistant_content, tool_events):
             assistant_content = self._synthesize_final_answer(
                 workspace.path,

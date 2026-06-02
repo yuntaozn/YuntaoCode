@@ -48,7 +48,7 @@ Task
 - 让工具调用、确认、失败、验证和最终摘要进入统一 Trace。
 - 让写入回退、失败重试、暂停恢复成为 Runtime 能力，而不是某个 prompt 的偶然表现。
 
-Task Model 草案见 [task-model.md](task-model.md)。
+Task Model 草案见 [task-model.md](task-model.md)，当前代码层基础契约见 [runtime-foundation.md](runtime-foundation.md)。
 
 ## 当前运行边界
 
