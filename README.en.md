@@ -135,12 +135,31 @@ See the Task Model draft in [docs/task-model.md](docs/task-model.md) and the cur
 
 ---
 
+## Repository Mirrors
+
+* GitHub main repository: [https://github.com/yuntaozn/YuntaoCode](https://github.com/yuntaozn/YuntaoCode)
+* Gitee mirror for China access: [https://gitee.com/yuntaozn/YuntaoCode](https://gitee.com/yuntaozn/YuntaoCode)
+
+The Gitee repository is mainly provided for faster cloning and downloads in China. Issues, pull requests, and long-term collaboration should preferably use GitHub.
+
+---
+
 ## Quick Start
 
 ### Clone Repository
 
+GitHub:
+
 ```bash
 git clone https://github.com/yuntaozn/YuntaoCode.git
+
+cd YuntaoCode
+```
+
+Gitee mirror:
+
+```bash
+git clone https://gitee.com/yuntaozn/YuntaoCode.git
 
 cd YuntaoCode
 ```

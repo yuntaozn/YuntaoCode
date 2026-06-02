@@ -135,12 +135,31 @@ Task Model 草案见 [docs/task-model.md](docs/task-model.md)，当前运行时�
 
 ---
 
+## 仓库镜像
+
+* GitHub 主仓库：[https://github.com/yuntaozn/YuntaoCode](https://github.com/yuntaozn/YuntaoCode)
+* Gitee 国内镜像：[https://gitee.com/yuntaozn/YuntaoCode](https://gitee.com/yuntaozn/YuntaoCode)
+
+Gitee 仓库主要用于国内访问、克隆和下载。Issue、Pull Request 和长期协作入口建议优先使用 GitHub。
+
+---
+
 ## 快速开始
 
 ### 克隆项目
 
+GitHub：
+
 ```bash
 git clone https://github.com/yuntaozn/YuntaoCode.git
+
+cd YuntaoCode
+```
+
+国内访问较慢时可使用 Gitee 镜像：
+
+```bash
+git clone https://gitee.com/yuntaozn/YuntaoCode.git
 
 cd YuntaoCode
 ```
