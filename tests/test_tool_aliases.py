@@ -37,6 +37,7 @@ def test_common_model_tool_name_variants_resolve_to_registered_tools() -> None:
         "document.extract_docx": "document.extract_docx_outline",
         "document.pdf_to_word": "document.extract_pdf_to_docx",
         "document.convert_pdf_to_docx": "document.extract_pdf_to_docx",
+        "document.translate_word": "document.translate_docx",
         "document.generate_powerpoint": "document.generate_ppt",
         "code.search": "code.search_text",
         "code.search_files": "code.search_text",

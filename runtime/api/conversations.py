@@ -10,6 +10,10 @@ import tornado.iostream
 
 from .base import ApiHandler
 from runtime import i18n
+from runtime.agent_strategy.capability_router import (
+    build_capability_catalog,
+    format_capability_catalog_for_prompt,
+)
 from runtime.agent_strategy import classifiers as _clf
 from runtime.agent_strategy import prompts as _prp
 from runtime.agent_strategy import plan_tracker as _pt
@@ -242,6 +246,7 @@ class ConversationMessagesHandler(ApiHandler):
             mode_config=mode_config,
             workspace_path=workspace["path"],
             user_message=latest_user_message,
+            capability_context=self._capability_context_prompt(mode_config),
         )
         messages = [{"role": "system", "content": system_prompt}]
         for item in conversation.messages:
@@ -251,6 +256,20 @@ class ConversationMessagesHandler(ApiHandler):
             role = "assistant" if item.role == "assistant" else "user"
             messages.append({"role": role, "content": item.content})
         return messages
+
+    def _capability_context_prompt(self, mode_config: dict[str, Any] | None = None) -> str:
+        allowed_tools: set[str] | None = None
+        if mode_config and "tools" in mode_config:
+            allowed_tools = set(mode_config["tools"])
+        specs: list[dict[str, Any]] = []
+        for spec in self.runtime.registry.list_specs():
+            tool_id = str(spec.get("id") or "")
+            if allowed_tools is not None and tool_id not in allowed_tools:
+                continue
+            if not self.runtime.settings.is_tool_enabled(tool_id):
+                continue
+            specs.append(spec)
+        return format_capability_catalog_for_prompt(build_capability_catalog(specs))
 
 class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def flush(self, include_footers: bool = False) -> asyncio.Task[None]:
@@ -410,6 +429,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         execution_mode: str,
         plan_mode: str,
         workspace_path: str,
+        expected_document_coverage: bool = False,
     ) -> dict[str, Any]:
         requires_write = task_intent in {"write_required", "document_export"}
         requires_verification = requires_write
@@ -418,6 +438,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             requires_plan = False
         return {
             "intent": task_intent,
+            "routing_strategy": "model_first_capability",
             "assistant_mode": mode or "terminal",
             "execution_mode": execution_mode,
             "plan_mode": plan_mode,
@@ -426,10 +447,12 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "requires_write": requires_write,
             "requires_verification": requires_verification,
             "requires_plan": requires_plan,
+            "expected_document_coverage": bool(expected_document_coverage),
             "success_conditions": [
                 condition for condition in [
                     "write_tool_success" if requires_write else "",
                     "verification_tool_success" if requires_verification else "",
+                    "document_output_coverage" if expected_document_coverage else "",
                     "final_answer_with_evidence",
                 ] if condition
             ],
@@ -438,12 +461,13 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _task_contract_prompt(self, contract: dict[str, Any]) -> str:
         conditions = ", ".join(contract.get("success_conditions") or [])
         lang = self.get_lang()
-        return (
+        prompt = (
             i18n.t("contract.title", lang)
             + i18n.t("contract.workspace", lang, workspace_path=str(contract.get("workspace_path")))
             + i18n.t("contract.access", lang, access_scope=str(contract.get("access_scope")))
             + i18n.t("contract.exec_mode", lang, execution_mode=str(contract.get("execution_mode")))
             + i18n.t("contract.intent", lang, intent=str(contract.get("intent")))
+            + f"任务路由：{contract.get('routing_strategy')}（模型理解任务，系统校验能力契约与执行结果）\n"
             + i18n.t("contract.must_write", lang, requires_write=str(bool(contract.get("requires_write"))))
             + i18n.t("contract.must_verify", lang, requires_verification=str(bool(contract.get("requires_verification"))))
             + i18n.t("contract.success", lang, conditions=conditions)
@@ -451,6 +475,12 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             + i18n.t("contract.verify_rule", lang)
             + i18n.t("contract.summary_rule", lang)
         )
+        if contract.get("expected_document_coverage"):
+            prompt += (
+                "\n文档覆盖要求：本轮是全文/整文档输出任务。生成文件后必须验证输出规模，"
+                "不能只验证文件存在；如果输出明显少于源文档，请明确说明未完整完成。\n"
+            )
+        return prompt
 
     def _task_contract_failures(
         self,
@@ -865,6 +895,108 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return True
         return self._looks_like_dangling_action(text)
 
+    def _run_status_from_result(self, run_result: dict[str, Any]) -> str:
+        status = str(run_result.get("status") or "")
+        if status == "stopped":
+            return "stopped"
+        if status == "failure":
+            return "failure"
+        if status == "partial":
+            return "partial"
+        return "success"
+
+    def _synthesize_failure_answer(
+        self,
+        workspace_path: str,
+        tool_events: list[dict[str, Any]],
+        run_result: dict[str, Any],
+    ) -> str:
+        failures = run_result.get("failures") if isinstance(run_result, dict) else []
+        lines = [
+            "未完成：本轮有工具执行失败，系统已按实际执行结果标记为失败。",
+            "",
+            "失败记录：",
+        ]
+        if isinstance(failures, list) and failures:
+            for item in failures[:6]:
+                if not isinstance(item, dict):
+                    continue
+                tool = str(item.get("tool") or "unknown")
+                path = str(item.get("path") or "").strip()
+                error = str(item.get("error") or "工具执行失败").strip()
+                label = f"{tool}（{path}）" if path else tool
+                lines.append(f"- {label}: {error[:240]}")
+        else:
+            for event in tool_events:
+                if not self._tool_event_failed(event):
+                    continue
+                tool = str(event.get("tool") or "unknown")
+                error = self._tool_event_failure_message(event)
+                path = self._tool_event_display_path(workspace_path, event)
+                label = f"{tool}（{path}）" if path else tool
+                lines.append(f"- {label}: {error[:240]}")
+        if len(lines) == 3:
+            lines.append("- 工具返回失败，但没有提供详细错误信息。")
+        risks = run_result.get("risks") if isinstance(run_result, dict) else []
+        if isinstance(risks, list) and risks:
+            lines.extend(["", "未满足条件/风险："])
+            for risk in risks[:8]:
+                if risk == "document_output_coverage_low":
+                    lines.append("- 文档输出覆盖率过低：目标文件已生成，但内容明显少于源文档，不能视为全文完成。")
+                elif risk == "recovered_tool_failure":
+                    lines.append("- 过程中有工具失败，但后续步骤曾尝试恢复。")
+                else:
+                    lines.append(f"- {risk}")
+        lines.extend([
+            "",
+            "请根据上面的失败原因继续修正后再执行；不要以模型原始总结作为完成依据。",
+        ])
+        return "\n".join(lines)
+
+    def _tool_event_failed(self, event: dict[str, Any]) -> bool:
+        if str(event.get("status") or "") == "failure":
+            return True
+        if str(event.get("status") or "") == "partial":
+            return False
+        output = event.get("output") if isinstance(event.get("output"), dict) else {}
+        if output.get("error") is True:
+            return True
+        if str(event.get("tool") or "") == "shell.run_command":
+            try:
+                return int(output.get("exit_code", 0) or 0) != 0
+            except (TypeError, ValueError):
+                return False
+        return False
+
+    def _tool_event_failure_message(self, event: dict[str, Any]) -> str:
+        error = str(event.get("error") or "").strip()
+        if error:
+            return error
+        output = event.get("output") if isinstance(event.get("output"), dict) else {}
+        stderr = str(output.get("stderr") or "").strip()
+        stdout = str(output.get("stdout") or "").strip()
+        if stderr:
+            return stderr
+        if stdout:
+            return stdout
+        if output.get("exit_code") is not None:
+            return f"exit_code={output.get('exit_code')}"
+        return "工具执行失败"
+
+    def _tool_event_display_path(self, workspace_path: str, event: dict[str, Any]) -> str:
+        event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
+        output = event.get("output") if isinstance(event.get("output"), dict) else {}
+        path = (
+            output.get("path")
+            or output.get("output_path")
+            or event_input.get("output_path")
+            or event_input.get("path")
+            or ""
+        )
+        if not path:
+            return ""
+        return self._relative_workspace_path(workspace_path, str(path))
+
     def _synthesize_final_answer(
         self,
         workspace_path: str,
@@ -964,6 +1096,74 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return False
         return bool(tool.spec.requires_confirmation)
 
+    def _document_contract_tool_guard(self, tool_id: str, arguments: dict[str, Any]) -> str:
+        contract = getattr(self, "_active_task_contract", None)
+        if not isinstance(contract, dict):
+            return ""
+        if contract.get("intent") != "document_export" or not contract.get("expected_document_coverage"):
+            return ""
+
+        if tool_id == "filesystem.write_file":
+            target = str(
+                arguments.get("path")
+                or arguments.get("output_path")
+                or arguments.get("file_path")
+                or ""
+            )
+            suffix = Path(target).suffix.lower()
+            content = str(arguments.get("content") or "")
+            script_suffixes = {".py", ".ps1", ".bat", ".cmd", ".js", ".mjs", ".ts", ".sh"}
+            script_markers = (
+                "deep_translator",
+                "googletranslator",
+                "translate_to_chinese",
+                "python-docx",
+                "from docx import",
+                "pip install",
+            )
+            script_text = f"{target}\n{content}".lower()
+            pdf_script_markers = (
+                "pdf2docx",
+                "pymupdf",
+                "fitz.open",
+                "from fitz import",
+                "convert_pdf",
+                "pdf_to_word",
+            )
+            if suffix in script_suffixes and (
+                any(marker in script_text for marker in pdf_script_markers)
+                or ("pdf" in script_text and any(term in script_text for term in ("docx", "word")))
+            ):
+                return (
+                    "当前任务是 PDF 转 Word / 图文文档输出，不能通过临时脚本绕过内置文档工具。"
+                    "请直接调用 document.extract_pdf_to_docx；如果用户要求图片和文字顺序保留，请传入 mode=text_with_images。"
+                )
+            if suffix in script_suffixes or any(marker in content.lower() for marker in script_markers):
+                return (
+                    "当前任务是全文文档输出/翻译，不能通过临时脚本实现。"
+                    "请直接调用 document.translate_docx；如果源文件是 PDF 转 Word，请调用 document.extract_pdf_to_docx。"
+                )
+
+        if tool_id == "shell.run_command":
+            args = arguments.get("args") if isinstance(arguments.get("args"), list) else []
+            command_text = " ".join(str(part) for part in [arguments.get("command"), *args] if part is not None).lower()
+            pdf_shell_terms = ("pdf2docx", "pymupdf", "fitz", "convert_pdf", "pdf_to_word")
+            if any(term in command_text for term in pdf_shell_terms) or (
+                "pdf" in command_text and any(term in command_text for term in ("docx", "word"))
+            ):
+                return (
+                    "当前任务是 PDF 转 Word / 图文文档输出，不能用 shell 或脚本绕过内置文档工具。"
+                    "请直接调用 document.extract_pdf_to_docx；如果用户要求图片和文字顺序保留，请传入 mode=text_with_images。"
+                )
+            blocked_terms = ("pip", "python", "py ", "deep_translator", "googletranslator", "translate", ".py")
+            if any(term in command_text for term in blocked_terms):
+                return (
+                    "当前任务是全文文档输出/翻译，不能用 shell 或脚本绕过内置文档工具。"
+                    "请直接调用 document.translate_docx，并让工具负责覆盖率与完成状态。"
+                )
+
+        return ""
+
     async def _confirm_runtime_tool_call(self, tool_id: str, arguments: dict[str, Any]) -> bool:
         conversation_id = str(getattr(self, "_active_conversation_id", "") or "")
         if not conversation_id:
@@ -1034,6 +1234,16 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 message=f"插件已禁用，不能调用工具：{tool_id}",
             )
 
+        guard_message = self._document_contract_tool_guard(tool_id, arguments)
+        if guard_message:
+            return self._skipped_tool_call(
+                tool_call,
+                tool_id,
+                arguments,
+                reason="document_contract_guard",
+                message=guard_message,
+            )
+
         if self._requires_runtime_confirmation(tool_id):
             confirmed = await self._confirm_runtime_tool_call(tool_id, arguments)
             if not confirmed:
@@ -1045,35 +1255,62 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                     message=f"用户取消了写入工具调用：{tool_id}",
                 )
 
+        task = await self.runtime.runner.submit(
+            tool_id,
+            arguments,
+            wait=False,
+            confirmed=True,
+            workspace_path=workspace_path,
+        )
         event: dict[str, Any] = {
             "status": "running",
             "tool": tool_id,
             "name": self._tool_display_name(tool_id),
             "input": arguments,
+            "task_id": task.id,
         }
         self.write_event({"event": "tool", **event})
         await self.flush()
 
-        task_future = asyncio.create_task(self.runtime.runner.submit(
-            tool_id,
-            arguments,
-            wait=True,
-            confirmed=True,
-            workspace_path=workspace_path,
-        ))
         started_at = asyncio.get_running_loop().time()
-        while not task_future.done():
+        last_log_count = len(task.logs)
+        last_progress_at = started_at
+        while task.status in {"queued", "running"}:
             await asyncio.sleep(10)
-            if task_future.done():
+            current = self.runtime.store.get(task.id) or task
+            new_logs = current.logs[last_log_count:]
+            if new_logs:
+                last_log_count = len(current.logs)
+                last_progress_at = asyncio.get_running_loop().time()
+                for log_event in new_logs[-3:]:
+                    self.write_event({
+                        "event": "tool_log",
+                        "tool": tool_id,
+                        "name": self._tool_display_name(tool_id),
+                        "task_id": task.id,
+                        "level": log_event.get("level"),
+                        "message": log_event.get("message"),
+                        "data": log_event.get("data") or {},
+                    })
+            task = current
+            if task.status not in {"queued", "running"}:
                 break
             elapsed = int(asyncio.get_running_loop().time() - started_at)
+            stale_seconds = int(asyncio.get_running_loop().time() - last_progress_at)
+            progress = self._tool_progress_snapshot(tool_id, task)
             self.write_event({
                 "event": "heartbeat",
-                "message": f"工具仍在运行：{self._tool_display_name(tool_id)}，已等待 {elapsed}s",
+                "message": self._tool_progress_message(tool_id, task, elapsed, stale_seconds, progress),
                 "idle_seconds": elapsed,
+                "tool": tool_id,
+                "name": self._tool_display_name(tool_id),
+                "task_id": task.id,
+                "task_status": task.status,
+                "stale_seconds": stale_seconds,
+                "progress": progress,
             })
             await self.flush()
-        task = await task_future
+        task = self.runtime.store.get(task.id) or task
         output_preview = self._tool_output_preview(tool_id, task.output)
         event = {
             "status": task.status,
@@ -1097,6 +1334,165 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "name": model_tool_name,
             "content": self._compact_tool_payload(tool_payload),
         }, event
+
+    def _tool_progress_snapshot(self, tool_id: str, task: Any) -> dict[str, Any]:
+        logs = task.logs if getattr(task, "logs", None) else []
+        snapshot: dict[str, Any] = {
+            "tool": tool_id,
+            "task_id": getattr(task, "id", ""),
+            "status": getattr(task, "status", ""),
+        }
+        if logs:
+            latest = logs[-1]
+            snapshot["last_log_message"] = latest.get("message")
+            snapshot["last_log_level"] = latest.get("level")
+            snapshot["last_log_time"] = latest.get("time")
+
+        if tool_id == "document.translate_docx":
+            for log_event in reversed(logs):
+                message = str(log_event.get("message") or "")
+                if not (
+                    message.startswith("translation progress ")
+                    or message.startswith("translation batch started ")
+                    or message.startswith("translation source loaded ")
+                ):
+                    continue
+                raw_progress = message.rsplit(" ", 1)[-1]
+                if "/" not in raw_progress:
+                    continue
+                done_text, total_text = raw_progress.split("/", 1)
+                try:
+                    done = int(done_text)
+                    total = int(total_text)
+                except ValueError:
+                    continue
+                data = log_event.get("data") if isinstance(log_event.get("data"), dict) else {}
+                phase = "progress"
+                if message.startswith("translation batch started "):
+                    phase = "batch_started"
+                elif message.startswith("translation source loaded "):
+                    phase = "source_loaded"
+                snapshot.update({
+                    "kind": "document_translation",
+                    "phase": phase,
+                    "done": done,
+                    "total": total,
+                    "percent": round((done / total) * 100, 1) if total else 0,
+                    "translated": data.get("translated"),
+                    "failed": data.get("failed"),
+                    "source_chars_done": data.get("source_chars_done"),
+                    "source_chars_total": data.get("source_chars_total"),
+                    "engine": data.get("engine"),
+                    "translation_profile": data.get("translation_profile"),
+                    "manifest_path": data.get("manifest_path"),
+                    "resumable": data.get("resumable"),
+                })
+                break
+        elif tool_id == "document.extract_pdf_to_docx":
+            for log_event in reversed(logs):
+                message = str(log_event.get("message") or "")
+                if not (
+                    message.startswith("pdf conversion started ")
+                    or message.startswith("pdf page converted ")
+                    or message.startswith("pdf docx saving ")
+                    or message.startswith("pdf docx saved ")
+                ):
+                    continue
+                raw_progress = message.rsplit(" ", 1)[-1]
+                if "/" not in raw_progress:
+                    continue
+                done_text, total_text = raw_progress.split("/", 1)
+                try:
+                    done = int(done_text)
+                    total = int(total_text)
+                except ValueError:
+                    continue
+                data = log_event.get("data") if isinstance(log_event.get("data"), dict) else {}
+                phase = str(data.get("phase") or "progress")
+                if message.startswith("pdf conversion started "):
+                    phase = "started"
+                elif message.startswith("pdf docx saving "):
+                    phase = "saving"
+                elif message.startswith("pdf docx saved "):
+                    phase = "saved"
+                snapshot.update({
+                    "kind": "pdf_to_docx",
+                    "phase": phase,
+                    "done": done,
+                    "total": total,
+                    "percent": round((done / total) * 100, 1) if total else 0,
+                    "source_pages": data.get("source_pages"),
+                    "text_block_count": data.get("text_block_count"),
+                    "image_count": data.get("image_count"),
+                    "skipped_image_count": data.get("skipped_image_count"),
+                    "mode": data.get("mode"),
+                    "file_size": data.get("file_size"),
+                })
+                break
+        return snapshot
+
+    def _tool_progress_message(
+        self,
+        tool_id: str,
+        task: Any,
+        elapsed_seconds: int,
+        stale_seconds: int,
+        progress: dict[str, Any],
+    ) -> str:
+        name = self._tool_display_name(tool_id)
+        if progress.get("kind") == "document_translation":
+            phase = str(progress.get("phase") or "progress")
+            if phase == "source_loaded":
+                lead = f"{name}仍在运行：已读取源文档，等待第一批翻译"
+            elif phase == "batch_started":
+                lead = f"{name}仍在运行：正在翻译下一批，已完成 {progress.get('done')}/{progress.get('total')} 段"
+            else:
+                lead = f"{name}仍在运行：已处理 {progress.get('done')}/{progress.get('total')} 段"
+            parts = [
+                lead,
+                f"{progress.get('percent')}%",
+                f"失败 {progress.get('failed') or 0} 段",
+                f"已等待 {elapsed_seconds}s",
+            ]
+            source_done = progress.get("source_chars_done")
+            source_total = progress.get("source_chars_total")
+            if isinstance(source_done, int) and isinstance(source_total, int) and source_total > 0:
+                char_percent = round((source_done / source_total) * 100, 1)
+                parts.insert(2, f"字符进度 {char_percent}%")
+            if stale_seconds >= 60:
+                parts.append(f"最近 {stale_seconds}s 没有新进度，可能正在等待模型响应")
+            return "；".join(parts)
+
+        if progress.get("kind") == "pdf_to_docx":
+            phase = str(progress.get("phase") or "progress")
+            done = progress.get("done")
+            total = progress.get("total")
+            if phase == "started":
+                lead = f"{name}仍在运行：已开始解析 PDF，等待第一页结果"
+            elif phase == "saving":
+                lead = f"{name}仍在运行：正在保存 Word 文件，已处理 {done}/{total} 页"
+            elif phase == "saved":
+                lead = f"{name}仍在运行：Word 文件已保存，正在收束结果"
+            else:
+                lead = f"{name}仍在运行：已处理 {done}/{total} 页"
+            parts = [
+                lead,
+                f"{progress.get('percent')}%",
+                f"文字块 {progress.get('text_block_count') or 0}",
+                f"图片 {progress.get('image_count') or 0}",
+                f"已等待 {elapsed_seconds}s",
+            ]
+            skipped = progress.get("skipped_image_count")
+            if isinstance(skipped, int) and skipped > 0:
+                parts.insert(4, f"跳过图片 {skipped}")
+            if stale_seconds >= 60:
+                parts.append(f"最近 {stale_seconds}s 没有新页面进度，可能正在处理大图片或保存文件")
+            return "；".join(parts)
+
+        last_log = str(progress.get("last_log_message") or "").strip()
+        if last_log:
+            return f"{name}仍在运行：{last_log}；已等待 {elapsed_seconds}s"
+        return f"{name}仍在运行，已等待 {elapsed_seconds}s"
 
     def _try_fix_json(self, text: str) -> dict[str, Any]:
         """Attempt to repair truncated or malformed JSON from model tool calls."""
@@ -1152,6 +1548,49 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "path": output.get("path"),
                 "created": True,
                 "size": output.get("pages_parsed"),
+                "mode": output.get("mode") or "text_only",
+                "image_count": output.get("image_count"),
+                "text_block_count": output.get("text_block_count"),
+                "file_size": output.get("file_size"),
+                "backup": output.get("_backup"),
+            }
+        elif tool_id == "document.extract_docx_outline":
+            preview = {
+                "type": "docx_outline",
+                "path": output.get("path"),
+                "paragraph_count": output.get("paragraph_count"),
+                "text_chars": output.get("text_chars"),
+                "table_count": output.get("table_count"),
+                "strategy": output.get("strategy"),
+            }
+        elif tool_id == "document.export_docx":
+            preview = {
+                "type": "file_write",
+                "path": output.get("path"),
+                "created": True,
+                "content_chars": output.get("content_chars"),
+                "paragraph_count": output.get("paragraph_count"),
+                "nonempty_paragraph_count": output.get("nonempty_paragraph_count"),
+                "file_size": output.get("file_size"),
+                "backup": output.get("_backup"),
+            }
+        elif tool_id == "document.translate_docx":
+            preview = {
+                "type": "file_write",
+                "path": output.get("path"),
+                "created": True,
+                "complete": bool(output.get("complete")),
+                "status": output.get("status"),
+                "partial_resumable": bool(output.get("partial_resumable")),
+                "source_nonempty_paragraph_count": output.get("source_nonempty_paragraph_count"),
+                "target_nonempty_goal": output.get("target_nonempty_goal"),
+                "translated_paragraph_count": output.get("translated_paragraph_count"),
+                "failed_paragraph_count": output.get("failed_paragraph_count"),
+                "source_chars_done": output.get("source_chars_done"),
+                "source_chars_total": output.get("source_chars_total"),
+                "manifest_path": output.get("manifest_path"),
+                "stopped_reason": output.get("stopped_reason"),
+                "file_size": output.get("file_size"),
                 "backup": output.get("_backup"),
             }
         elif tool_id == "filesystem.read_file":
@@ -1455,6 +1894,44 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 return True
         return False
 
+    def _previous_full_document_output_context(self, conversation: Any | None, current_content: str) -> bool:
+        if conversation is None:
+            return False
+        current = current_content.strip()
+        for message in reversed(getattr(conversation, "messages", [])[-16:]):
+            if self._is_runtime_guidance_message(message):
+                continue
+            role = str(getattr(message, "role", "") or "")
+            previous_content = str(getattr(message, "content", "") or "")
+            if previous_content.strip() == current:
+                continue
+            metadata = getattr(message, "metadata", {}) or {}
+            if role == "user":
+                if self._has_no_write_instruction(previous_content):
+                    return False
+                if self._looks_like_full_document_output_request(previous_content):
+                    return True
+                continue
+            if role != "assistant" or not isinstance(metadata, dict):
+                continue
+            contract = metadata.get("task_contract")
+            if isinstance(contract, dict) and contract.get("expected_document_coverage"):
+                return True
+        return False
+
+    def _expects_full_document_output(self, content: str, conversation: Any | None = None) -> bool:
+        if self._looks_like_full_document_output_request(content):
+            return True
+        text = content.strip().lower()
+        if conversation is not None and len(text) < 80 and any(
+            term in text
+            for term in ("没看到", "没生成", "没成功", "上次", "再做", "再翻译", "继续")
+        ):
+            return self._previous_full_document_output_context(conversation, content)
+        if self._looks_like_follow_up_execution(content):
+            return self._previous_full_document_output_context(conversation, content)
+        return False
+
     def _plan_has_pending_write_step(self, execution_plan: Any) -> bool:
         return _clf.plan_has_pending_write_step(execution_plan)
 
@@ -1507,6 +1984,9 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
 
     def _looks_like_document_export_request(self, content: str) -> bool:
         return _clf.looks_like_document_export_request(content)
+
+    def _looks_like_full_document_output_request(self, content: str) -> bool:
+        return _clf.looks_like_full_document_output_request(content)
 
     def _has_explicit_write_instruction(self, content: str) -> bool:
         return _clf.has_explicit_write_instruction(content)
@@ -1927,6 +2407,17 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "stderr": str(output.get("stderr") or "")[:12000],
                 "truncated_for_context": True,
             }
+        elif tool_id == "document.extract_docx_outline":
+            text = str(output.get("text") or "")
+            max_chars = 50000
+            compacted["output"] = {
+                **output,
+                "text": text[:max_chars],
+                "text_chars": output.get("text_chars") or len(text),
+                "truncated_for_context": len(text) > max_chars,
+            }
+            if len(text) > max_chars:
+                compacted["output"]["text"] += "\n... 文档内容过长，已截断；如需全文处理，请使用专门的文档转换/翻译工具或分批读取 ... "
         elif tool_id.startswith("web."):
             compacted["output"] = {
                 **output,

@@ -174,6 +174,8 @@ def canonical_run_event_name(payload: dict[str, Any]) -> str:
             return "tool.started"
         if status == "success":
             return "tool.completed"
+        if status == "partial":
+            return "tool.partial"
         if status == "failure":
             return "tool.failed"
         if status == "waiting_confirmation":

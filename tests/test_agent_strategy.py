@@ -25,6 +25,7 @@ from runtime.agent_strategy.classifiers import (
     looks_like_dangling_action,
     looks_like_document_export_request,
     looks_like_follow_up_execution,
+    looks_like_full_document_output_request,
     looks_like_paper_task,
     looks_like_read_only_request,
     looks_like_simple_code_change,
@@ -163,8 +164,28 @@ class TestLooksLikeDocumentExportRequest:
     def test_pdf_to_docx(self):
         assert looks_like_document_export_request("把 PDF 转成 docx")
 
+    def test_pdf_images_and_text_to_word(self):
+        assert looks_like_document_export_request("重新将PDF导一个图片加文字的word")
+
+    def test_translate_chinese_version(self):
+        assert looks_like_document_export_request("帮我再翻译个中文版的")
+
     def test_not_export(self):
         assert not looks_like_document_export_request("修改 main.py 的内容")
+
+
+class TestLooksLikeFullDocumentOutputRequest:
+    def test_translate_chinese_version(self):
+        assert looks_like_full_document_output_request("帮我再翻译个中文版的")
+
+    def test_full_document_terms(self):
+        assert looks_like_full_document_output_request("把这个 PDF 完整转成 Word")
+
+    def test_pdf_images_and_text_to_word(self):
+        assert looks_like_full_document_output_request("重新将PDF导一个图片加文字的word")
+
+    def test_small_report_not_full_document(self):
+        assert not looks_like_full_document_output_request("根据文档生成一个摘要报告")
 
 
 class TestLooksLikePaperTask:
@@ -184,6 +205,9 @@ class TestLooksLikeFollowUpExecution:
 
     def test_retry(self):
         assert looks_like_follow_up_execution("重试")
+
+    def test_retry_after_failure(self):
+        assert looks_like_follow_up_execution("失败了再来一次")
 
     def test_too_long(self):
         # Messages > 40 chars are NOT follow-ups
@@ -265,6 +289,12 @@ class TestClassifyTaskIntent:
     def test_pdf_to_word_is_document_export(self):
         assert classify_task_intent("将pdf文件中文字提取出来转存word", None) == "document_export"
 
+    def test_pdf_images_and_text_to_word_is_document_export(self):
+        assert classify_task_intent("重新将PDF导一个图片加文字的word", None) == "document_export"
+
+    def test_translate_chinese_version_is_document_export(self):
+        assert classify_task_intent("帮我再翻译个中文版的", None) == "document_export"
+
     def test_paper_workflow(self):
         assert classify_task_intent("写文献综述", None) == "paper_workflow"
 
@@ -331,6 +361,11 @@ class TestPlanningPolicy:
         assert decision.enabled is True
         assert decision.source == "policy"
 
+    def test_document_export_uses_plan_without_model_judge(self):
+        decision = deterministic_plan_gate("重新将PDF导一个图片加文字的word", "document_export", "terminal", "auto")
+        assert decision.enabled is True
+        assert decision.source == "policy"
+
     def test_simple_read_only_skips_plan(self):
         decision = deterministic_plan_gate("解释一下这个函数的作用", "read_only_analysis", "terminal", "auto")
         assert decision.enabled is False
@@ -366,6 +401,9 @@ class TestIsWriteTool:
 
     def test_pdf_to_docx(self):
         assert is_write_tool("document.extract_pdf_to_docx")
+
+    def test_translate_docx(self):
+        assert is_write_tool("document.translate_docx")
 
 
 class TestIsReconTool:

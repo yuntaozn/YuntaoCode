@@ -90,8 +90,9 @@ class TaskStore:
 
     def append_log(self, task_id: str, level: str, message: str, data: dict[str, Any] | None = None) -> None:
         task = self._require(task_id)
+        task.updated_at = utc_now()
         event = {
-            "time": utc_now(),
+            "time": task.updated_at,
             "level": level,
             "message": message,
             "data": data or {},
@@ -128,6 +129,7 @@ class TaskStore:
         items = data.get("tasks") if isinstance(data, dict) else None
         if not isinstance(items, list):
             return
+        changed = False
         for item in items:
             if not isinstance(item, dict) or not item.get("id") or not item.get("tool"):
                 continue
@@ -145,7 +147,20 @@ class TaskStore:
                 )
             except (TypeError, ValueError):
                 continue
+            if record.status in {"queued", "running", "waiting_confirmation"}:
+                record.status = "failure"
+                record.error = record.error or "task interrupted before runtime startup"
+                record.updated_at = utc_now()
+                record.logs.append({
+                    "time": record.updated_at,
+                    "level": "error",
+                    "message": record.error,
+                    "data": {"reason": "runtime_startup_recovery"},
+                })
+                changed = True
             self._tasks[record.id] = record
+        if changed:
+            self._save()
 
     def _save(self) -> None:
         if not self.storage_path:

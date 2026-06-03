@@ -46,6 +46,9 @@ def test_list_specs_includes_public_metadata() -> None:
             input_schema={"type": "object"},
             requires_confirmation=False,
             local_only=True,
+            capability="demo.read",
+            artifacts=["text"],
+            idempotent=True,
         ),
         _noop_handler,
     )
@@ -61,6 +64,11 @@ def test_list_specs_includes_public_metadata() -> None:
             "requires_confirmation": False,
             "local_only": True,
             "dependencies": {},
+            "capability": "demo.read",
+            "artifacts": ["text"],
+            "long_running": False,
+            "retry_safe": False,
+            "idempotent": True,
         }
     ]
 

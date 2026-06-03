@@ -34,5 +34,6 @@ def test_result_event_is_recorded_as_runtime_result() -> None:
 def test_canonical_run_event_name_maps_runtime_events() -> None:
     assert canonical_run_event_name({"event": "status", "status": "thinking"}) == "run.status"
     assert canonical_run_event_name({"event": "tool", "status": "running"}) == "tool.started"
+    assert canonical_run_event_name({"event": "tool", "status": "partial"}) == "tool.partial"
     assert canonical_run_event_name({"event": "tool", "status": "failure"}) == "tool.failed"
     assert canonical_run_event_name({"event": "done"}) == "run.completed"

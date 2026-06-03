@@ -23,6 +23,7 @@ class TaskRunner:
         "document.export_markdown",
         "document.export_docx",
         "document.extract_pdf_to_docx",
+        "document.translate_docx",
         "document.generate_docx_from_outline",
         "document.export_pdf",
         "document.generate_ppt",
@@ -123,12 +124,24 @@ class TaskRunner:
                 settings=self.settings,
             )
             output = await tool.handler(task.input, context)
+            failure_reason = self._output_failure_reason(task.tool, output)
+            partial_reason = "" if failure_reason else self._output_partial_reason(task.tool, output)
             if backup_session:
-                backup_meta = backup_session.finish("success", int(backup_settings.get("keep_rounds") or 5))
+                backup_meta = backup_session.finish(
+                    "failure" if failure_reason else ("partial" if partial_reason else "success"),
+                    int(backup_settings.get("keep_rounds") or 5),
+                )
                 if backup_meta and isinstance(output, dict):
                     output["_backup"] = backup_meta
-            self.store.update(task_id, status="success", output=output)
-            self.store.append_log(task_id, "info", "task completed")
+            if failure_reason:
+                self.store.update(task_id, status="failure", output=output, error=failure_reason)
+                self.store.append_log(task_id, "error", failure_reason)
+            elif partial_reason:
+                self.store.update(task_id, status="partial", output=output, error=partial_reason)
+                self.store.append_log(task_id, "warning", partial_reason)
+            else:
+                self.store.update(task_id, status="success", output=output)
+                self.store.append_log(task_id, "info", "task completed")
         except Exception as exc:
             if backup_session:
                 try:
@@ -140,3 +153,42 @@ class TaskRunner:
                     self.store.append_log(task_id, "error", f"backup failed: {backup_exc}")
             self.store.update(task_id, status="failure", error=str(exc))
             self.store.append_log(task_id, "error", str(exc))
+
+    @staticmethod
+    def _output_failure_reason(tool_id: str, output: Any) -> str:
+        if not isinstance(output, dict):
+            return ""
+        if output.get("error") is True:
+            return _compact_failure_message(output, "tool reported an error")
+        if tool_id == "shell.run_command":
+            try:
+                exit_code = int(output.get("exit_code", 0) or 0)
+            except (TypeError, ValueError):
+                exit_code = 0
+            if exit_code != 0:
+                return _compact_failure_message(
+                    output,
+                    f"command exited with code {exit_code}",
+                )
+        return ""
+
+    @staticmethod
+    def _output_partial_reason(tool_id: str, output: Any) -> str:
+        if not isinstance(output, dict):
+            return ""
+        status = str(output.get("status") or "").strip().lower()
+        if status in {"partial", "partial_resumable"} or output.get("partial_resumable") is True:
+            reason = str(output.get("stopped_reason") or "").strip()
+            if status == "partial_resumable" or output.get("partial_resumable") is True:
+                return reason or "tool partially completed and can be resumed"
+            return reason or "tool partially completed"
+        return ""
+
+
+def _compact_failure_message(output: dict[str, Any], fallback: str) -> str:
+    stderr = str(output.get("stderr") or "").strip()
+    stdout = str(output.get("stdout") or "").strip()
+    detail = stderr or stdout
+    if not detail:
+        return fallback
+    return f"{fallback}: {detail[:500]}"

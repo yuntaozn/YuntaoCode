@@ -28,6 +28,7 @@ DOCUMENT_WRITE_TOOL_IDS: frozenset[str] = frozenset({
     "document.export_markdown",
     "document.export_docx",
     "document.extract_pdf_to_docx",
+    "document.translate_docx",
     "document.generate_docx_from_outline",
     "document.export_pdf",
     "document.generate_ppt",
@@ -196,6 +197,22 @@ def looks_like_read_only_request(content: str) -> bool:
 
 def looks_like_document_export_request(content: str) -> bool:
     text = content.lower()
+    pdf_word_pair = "pdf" in text and any(term in text for term in ("word", "docx"))
+    document_transform_action = any(
+        term in text
+        for term in (
+            "导", "转", "生成", "输出", "保存", "提取", "重做", "重新", "做成", "做一个", "做个",
+            "convert", "export", "extract", "generate", "save",
+        )
+    )
+    pdf_layout_terms = any(
+        term in text
+        for term in ("图文", "图片", "文字", "带图", "保留图片", "排版", "image", "text", "layout")
+    )
+    if pdf_word_pair and (document_transform_action or pdf_layout_terms):
+        return True
+    if "pdf" in text and pdf_layout_terms and document_transform_action:
+        return True
     export_terms = (
         "导出", "生成word", "生成 word", "生成docx", "生成 docx",
         "生成pdf", "生成 pdf", "生成ppt", "生成 ppt",
@@ -207,9 +224,44 @@ def looks_like_document_export_request(content: str) -> bool:
         "转换为docx", "转换为 docx",
         "pdf转word", "pdf 转 word", "pdf转docx", "pdf 转 docx",
         "pdf文字提取", "pdf 文本提取", "提取pdf", "提取 pdf",
+        "中文版", "翻译成中文", "翻译为中文", "翻译成中文版", "翻译为中文版",
+        "翻译中文版", "翻译个中文版", "转成中文", "转为中文", "中文翻译",
         ".docx", ".pdf", ".pptx", ".md",
     )
     return any(term in text for term in export_terms)
+
+
+def looks_like_full_document_output_request(content: str) -> bool:
+    text = content.lower()
+    if not text:
+        return False
+    pdf_word_pair = "pdf" in text and any(term in text for term in ("word", "docx"))
+    document_transform_action = any(
+        term in text
+        for term in (
+            "导", "转", "生成", "输出", "保存", "提取", "重做", "重新", "做成", "做一个", "做个",
+            "convert", "export", "extract", "generate", "save",
+        )
+    )
+    pdf_layout_terms = any(
+        term in text
+        for term in ("图文", "图片", "文字", "带图", "保留图片", "排版", "image", "text", "layout")
+    )
+    if pdf_word_pair and (document_transform_action or pdf_layout_terms):
+        return True
+    if "pdf" in text and pdf_layout_terms and document_transform_action:
+        return True
+    transform_terms = (
+        "翻译", "中文版", "转成中文", "转为中文", "中文翻译",
+        "pdf转word", "pdf 转 word", "pdf转docx", "pdf 转 docx",
+        "转存word", "转存 word", "转换成word", "转换为word",
+        "转换成 docx", "转换为 docx", "提取pdf", "提取 pdf",
+    )
+    full_terms = ("全文", "完整", "全部", "整本", "全书", "全篇", "每页", "所有")
+    return any(term in text for term in transform_terms) or (
+        any(term in text for term in full_terms)
+        and any(term in text for term in ("文档", "文件", "docx", "pdf", "word"))
+    )
 
 
 def looks_like_paper_task(content: str) -> bool:
@@ -233,7 +285,8 @@ def looks_like_follow_up_execution(content: str) -> bool:
     terms = (
         "继续", "再执行", "再次执行", "重新执行", "重试", "再试", "试试",
         "继续优化", "继续执行", "继续处理", "接着做", "往下做", "接着改",
-        "按这个改", "就这样改", "继续改", "继续做",
+        "按这个改", "就这样改", "继续改", "继续做", "再来一次",
+        "失败了", "没成功", "没生成", "没能成功", "没执行完", "不完整",
     )
     return any(term in text for term in terms)
 

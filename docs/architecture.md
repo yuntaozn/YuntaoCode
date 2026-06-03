@@ -63,9 +63,9 @@ Task Model 草案见 [task-model.md](task-model.md)，当前代码层基础契�
 
 ```text
 User Request
-  -> Intent Classifier
-  -> Agent Profile
-  -> Planning Policy
+  -> Model Task Understanding
+  -> Capability Router
+  -> Agent Profile / Planning Policy
   -> Task / Plan / Step
   -> Conversation Runner
   -> Tools / Model Providers
@@ -75,6 +75,7 @@ User Request
 这层策略目前集中在 `runtime/agent_strategy/`：
 
 - `classifiers.py`：意图分类、工具分类、进度观察和阶段判断。
+- `capability_router.py`：能力契约、模型路由提案和提案验证。
 - `profiles.py`：内部执行 Profile，例如直接问答、项目分析、代码修改、文档工作流、论文工作流。
 - `policy.py`：请求路由和计划执行开关，先做确定性判断，只有模糊请求才交给模型裁决。
 - `prompts.py`：阶段提示、修复提示、最终回答提示等 prompt 构建。
@@ -83,6 +84,15 @@ User Request
 新增能力时优先扩展这些模块，而不是继续向 `conversation_runner.py`
 主循环里堆分支。`conversation_runner.py` 应尽量保持为编排层：
 它负责串起上下文压缩、计划、模型流、工具调用、确认机制和最终消息落库。
+
+后续演进方向是让第一层任务理解更多交给模型，Runtime 负责能力目录与执行契约：
+
+```text
+Model proposes: goal + capability + tool + expected artifacts
+Runtime validates: known capability, known tool, permission, confirmation, trace, verification
+```
+
+Capability Router 草案见 [capability-router.md](capability-router.md)。
 
 ## 扩展原则
 

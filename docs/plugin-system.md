@@ -6,6 +6,11 @@ The current release only groups built-in tools by tool ID prefix, such as `files
 
 Plugins are capability providers for the Task Runtime. They can expose tools, dependencies, and permission needs, but task state, plan execution, trace, recovery, and audit remain runtime-level concerns.
 
+In the runtime architecture, a plugin should first be understood as a provider
+of Capability Contracts. The model may propose using a capability, but the
+runtime validates the capability, tool IDs, permissions, confirmations, and
+artifacts before execution. See [capability-router.md](capability-router.md).
+
 ## Current Boundary
 
 - Built-in capabilities are registered from `runtime/skills/`.
@@ -76,6 +81,10 @@ AI-built plugin drafts should live under a user-controlled local data directory:
       "id": "example.echo",
       "name": "Echo",
       "description": "Echo input text.",
+      "capability": "example.echo",
+      "artifacts": [],
+      "long_running": false,
+      "retry_safe": true,
       "requires_confirmation": false,
       "local_only": true
     }

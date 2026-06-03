@@ -1734,9 +1734,15 @@ function renderToolEvents(message) {
     return `
         <div class="tool-events">
             ${events.map((item) => {
-                const statusLabel = item.status === "running" ? t('tools.calling_short') : item.status === "success" ? t('tools.called') : t('tools.call_failed');
+                const statusLabel = item.status === "running"
+                    ? t('tools.calling_short')
+                    : item.status === "success"
+                        ? t('tools.called')
+                        : item.status === "partial"
+                            ? t('tools.call_partial')
+                            : t('tools.call_failed');
                 const header = `
-                    <div class="tool-event ${item.status === "failure" ? "failed" : ""}">
+                    <div class="tool-event ${item.status === "failure" ? "failed" : ""} ${item.status === "partial" ? "partial" : ""}">
                         <span>${escapeHtml(statusLabel)}</span>
                         <strong>${escapeHtml(item.name || item.tool)}</strong>
                     </div>
@@ -1782,7 +1788,7 @@ function renderToolOutput(item) {
     if (o.type === "file_write") {
         const label = o.created ? t('tools.file_created') : t('tools.file_written');
         const size = Number.isFinite(Number(o.size)) ? ` · ${Number(o.size)} bytes` : "";
-        return `<div class="tool-output-info">${label}：${escapeHtml(o.path || "")}${size}</div>${renderBackupBadge(o.backup)}`;
+        return `<div class="tool-output-info">${label}：${escapeHtml(o.path || "")}${size}</div>${renderFileWriteDetail(o)}${renderBackupBadge(o.backup)}`;
     }
     if (o.type === "bulk_replace") {
         const files = o.changed_files || [];
@@ -1841,6 +1847,33 @@ function renderToolOutput(item) {
         `;
     }
     return "";
+}
+
+function renderFileWriteDetail(o) {
+    const rows = [];
+    if (o.status === "partial_resumable" || o.partial_resumable) {
+        rows.push(t('tools.partial_resumable'));
+    } else if (o.complete === false && o.status) {
+        rows.push(t('tools.partial_output'));
+    }
+    if (o.translated_paragraph_count !== undefined && o.target_nonempty_goal !== undefined) {
+        rows.push(t('tools.translation_progress', {
+            done: Number(o.translated_paragraph_count || 0),
+            total: Number(o.target_nonempty_goal || 0),
+        }));
+    }
+    if (o.source_chars_done !== undefined && o.source_chars_total) {
+        const percent = Math.round((Number(o.source_chars_done || 0) / Number(o.source_chars_total || 1)) * 1000) / 10;
+        rows.push(t('tools.char_progress', {percent}));
+    }
+    if (o.manifest_path) {
+        rows.push(`${t('tools.manifest')}${o.manifest_path}`);
+    }
+    if (o.stopped_reason) {
+        rows.push(`${t('tools.stopped_reason')}${o.stopped_reason}`);
+    }
+    if (!rows.length) return "";
+    return `<div class="tool-output-detail">${rows.map((row) => `<div>${escapeHtml(row)}</div>`).join("")}</div>`;
 }
 
 function renderBackupBadge(backup) {

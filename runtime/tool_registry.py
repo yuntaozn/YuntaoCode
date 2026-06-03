@@ -23,6 +23,11 @@ class ToolSpec:
     requires_confirmation: bool = False
     local_only: bool = True
     optional_dependencies: list[str] | None = None
+    capability: str | None = None
+    artifacts: list[str] | None = None
+    long_running: bool = False
+    retry_safe: bool = False
+    idempotent: bool = False
 
     def check_dependencies(self) -> dict[str, bool]:
         if not self.optional_dependencies:
@@ -47,6 +52,11 @@ class ToolSpec:
             "requires_confirmation": self.requires_confirmation,
             "local_only": self.local_only,
             "dependencies": self.check_dependencies(),
+            "capability": self.capability,
+            "artifacts": list(self.artifacts or []),
+            "long_running": self.long_running,
+            "retry_safe": self.retry_safe,
+            "idempotent": self.idempotent,
         }
 
 

@@ -10,6 +10,8 @@ Tool 只能说明系统“能做什么”。
 
 Task 才能说明系统“正在为什么目标做什么、做到哪一步、依据是什么、失败后如何恢复”。
 
+第一层任务理解不应主要依赖关键词分类。更合适的分工是：模型负责理解用户目标并提出任务路由，Runtime 负责校验能力契约、权限、确认、产物和执行轨迹。
+
 如果把模型替换掉，YuntaoCode 仍应保留这些价值：
 
 - 本地任务状态管理。
@@ -24,6 +26,10 @@ Task 才能说明系统“正在为什么目标做什么、做到哪一步、依
 Task
   -> Goal
   -> Context
+  -> RouteProposal
+      -> Capability
+      -> Tool
+      -> ExpectedArtifact[]
   -> Plan
       -> Step[]
   -> Trace
@@ -58,6 +64,29 @@ Task 是一次用户目标的执行实例。
   "metadata": {}
 }
 ```
+
+## Route Proposal And Capability
+
+RouteProposal 是模型对任务的结构化理解，Capability 是 Runtime 对可执行能力的契约。
+
+```json
+{
+  "goal": "把 PDF 转成带图片和文字的 Word",
+  "capability_id": "document.pdf_to_docx",
+  "tool_id": "document.extract_pdf_to_docx",
+  "expected_artifacts": ["docx"],
+  "requires_write": true,
+  "requires_verification": true,
+  "confidence": 0.86
+}
+```
+
+原则：
+
+- 模型可以提出路由，但不能发明不存在的能力或工具。
+- 系统只接受通过 Capability Contract 验证的提案。
+- 需要文件产物的任务必须产生真实 artifact，不能只用自然语言宣布完成。
+- 任务成功由 Trace、ToolEvent、Artifact Verification 决定。
 
 ## Lifecycle
 

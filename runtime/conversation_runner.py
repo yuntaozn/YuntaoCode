@@ -140,7 +140,9 @@ class ConversationRunExecutor:
             execution_mode=execution_mode,
             plan_mode=plan_mode,
             workspace_path=workspace.path,
+            expected_document_coverage=self._expects_full_document_output(content, conversation),
         )
+        self._active_task_contract = task_contract
         messages.append({
             "role": "system",
             "content": self._task_contract_prompt(task_contract),
@@ -1261,13 +1263,24 @@ class ConversationRunExecutor:
             change_summary=change_summary,
             mode=effective_mode,
             requires_code_write=bool(task_contract.get("requires_write")),
+            expected_document_coverage=bool(task_contract.get("expected_document_coverage")),
             contract_failed=tool_contract_failed,
             max_rounds_exceeded=max_rounds_exceeded,
         )
         metadata["run_result"] = run_result
         self.write_event({"event": "result", "result": run_result})
         await self.flush()
-        if self._needs_synthesized_final_answer(assistant_content, tool_events):
+        run_result_status = str(run_result.get("status") or "")
+        if run_result_status == "failure" and not (
+            max_rounds_exceeded or tool_contract_failed
+        ):
+            assistant_content = self._synthesize_failure_answer(
+                workspace.path,
+                tool_events,
+                run_result,
+            )
+            metadata["synthesized_final_answer"] = True
+        elif self._needs_synthesized_final_answer(assistant_content, tool_events):
             assistant_content = self._synthesize_final_answer(
                 workspace.path,
                 tool_events,
@@ -1310,7 +1323,7 @@ class ConversationRunExecutor:
         }
         if metadata.get("usage"):
             done_event["usage"] = metadata["usage"]
-        done_event["run_status"] = "failure" if (max_rounds_exceeded or tool_contract_failed) else "success"
+        done_event["run_status"] = self._run_status_from_result(run_result)
         self.write_event(done_event)
         await self.flush()
 

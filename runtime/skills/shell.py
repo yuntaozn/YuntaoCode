@@ -117,10 +117,11 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
     command = (input_data.get("command") or "").strip()
     if not command:
         raise ValueError("command is required")
-    command = _compose_command(command, input_data.get("args"))
+    argv = _normalize_args(input_data.get("args"))
+    display_command = _compose_command(command, argv)
 
-    if _is_dangerous(command):
-        raise ValueError(f"command rejected as potentially destructive: {command[:100]}")
+    if _is_dangerous(display_command):
+        raise ValueError(f"command rejected as potentially destructive: {display_command[:100]}")
 
     cwd_raw = input_data.get("cwd")
     if cwd_raw:
@@ -130,16 +131,29 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
 
     timeout = min(int(input_data.get("timeout", DEFAULT_TIMEOUT)), MAX_TIMEOUT)
 
-    context.log("info", f"running: {command[:200]}", {"cwd": cwd, "timeout": timeout})
+    context.log("info", f"running: {display_command[:200]}", {"cwd": cwd, "timeout": timeout})
 
     timed_out = False
     stdout_bytes = b""
     stderr_bytes = b""
     try:
         process_kwargs: dict[str, Any] = {}
-        if sys.platform.startswith("win"):
+        if argv:
+            if sys.platform.startswith("win"):
+                process_kwargs["creationflags"] = _WIN_NO_WINDOW
+            else:
+                process_kwargs["start_new_session"] = True
+            process = await asyncio.create_subprocess_exec(
+                command,
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+                **process_kwargs,
+            )
+        elif sys.platform.startswith("win"):
             # PowerShell v5 doesn't support &&, replace with ;
-            safe_command = command.replace("&&", ";")
+            safe_command = display_command.replace("&&", ";")
             ps_command = (
                 "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
                 "$OutputEncoding = [System.Text.Encoding]::UTF8; "
@@ -162,7 +176,7 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
         else:
             process_kwargs["start_new_session"] = True
             process = await asyncio.create_subprocess_shell(
-                command,
+                display_command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
@@ -198,7 +212,10 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
     )
 
     return {
-        "command": command,
+        "command": display_command,
+        "executable": command,
+        "args": argv,
+        "display_command": display_command,
         "cwd": cwd,
         "exit_code": exit_code,
         "stdout": stdout,

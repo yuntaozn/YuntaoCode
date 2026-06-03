@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -43,3 +44,21 @@ async def test_run_command_uses_args_array(tmp_path: Path) -> None:
     assert "ARGS_OK" in result["stdout"]
     assert "python" in result["command"]
     assert "-c" in result["command"]
+
+
+@pytest.mark.asyncio
+async def test_run_command_passes_multiline_args_without_shell_requoting(tmp_path: Path) -> None:
+    context = FakeContext(PathGuard([tmp_path]))
+
+    script = "value = \"引号'和中文冒号：OK\"\nprint(value)"
+    result = await run_command(
+        {
+            "command": sys.executable,
+            "args": ["-c", script],
+            "timeout": 10,
+        },
+        context,
+    )
+
+    assert result["exit_code"] == 0
+    assert "引号'和中文冒号：OK" in result["stdout"]

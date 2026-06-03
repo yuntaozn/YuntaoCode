@@ -892,6 +892,12 @@ button {
     border-color: rgba(180, 35, 24, 0.16);
 }
 
+.tool-event.partial {
+    color: #8a5a00;
+    background: rgba(245, 158, 11, 0.10);
+    border-color: rgba(245, 158, 11, 0.22);
+}
+
 /* Tool output: shell */
 .tool-output-shell {
     margin: 4px 0 8px;
@@ -1142,6 +1148,19 @@ button {
     color: var(--danger);
     background: rgba(180, 35, 24, 0.08);
     border: 1px solid rgba(180, 35, 24, 0.16);
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.tool-output-detail {
+    display: grid;
+    gap: 3px;
+    margin: 4px 0 8px;
+    padding: 7px 10px;
+    color: #56636d;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.18);
     border-radius: 8px;
     font-size: 12px;
     line-height: 1.5;

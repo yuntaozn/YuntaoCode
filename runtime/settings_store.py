@@ -38,7 +38,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         },
         "qwen": {
             "name": "通义千问 / OpenAI Compatible",
-            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v3",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
             "api_key": "",
             "api_key_required": True,
             "chat_path": "/chat/completions",
