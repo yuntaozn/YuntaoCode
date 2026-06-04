@@ -555,6 +555,79 @@ class TestNativeToolCalls:
 
         assert strip_native_tool_call_blocks(text) == "before  after"
 
+    def test_extract_xml_style_function_call_block(self):
+        text = (
+            "让我先查看当前目录。"
+            "<filesystem.scan_folder>"
+            "<arg-key>path</arg-key>"
+            "<arg-value>D:\\365接箍管料切断机\\365接箍管料切断机</arg-value>"
+            "<arg-key>max_depth</arg-key>"
+            "<arg-value>3</arg-value>"
+            "</filesystem.scan_folder>"
+        )
+
+        result = extract_native_tool_calls(text, 4)
+
+        assert result == [
+            {
+                "id": "native_4_0",
+                "type": "function",
+                "function": {
+                    "name": "filesystem.scan_folder",
+                    "arguments": (
+                        '{"path": "D:\\\\365接箍管料切断机\\\\365接箍管料切断机", '
+                        '"max_depth": "3"}'
+                    ),
+                },
+            }
+        ]
+
+    def test_strip_xml_style_function_call_block(self):
+        text = (
+            "before "
+            "<filesystem.scan_folder>"
+            "<arg-key>path</arg-key><arg-value>.</arg-value>"
+            "</filesystem.scan_folder>"
+            " after"
+        )
+
+        assert strip_native_tool_call_blocks(text) == "before  after"
+
+    def test_extract_mcreference_toolcall_block(self):
+        text = (
+            "我来查看目录。"
+            '<mcreference><toolcall>{"name":"filesystem.list_directory",'
+            '"query_language":"Chinese",'
+            '"params":{"dir_path":"D:\\\\365接箍管料切断机\\\\365接箍管料切断机","max_depth":3}}'
+            "</toolcall></mcreference>"
+        )
+
+        result = extract_native_tool_calls(text, 5)
+
+        assert result == [
+            {
+                "id": "native_5_0",
+                "type": "function",
+                "function": {
+                    "name": "filesystem.list_directory",
+                    "arguments": (
+                        '{"dir_path": "D:\\\\365接箍管料切断机\\\\365接箍管料切断机", '
+                        '"max_depth": 3, '
+                        '"path": "D:\\\\365接箍管料切断机\\\\365接箍管料切断机"}'
+                    ),
+                },
+            }
+        ]
+
+    def test_strip_mcreference_toolcall_block(self):
+        text = (
+            "before "
+            '<mcreference><toolcall>{"name":"filesystem.scan_folder","params":{"path":"."}}</toolcall></mcreference>'
+            " after"
+        )
+
+        assert strip_native_tool_call_blocks(text) == "before  after"
+
 
 class TestToolSignature:
     def test_deterministic(self):

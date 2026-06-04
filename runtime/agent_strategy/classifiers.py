@@ -9,6 +9,7 @@ They can be tested in isolation without a Tornado handler or runtime context.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from runtime.tool_aliases import TOOL_ID_ALIASES, normalize_tool_id
@@ -55,6 +56,22 @@ POST_WRITE_VERIFY_TOOL_IDS: frozenset[str] = frozenset({
 
 NATIVE_TOOL_CALL_BEGIN = "<|FunctionCallBegin|>"
 NATIVE_TOOL_CALL_END = "<|FunctionCallEnd|>"
+XML_TOOL_CALL_PATTERN = re.compile(
+    r"<(?P<name>[A-Za-z][\w]*(?:[._][\w]+)+)>(?P<body>.*?)</(?P=name)>",
+    re.DOTALL,
+)
+XML_TOOL_ARG_PATTERN = re.compile(
+    r"<arg-key>(?P<key>.*?)</arg-key>\s*<arg-value>(?P<value>.*?)</arg-value>",
+    re.DOTALL,
+)
+MCP_REFERENCE_TOOL_CALL_PATTERN = re.compile(
+    r"<mcreference\b[^>]*>\s*<toolcall\b[^>]*>.*?</toolcall>\s*</mcreference>",
+    re.DOTALL | re.IGNORECASE,
+)
+TAGGED_TOOL_CALL_PATTERN = re.compile(
+    r"<toolcall\b[^>]*>(?P<body>.*?)</toolcall>",
+    re.DOTALL | re.IGNORECASE,
+)
 
 POST_WRITE_READ_TOOL_IDS: frozenset[str] = frozenset({
     "filesystem.read_file",
@@ -554,11 +571,21 @@ def extract_native_tool_calls(text: str, round_index: int = 0) -> list[dict[str,
             call = _native_item_to_tool_call(item, round_index, len(calls))
             if call:
                 calls.append(call)
+    for item in xml_style_tool_call_blocks(text):
+        call = _native_item_to_tool_call(item, round_index, len(calls))
+        if call:
+            calls.append(call)
+    for item in tagged_tool_call_blocks(text):
+        call = _native_item_to_tool_call(item, round_index, len(calls))
+        if call:
+            calls.append(call)
     return calls
 
 
 def strip_native_tool_call_blocks(text: str) -> str:
     """Remove raw local-model function-call blocks from display text."""
+    text = strip_xml_style_tool_call_blocks(text)
+    text = strip_tagged_tool_call_blocks(text)
     if NATIVE_TOOL_CALL_BEGIN not in text:
         return text
     result: list[str] = []
@@ -594,6 +621,62 @@ def native_tool_call_blocks(text: str) -> list[str]:
     return blocks
 
 
+def xml_style_tool_call_blocks(text: str) -> list[dict[str, Any]]:
+    """Parse XML-like function calls emitted as assistant text by some models.
+
+    Example:
+    ``<filesystem.scan_folder><arg-key>path</arg-key><arg-value>.</arg-value></filesystem.scan_folder>``
+    """
+    calls: list[dict[str, Any]] = []
+    for match in XML_TOOL_CALL_PATTERN.finditer(text):
+        body = match.group("body")
+        arguments: dict[str, Any] = {}
+        for arg_match in XML_TOOL_ARG_PATTERN.finditer(body):
+            key = _xml_tool_text(arg_match.group("key"))
+            if not key:
+                continue
+            arguments[key] = _xml_tool_text(arg_match.group("value"))
+        if arguments:
+            calls.append({"name": match.group("name"), "parameters": arguments})
+    return calls
+
+
+def strip_xml_style_tool_call_blocks(text: str) -> str:
+    if "<arg-key>" not in text or "<arg-value>" not in text:
+        return text
+    return XML_TOOL_CALL_PATTERN.sub(
+        lambda match: "" if XML_TOOL_ARG_PATTERN.search(match.group("body")) else match.group(0),
+        text,
+    )
+
+
+def tagged_tool_call_blocks(text: str) -> list[dict[str, Any]]:
+    """Parse ``<toolcall>{...}</toolcall>`` blocks emitted as assistant text."""
+    calls: list[dict[str, Any]] = []
+    for match in TAGGED_TOOL_CALL_PATTERN.finditer(text):
+        block = _xml_tool_text(match.group("body"))
+        calls.extend(_parse_native_tool_call_block(block))
+    return calls
+
+
+def strip_tagged_tool_call_blocks(text: str) -> str:
+    if "<toolcall" not in text.lower():
+        return text
+    text = MCP_REFERENCE_TOOL_CALL_PATTERN.sub("", text)
+    return TAGGED_TOOL_CALL_PATTERN.sub("", text)
+
+
+def _xml_tool_text(value: str) -> str:
+    return (
+        value.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+        .replace("&quot;", '"')
+        .replace("&apos;", "'")
+        .strip()
+    )
+
+
 def _parse_native_tool_call_block(block: str) -> list[dict[str, Any]]:
     try:
         value = json.loads(block)
@@ -625,11 +708,14 @@ def _native_item_to_tool_call(
     name = str(name).strip()
     if not name:
         return None
-    arguments = (
-        item.get("parameters")
-        if "parameters" in item
-        else item.get("arguments", function.get("arguments", {}))
-    )
+    if "parameters" in item:
+        arguments = item.get("parameters")
+    elif "params" in item:
+        arguments = item.get("params")
+    elif "input" in item:
+        arguments = item.get("input")
+    else:
+        arguments = item.get("arguments", function.get("arguments", {}))
     arguments = _normalize_native_tool_arguments(arguments)
     return {
         "id": item.get("id") or f"native_{round_index}_{index}",

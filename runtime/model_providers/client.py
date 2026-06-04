@@ -318,7 +318,7 @@ def extract_stream_event(payload: dict[str, Any]) -> dict[str, Any]:
         event["message"] = message
     if reasoning:
         event["reasoning"] = reasoning
-    tool_calls = normalize_tool_call_chunks(delta.get("tool_calls") or [])
+    tool_calls = normalize_tool_call_chunks(delta.get("tool_calls") or delta.get("function_call") or [])
     if tool_calls:
         event["tool_calls"] = tool_calls
     if usage:
@@ -345,7 +345,7 @@ def extract_direct_stream_event(payload: dict[str, Any]) -> dict[str, Any]:
         event["message"] = message
     if reasoning:
         event["reasoning"] = reasoning
-    tool_calls = normalize_tool_call_chunks(payload.get("tool_calls") or [])
+    tool_calls = normalize_tool_call_chunks(payload.get("tool_calls") or payload.get("function_call") or [])
     if tool_calls:
         event["tool_calls"] = tool_calls
     return event
@@ -368,6 +368,11 @@ def normalize_tool_call_chunks(raw_tool_calls: Any) -> list[dict[str, Any]]:
         function = item.get("function") or {}
         if not isinstance(function, dict):
             function = {}
+        if not function and ("name" in item or "arguments" in item):
+            function = {
+                "name": item.get("name") or "",
+                "arguments": item.get("arguments") or "",
+            }
         chunks.append({
             "index": item.get("index", fallback_index),
             "id": item.get("id"),
