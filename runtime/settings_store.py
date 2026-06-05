@@ -17,10 +17,13 @@ from .memory_store import MemoryStore
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "settings_version": 3,
+    "settings_version": 4,
     "backend_url": "http://127.0.0.1:8088",
     "default_model": "doubao-seed-2-0-pro-260215",
     "access_scope": "project_only",
+    "planning_policy": "auto",
+    "confirmation_policy": "auto",
+    # Deprecated compatibility alias for planning_policy.
     "execution_mode": "auto",
     "backups": {
         "enabled": True,
@@ -156,6 +159,24 @@ VALID_ASSISTANT_MODES = {"terminal", "document", "coding", "paper"}
 LEGACY_ASSISTANT_MODE_ALIASES = {"document": "terminal", "coding": "terminal", "paper": "terminal"}
 VALID_ACCESS_SCOPES = {"project_only", "full_local"}
 VALID_EXECUTION_MODES = {"conservative", "auto", "aggressive"}
+VALID_PLANNING_POLICIES = {"off", "auto", "always"}
+VALID_CONFIRMATION_POLICIES = {"conservative", "auto", "aggressive"}
+
+
+def planning_policy_from_legacy_execution_mode(value: Any) -> str:
+    return {
+        "conservative": "off",
+        "auto": "auto",
+        "aggressive": "always",
+    }.get(str(value or "").strip().lower(), "auto")
+
+
+def legacy_execution_mode_from_planning_policy(value: Any) -> str:
+    return {
+        "off": "conservative",
+        "auto": "auto",
+        "always": "aggressive",
+    }.get(str(value or "").strip().lower(), "auto")
 
 
 class SettingsStore:
@@ -200,6 +221,8 @@ class SettingsStore:
             "models": self.get_models(),
             "assistant_mode": self.get_assistant_mode(default=""),
             "access_scope": self.get_access_scope(),
+            "planning_policy": self.get_planning_policy(),
+            "confirmation_policy": self.get_confirmation_policy(),
             "execution_mode": self.get_execution_mode(),
             "backups": self.get_backup_settings(),
             "memories": self.get_memory_settings(),
@@ -231,6 +254,24 @@ class SettingsStore:
                 self._settings["providers"] = deepcopy(DEFAULT_SETTINGS["providers"])
             if not self._settings.get("models"):
                 self._settings["models"] = deepcopy(DEFAULT_SETTINGS["models"])
+        if version < 4:
+            loaded_planning_policy = loaded.get("planning_policy") if isinstance(loaded, dict) else None
+            loaded_confirmation_policy = loaded.get("confirmation_policy") if isinstance(loaded, dict) else None
+            self._settings["planning_policy"] = (
+                str(loaded_planning_policy)
+                if loaded_planning_policy in VALID_PLANNING_POLICIES
+                else planning_policy_from_legacy_execution_mode(
+                    loaded.get("execution_mode") if isinstance(loaded, dict) else None
+                )
+            )
+            self._settings["confirmation_policy"] = (
+                str(loaded_confirmation_policy)
+                if loaded_confirmation_policy in VALID_CONFIRMATION_POLICIES
+                else DEFAULT_SETTINGS["confirmation_policy"]
+            )
+            self._settings["execution_mode"] = legacy_execution_mode_from_planning_policy(
+                self._settings["planning_policy"]
+            )
         if version < DEFAULT_SETTINGS["settings_version"]:
             self._settings["settings_version"] = DEFAULT_SETTINGS["settings_version"]
             self._save()
@@ -248,10 +289,20 @@ class SettingsStore:
             access_scope = str(payload["access_scope"])
             if access_scope in VALID_ACCESS_SCOPES:
                 self._settings["access_scope"] = access_scope
-        if payload.get("execution_mode"):
+        if payload.get("planning_policy"):
+            planning_policy = str(payload["planning_policy"])
+            if planning_policy in VALID_PLANNING_POLICIES:
+                self._settings["planning_policy"] = planning_policy
+                self._settings["execution_mode"] = legacy_execution_mode_from_planning_policy(planning_policy)
+        elif payload.get("execution_mode"):
             execution_mode = str(payload["execution_mode"])
             if execution_mode in VALID_EXECUTION_MODES:
                 self._settings["execution_mode"] = execution_mode
+                self._settings["planning_policy"] = planning_policy_from_legacy_execution_mode(execution_mode)
+        if payload.get("confirmation_policy"):
+            confirmation_policy = str(payload["confirmation_policy"])
+            if confirmation_policy in VALID_CONFIRMATION_POLICIES:
+                self._settings["confirmation_policy"] = confirmation_policy
         if isinstance(payload.get("backups"), dict):
             incoming_backups = payload["backups"]
             backups = self._settings.setdefault("backups", {})
@@ -410,6 +461,8 @@ class SettingsStore:
             "name": model_id,
             "provider": "qwen",
             "context_limit": 128000,
+            "max_output_tokens": 0,
+            "output_token_param": "",
             "supports_tools": True,
             "thinking_mode": "",
             "request_options": {},
@@ -437,8 +490,18 @@ class SettingsStore:
         return scope if scope in VALID_ACCESS_SCOPES else DEFAULT_SETTINGS["access_scope"]
 
     def get_execution_mode(self) -> str:
-        mode = str(self._settings.get("execution_mode") or DEFAULT_SETTINGS["execution_mode"])
-        return mode if mode in VALID_EXECUTION_MODES else DEFAULT_SETTINGS["execution_mode"]
+        """Return the deprecated planning-policy compatibility alias."""
+        return legacy_execution_mode_from_planning_policy(self.get_planning_policy())
+
+    def get_planning_policy(self) -> str:
+        policy = str(self._settings.get("planning_policy") or "").strip().lower()
+        if policy in VALID_PLANNING_POLICIES:
+            return policy
+        return planning_policy_from_legacy_execution_mode(self._settings.get("execution_mode"))
+
+    def get_confirmation_policy(self) -> str:
+        policy = str(self._settings.get("confirmation_policy") or "").strip().lower()
+        return policy if policy in VALID_CONFIRMATION_POLICIES else DEFAULT_SETTINGS["confirmation_policy"]
 
     def get_backup_settings(self) -> dict[str, Any]:
         backups = merge_settings(
@@ -553,12 +616,21 @@ def normalize_model_config(value: dict[str, Any]) -> dict[str, Any]:
         context_limit = int(value.get("context_limit") or value.get("max_context_tokens") or 128000)
     except (TypeError, ValueError):
         context_limit = 128000
+    try:
+        max_output_tokens = int(value.get("max_output_tokens") or 0)
+    except (TypeError, ValueError):
+        max_output_tokens = 0
+    output_token_param = str(value.get("output_token_param") or "").strip()
+    if output_token_param not in {"", "max_tokens", "max_completion_tokens", "max_output_tokens"}:
+        output_token_param = ""
     model = {
         "id": model_id,
         "name": str(value.get("name") or value.get("label") or model_id).strip(),
         "provider": normalize_id(value.get("provider") or value.get("provider_id") or "qwen"),
         "api_model": normalize_id(value.get("api_model") or value.get("model_name") or model_id),
         "context_limit": max(4096, min(context_limit, 2_000_000)),
+        "max_output_tokens": max(0, min(max_output_tokens, 1_000_000)),
+        "output_token_param": output_token_param,
         "supports_tools": bool(value.get("supports_tools", True)),
         "supports_stream": bool(value.get("supports_stream", True)),
         "thinking_mode": str(value.get("thinking_mode") or "").strip(),

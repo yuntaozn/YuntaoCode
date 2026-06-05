@@ -9,7 +9,8 @@ Plugins are capability providers for the Task Runtime. They can expose tools, de
 In the runtime architecture, a plugin should first be understood as a provider
 of Capability Contracts. The model may propose using a capability, but the
 runtime validates the capability, tool IDs, permissions, confirmations, and
-artifacts before execution. See [capability-router.md](capability-router.md).
+artifacts before execution. See [capability-runtime.md](capability-runtime.md)
+and [capability-router.md](capability-router.md).
 
 ## Current Boundary
 

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
+from runtime.api import conversations as conversations_api
 from runtime.api.conversations import ConversationMessagesStreamHandler
 
 
@@ -13,6 +18,256 @@ def _handler_with_contract() -> ConversationMessagesStreamHandler:
         "expected_document_coverage": True,
     }
     return handler
+
+
+def test_task_contract_prompt_is_model_declaration_not_fixed_target() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    handler.get_lang = lambda: "zh-CN"
+
+    prompt = handler._task_contract_prompt({
+        "workspace_path": r"D:\ifctool",
+        "access_scope": "project_only",
+        "planning_policy": "auto",
+        "confirmation_policy": "auto",
+        "intent": "write_required",
+        "goal": "创建模型查看页面",
+        "deliverables": [{"kind": "file", "path_hint": "viewer.html"}],
+        "routing_strategy": "model_first_task_contract",
+        "requires_write": True,
+        "requires_verification": True,
+        "success_conditions": ["write_tool_success"],
+    })
+
+    assert "模型声明的任务理解" in prompt
+    assert "创建模型查看页面" in prompt
+    assert "仅作提示，不固定路径" in prompt
+    assert "执行策略由你自行选择" in prompt
+    assert "必须遵守以下硬条件" not in prompt
+
+
+def test_runtime_confirmation_message_describes_file_creation(tmp_path: Path) -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    handler._active_task_contract = {"goal": "重写 HTML 示例页"}
+    handler._tool_display_name = lambda _tool_id: "写入文件"
+    target = tmp_path / "index.html"
+
+    message = handler._runtime_confirmation_message(
+        "filesystem.write_file",
+        {"path": str(target), "content": "<!doctype html>"},
+    )
+
+    assert "任务目标：重写 HTML 示例页" in message
+    assert "操作：创建文件" in message
+    assert "工具：写入文件（filesystem.write_file）" in message
+    assert f"目标：{target}" in message
+    assert "内容大小：15 字符" in message
+
+
+def test_runtime_confirmation_message_describes_file_overwrite(tmp_path: Path) -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    handler._tool_display_name = lambda _tool_id: "写入文件"
+    target = tmp_path / "index.html"
+    target.write_text("old", encoding="utf-8")
+
+    message = handler._runtime_confirmation_message(
+        "filesystem.write_file",
+        {"path": str(target), "content": "new"},
+    )
+
+    assert "操作：覆盖/更新文件" in message
+    assert f"目标：{target}" in message
+
+
+def test_runtime_confirmation_message_describes_patch_targets() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    handler._tool_display_name = lambda _tool_id: "应用代码补丁"
+
+    message = handler._runtime_confirmation_message(
+        "code.apply_patch",
+        {
+            "patch": (
+                "*** Begin Patch\n"
+                "*** Update File: src/app.js\n"
+                "@@\n"
+                "-old\n"
+                "+new\n"
+                "*** Add File: src/new.js\n"
+                "+content\n"
+                "*** End Patch"
+            ),
+        },
+    )
+
+    assert "操作：应用代码补丁" in message
+    assert "目标：src/app.js, src/new.js" in message
+
+
+def test_verification_runtime_guard_blocks_long_running_server_after_write() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    handler._active_task_contract = {"requires_verification": True}
+    handler._active_tool_events = [
+        {
+            "tool": "filesystem.write_file",
+            "status": "success",
+            "input": {"path": r"D:\ifctool\viewer.html"},
+        }
+    ]
+    handler._active_current_stage = "verifier"
+    handler._active_post_write_mode = True
+
+    message = handler._verification_runtime_tool_guard(
+        "shell.run_command",
+        {"command": "python -m http.server 8080", "timeout": 5},
+    )
+
+    assert message
+    assert "长驻服务" in message
+    assert "不能作为本轮写入后的自动验证" in message
+
+
+def test_shell_output_preview_includes_timeout_fields() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+
+    preview = handler._tool_output_preview(
+        "shell.run_command",
+        {"exit_code": 1, "stdout": "", "stderr": "", "timed_out": True, "timeout": 5},
+    )
+
+    assert preview["type"] == "shell"
+    assert preview["timed_out"] is True
+    assert preview["timeout"] == 5
+
+
+def test_transform_text_output_preview_reports_integrity() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+
+    preview = handler._tool_output_preview(
+        "filesystem.transform_text",
+        {
+            "path": r"D:\ifctool\viewer.html",
+            "transform": "html_unescape",
+            "changed": True,
+            "before_size": 100,
+            "after_size": 80,
+            "integrity_before": {"checked": True, "valid": False},
+            "integrity": {"checked": True, "valid": True},
+        },
+    )
+
+    assert preview["type"] == "file_transform"
+    assert preview["path"] == r"D:\ifctool\viewer.html"
+    assert preview["transform"] == "html_unescape"
+    assert preview["integrity"]["valid"] is True
+
+
+def test_execution_notice_reports_invalid_verification_method() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+
+    notice = handler._build_execution_notice(
+        "terminal",
+        "已修复 viewer.html",
+        [
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": r"D:\ifctool\viewer.html"},
+            },
+            {
+                "tool": "shell.run_command",
+                "status": "failure",
+                "input": {"command": "python -m http.server 8080", "timeout": 5},
+                "output": {"exit_code": 1, "timed_out": True, "timeout": 5},
+                "error": "command timed out after 5s",
+            },
+        ],
+        requires_code_write=True,
+    )
+
+    assert notice["reason"] == "invalid_verification_method"
+    assert "长驻服务" in notice["message"]
+
+
+def test_short_follow_up_uses_model_contract_when_conversation_has_task_context() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    conversation = SimpleNamespace(messages=[
+        SimpleNamespace(role="user", content="重写一个 3D 模型查看器", metadata={}),
+        SimpleNamespace(
+            role="assistant",
+            content="已创建 viewer.html",
+            metadata={"task_contract": {"intent": "write_required", "goal": "创建模型查看器"}},
+        ),
+        SimpleNamespace(role="user", content="现在想加能选构件的能力", metadata={}),
+    ])
+
+    assert handler._should_use_model_task_contract(
+        "现在想加能选构件的能力",
+        "answer_only",
+        False,
+        conversation,
+    )
+
+
+def test_short_greeting_without_task_context_skips_model_contract() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    conversation = SimpleNamespace(messages=[
+        SimpleNamespace(role="user", content="你好", metadata={}),
+    ])
+
+    assert not handler._should_use_model_task_contract(
+        "你好",
+        "answer_only",
+        False,
+        conversation,
+    )
+
+
+@pytest.mark.asyncio
+async def test_model_task_contract_receives_recent_conversation_context(monkeypatch: Any) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_generate_chat_completion(**kwargs: Any) -> tuple[str, dict[str, Any]]:
+        captured["messages"] = kwargs["messages"]
+        return (
+            '{"intent":"write_required","requires_write":true,"goal":"添加构件选择功能"}',
+            {},
+        )
+
+    monkeypatch.setattr(conversations_api, "generate_chat_completion", fake_generate_chat_completion)
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    handler.runtime = SimpleNamespace(
+        settings=SimpleNamespace(get_access_scope=lambda: "project_only"),
+    )
+
+    contract = await handler._decide_task_contract(
+        model="fake-model",
+        messages=[
+            {"role": "system", "content": "large tool catalog"},
+            {"role": "user", "content": "重写一个 3D 模型查看器"},
+            {"role": "assistant", "content": "已创建 viewer.html"},
+            {"role": "user", "content": "现在想加能选构件的能力"},
+        ],
+        workspace_path=r"D:\ifctool",
+        user_content="现在想加能选构件的能力",
+        fallback_contract=handler._build_task_contract(
+            task_intent="answer_only",
+            mode="terminal",
+            planning_policy="auto",
+            confirmation_policy="auto",
+            workspace_path=r"D:\ifctool",
+        ),
+        hard_no_write_lock=False,
+        expected_document_coverage=False,
+    )
+
+    assert contract["intent"] == "write_required"
+    assert [item["role"] for item in captured["messages"]] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert captured["messages"][-1]["content"] == "现在想加能选构件的能力"
+    assert all(item["content"] != "large tool catalog" for item in captured["messages"])
 
 
 def test_document_contract_guard_blocks_translation_script_write() -> None:
@@ -74,6 +329,61 @@ def test_document_contract_guard_blocks_pdf_to_word_shell_fallback() -> None:
 
     assert message
     assert "document.extract_pdf_to_docx" in message
+
+
+def test_ai_plugin_draft_guard_blocks_workspace_ai_plugins_write() -> None:
+    handler = _handler_with_contract()
+    handler.runtime = SimpleNamespace(settings=SimpleNamespace(data_dir=Path(r"C:\Users\wutao\AppData\Local\YuntaoCode")))
+
+    message = handler._ai_plugin_draft_workspace_guard(
+        "filesystem.write_file",
+        {
+            "path": r"D:\code\YuntaoCode\ai-plugins\video-generator\plugin.json",
+            "content": "{}",
+        },
+        r"D:\code\YuntaoCode",
+    )
+
+    assert message
+    assert "不能写入当前工作区的 ai-plugins/" in message
+    assert r"C:\Users\wutao\AppData\Local\YuntaoCode\ai-plugins\<plugin-id>" in message
+
+
+def test_ai_plugin_draft_guard_blocks_apply_patch_to_workspace_ai_plugins() -> None:
+    handler = _handler_with_contract()
+    handler.runtime = SimpleNamespace(settings=SimpleNamespace(data_dir=Path(r"C:\Users\wutao\AppData\Local\YuntaoCode")))
+
+    message = handler._ai_plugin_draft_workspace_guard(
+        "code.apply_patch",
+        {
+            "patch": (
+                "*** Begin Patch\n"
+                "*** Add File: ai-plugins/video-generator/plugin.json\n"
+                "+{}\n"
+                "*** End Patch"
+            ),
+        },
+        r"D:\code\YuntaoCode",
+    )
+
+    assert message
+    assert "不能写入当前工作区的 ai-plugins/" in message
+
+
+def test_ai_plugin_draft_guard_allows_normal_workspace_write() -> None:
+    handler = _handler_with_contract()
+    handler.runtime = SimpleNamespace(settings=SimpleNamespace(data_dir=Path(r"C:\Users\wutao\AppData\Local\YuntaoCode")))
+
+    message = handler._ai_plugin_draft_workspace_guard(
+        "filesystem.write_file",
+        {
+            "path": r"D:\code\YuntaoCode\docs\plugin-system.md",
+            "content": "ok",
+        },
+        r"D:\code\YuntaoCode",
+    )
+
+    assert message == ""
 
 
 def test_document_contract_guard_allows_builtin_translation_tool() -> None:

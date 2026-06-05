@@ -1322,6 +1322,7 @@ button {
     padding: 8px 16px;
     display: flex;
     align-items: center;
+    gap: 12px;
     justify-content: space-between;
     background: var(--soft);
     border: 1px solid var(--line);
@@ -1338,6 +1339,8 @@ button {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
+    flex: 1 1 auto;
 }
 .status-bar-dot {
     width: 8px;
@@ -1353,27 +1356,36 @@ button {
 .status-bar-text {
     font-weight: 500;
     color: var(--text);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .status-bar-elapsed {
     color: var(--muted);
     font-size: 12px;
+    flex: 0 0 auto;
 }
 .status-bar-actions {
     display: flex;
     gap: 8px;
+    flex: 0 0 auto;
 }
 .status-bar-actions.hidden {
     display: none;
 }
 .status-bar-btn {
+    min-height: 30px;
     padding: 6px 14px;
     border-radius: 6px;
     font-size: 12px;
+    line-height: 16px;
     font-weight: 600;
     border: 1px solid var(--line);
     cursor: pointer;
     background: var(--panel);
     color: var(--text);
+    white-space: nowrap;
     transition: background 0.15s, box-shadow 0.15s, transform 0.05s;
 }
 .status-bar-btn:hover {
@@ -1578,6 +1590,13 @@ button {
     flex: 1;
 }
 
+.composer-meta {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .composer-action {
     flex: 0 0 32px;
     width: 32px;
@@ -1597,10 +1616,13 @@ button {
     background: var(--soft);
 }
 
-.plan-mode-btn {
+.plan-mode-btn,
+.confirmation-mode-btn {
     display: inline-flex;
     align-items: center;
     gap: 4px;
+    height: 24px;
+    white-space: nowrap;
     padding: 4px 10px;
     color: var(--muted);
     background: transparent;
@@ -1611,7 +1633,8 @@ button {
     transition: all 0.15s;
 }
 
-.plan-mode-btn:hover {
+.plan-mode-btn:hover,
+.confirmation-mode-btn:hover {
     color: var(--text);
     background: var(--soft);
 }
@@ -1624,6 +1647,16 @@ button {
 .plan-mode-btn[data-plan-mode="off"] {
     color: var(--muted);
     opacity: 0.7;
+}
+
+.confirmation-mode-btn[data-confirmation-mode="aggressive"] {
+    color: #2f6f62;
+    background: rgba(47, 111, 98, 0.08);
+}
+
+.confirmation-mode-btn[data-confirmation-mode="conservative"] {
+    color: #9a5b12;
+    background: rgba(184, 111, 25, 0.1);
 }
 
 .image-preview {

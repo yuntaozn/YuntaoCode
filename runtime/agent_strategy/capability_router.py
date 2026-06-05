@@ -108,6 +108,11 @@ PREFIX_CAPABILITIES: dict[str, tuple[str, str, str]] = {
 
 
 EXPLICIT_CAPABILITIES: dict[str, tuple[str, str, str]] = {
+    "filesystem.transform_text": (
+        "filesystem.text_transform",
+        "Text Transform",
+        "Apply a whitelisted local text transformation to an existing file, such as HTML entity unescape, without retransmitting the full artifact.",
+    ),
     "document.extract_pdf_to_docx": (
         "document.pdf_to_docx",
         "PDF To Word",

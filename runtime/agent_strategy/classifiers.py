@@ -39,8 +39,10 @@ DOCUMENT_WRITE_TOOL_IDS: frozenset[str] = frozenset({
 })
 
 WRITE_TOOL_IDS: frozenset[str] = frozenset({
+    "code.apply_patch",
     "code.edit_file",
     "code.replace_text",
+    "filesystem.transform_text",
     "filesystem.write_file",
     *DOCUMENT_WRITE_TOOL_IDS,
 })
@@ -72,12 +74,33 @@ TAGGED_TOOL_CALL_PATTERN = re.compile(
     r"<toolcall\b[^>]*>(?P<body>.*?)</toolcall>",
     re.DOTALL | re.IGNORECASE,
 )
+BARE_TOOL_NAME_PATTERN = re.compile(r"[A-Za-z][\w]*(?:[._][\w]+)+")
+BARE_TAGGED_TOOL_CALL_IDS: frozenset[str] = frozenset({
+    "filesystem.scan_folder",
+    "code.list_project_files",
+    "git.status",
+})
 
 POST_WRITE_READ_TOOL_IDS: frozenset[str] = frozenset({
     "filesystem.read_file",
     "filesystem.read_text_preview",
     "filesystem.scan_folder",
 })
+
+LONG_RUNNING_SERVICE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bpython(?:3|\.exe)?\s+-m\s+http\.server\b", re.IGNORECASE),
+    re.compile(r"\bpy\s+-m\s+http\.server\b", re.IGNORECASE),
+    re.compile(r"\bnpm\s+run\s+(dev|serve|start)\b", re.IGNORECASE),
+    re.compile(r"\bnpm\s+start\b", re.IGNORECASE),
+    re.compile(r"\bpnpm\s+(dev|serve|start)\b", re.IGNORECASE),
+    re.compile(r"\byarn\s+(dev|serve|start)\b", re.IGNORECASE),
+    re.compile(r"\b(vite|next|nuxt|astro)\s+dev\b", re.IGNORECASE),
+    re.compile(r"\bwebpack-dev-server\b", re.IGNORECASE),
+    re.compile(r"\bpython(?:3|\.exe)?\s+manage\.py\s+runserver\b", re.IGNORECASE),
+    re.compile(r"\bflask\s+run\b", re.IGNORECASE),
+    re.compile(r"\buvicorn\b.*\s+--reload\b", re.IGNORECASE),
+    re.compile(r"\bstreamlit\s+run\b", re.IGNORECASE),
+)
 
 RECON_TOOL_IDS: frozenset[str] = frozenset({
     "filesystem.scan_folder",
@@ -155,6 +178,35 @@ def is_state_changing_tool(tool_id: str) -> bool:
 def is_verification_tool(tool_id: str, mode: str | None) -> bool:
     tool_id = canonical_tool_id(tool_id)
     return tool_id in verification_tool_ids(mode)
+
+
+def shell_command_text(input_data: dict[str, Any] | None) -> str:
+    if not isinstance(input_data, dict):
+        return ""
+    command = str(input_data.get("command") or "").strip()
+    args = input_data.get("args") if isinstance(input_data.get("args"), list) else []
+    arg_text = " ".join(str(item).strip() for item in args if str(item).strip())
+    return f"{command} {arg_text}".strip()
+
+
+def is_long_running_service_command(input_data: dict[str, Any] | None) -> bool:
+    text = shell_command_text(input_data)
+    if not text:
+        return False
+    normalized = text.replace("&&", " ; ").replace("|", " ")
+    return any(pattern.search(normalized) for pattern in LONG_RUNNING_SERVICE_PATTERNS)
+
+
+def is_invalid_verification_method_event(event: dict[str, Any]) -> bool:
+    tool_id = canonical_tool_id(str(event.get("tool") or ""))
+    if tool_id != "shell.run_command":
+        return False
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    reason = str(output.get("reason") or "").strip()
+    if reason in {"invalid_verification_method", "long_running_service_verification"}:
+        return True
+    event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
+    return bool(output.get("timed_out") is True and is_long_running_service_command(event_input))
 
 
 # ---------------------------------------------------------------------------
@@ -582,6 +634,18 @@ def extract_native_tool_calls(text: str, round_index: int = 0) -> list[dict[str,
     return calls
 
 
+def has_unresolved_tool_call_markup(text: str) -> bool:
+    """Return whether model text contains tool-call markup that cannot execute."""
+    lowered = str(text or "").lower()
+    has_marker = (
+        "<toolcall" in lowered
+        or NATIVE_TOOL_CALL_BEGIN.lower() in lowered
+        or "<mcreference" in lowered
+        or bool(XML_TOOL_CALL_PATTERN.search(str(text or "")))
+    )
+    return bool(has_marker and not extract_native_tool_calls(text))
+
+
 def strip_native_tool_call_blocks(text: str) -> str:
     """Remove raw local-model function-call blocks from display text."""
     text = strip_xml_style_tool_call_blocks(text)
@@ -642,12 +706,7 @@ def xml_style_tool_call_blocks(text: str) -> list[dict[str, Any]]:
 
 
 def strip_xml_style_tool_call_blocks(text: str) -> str:
-    if "<arg-key>" not in text or "<arg-value>" not in text:
-        return text
-    return XML_TOOL_CALL_PATTERN.sub(
-        lambda match: "" if XML_TOOL_ARG_PATTERN.search(match.group("body")) else match.group(0),
-        text,
-    )
+    return XML_TOOL_CALL_PATTERN.sub("", text)
 
 
 def tagged_tool_call_blocks(text: str) -> list[dict[str, Any]]:
@@ -655,7 +714,14 @@ def tagged_tool_call_blocks(text: str) -> list[dict[str, Any]]:
     calls: list[dict[str, Any]] = []
     for match in TAGGED_TOOL_CALL_PATTERN.finditer(text):
         block = _xml_tool_text(match.group("body"))
-        calls.extend(_parse_native_tool_call_block(block))
+        parsed = _parse_native_tool_call_block(block)
+        if parsed:
+            calls.extend(parsed)
+        elif (
+            BARE_TOOL_NAME_PATTERN.fullmatch(block)
+            and canonical_tool_id(block) in BARE_TAGGED_TOOL_CALL_IDS
+        ):
+            calls.append({"name": block, "parameters": {}})
     return calls
 
 
@@ -663,7 +729,11 @@ def strip_tagged_tool_call_blocks(text: str) -> str:
     if "<toolcall" not in text.lower():
         return text
     text = MCP_REFERENCE_TOOL_CALL_PATTERN.sub("", text)
-    return TAGGED_TOOL_CALL_PATTERN.sub("", text)
+    text = TAGGED_TOOL_CALL_PATTERN.sub("", text)
+    dangling_start = text.lower().find("<toolcall")
+    if dangling_start >= 0:
+        text = text[:dangling_start]
+    return text
 
 
 def _xml_tool_text(value: str) -> str:
@@ -819,37 +889,25 @@ def messages_for_model_round(
     return sanitized
 
 
-def try_fix_json(text: str) -> dict[str, Any]:
-    """Attempt to repair truncated or malformed JSON from model tool calls."""
-    text = text.strip()
-    if not text:
-        return {}
-    # Try closing unclosed braces/brackets
-    opens = text.count("{") - text.count("}")
-    open_brackets = text.count("[") - text.count("]")
-    fixed = text
-    if open_brackets > 0:
-        fixed += "]" * open_brackets
-    if opens > 0:
-        fixed += "}" * opens
+def parse_tool_arguments_strict(text: str) -> tuple[dict[str, Any], str | None]:
+    """Parse tool arguments without guessing or repairing incomplete JSON."""
+    raw = str(text or "").strip() or "{}"
     try:
-        result = json.loads(fixed)
-        return result if isinstance(result, dict) else {}
-    except (json.JSONDecodeError, ValueError):
-        pass
-    # Try adding a closing quote if string is unclosed
-    if fixed.count('"') % 2 != 0:
-        fixed += '"'
-        if open_brackets > 0:
-            fixed += "]" * open_brackets
-        if opens > 0:
-            fixed += "}" * opens
-        try:
-            result = json.loads(fixed)
-            return result if isinstance(result, dict) else {}
-        except (json.JSONDecodeError, ValueError):
-            pass
-    return {}
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}, "malformed_tool_arguments"
+    if not isinstance(value, dict):
+        return {}, "non_object_tool_arguments"
+    return value, None
+
+
+def finish_reason_indicates_truncation(reason: Any) -> bool:
+    """Return whether a provider says the model output stopped at a length limit."""
+    return str(reason or "").strip().lower() in {
+        "length",
+        "max_tokens",
+        "max_output_tokens",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -889,6 +947,57 @@ def round_has_only_non_progress(round_events: list[dict[str, Any]]) -> bool:
     return True
 
 
+def consecutive_repeated_failure_count(tool_events: list[dict[str, Any]]) -> int:
+    """Count identical trailing failures so the runtime can stop empty retries."""
+    signature = ""
+    count = 0
+    for event in reversed(tool_events):
+        if event.get("status") != "failure":
+            break
+        event_signature = _tool_failure_signature(event)
+        if not signature:
+            signature = event_signature
+        if event_signature != signature:
+            break
+        count += 1
+    return count
+
+
+def repeated_failure_action(
+    tool_events: list[dict[str, Any]],
+    *,
+    strategy_change_intervened: bool,
+) -> str:
+    """Return the convergence action without adding another strategy prompt.
+
+    Repeated identical failures usually mean the model is not producing a
+    valid executable call.  Stop and record the real failure instead of asking
+    the model to reinterpret the task through another soft strategy prompt.
+    The ``strategy_change_intervened`` argument is kept for API compatibility.
+    """
+    count = consecutive_repeated_failure_count(tool_events)
+    if count < 2:
+        return "none"
+    return "stop"
+
+
+def _tool_failure_signature(event: dict[str, Any]) -> str:
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
+    error = " ".join(str(event.get("error") or "").lower().split())
+    return json.dumps(
+        {
+            "tool": canonical_tool_id(str(event.get("tool") or "")),
+            "reason": str(output.get("reason") or "").strip().lower(),
+            "error": error,
+            "input": event_input,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+
+
 def has_successful_write(tool_events: list[dict[str, Any]]) -> bool:
     return any(
         is_write_tool(str(event.get("tool") or "")) and event.get("status") == "success"
@@ -897,14 +1006,219 @@ def has_successful_write(tool_events: list[dict[str, Any]]) -> bool:
 
 
 def has_successful_verification(tool_events: list[dict[str, Any]], mode: str | None) -> bool:
+    verification_events, written_paths = _verification_scope_after_latest_write(tool_events)
     return any(
-        is_verification_tool(str(event.get("tool") or ""), mode) and event.get("status") == "success"
-        for event in tool_events
+        is_meaningful_verification_event(event, mode, written_paths=written_paths)
+        for event in verification_events
     )
 
 
+def successful_verification_events(
+    tool_events: list[dict[str, Any]],
+    mode: str | None,
+) -> list[dict[str, Any]]:
+    """Return verification evidence, scoped after the latest successful write."""
+    verification_events, written_paths = _verification_scope_after_latest_write(tool_events)
+    return [
+        event
+        for event in verification_events
+        if is_meaningful_verification_event(event, mode, written_paths=written_paths)
+    ]
+
+
+def _verification_scope_after_latest_write(
+    tool_events: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], set[str]]:
+    latest_write_index = -1
+    written_paths: set[str] = set()
+    for index, event in enumerate(tool_events):
+        if not (
+            is_write_tool(str(event.get("tool") or ""))
+            and str(event.get("status") or "") in {"success", "partial"}
+        ):
+            continue
+        latest_write_index = index
+        written_paths.update(_event_path_hints(event))
+    if latest_write_index < 0:
+        return tool_events, written_paths
+    return tool_events[latest_write_index + 1 :], written_paths
+
+
+def is_meaningful_verification_event(
+    event: dict[str, Any],
+    mode: str | None,
+    *,
+    written_paths: set[str] | None = None,
+) -> bool:
+    """Return True when a successful tool call provides real verification.
+
+    Directory listings and file-existence probes are useful evidence, but they
+    should not satisfy a code-write verification contract by themselves.
+    """
+    tool_id = canonical_tool_id(str(event.get("tool") or ""))
+    if str(event.get("status") or "") != "success":
+        return False
+    if tool_id in {"filesystem.read_file", "filesystem.read_text_preview"}:
+        path = _event_path_hint(event)
+        output = event.get("output") if isinstance(event.get("output"), dict) else {}
+        if tool_id == "filesystem.read_text_preview" and output.get("truncated") is True:
+            return False
+        integrity = output.get("integrity") if isinstance(output.get("integrity"), dict) else {}
+        if integrity.get("checked") is True and integrity.get("valid") is not True:
+            return False
+        return bool(path and _path_matches_any(path, written_paths or set()))
+    if not is_verification_tool(tool_id, mode):
+        return False
+    if tool_id == "shell.run_command":
+        return _shell_command_verifies_behavior(event)
+    if tool_id in {"filesystem.scan_folder", "code.list_project_files"}:
+        return False
+    if tool_id == "code.search_text":
+        event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
+        return bool(event_input.get("query"))
+    if tool_id in {"git.status", "git.diff"}:
+        return True
+    return True
+
+
+def is_test_verification_event(event: dict[str, Any]) -> bool:
+    """Return True for successful commands that look like tests/build/checks."""
+    if canonical_tool_id(str(event.get("tool") or "")) != "shell.run_command":
+        return False
+    if str(event.get("status") or "") != "success":
+        return False
+    return _shell_command_verifies_behavior(event, require_test_marker=True)
+
+
+def _successful_written_path_hints(tool_events: list[dict[str, Any]]) -> set[str]:
+    paths: set[str] = set()
+    for event in tool_events:
+        if not (
+            is_write_tool(str(event.get("tool") or ""))
+            and str(event.get("status") or "") == "success"
+        ):
+            continue
+        paths.update(_event_path_hints(event))
+    return paths
+
+
+def _event_path_hint(event: dict[str, Any]) -> str:
+    paths = _event_path_hints(event)
+    return next(iter(paths), "")
+
+
+def _event_path_hints(event: dict[str, Any]) -> set[str]:
+    event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    values = output.get("paths") if isinstance(output.get("paths"), list) else []
+    paths = {
+        _normalize_path_hint(value)
+        for value in values
+        if _normalize_path_hint(value)
+    }
+    if paths:
+        return paths
+    value = (
+        output.get("path")
+        or output.get("output_path")
+        or event_input.get("output_path")
+        or event_input.get("path")
+        or ""
+    )
+    normalized = _normalize_path_hint(value)
+    return {normalized} if normalized else set()
+
+
+def _normalize_path_hint(value: Any) -> str:
+    return str(value or "").strip().replace("\\", "/").rstrip("/").lower()
+
+
+def _path_matches_any(path: str, candidates: set[str]) -> bool:
+    normalized = _normalize_path_hint(path)
+    for candidate in candidates:
+        other = _normalize_path_hint(candidate)
+        if not other:
+            continue
+        if normalized == other:
+            return True
+        if normalized.endswith("/" + other) or other.endswith("/" + normalized):
+            return True
+    return False
+
+
+def _shell_command_verifies_behavior(
+    event: dict[str, Any],
+    *,
+    require_test_marker: bool = False,
+) -> bool:
+    event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    if is_long_running_service_command(event_input):
+        return False
+    if output.get("timed_out") is True:
+        return False
+    try:
+        exit_code = int(output.get("exit_code", 0) or 0)
+    except (TypeError, ValueError):
+        exit_code = 0
+    if exit_code != 0:
+        return False
+    command = str(event_input.get("command") or "").strip().lower()
+    args = event_input.get("args") if isinstance(event_input.get("args"), list) else []
+    arg_text = " ".join(str(item).lower() for item in args)
+    combined = f"{command} {arg_text}".strip()
+    if not combined:
+        return False
+
+    existence_markers = (
+        "os.listdir",
+        "get-childitem",
+        "get-item",
+        "test-path",
+        " dir ",
+        " ls ",
+        " stat ",
+    )
+    padded = f" {combined} "
+    if any(marker in padded for marker in existence_markers):
+        return False
+    if command in {"dir", "ls", "gci", "get-childitem", "get-item"}:
+        return False
+
+    test_markers = (
+        "pytest",
+        "unittest",
+        "py_compile",
+        "node --check",
+        "npm test",
+        "npm run test",
+        "npm run build",
+        "npm run lint",
+        "pnpm test",
+        "pnpm build",
+        "yarn test",
+        "yarn build",
+        "cargo check",
+        "cargo test",
+        "go test",
+        "tsc",
+        "eslint",
+        "ruff",
+        "mypy",
+        "javac",
+        "dotnet test",
+        "dotnet build",
+        "mvn test",
+        "gradle test",
+    )
+    has_test_marker = any(marker in combined for marker in test_markers)
+    if require_test_marker:
+        return has_test_marker
+    return has_test_marker or command not in {"python", "python3", "py", "node", "npm", "pnpm", "yarn"}
+
+
 def is_recoverable_write_failure(tool_id: str, event: dict[str, Any]) -> bool:
-    if tool_id not in {"code.edit_file", "code.replace_text", "filesystem.write_file"}:
+    if tool_id not in {"code.apply_patch", "code.edit_file", "code.replace_text", "filesystem.write_file"}:
         return False
     if event.get("status") == "success":
         return False
@@ -914,9 +1228,6 @@ def is_recoverable_write_failure(tool_id: str, event: dict[str, Any]) -> bool:
         for marker in (
             "old_text not found",
             "old_text matches",
-            "path is required",
-            "content is required",
-            "missing required",
             "path not found",
             "no such file",
             "not found in file",

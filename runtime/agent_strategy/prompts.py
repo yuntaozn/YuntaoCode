@@ -152,6 +152,33 @@ def progress_observer_prompt(
     )
 
 
+def repeated_failure_strategy_prompt(
+    workspace_path: str,
+    current_stage: str,
+    tool_events: list[dict[str, Any]],
+) -> str:
+    """Ask the model to choose a materially different route after repetition."""
+    latest = tool_events[-1] if tool_events else {}
+    tool_id = str(latest.get("tool") or "unknown")
+    error = str(latest.get("error") or "unknown failure").strip()
+    write_status = (
+        "本轮已经观察到成功写入；除非有新证据表明产物错误，不要继续重复写入，应优先验证或如实总结。"
+        if has_successful_write(tool_events)
+        else "本轮尚未观察到成功写入；如任务要求产物，请先获得真实目标路径和内容后再写入。"
+    )
+    return (
+        "策略切换要求：完全相同的工具失败已经连续发生两次，原策略没有产生新进展。\n"
+        f"当前项目：{workspace_path}\n"
+        f"当前阶段：{current_stage or '无'}\n"
+        f"重复失败工具：{tool_id}\n"
+        f"最近失败原因：{error}\n"
+        f"{write_status}\n"
+        "请重新判断任务目标与已有证据，下一步必须采用实质不同的策略，不要再次发送相同工具和相同参数。"
+        "可选方向包括：补全真实参数、读取最小必要上下文、改用更合适的工具、转入验证，"
+        "或在确实无法继续时如实说明阻碍并结束。由你根据当前任务选择最合适的一项。"
+    )
+
+
 def recon_budget_prompt(budget: int, workspace_path: str) -> str:
     return (
         f"侦察预算已用完（{budget} 次读取/搜索）。项目={workspace_path}。"
@@ -179,6 +206,18 @@ def dangling_action_prompt(
         f"悬空动作：项目={workspace_path}。未完成：{snippet}\n"
         "请调用本地工具执行动作，或直接输出最终总结（变更文件+验证结果+风险）。"
         "不要只说'我先验证/我将检查/接下来处理'。"
+    )
+
+
+def malformed_tool_call_prompt(workspace_path: str, unfinished_text: str) -> str:
+    snippet = unfinished_text[-300:]
+    return (
+        f"检测到不可执行的工具调用格式。当前项目：{workspace_path}。\n"
+        f"模型原始片段：{snippet}\n"
+        "不要在普通文本中输出 <toolcall>、<mcreference> 或 FunctionCall 标记。"
+        "请使用当前接口提供的结构化工具调用，并一次性提供该工具要求的全部参数。"
+        "如果尚不知道目标文件路径，先使用带明确 path 参数的目录扫描或代码文件列表工具。"
+        "如果不需要工具，请直接给出最终回答，不要声称即将执行。"
     )
 
 
@@ -271,7 +310,11 @@ def analysis_first_task_prompt(workspace_path: str) -> str:
 def post_write_prompt(workspace_path: str) -> str:
     return (
         f"已有写入成功。项目={workspace_path}。"
-        "继续写入剩余文件，或调用验证工具（shell.run_command/git.diff/git.status）后总结。"
+        "现在优先调用真实验证工具，然后总结。除非验证返回了新的失败证据，或任务契约明确还有未生成的产物，"
+        "不要再次覆盖已经成功写入的同一文件。代码/HTML/脚本任务优先运行可行的语法检查、构建、测试或 lint；"
+        "不要把 dir/ls/os.listdir/Get-Item 这类目录或存在性检查当作测试通过。"
+        "不要把 python -m http.server、npm run dev 等长驻服务命令当作普通验证命令。"
+        "如果只能读取生成文件做内容检查，最终必须说明未运行测试。"
         "最终回复须列出变更文件、验证情况和剩余风险。"
     )
 
@@ -295,7 +338,10 @@ def verifier_retry_prompt(mode: str | None, workspace_path: str) -> str:
     return (
         "验证阶段必须执行一次真实验证工具调用，不能只用文字说明已经验证。\n"
         f"当前项目目录：{workspace_path}\n"
-        "请调用 shell.run_command、git.status 或 git.diff 中的一个工具，确认本轮变更结果后再总结。"
+        "代码/HTML/脚本任务优先调用 shell.run_command 运行可行的语法检查、构建、测试或 lint，例如 pytest、python -m py_compile、node --check、npm test/build 等。"
+        "不要使用 dir/ls/os.listdir/Get-Item 作为测试通过依据。"
+        "不要启动 python -m http.server、npm run dev 等长驻服务作为普通验证命令；这类命令通常会超时。"
+        "如果确实没有可运行测试，请读取刚生成/修改的文件完成内容级验证，并在最终总结中明确说明未运行测试。"
     )
 
 

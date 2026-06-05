@@ -294,11 +294,19 @@
                             <div class="settings-warning" data-i18n="settings_page.access_warning">完全本机权限会允许 AI 访问本机当前用户可访问的路径。写入类工具仍会创建备份，但请只在信任当前任务时开启。</div>
                         </div>
                         <div class="settings-form-row">
-                            <label for="execution-mode-input" data-i18n="settings.exec_mode">执行模式</label>
-                            <select id="execution-mode-input">
-                                <option value="conservative" data-i18n="settings.exec_conservative">保守：少自动执行</option>
-                                <option value="auto" data-i18n="settings.exec_auto">自动：系统判断</option>
-                                <option value="aggressive" data-i18n="settings.exec_aggressive">激进：强制计划与验证</option>
+                            <label for="planning-policy-input" data-i18n="settings.planning_policy">规划策略</label>
+                            <select id="planning-policy-input">
+                                <option value="off" data-i18n="settings.plan_off">直接：默认不生成计划</option>
+                                <option value="auto" data-i18n="settings.plan_auto">自动：按任务判断是否规划</option>
+                                <option value="always" data-i18n="settings.plan_always">始终：每个任务先生成计划</option>
+                            </select>
+                        </div>
+                        <div class="settings-form-row">
+                            <label for="confirmation-policy-input" data-i18n="settings.confirmation_policy">执行确认</label>
+                            <select id="confirmation-policy-input">
+                                <option value="conservative" data-i18n="settings.confirm_conservative">保守：所有状态变更均确认</option>
+                                <option value="auto" data-i18n="settings.confirm_auto">自动：普通写入自动，风险操作确认</option>
+                                <option value="aggressive" data-i18n="settings.confirm_aggressive">激进：授权边界内自动执行</option>
                             </select>
                         </div>
                         <div class="settings-form-row">
@@ -380,7 +388,7 @@
         </main>
     </div>
 
-    <script src="/static/i18n.js?v=20260528-2"></script>
-    <script src="/static/settings.js?v=20260528-2"></script>
+    <script src="/static/i18n.js?v=20260605-2"></script>
+    <script src="/static/settings.js?v=20260605-2"></script>
 </body>
 </html>

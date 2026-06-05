@@ -1,0 +1,95 @@
+from runtime.agent_strategy.tool_result_risks import (
+    assess_tool_result_risks,
+    attach_tool_result_risks,
+)
+from runtime.api.conversations import ConversationMessagesStreamHandler
+
+
+def test_invalid_integrity_becomes_non_blocking_model_facing_risk() -> None:
+    risks = assess_tool_result_risks(
+        "filesystem.read_file",
+        "success",
+        {
+            "path": "viewer.html",
+            "integrity": {
+                "checked": True,
+                "valid": False,
+                "issues": ["html appears escaped as text"],
+            },
+        },
+    )
+
+    assert risks == [
+        {
+            "code": "artifact_integrity_invalid",
+            "severity": "warning",
+            "source": "filesystem.read_file",
+            "path": "viewer.html",
+            "issues": ["html appears escaped as text"],
+            "action": "assess_before_state_change",
+            "suggested_tools": ["filesystem.transform_text"],
+            "blocking": False,
+            "message": (
+                "The inspected artifact has an integrity warning. Before changing local state, "
+                "assess this evidence and choose whether to repair the artifact, continue with "
+                "an explicit assumption, or stop and report the risk. Prefer a bounded local "
+                "transformation over retransmitting the complete artifact."
+            ),
+        }
+    ]
+
+
+def test_valid_integrity_does_not_add_risk() -> None:
+    payload = attach_tool_result_risks({
+        "tool": "filesystem.read_file",
+        "status": "success",
+        "output": {"integrity": {"checked": True, "valid": True, "issues": []}},
+    })
+
+    assert "runtime_risks" not in payload
+
+
+def test_compact_read_payload_keeps_integrity_and_runtime_risks() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    payload = attach_tool_result_risks({
+        "tool": "filesystem.read_file",
+        "status": "success",
+        "output": {
+            "path": "viewer.html",
+            "content": "1| &lt;html&gt;",
+            "raw_content": "&lt;html&gt;",
+            "integrity": {
+                "checked": True,
+                "valid": False,
+                "issues": ["html appears escaped as text"],
+            },
+        },
+    })
+
+    compact = handler._summarize_tool_payload(payload)
+
+    assert compact["output"]["integrity"]["valid"] is False
+    assert compact["runtime_risks"][0]["code"] == "artifact_integrity_invalid"
+
+
+def test_compact_tool_message_keeps_risk_before_large_output_truncation() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    payload = attach_tool_result_risks({
+        "tool": "filesystem.read_file",
+        "status": "success",
+        "output": {
+            "path": "viewer.html",
+            "content": "x" * 60000,
+            "raw_content": "x" * 60000,
+            "integrity": {
+                "checked": True,
+                "valid": False,
+                "issues": ["html appears escaped as text"],
+            },
+        },
+    })
+
+    compact_message = handler._compact_tool_payload(payload)
+
+    assert "artifact_integrity_invalid" in compact_message
+    assert "assess_before_state_change" in compact_message

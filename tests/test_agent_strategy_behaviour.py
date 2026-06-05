@@ -7,7 +7,6 @@ shell, or Tornado request stack.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
@@ -18,14 +17,16 @@ from runtime.agent_strategy.classifiers import (
     is_recon_tool,
     is_recoverable_write_failure,
     is_write_tool,
+    has_unresolved_tool_call_markup,
     looks_like_dangling_action,
     merge_tool_call_chunks,
+    parse_tool_arguments_strict,
     progress_key,
-    try_fix_json,
 )
 from runtime.agent_strategy.plan_tracker import normalize_tool_id
 from runtime.agent_strategy.prompts import (
     dangling_action_prompt,
+    malformed_tool_call_prompt,
     progress_observer_prompt,
     recon_budget_prompt,
     write_repair_prompt,
@@ -62,12 +63,16 @@ async def run_scripted_loop(
             function = call.get("function") or {}
             tool_id = normalize_tool_id(function.get("name"))
             raw_args = str(function.get("arguments") or "{}")
-            try:
-                arguments = json.loads(raw_args)
-                if not isinstance(arguments, dict):
-                    arguments = {}
-            except json.JSONDecodeError:
-                arguments = try_fix_json(raw_args)
+            arguments, argument_error = parse_tool_arguments_strict(raw_args)
+            if argument_error:
+                tool_events.append({
+                    "tool": tool_id,
+                    "status": "failure",
+                    "input": {},
+                    "output": {"reason": argument_error},
+                    "error": argument_error,
+                })
+                continue
 
             result = await runner.run(tool_id, arguments)
             tool_events.append({
@@ -164,3 +169,13 @@ async def test_fake_dangling_answer_gets_correction_prompt() -> None:
     prompt = dangling_action_prompt("D:/workspace", content, events, "coding")
     assert "悬空动作" in prompt
     assert "不要只说" in prompt
+
+
+def test_malformed_tool_call_gets_structured_call_correction_prompt() -> None:
+    content = "让我先读取文件。<toolcall>filesystem.read_file</toolcall>"
+
+    assert has_unresolved_tool_call_markup(content)
+    prompt = malformed_tool_call_prompt("D:/workspace", content)
+    assert "不可执行的工具调用格式" in prompt
+    assert "结构化工具调用" in prompt
+    assert "明确 path 参数" in prompt

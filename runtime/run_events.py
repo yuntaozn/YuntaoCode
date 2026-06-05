@@ -12,6 +12,8 @@ RUN_EVENT_SCHEMA_VERSION = "0.1"
 RECORDED_EVENT_TYPES = {
     "status",
     "tool",
+    "context_hygiene",
+    "task_contract",
     "plan_decision",
     "plan",
     "plan_step",
@@ -103,6 +105,7 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
             "input": payload.get("input"),
             "output": payload.get("output"),
             "error": payload.get("error"),
+            "runtime_risks": payload.get("runtime_risks"),
         }
     if event_type == "status":
         return {
@@ -111,6 +114,20 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
             "event_name": event_name,
             "status": payload.get("status"),
             "message": payload.get("message"),
+        }
+    if event_type == "task_contract":
+        return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
+            "event": "task_contract",
+            "event_name": event_name,
+            "contract": payload.get("contract"),
+        }
+    if event_type == "context_hygiene":
+        return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
+            "event": "context_hygiene",
+            "event_name": event_name,
+            "report": payload.get("report"),
         }
     if event_type == "guidance":
         return {
@@ -183,6 +200,10 @@ def canonical_run_event_name(payload: dict[str, Any]) -> str:
         return "tool.updated"
     if event_type == "status":
         return "run.status"
+    if event_type == "task_contract":
+        return "task.contract"
+    if event_type == "context_hygiene":
+        return "context.hygiene"
     if event_type == "plan_decision":
         return "plan.decision"
     if event_type == "plan":

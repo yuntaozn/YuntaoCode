@@ -108,3 +108,32 @@ def test_registry_resolves_pdf_document_aliases_without_listing_them() -> None:
     assert registry.resolve_id("document.read_pdf") == "document.extract_pdf_text_preview"
     assert registry.get("document.pdf_extract_text").spec.id == "document.extract_pdf_text_preview"
     assert [spec["id"] for spec in registry.list_specs()] == ["document.extract_pdf_text_preview"]
+
+
+def test_registry_reports_missing_required_input_before_execution() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            id="filesystem.write_file",
+            name="Write File",
+            description="Write a file",
+            input_schema={
+                "type": "object",
+                "required": ["path", "content"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+            },
+        ),
+        _noop_handler,
+    )
+
+    assert registry.missing_required_input_fields("filesystem.write_file", {}) == [
+        "path",
+        "content",
+    ]
+    assert registry.missing_required_input_fields(
+        "filesystem.write_file",
+        {"path": "demo.txt", "content": ""},
+    ) == []

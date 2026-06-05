@@ -88,6 +88,41 @@ RouteProposal 是模型对任务的结构化理解，Capability 是 Runtime 对�
 - 需要文件产物的任务必须产生真实 artifact，不能只用自然语言宣布完成。
 - 任务成功由 Trace、ToolEvent、Artifact Verification 决定。
 
+## Task Contract
+
+当前基座开始引入 Task Contract 作为 RouteProposal 前的入口层。
+
+模型先判断用户目标，输出结构化契约；Runtime 再规范字段、应用硬约束，并基于契约验收结果。这样可以避免把“写 HTML”“生成视频”“转换 Word”等场景都固化成系统关键词。
+
+示例：
+
+```json
+{
+  "goal": "创建一个可以显示 3D 模型的 HTML 示例页",
+  "intent": "write_required",
+  "requires_write": true,
+  "requires_verification": true,
+  "requires_plan": false,
+  "deliverables": [
+    {
+      "kind": "file",
+      "path_hint": "model-viewer.html",
+      "description": "Three.js 模型查看器示例"
+    }
+  ],
+  "first_action": "write",
+  "blockers": [],
+  "confidence": 0.8
+}
+```
+
+Runtime 负责：
+
+- 将模型契约规范为稳定 schema。
+- 应用 `只分析/不要修改` 这类硬边界。
+- 校验写入、验证、文档覆盖等成功条件。
+- 记录 `task.contract` 事件，供审计和后续 UI 展示。
+
 ## Lifecycle
 
 任务状态应比普通消息状态更明确：
@@ -227,6 +262,9 @@ Task Template 是比 prompt 更稳定的复用单元。
 
 现有代码已经有 Task Runtime 的雏形：
 
+- `runtime/core/task.py`：用户目标级 Task / Plan / Step 初始 schema，区别于一次工具调用的 ToolTask。
+- `runtime/core/events.py`：TraceEvent 初始 schema 和稳定事件名方向。
+- `runtime/core/result.py`：RunResult 公共 schema 常量和结果事实结构。
 - `runtime/conversation_runner.py`：当前主编排层。
 - `runtime/agent_strategy/profiles.py`：内部任务 Profile。
 - `runtime/agent_strategy/policy.py`：计划执行策略。

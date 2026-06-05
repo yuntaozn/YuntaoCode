@@ -35,8 +35,13 @@ from runtime.agent_strategy.classifiers import (
     RECON_TOOL_IDS,
     canonical_tool_id,
     explorer_tool_ids,
+    has_unresolved_tool_call_markup,
     is_recon_tool,
+    is_invalid_verification_method_event,
+    is_long_running_service_command,
+    is_meaningful_verification_event,
     is_state_changing_tool,
+    is_test_verification_event,
     is_verification_tool,
     is_write_tool,
     verification_tool_ids,
@@ -45,15 +50,18 @@ from runtime.agent_strategy.classifiers import (
     extract_native_tool_calls,
     merge_tool_call_chunks,
     messages_for_model_round,
+    parse_tool_arguments_strict,
     strip_native_tool_call_blocks,
     tool_signature,
-    try_fix_json,
     # Progress observation
+    consecutive_repeated_failure_count,
     has_successful_verification,
     has_successful_write,
     is_recoverable_write_failure,
     progress_key,
+    repeated_failure_action,
     round_has_only_non_progress,
+    finish_reason_indicates_truncation,
     # Stage management
     execution_stage_sequence,
     plan_has_pending_write_step,
@@ -70,6 +78,7 @@ from runtime.agent_strategy.prompts import (
     max_rounds_message,
     post_write_prompt,
     progress_observer_prompt,
+    repeated_failure_strategy_prompt,
     read_only_task_prompt,
     recon_budget_prompt,
     runtime_intervention_prompt,
@@ -387,11 +396,17 @@ class TestPlanningPolicy:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestIsWriteTool:
+    def test_apply_patch(self):
+        assert is_write_tool("code.apply_patch")
+
     def test_edit_file(self):
         assert is_write_tool("code.edit_file")
 
     def test_write_file(self):
         assert is_write_tool("filesystem.write_file")
+
+    def test_transform_text(self):
+        assert is_write_tool("filesystem.transform_text")
 
     def test_read_file_not_write(self):
         assert not is_write_tool("filesystem.read_file")
@@ -628,6 +643,63 @@ class TestNativeToolCalls:
 
         assert strip_native_tool_call_blocks(text) == "before  after"
 
+    def test_strip_function_like_tagged_toolcall_block(self):
+        text = (
+            "before "
+            '<toolcall>filesystem__write_file({"path":"demo.html","content":"x"})</toolcall>'
+            " after"
+        )
+
+        assert strip_native_tool_call_blocks(text) == "before  after"
+
+
+    def test_extract_bare_tagged_tool_name_block(self):
+        text = "先看看项目文件。<toolcall>filesystem.list_project_files</toolcall>"
+
+        result = extract_native_tool_calls(text, 6)
+
+        assert result == [
+            {
+                "id": "native_6_0",
+                "type": "function",
+                "function": {
+                    "name": "filesystem.list_project_files",
+                    "arguments": "{}",
+                },
+            }
+        ]
+
+    def test_ignores_bare_tagged_write_tool_name_block(self):
+        text = "我来写文件。<toolcall>filesystem.write_file</toolcall>"
+
+        assert extract_native_tool_calls(text, 7) == []
+
+    def test_bare_read_tool_without_arguments_requires_correction(self):
+        text = "让我先读取当前文件。<toolcall>filesystem.read_file</toolcall>"
+
+        assert extract_native_tool_calls(text, 8) == []
+        assert has_unresolved_tool_call_markup(text)
+        assert strip_native_tool_call_blocks(text) == "让我先读取当前文件。"
+
+    def test_valid_tagged_tool_call_is_not_unresolved(self):
+        text = '<toolcall>{"name":"filesystem.read_file","parameters":{"path":"viewer.html"}}</toolcall>'
+
+        assert extract_native_tool_calls(text, 9)
+        assert not has_unresolved_tool_call_markup(text)
+
+    def test_xml_tool_call_without_arguments_requires_correction(self):
+        text = "让我先读取文件。<filesystem.read_file></filesystem.read_file>"
+
+        assert extract_native_tool_calls(text, 10) == []
+        assert has_unresolved_tool_call_markup(text)
+        assert strip_native_tool_call_blocks(text) == "让我先读取文件。"
+
+    def test_unclosed_tagged_tool_call_is_removed_from_display_text(self):
+        text = "让我先读取文件。<toolcall>filesystem.read_file"
+
+        assert has_unresolved_tool_call_markup(text)
+        assert strip_native_tool_call_blocks(text) == "让我先读取文件。"
+
 
 class TestToolSignature:
     def test_deterministic(self):
@@ -659,28 +731,33 @@ class TestMessagesForModelRound:
         assert result[-1]["role"] == "assistant"
 
 
-class TestTryFixJson:
-    def test_valid_json(self):
-        assert try_fix_json('{"a": 1}') == {"a": 1}
+class TestStrictToolArguments:
+    def test_rejects_truncated_json(self):
+        arguments, error = parse_tool_arguments_strict(
+            '{"path":"demo.html","content":"partial',
+        )
 
-    def test_unclosed_brace(self):
-        assert try_fix_json('{"path": "test.py"') == {"path": "test.py"}
+        assert arguments == {}
+        assert error == "malformed_tool_arguments"
 
-    def test_unclosed_bracket(self):
-        result = try_fix_json('{"items": [1, 2')
-        assert result == {"items": [1, 2]}
+    def test_accepts_complete_object(self):
+        arguments, error = parse_tool_arguments_strict(
+            '{"path":"demo.html","content":"complete"}',
+        )
 
-    def test_unclosed_string_with_brace(self):
-        # When both a quote and a brace are unclosed, the fix produces {"key": "val}"}
-        result = try_fix_json('{"key": "val')
-        # The repair appends " then }, producing valid JSON with value "val}"
-        assert result == {"key": "val}"}
+        assert arguments == {"path": "demo.html", "content": "complete"}
+        assert error is None
 
-    def test_empty(self):
-        assert try_fix_json("") == {}
+    def test_rejects_non_object_json(self):
+        arguments, error = parse_tool_arguments_strict('["demo.html"]')
 
-    def test_unfixable(self):
-        assert try_fix_json("not json at all {{{") == {}
+        assert arguments == {}
+        assert error == "non_object_tool_arguments"
+
+    def test_detects_provider_length_finish_reasons(self):
+        assert finish_reason_indicates_truncation("length") is True
+        assert finish_reason_indicates_truncation("max_output_tokens") is True
+        assert finish_reason_indicates_truncation("tool_calls") is False
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -713,6 +790,60 @@ class TestRoundHasOnlyNonProgress:
         assert not round_has_only_non_progress([])
 
 
+class TestConsecutiveRepeatedFailureCount:
+    def test_counts_identical_trailing_failures(self):
+        event = {
+            "tool": "filesystem.write_file",
+            "status": "failure",
+            "input": {},
+            "error": "missing required: path, content",
+            "output": {"reason": "invalid_tool_input"},
+        }
+
+        assert consecutive_repeated_failure_count([event, event, event]) == 3
+
+    def test_success_resets_failure_count(self):
+        failure = {
+            "tool": "filesystem.write_file",
+            "status": "failure",
+            "input": {},
+            "error": "missing required: path, content",
+            "output": {"reason": "invalid_tool_input"},
+        }
+        success = {"tool": "filesystem.read_file", "status": "success", "input": {"path": "a.py"}}
+
+        assert consecutive_repeated_failure_count([failure, failure, success]) == 0
+
+    def test_different_failure_does_not_share_budget(self):
+        events = [
+            {"tool": "filesystem.write_file", "status": "failure", "error": "missing path"},
+            {"tool": "filesystem.write_file", "status": "failure", "error": "missing content"},
+        ]
+
+        assert consecutive_repeated_failure_count(events) == 1
+
+    def test_repeated_failure_stops_without_strategy_prompt(self):
+        event = {
+            "tool": "filesystem.write_file",
+            "status": "failure",
+            "input": {},
+            "error": "missing required: path, content",
+            "output": {"reason": "invalid_tool_input"},
+        }
+        events = [event, event]
+
+        assert repeated_failure_action(events, strategy_change_intervened=False) == "stop"
+        assert repeated_failure_action(events, strategy_change_intervened=True) == "stop"
+
+    def test_different_strategy_resets_intervention_state(self):
+        events = [
+            {"tool": "filesystem.write_file", "status": "failure", "error": "missing path"},
+            {"tool": "filesystem.read_file", "status": "success", "input": {"path": "viewer.html"}},
+        ]
+
+        assert repeated_failure_action(events, strategy_change_intervened=True) == "none"
+
+
 class TestHasSuccessfulWrite:
     def test_yes(self):
         events = [{"tool": "code.edit_file", "status": "success"}]
@@ -729,12 +860,157 @@ class TestHasSuccessfulWrite:
 
 class TestHasSuccessfulVerification:
     def test_shell_success(self):
-        events = [{"tool": "shell.run_command", "status": "success"}]
+        events = [
+            {
+                "tool": "shell.run_command",
+                "status": "success",
+                "input": {"command": "pytest"},
+                "output": {"exit_code": 0},
+            }
+        ]
         assert has_successful_verification(events, None)
 
     def test_no_verification_tool(self):
         events = [{"tool": "filesystem.read_file", "status": "success"}]
         assert not has_successful_verification(events, "coding")
+
+    def test_directory_listing_is_not_meaningful_code_verification(self):
+        events = [
+            {"tool": "filesystem.write_file", "status": "success", "input": {"path": "demo.html"}},
+            {
+                "tool": "shell.run_command",
+                "status": "success",
+                "input": {
+                    "command": "python",
+                    "args": ["-c", "import os; print(os.listdir('.'))"],
+                },
+                "output": {"exit_code": 0},
+            },
+        ]
+
+        assert not has_successful_verification(events, "terminal")
+
+    def test_reading_written_file_counts_as_content_verification(self):
+        events = [
+            {"tool": "filesystem.write_file", "status": "success", "input": {"path": "demo.html"}},
+            {"tool": "filesystem.read_file", "status": "success", "input": {"path": "demo.html"}},
+        ]
+
+        assert has_successful_verification(events, "terminal")
+
+    def test_read_before_write_does_not_count_as_post_write_verification(self):
+        events = [
+            {"tool": "filesystem.read_file", "status": "success", "input": {"path": "demo.html"}},
+            {"tool": "filesystem.write_file", "status": "success", "input": {"path": "demo.html"}},
+        ]
+
+        assert not has_successful_verification(events, "terminal")
+
+    def test_new_write_invalidates_earlier_verification(self):
+        events = [
+            {"tool": "filesystem.write_file", "status": "success", "input": {"path": "demo.html"}},
+            {"tool": "filesystem.read_file", "status": "success", "input": {"path": "demo.html"}},
+            {"tool": "filesystem.write_file", "status": "success", "input": {"path": "demo.html"}},
+        ]
+
+        assert not has_successful_verification(events, "terminal")
+
+    def test_reading_incomplete_html_does_not_count_as_verification(self):
+        events = [
+            {"tool": "filesystem.write_file", "status": "success", "input": {"path": "demo.html"}},
+            {
+                "tool": "filesystem.read_file",
+                "status": "success",
+                "input": {"path": "demo.html"},
+                "output": {
+                    "integrity": {
+                        "checked": True,
+                        "valid": False,
+                        "issues": ["missing </html>"],
+                    },
+                },
+            },
+        ]
+
+        assert not has_successful_verification(events, "terminal")
+
+    def test_truncated_preview_does_not_count_as_code_verification(self):
+        events = [
+            {"tool": "filesystem.write_file", "status": "success", "input": {"path": "demo.html"}},
+            {
+                "tool": "filesystem.read_text_preview",
+                "status": "success",
+                "input": {"path": "demo.html", "max_bytes": 5000},
+                "output": {"path": "demo.html", "truncated": True},
+            },
+        ]
+
+        assert not has_successful_verification(events, "terminal")
+
+    def test_preview_with_invalid_html_integrity_does_not_count_as_verification(self):
+        events = [
+            {"tool": "filesystem.write_file", "status": "success", "input": {"path": "demo.html"}},
+            {
+                "tool": "filesystem.read_text_preview",
+                "status": "success",
+                "input": {"path": "demo.html"},
+                "output": {
+                    "path": "demo.html",
+                    "truncated": False,
+                    "integrity": {
+                        "checked": True,
+                        "valid": False,
+                        "issues": ["html appears escaped as text"],
+                    },
+                },
+            },
+        ]
+
+        assert not has_successful_verification(events, "terminal")
+
+    def test_pytest_counts_as_test_verification(self):
+        event = {
+            "tool": "shell.run_command",
+            "status": "success",
+            "input": {"command": "pytest"},
+            "output": {"exit_code": 0},
+        }
+
+        assert is_meaningful_verification_event(event, "terminal")
+        assert is_test_verification_event(event)
+
+    def test_timed_out_shell_command_is_not_verification(self):
+        event = {
+            "tool": "shell.run_command",
+            "status": "success",
+            "input": {"command": "pytest"},
+            "output": {"exit_code": 0, "timed_out": True, "timeout": 10},
+        }
+
+        assert not is_meaningful_verification_event(event, "terminal")
+        assert not is_test_verification_event(event)
+
+    def test_long_running_service_command_is_not_verification(self):
+        event = {
+            "tool": "shell.run_command",
+            "status": "success",
+            "input": {"command": "python -m http.server 8080"},
+            "output": {"exit_code": 0},
+        }
+
+        assert is_long_running_service_command(event["input"])
+        assert not is_meaningful_verification_event(event, "terminal")
+        assert not is_test_verification_event(event)
+
+    def test_timed_out_long_running_service_is_invalid_verification_method(self):
+        event = {
+            "tool": "shell.run_command",
+            "status": "failure",
+            "input": {"command": r"cd D:\ifctool ; python -m http.server 8080"},
+            "output": {"exit_code": 1, "timed_out": True, "timeout": 5},
+        }
+
+        assert is_invalid_verification_method_event(event)
 
 
 class TestIsRecoverableWriteFailure:
@@ -749,6 +1025,10 @@ class TestIsRecoverableWriteFailure:
     def test_non_write_tool(self):
         event = {"status": "failure", "error": "old_text not found"}
         assert not is_recoverable_write_failure("filesystem.read_file", event)
+
+    def test_missing_required_input_is_protocol_failure_not_write_repair(self):
+        event = {"status": "failure", "error": "missing required: path, content"}
+        assert not is_recoverable_write_failure("filesystem.write_file", event)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -898,6 +1178,10 @@ class TestToolMatchesPlanStep:
         step = {"title": "读取文件", "tool_hint": "filesystem.read_file", "description": ""}
         assert not tool_matches_plan_step("code.edit_file", step)
 
+    def test_explicit_write_hint_does_not_match_read_tool(self):
+        step = {"title": "重写HTML页面", "tool_hint": "filesystem.write_file", "description": "创建文件"}
+        assert not tool_matches_plan_step("filesystem.read_text_preview", step)
+
 
 class TestMarkNextPlanStepRunning:
     def test_marks_matching_step(self):
@@ -999,6 +1283,28 @@ class TestPrompts:
         prompt = progress_observer_prompt("/tmp", "explorer", events, True, "stagnation")
         assert "stagnation" in prompt
         assert "尚未写入" in prompt  # code_change_intent=True, no write yet
+
+    def test_repeated_failure_strategy_prompt_requires_different_route(self):
+        events = [
+            {
+                "tool": "filesystem.write_file",
+                "status": "failure",
+                "input": {},
+                "error": "missing required: path, content",
+            },
+            {
+                "tool": "filesystem.write_file",
+                "status": "failure",
+                "input": {},
+                "error": "missing required: path, content",
+            },
+        ]
+
+        prompt = repeated_failure_strategy_prompt("/tmp", "editor", events)
+
+        assert "实质不同的策略" in prompt
+        assert "filesystem.write_file" in prompt
+        assert "missing required" in prompt
 
     def test_recon_budget_prompt(self):
         prompt = recon_budget_prompt(5, "/tmp")

@@ -82,6 +82,8 @@ Runtime 只接受通过能力目录验证的提案。未知能力、未知工具
 
 当前代码已加入第一步基础：
 
+- `runtime/core/capability.py`
+  - CapabilityContract 和 PermissionSet 初始 schema。
 - `runtime/agent_strategy/capability_router.py`
   - 能力契约聚合。
   - 任务路由提案结构。

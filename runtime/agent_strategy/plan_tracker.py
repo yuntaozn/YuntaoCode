@@ -137,11 +137,13 @@ def tool_matches_plan_step(tool_id: str, step: dict[str, Any]) -> bool:
     if tool_id in hint:
         return True
 
-    # Fuzzy match: if hint mentions a tool prefix (e.g. filesystem.list_dir)
-    # but the actual tool doesn't match exactly, try semantic keyword matching.
+    # When a plan step names a concrete tool, avoid completing it with a
+    # different tool just because the wording is similar.
     hint_has_tool_prefix = any(
         prefix in hint for prefix in ("filesystem.", "code.", "document.", "shell.", "git.")
     )
+    if hint_has_tool_prefix:
+        return False
 
     write_terms = (
         "写", "写入", "修改", "编辑", "替换", "创建", "新增", "生成", "导出",
@@ -156,13 +158,9 @@ def tool_matches_plan_step(tool_id: str, step: dict[str, Any]) -> bool:
         "验证", "测试", "检查", "运行", "diff", "status", "verify", "test", "lint",
     )
     if is_write_tool(tool_id):
-        if not hint_has_tool_prefix:
-            return any(term in text for term in write_terms)
-        return False
+        return any(term in text for term in write_terms)
     if is_verification_tool(tool_id, None):
-        if not hint_has_tool_prefix:
-            return any(term in text for term in verify_terms)
-        return False
+        return any(term in text for term in verify_terms)
     if tool_id in explorer_tool_ids("coding") or tool_id in (RECON_TOOL_IDS | {"git.status", "git.diff", "git.log"}):
         return any(term in text for term in read_terms)
     return False

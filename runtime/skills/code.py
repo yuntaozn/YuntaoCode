@@ -605,6 +605,167 @@ def edit_file_sync(path: Path, edits: list[dict[str, Any]], context: Any) -> dic
     }
 
 
+# ---------------------------------------------------------------------------
+# apply_patch -- small, transactional code changes
+# ---------------------------------------------------------------------------
+
+async def apply_patch(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    patch = input_data.get("patch")
+    if not isinstance(patch, str) or not patch.strip():
+        raise ValueError("patch is required")
+    return await asyncio.to_thread(apply_patch_sync, patch, context)
+
+
+def apply_patch_sync(patch: str, context: Any) -> dict[str, Any]:
+    """Apply a small Codex-style patch after validating every operation."""
+    operations = _parse_apply_patch(patch)
+    planned: list[dict[str, Any]] = []
+    seen_paths: set[Path] = set()
+
+    for operation in operations:
+        path = context.path_guard.resolve(operation["path"])
+        if path in seen_paths:
+            raise ValueError(f"patch contains multiple operations for the same file: {path}")
+        seen_paths.add(path)
+        kind = operation["kind"]
+        if kind == "add":
+            if path.exists():
+                raise ValueError(f"cannot add existing file: {path}")
+            text = _apply_add_file_patch(operation["body"])
+            if path.suffix.lower() in {".html", ".htm"}:
+                from runtime.skills.filesystem import inspect_text_artifact_integrity
+
+                integrity = inspect_text_artifact_integrity(path, text)
+                if integrity.get("checked") and not integrity.get("valid"):
+                    issues = ", ".join(str(item) for item in integrity.get("issues") or [])
+                    raise ValueError(f"refusing incomplete added HTML file: {issues}")
+            planned.append({"kind": kind, "path": path, "text": text, "encoding": "utf-8"})
+            continue
+        if kind == "update":
+            if not path.exists() or not path.is_file():
+                raise ValueError(f"file not found: {path}")
+            original, encoding = _read_text_with_encoding(path)
+            text, hunk_count = _apply_update_file_patch(original, operation["body"])
+            planned.append({
+                "kind": kind,
+                "path": path,
+                "text": text,
+                "encoding": encoding,
+                "hunk_count": hunk_count,
+            })
+            continue
+        raise ValueError(f"unsupported patch operation: {kind}")
+
+    for item in planned:
+        path = item["path"]
+        if callable(getattr(context, "backup_file", None)):
+            context.backup_file(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_text_with_encoding(path, item["text"], item["encoding"])
+        context.log("info", f"patch {item['kind']}: {path}")
+
+    return {
+        "path": str(planned[0]["path"]) if len(planned) == 1 else "",
+        "paths": [str(item["path"]) for item in planned],
+        "file_count": len(planned),
+        "operation_count": len(operations),
+        "hunk_count": sum(int(item.get("hunk_count") or 0) for item in planned),
+    }
+
+
+def _parse_apply_patch(patch: str) -> list[dict[str, Any]]:
+    text = patch.replace("\r\n", "\n").replace("\r", "\n").strip()
+    lines = text.splitlines()
+    if len(lines) < 3 or lines[0] != "*** Begin Patch" or lines[-1] != "*** End Patch":
+        raise ValueError("patch must start with '*** Begin Patch' and end with '*** End Patch'")
+
+    operations: list[dict[str, Any]] = []
+    index = 1
+    end_index = len(lines) - 1
+    headers = {
+        "*** Add File: ": "add",
+        "*** Update File: ": "update",
+    }
+    while index < end_index:
+        if not lines[index].strip():
+            index += 1
+            continue
+        header = lines[index]
+        kind = ""
+        path = ""
+        for prefix, candidate_kind in headers.items():
+            if header.startswith(prefix):
+                kind = candidate_kind
+                path = header[len(prefix):].strip()
+                break
+        if not kind or not path:
+            raise ValueError(f"unsupported or malformed patch header: {header[:160]}")
+        index += 1
+        body: list[str] = []
+        while index < end_index and not any(lines[index].startswith(prefix) for prefix in headers):
+            body.append(lines[index])
+            index += 1
+        if not body:
+            raise ValueError(f"patch operation has no body: {path}")
+        operations.append({"kind": kind, "path": path, "body": body})
+    if not operations:
+        raise ValueError("patch contains no file operations")
+    return operations
+
+
+def _apply_add_file_patch(body: list[str]) -> str:
+    content: list[str] = []
+    for line in body:
+        if line == "*** End of File":
+            continue
+        if not line.startswith("+"):
+            raise ValueError("every added-file line must start with '+'")
+        content.append(line[1:])
+    return "\n".join(content) + ("\n" if content else "")
+
+
+def _apply_update_file_patch(original: str, body: list[str]) -> tuple[str, int]:
+    text = original.replace("\r\n", "\n").replace("\r", "\n")
+    hunks: list[list[str]] = []
+    current: list[str] = []
+    for line in body:
+        if line.startswith("@@"):
+            if current:
+                hunks.append(current)
+                current = []
+            continue
+        if line == "*** End of File":
+            continue
+        current.append(line)
+    if current:
+        hunks.append(current)
+    if not hunks:
+        raise ValueError("update patch contains no hunks")
+
+    for hunk in hunks:
+        old_lines: list[str] = []
+        new_lines: list[str] = []
+        for line in hunk:
+            if not line or line[0] not in {" ", "+", "-"}:
+                raise ValueError("update hunk lines must start with space, '+', or '-'")
+            value = line[1:]
+            if line[0] in {" ", "-"}:
+                old_lines.append(value)
+            if line[0] in {" ", "+"}:
+                new_lines.append(value)
+        old_text = "\n".join(old_lines)
+        new_text = "\n".join(new_lines)
+        if not old_text:
+            raise ValueError("update hunk must include context or removed lines")
+        count, matched_text = _fuzzy_match(text, old_text)
+        if count == 0:
+            raise ValueError(f"patch context not found: {old_text[:160]!r}")
+        if count > 1:
+            raise ValueError(f"patch context matches {count} locations: {old_text[:160]!r}")
+        text = text.replace(matched_text or old_text, new_text, 1)
+    return text, len(hunks)
+
+
 def register_code_tools(registry: ToolRegistry) -> None:
     registry.register(
         ToolSpec(
@@ -642,6 +803,32 @@ def register_code_tools(registry: ToolRegistry) -> None:
             },
         ),
         list_project_files,
+    )
+    registry.register(
+        ToolSpec(
+            id="code.apply_patch",
+            name="应用代码补丁",
+            description=(
+                "首选的代码修改工具。使用 Codex 风格的 *** Begin Patch / "
+                "*** Update File / *** Add File 小块补丁修改一个或多个文件。"
+                "运行时会先完整解析全部补丁，再应用写入；不要用它一次传输超大完整文件。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "patch": {
+                        "type": "string",
+                        "description": (
+                            "完整补丁文本。更新文件时每个 hunk 使用 @@，上下文行以空格开头，"
+                            "删除行以 - 开头，新增行以 + 开头。"
+                        ),
+                    },
+                },
+                "required": ["patch"],
+            },
+            requires_confirmation=True,
+        ),
+        apply_patch,
     )
     registry.register(
         ToolSpec(

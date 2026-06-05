@@ -32,7 +32,9 @@ def test_common_model_tool_name_variants_resolve_to_registered_tools() -> None:
     aliases = {
         "filesystem.list_dir": "filesystem.scan_folder",
         "filesystem.list_files": "filesystem.scan_folder",
+        "filesystem.list_project_files": "code.list_project_files",
         "filesystem.preview_text": "filesystem.read_text_preview",
+        "filesystem.write_temp": "filesystem.write_temp_file",
         "document.pdf_extract_text": "document.extract_pdf_text_preview",
         "document.extract_docx": "document.extract_docx_outline",
         "document.pdf_to_word": "document.extract_pdf_to_docx",

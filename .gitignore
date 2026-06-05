@@ -24,6 +24,9 @@ desktop-shell/src-tauri/binaries/*.pdb
 # Logs
 *.log
 
+# Local AI plugin drafts
+ai-plugins/
+
 # IDE
 .vscode/
 .idea/

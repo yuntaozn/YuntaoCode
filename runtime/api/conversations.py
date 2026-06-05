@@ -10,14 +10,19 @@ import tornado.iostream
 
 from .base import ApiHandler
 from runtime import i18n
+from runtime.capability_governance import ai_plugin_draft_workspace_guard_message
 from runtime.agent_strategy.capability_router import (
     build_capability_catalog,
     format_capability_catalog_for_prompt,
 )
 from runtime.agent_strategy import classifiers as _clf
+from runtime.agent_strategy import confirmation_policy as _cp
+from runtime.agent_strategy import context_hygiene as _ctx_hygiene
 from runtime.agent_strategy import prompts as _prp
 from runtime.agent_strategy import plan_tracker as _pt
 from runtime.agent_strategy import policy as _pol
+from runtime.agent_strategy import task_contract as _tc
+from runtime.agent_strategy import tool_result_risks as _tool_risks
 from runtime.model_providers import generate_chat_completion
 from runtime.model_providers.client import stream_chat_completion
 from runtime.assistant_modes import get_mode_config, normalize_mode
@@ -255,6 +260,8 @@ class ConversationMessagesHandler(ApiHandler):
                 continue
             role = "assistant" if item.role == "assistant" else "user"
             messages.append({"role": role, "content": item.content})
+        messages, hygiene_report = _ctx_hygiene.sanitize_model_context(messages)
+        self._last_context_hygiene_report = hygiene_report
         return messages
 
     def _capability_context_prompt(self, mode_config: dict[str, Any] | None = None) -> str:
@@ -377,6 +384,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                         "event": "heartbeat",
                         "run_id": run.id,
                         "message": self.t("conv.model_processing"),
+                        "phase": "run_stream",
+                        "connection_alive": True,
                     })
                     await self.flush()
                     continue
@@ -391,25 +400,38 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             if _active_stream_conversation_runs.get(conversation_id) in {run.id, "pending"}:
                 _active_stream_conversation_runs.pop(conversation_id, None)
 
+    def _normalize_planning_policy(self, payload: dict[str, Any]) -> str:
+        policy = str(payload.get("planning_policy") or "").strip().lower()
+        if policy in {"off", "auto", "always"}:
+            return policy
+        if any(key in payload for key in ("plan_mode", "plan_execution")):
+            return self._normalize_plan_mode(payload)
+        legacy = str(payload.get("execution_mode") or "").strip().lower()
+        if legacy in {"conservative", "auto", "aggressive"}:
+            return {
+                "conservative": "off",
+                "auto": "auto",
+                "aggressive": "always",
+            }[legacy]
+        return self.runtime.settings.get_planning_policy()
+
+    def _normalize_confirmation_policy(self, payload: dict[str, Any]) -> str:
+        return _cp.normalize_confirmation_policy(
+            payload.get("confirmation_policy"),
+            self.runtime.settings.get_confirmation_policy(),
+        )
+
     def _normalize_execution_mode(self, payload: dict[str, Any]) -> str:
-        mode = str(payload.get("execution_mode") or "").strip().lower()
-        if mode in {"conservative", "auto", "aggressive"}:
-            return mode
-        if not any(key in payload for key in ("plan_mode", "plan_execution")):
-            return self.runtime.settings.get_execution_mode()
-        legacy = self._normalize_plan_mode(payload)
+        """Return the deprecated compatibility alias for planning_policy."""
         return {
             "off": "conservative",
             "auto": "auto",
             "always": "aggressive",
-        }.get(legacy, self.runtime.settings.get_execution_mode())
+        }[self._normalize_planning_policy(payload)]
 
     def _plan_mode_for_execution_mode(self, execution_mode: str, payload: dict[str, Any]) -> str:
-        if execution_mode == "conservative":
-            return "off"
-        if execution_mode == "aggressive":
-            return "always"
-        return self._normalize_plan_mode(payload)
+        """Compatibility helper for older callers."""
+        return self._normalize_planning_policy({**payload, "execution_mode": execution_mode})
 
     def _normalize_plan_mode(self, payload: dict[str, Any]) -> str:
         mode = str(payload.get("plan_mode") or "").strip().lower()
@@ -426,47 +448,98 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         *,
         task_intent: str,
         mode: str | None,
-        execution_mode: str,
-        plan_mode: str,
+        planning_policy: str,
+        confirmation_policy: str,
         workspace_path: str,
         expected_document_coverage: bool = False,
+        source: str = "policy",
     ) -> dict[str, Any]:
-        requires_write = task_intent in {"write_required", "document_export"}
-        requires_verification = requires_write
-        requires_plan = plan_mode == "always"
-        if execution_mode == "conservative":
-            requires_plan = False
-        return {
-            "intent": task_intent,
-            "routing_strategy": "model_first_capability",
-            "assistant_mode": mode or "terminal",
-            "execution_mode": execution_mode,
-            "plan_mode": plan_mode,
-            "access_scope": self.runtime.settings.get_access_scope(),
-            "workspace_path": workspace_path,
-            "requires_write": requires_write,
-            "requires_verification": requires_verification,
-            "requires_plan": requires_plan,
-            "expected_document_coverage": bool(expected_document_coverage),
-            "success_conditions": [
-                condition for condition in [
-                    "write_tool_success" if requires_write else "",
-                    "verification_tool_success" if requires_verification else "",
-                    "document_output_coverage" if expected_document_coverage else "",
-                    "final_answer_with_evidence",
-                ] if condition
-            ],
-        }
+        return _tc.default_task_contract(
+            task_intent=task_intent,
+            mode=mode,
+            planning_policy=planning_policy,
+            confirmation_policy=confirmation_policy,
+            workspace_path=workspace_path,
+            access_scope=self.runtime.settings.get_access_scope(),
+            expected_document_coverage=expected_document_coverage,
+            source=source,
+        )
+
+    def _should_use_model_task_contract(
+        self,
+        content: str,
+        fallback_intent: str,
+        hard_no_write_lock: bool,
+        conversation: Any | None = None,
+    ) -> bool:
+        if hard_no_write_lock:
+            return False
+        text = str(content or "").strip()
+        if not text:
+            return False
+        if fallback_intent in {"document_export", "paper_workflow", "write_required"}:
+            return True
+        if fallback_intent == "answer_only" and len(text) <= 16:
+            return self._has_recent_task_context(conversation, text)
+        return True
+
+    async def _decide_task_contract(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        workspace_path: str,
+        user_content: str,
+        fallback_contract: dict[str, Any],
+        hard_no_write_lock: bool,
+        expected_document_coverage: bool,
+    ) -> dict[str, Any]:
+        prompt = _tc.task_contract_prompt(workspace_path, fallback_contract)
+        try:
+            decision_messages: list[dict[str, Any]] = [
+                {"role": "system", "content": prompt},
+                *_tc.task_contract_context_messages(messages, user_content),
+            ]
+            answer, _metadata = await generate_chat_completion(
+                settings=self.runtime.settings,
+                model=model,
+                messages=decision_messages,
+                enable_thinking=False,
+                reasoning_effort="low",
+                tools=None,
+            )
+            parsed = _tc.extract_task_contract_json(answer)
+            return _tc.merge_model_task_contract(
+                parsed,
+                fallback_contract,
+                hard_no_write_lock=hard_no_write_lock,
+                expected_document_coverage=expected_document_coverage,
+            )
+        except Exception as exc:
+            contract = _tc.merge_model_task_contract(
+                None,
+                fallback_contract,
+                hard_no_write_lock=hard_no_write_lock,
+                expected_document_coverage=expected_document_coverage,
+            )
+            contract["source"] = "policy_fallback"
+            contract["model_contract_error"] = str(exc)[:500]
+            return contract
 
     def _task_contract_prompt(self, contract: dict[str, Any]) -> str:
         conditions = ", ".join(contract.get("success_conditions") or [])
+        goal = str(contract.get("goal") or "").strip() or "(not declared)"
+        deliverables = json.dumps(contract.get("deliverables") or [], ensure_ascii=False)
         lang = self.get_lang()
         prompt = (
             i18n.t("contract.title", lang)
             + i18n.t("contract.workspace", lang, workspace_path=str(contract.get("workspace_path")))
             + i18n.t("contract.access", lang, access_scope=str(contract.get("access_scope")))
-            + i18n.t("contract.exec_mode", lang, execution_mode=str(contract.get("execution_mode")))
+            + i18n.t("contract.planning_policy", lang, planning_policy=str(contract.get("planning_policy")))
+            + i18n.t("contract.confirmation_policy", lang, confirmation_policy=str(contract.get("confirmation_policy")))
             + i18n.t("contract.intent", lang, intent=str(contract.get("intent")))
+            + i18n.t("contract.goal", lang, goal=goal)
+            + i18n.t("contract.deliverables", lang, deliverables=deliverables)
             + f"任务路由：{contract.get('routing_strategy')}（模型理解任务，系统校验能力契约与执行结果）\n"
             + i18n.t("contract.must_write", lang, requires_write=str(bool(contract.get("requires_write"))))
             + i18n.t("contract.must_verify", lang, requires_verification=str(bool(contract.get("requires_verification"))))
@@ -582,6 +655,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                     "event": "heartbeat",
                     "message": event.get("message") or "模型仍在处理，请稍候",
                     "idle_seconds": event.get("idle_seconds"),
+                    "phase": event.get("phase") or "model_stream",
+                    "connection_alive": event.get("connection_alive", True),
                 })
                 await self.flush()
         raw_plan = "".join(plan_parts).strip()
@@ -875,8 +950,28 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _round_has_only_non_progress(self, round_events: list[dict[str, Any]]) -> bool:
         return _clf.round_has_only_non_progress(round_events)
 
+    def _consecutive_repeated_failure_count(self, tool_events: list[dict[str, Any]]) -> int:
+        return _clf.consecutive_repeated_failure_count(tool_events)
+
+    def _repeated_failure_action(
+        self,
+        tool_events: list[dict[str, Any]],
+        *,
+        strategy_change_intervened: bool,
+    ) -> str:
+        return _clf.repeated_failure_action(
+            tool_events,
+            strategy_change_intervened=strategy_change_intervened,
+        )
+
     def _looks_like_dangling_action(self, content: str) -> bool:
         return _clf.looks_like_dangling_action(content)
+
+    def _has_unresolved_tool_call_markup(self, content: str) -> bool:
+        return _clf.has_unresolved_tool_call_markup(content)
+
+    def _strip_native_tool_call_blocks(self, content: str) -> str:
+        return _clf.strip_native_tool_call_blocks(content)
 
     def _dangling_action_prompt(
         self,
@@ -887,11 +982,16 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     ) -> str:
         return _prp.dangling_action_prompt(workspace_path, unfinished_text, tool_events, mode)
 
+    def _malformed_tool_call_prompt(self, workspace_path: str, unfinished_text: str) -> str:
+        return _prp.malformed_tool_call_prompt(workspace_path, unfinished_text)
+
     def _needs_synthesized_final_answer(self, content: str, tool_events: list[dict[str, Any]]) -> bool:
         if not tool_events:
             return False
         text = (content or "").strip()
         if not text or text == "模型没有返回内容。":
+            return True
+        if _clf.strip_native_tool_call_blocks(text) != text:
             return True
         return self._looks_like_dangling_action(text)
 
@@ -953,6 +1053,51 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         ])
         return "\n".join(lines)
 
+    def _synthesize_partial_answer(
+        self,
+        workspace_path: str,
+        tool_events: list[dict[str, Any]],
+        run_result: dict[str, Any],
+    ) -> str:
+        changed_paths = run_result.get("changed_paths") if isinstance(run_result, dict) else []
+        failures = run_result.get("failures") if isinstance(run_result, dict) else []
+        risks = run_result.get("risks") if isinstance(run_result, dict) else []
+        counts = run_result.get("counts") if isinstance(run_result, dict) else {}
+        lines = [
+            "未完整完成：本轮已有部分操作成功，但系统检测到失败项或缺少可靠验证。",
+        ]
+        if isinstance(changed_paths, list) and changed_paths:
+            lines.extend(["", "已变更文件："])
+            lines.extend(f"- {path}" for path in changed_paths[:12])
+        if isinstance(failures, list) and failures:
+            lines.extend(["", "失败记录："])
+            for item in failures[:6]:
+                if not isinstance(item, dict):
+                    continue
+                tool = str(item.get("tool") or "unknown")
+                path = str(item.get("path") or "").strip()
+                error = str(item.get("error") or "工具执行失败").strip()
+                label = f"{tool}（{path}）" if path else tool
+                lines.append(f"- {label}: {error[:240]}")
+        if isinstance(risks, list) and risks:
+            lines.extend(["", "仍需处理："])
+            risk_messages = {
+                "test_not_observed": "没有观察到测试、构建或语法检查成功。",
+                "write_not_verified": "写入后没有观察到有效验证。",
+                "partial_write_failure": "同一轮既有写入成功，也有写入失败，产物可能不完整。",
+                "runtime_verification_not_observed": "没有观察到可退出的运行时验证。",
+                "invalid_verification_method": "使用了无效的验证方式。",
+                "max_rounds_exceeded": "执行达到轮次上限。",
+            }
+            for risk in risks[:8]:
+                lines.append(f"- {risk_messages.get(str(risk), str(risk))}")
+        if isinstance(counts, dict) and int(counts.get("test_successes") or 0) == 0:
+            lines.extend([
+                "",
+                "结论：不能把本轮视为目标已完成；请基于现有变更继续修复并执行实际验证。",
+            ])
+        return "\n".join(lines)
+
     def _tool_event_failed(self, event: dict[str, Any]) -> bool:
         if str(event.get("status") or "") == "failure":
             return True
@@ -962,6 +1107,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         if output.get("error") is True:
             return True
         if str(event.get("tool") or "") == "shell.run_command":
+            if output.get("timed_out") is True:
+                return True
             try:
                 return int(output.get("exit_code", 0) or 0) != 0
             except (TypeError, ValueError):
@@ -969,10 +1116,16 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         return False
 
     def _tool_event_failure_message(self, event: dict[str, Any]) -> str:
+        output = event.get("output") if isinstance(event.get("output"), dict) else {}
+        if output.get("timed_out") is True:
+            event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
+            timeout = output.get("timeout") or event_input.get("timeout")
+            message = f"command timed out after {timeout}s" if timeout else "command timed out"
+            detail = str(output.get("stderr") or output.get("stdout") or "").strip()
+            return f"{message}: {detail}" if detail else message
         error = str(event.get("error") or "").strip()
         if error:
             return error
-        output = event.get("output") if isinstance(event.get("output"), dict) else {}
         stderr = str(output.get("stderr") or "").strip()
         stdout = str(output.get("stdout") or "").strip()
         if stderr:
@@ -1081,20 +1234,34 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     ) -> str:
         return _prp.progress_observer_prompt(workspace_path, current_stage, tool_events, code_change_intent, reason)
 
+    def _repeated_failure_strategy_prompt(
+        self,
+        workspace_path: str,
+        current_stage: str,
+        tool_events: list[dict[str, Any]],
+    ) -> str:
+        return _prp.repeated_failure_strategy_prompt(workspace_path, current_stage, tool_events)
+
     def _recon_budget_prompt(self, budget: int, workspace_path: str) -> str:
         return _prp.recon_budget_prompt(budget, workspace_path)
 
     def _write_only_stage_prompt(self, workspace_path: str) -> str:
         return _prp.write_only_stage_prompt(workspace_path)
 
-    def _requires_runtime_confirmation(self, tool_id: str) -> bool:
-        if tool_id not in self._document_write_tool_ids() and tool_id != "filesystem.write_file":
-            return False
+    def _runtime_confirmation_decision(self, tool_id: str) -> _cp.ConfirmationDecision:
         try:
             tool = self.runtime.registry.get(tool_id)
         except KeyError:
-            return False
-        return bool(tool.spec.requires_confirmation)
+            return _cp.decide_tool_confirmation(
+                getattr(self, "_active_confirmation_policy", "auto"),
+                tool_id,
+                declared_confirmation=True,
+            )
+        return _cp.decide_tool_confirmation(
+            getattr(self, "_active_confirmation_policy", "auto"),
+            tool_id,
+            declared_confirmation=bool(tool.spec.requires_confirmation),
+        )
 
     def _document_contract_tool_guard(self, tool_id: str, arguments: dict[str, Any]) -> str:
         contract = getattr(self, "_active_task_contract", None)
@@ -1164,7 +1331,123 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
 
         return ""
 
-    async def _confirm_runtime_tool_call(self, tool_id: str, arguments: dict[str, Any]) -> bool:
+    def _verification_runtime_tool_guard(self, tool_id: str, arguments: dict[str, Any]) -> str:
+        if tool_id != "shell.run_command":
+            return ""
+        if not _clf.is_long_running_service_command(arguments):
+            return ""
+        contract = getattr(self, "_active_task_contract", None)
+        if not isinstance(contract, dict) or not contract.get("requires_verification"):
+            return ""
+        tool_events = getattr(self, "_active_tool_events", [])
+        current_stage = str(getattr(self, "_active_current_stage", "") or "")
+        post_write_mode = bool(getattr(self, "_active_post_write_mode", False))
+        verification_context = (
+            _clf.has_successful_write(tool_events if isinstance(tool_events, list) else [])
+            or current_stage == "verifier"
+            or post_write_mode
+        )
+        if not verification_context:
+            return ""
+        command = _clf.shell_command_text(arguments)
+        return (
+            "检测到模型把长驻服务启动命令当作普通验证命令："
+            f"{command}。这类命令通常不会自行退出，不能作为本轮写入后的自动验证。"
+            "请改用可退出的语法检查、构建、测试、读取生成文件、git diff/status，"
+            "或在最终总结中明确说明需要用户手动打开浏览器验证。"
+        )
+
+    def _ai_plugin_draft_workspace_guard(
+        self,
+        tool_id: str,
+        arguments: dict[str, Any],
+        workspace_path: str | None,
+    ) -> str:
+        return ai_plugin_draft_workspace_guard_message(
+            tool_id=tool_id,
+            input_data=arguments,
+            workspace_path=workspace_path,
+            data_dir=getattr(getattr(self.runtime, "settings", None), "data_dir", None),
+        )
+
+    def _runtime_confirmation_message(
+        self,
+        tool_id: str,
+        arguments: dict[str, Any],
+        decision: _cp.ConfirmationDecision | None = None,
+    ) -> str:
+        target = self._runtime_confirmation_target(arguments)
+        operation = self._runtime_confirmation_operation(tool_id, arguments, target)
+        lines = ["即将执行需要确认的本地操作。"]
+        contract = getattr(self, "_active_task_contract", None)
+        if isinstance(contract, dict):
+            goal = str(contract.get("goal") or "").strip()
+            if goal:
+                lines.append(f"任务目标：{goal}")
+        lines.append(f"操作：{operation}")
+        lines.append(f"工具：{self._tool_display_name(tool_id)}（{tool_id}）")
+        if decision is not None:
+            lines.append(f"确认策略：{decision.policy}")
+            lines.append(f"风险类型：{decision.risk}")
+        if target:
+            lines.append(f"目标：{target}")
+        if tool_id == "filesystem.write_file" and isinstance(arguments.get("content"), str):
+            lines.append(f"内容大小：{len(arguments['content'])} 字符")
+        lines.append("确认后会在本地工作区执行；5 分钟内未响应将自动取消。")
+        return "\n".join(lines)
+
+    def _runtime_confirmation_target(self, arguments: dict[str, Any]) -> str:
+        patch = arguments.get("patch")
+        if isinstance(patch, str):
+            paths: list[str] = []
+            for line in patch.splitlines():
+                for prefix in ("*** Add File: ", "*** Update File: "):
+                    if line.startswith(prefix):
+                        path = line[len(prefix):].strip()
+                        if path and path not in paths:
+                            paths.append(path)
+            if paths:
+                return ", ".join(paths[:4])
+        return str(
+            arguments.get("path")
+            or arguments.get("output_path")
+            or arguments.get("output_dir")
+            or ""
+        ).strip()
+
+    def _runtime_confirmation_operation(
+        self,
+        tool_id: str,
+        arguments: dict[str, Any],
+        target: str,
+    ) -> str:
+        if tool_id == "code.apply_patch":
+            return "应用代码补丁"
+        if target:
+            exists = False
+            is_dir = False
+            try:
+                path = Path(target)
+                exists = path.exists()
+                is_dir = path.is_dir()
+            except (OSError, ValueError):
+                exists = False
+                is_dir = False
+            if is_dir or arguments.get("output_dir"):
+                return "更新目录内容" if exists else "创建/使用输出目录"
+            if tool_id in self._document_write_tool_ids():
+                return "更新文档" if exists else "生成文档"
+            return "覆盖/更新文件" if exists else "创建文件"
+        if tool_id in self._document_write_tool_ids():
+            return "生成或更新文档"
+        return "写入文件"
+
+    async def _confirm_runtime_tool_call(
+        self,
+        tool_id: str,
+        arguments: dict[str, Any],
+        decision: _cp.ConfirmationDecision,
+    ) -> bool:
         conversation_id = str(getattr(self, "_active_conversation_id", "") or "")
         if not conversation_id:
             return True
@@ -1172,19 +1455,12 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         confirm_event = asyncio.Event()
         _pending_confirms[conversation_id] = confirm_event
         _confirm_responses.pop(conversation_id, None)
-        target = (
-            arguments.get("path")
-            or arguments.get("output_path")
-            or arguments.get("output_dir")
-            or ""
-        )
         self.write_event({
             "event": "confirm",
-            "message": f"即将执行文件写入工具 {self._tool_display_name(tool_id)}"
-            + (f"：{target}" if target else "")
-            + "，是否继续？（5 分钟内未响应将自动取消）",
+            "message": self._runtime_confirmation_message(tool_id, arguments, decision),
             "tool": tool_id,
             "input": arguments,
+            "confirmation_decision": decision.to_dict(),
         })
         await self.flush()
         try:
@@ -1205,13 +1481,18 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         model_tool_name = function.get("name") or ""
         tool_id = tool_name_map.get(model_tool_name) or model_tool_name.replace("__", ".")
         arguments_text = function.get("arguments") or "{}"
-        try:
-            arguments = json.loads(arguments_text)
-            if not isinstance(arguments, dict):
-                arguments = {}
-        except json.JSONDecodeError:
-            # Try to fix common JSON issues from streaming (unclosed braces/brackets)
-            arguments = self._try_fix_json(arguments_text)
+        arguments, argument_error = _clf.parse_tool_arguments_strict(arguments_text)
+        if argument_error:
+            return self._skipped_tool_call(
+                tool_call,
+                tool_id,
+                arguments,
+                reason=argument_error,
+                message=(
+                    "Tool arguments were incomplete, malformed, or not a JSON object. "
+                    "The runtime did not execute this call."
+                ),
+            )
 
         try:
             tool_id = self.runtime.registry.resolve_id(tool_id)
@@ -1234,6 +1515,29 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 message=f"插件已禁用，不能调用工具：{tool_id}",
             )
 
+        missing_fields = self.runtime.registry.missing_required_input_fields(tool_id, arguments)
+        if missing_fields:
+            return self._skipped_tool_call(
+                tool_call,
+                tool_id,
+                arguments,
+                reason="invalid_tool_input",
+                message=(
+                    f"工具调用缺少必填参数：{', '.join(missing_fields)}。"
+                    "请补全参数后重新发送结构化工具调用；无效调用不会进入人工确认。"
+                ),
+            )
+
+        guard_message = self._ai_plugin_draft_workspace_guard(tool_id, arguments, workspace_path)
+        if guard_message:
+            return self._skipped_tool_call(
+                tool_call,
+                tool_id,
+                arguments,
+                reason="ai_plugin_draft_workspace_guard",
+                message=guard_message,
+            )
+
         guard_message = self._document_contract_tool_guard(tool_id, arguments)
         if guard_message:
             return self._skipped_tool_call(
@@ -1244,8 +1548,19 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 message=guard_message,
             )
 
-        if self._requires_runtime_confirmation(tool_id):
-            confirmed = await self._confirm_runtime_tool_call(tool_id, arguments)
+        guard_message = self._verification_runtime_tool_guard(tool_id, arguments)
+        if guard_message:
+            return self._skipped_tool_call(
+                tool_call,
+                tool_id,
+                arguments,
+                reason="invalid_verification_method",
+                message=guard_message,
+            )
+
+        confirmation_decision = self._runtime_confirmation_decision(tool_id)
+        if confirmation_decision.requires_confirmation:
+            confirmed = await self._confirm_runtime_tool_call(tool_id, arguments, confirmation_decision)
             if not confirmed:
                 return self._skipped_tool_call(
                     tool_call,
@@ -1261,6 +1576,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             wait=False,
             confirmed=True,
             workspace_path=workspace_path,
+            artifact_scope_id=getattr(self, "_active_run_id", "") or None,
         )
         event: dict[str, Any] = {
             "status": "running",
@@ -1268,6 +1584,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "name": self._tool_display_name(tool_id),
             "input": arguments,
             "task_id": task.id,
+            "confirmation_decision": confirmation_decision.to_dict(),
         }
         self.write_event({"event": "tool", **event})
         await self.flush()
@@ -1312,22 +1629,33 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             await self.flush()
         task = self.runtime.store.get(task.id) or task
         output_preview = self._tool_output_preview(tool_id, task.output)
+        task_error = task.error
+        if task.status == "failure":
+            task_error = self._tool_event_failure_message({
+                "tool": tool_id,
+                "status": task.status,
+                "input": arguments,
+                "output": task.output,
+                "error": task.error,
+            })
         event = {
             "status": task.status,
             "tool": tool_id,
             "name": self._tool_display_name(tool_id),
             "input": arguments,
             "task_id": task.id,
-            "error": task.error,
+            "error": task_error,
             "output": output_preview,
         }
-        tool_payload = {
+        tool_payload = _tool_risks.attach_tool_result_risks({
             "tool": tool_id,
             "input": arguments,
             "status": task.status,
             "output": task.output,
-            "error": task.error,
-        }
+            "error": task_error,
+        })
+        if tool_payload.get("runtime_risks"):
+            event["runtime_risks"] = tool_payload["runtime_risks"]
         return {
             "role": "tool",
             "tool_call_id": tool_call["id"],
@@ -1494,10 +1822,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return f"{name}仍在运行：{last_log}；已等待 {elapsed_seconds}s"
         return f"{name}仍在运行，已等待 {elapsed_seconds}s"
 
-    def _try_fix_json(self, text: str) -> dict[str, Any]:
-        """Attempt to repair truncated or malformed JSON from model tool calls."""
-        return _clf.try_fix_json(text)
-
     def _tool_display_name(self, tool_id: str) -> str:
         try:
             return self.runtime.registry.get(tool_id).spec.name
@@ -1512,7 +1836,24 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         if tool_id == "shell.run_command":
             stdout = str(output.get("stdout") or "")[:4000]
             stderr = str(output.get("stderr") or "")[:2000]
-            preview = {"type": "shell", "exit_code": output.get("exit_code"), "stdout": stdout, "stderr": stderr}
+            preview = {
+                "type": "shell",
+                "exit_code": output.get("exit_code"),
+                "stdout": stdout,
+                "stderr": stderr,
+                "timed_out": bool(output.get("timed_out")),
+                "timeout": output.get("timeout"),
+            }
+        elif tool_id == "code.apply_patch":
+            preview = {
+                "type": "patch",
+                "path": output.get("path"),
+                "paths": (output.get("paths") or [])[:40],
+                "file_count": output.get("file_count"),
+                "operation_count": output.get("operation_count"),
+                "hunk_count": output.get("hunk_count"),
+                "backup": output.get("_backup"),
+            }
         elif tool_id == "code.edit_file":
             preview = {
                 "type": "diff",
@@ -1540,6 +1881,19 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "path": output.get("path"),
                 "created": bool(output.get("created")),
                 "size": output.get("size"),
+                "integrity": output.get("integrity"),
+                "backup": output.get("_backup"),
+            }
+        elif tool_id == "filesystem.transform_text":
+            preview = {
+                "type": "file_transform",
+                "path": output.get("path"),
+                "transform": output.get("transform"),
+                "changed": bool(output.get("changed")),
+                "before_size": output.get("before_size"),
+                "after_size": output.get("after_size"),
+                "integrity_before": output.get("integrity_before"),
+                "integrity": output.get("integrity"),
                 "backup": output.get("_backup"),
             }
         elif tool_id == "document.extract_pdf_to_docx":
@@ -1604,6 +1958,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "remaining_lines": output.get("remaining_lines"),
                 "next_start_line": output.get("next_start_line"),
                 "next_end_line": output.get("next_end_line"),
+                "integrity": output.get("integrity"),
             }
         elif tool_id == "filesystem.read_text_preview":
             preview = {
@@ -1611,6 +1966,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "path": output.get("path"),
                 "size": output.get("size"),
                 "truncated": bool(output.get("truncated")),
+                "integrity": output.get("integrity"),
             }
         elif tool_id == "git.diff":
             preview = {"type": "diff", "diff_preview": str(output.get("diff") or "")[:4000]}
@@ -1720,7 +2076,9 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             output = event.get("output") if isinstance(event.get("output"), dict) else {}
             input_data = event.get("input") if isinstance(event.get("input"), dict) else {}
             candidates: list[Any] = []
-            if tool_id == "code.replace_text":
+            if tool_id == "code.apply_patch":
+                candidates.extend(output.get("paths") or [])
+            elif tool_id == "code.replace_text":
                 root = output.get("root") or input_data.get("path") or workspace_path
                 for item in output.get("changed_files") or []:
                     if isinstance(item, dict) and item.get("path"):
@@ -1859,6 +2217,31 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             if "继续" in content_hint and any(
                 term in content_hint
                 for term in ("优化", "修改", "写入", "创建", "未完成", "剩余", "页面", "seo")
+            ):
+                return True
+        return False
+
+    def _has_recent_task_context(self, conversation: Any | None, current_content: str) -> bool:
+        """Return whether a short request belongs to an existing conversation task."""
+        if conversation is None:
+            return False
+        current = current_content.strip()
+        for message in reversed(getattr(conversation, "messages", [])[-12:]):
+            if self._is_runtime_guidance_message(message):
+                continue
+            role = str(getattr(message, "role", "") or "")
+            previous_content = str(getattr(message, "content", "") or "").strip()
+            if role == "user" and previous_content and previous_content != current:
+                return True
+            if role != "assistant":
+                continue
+            metadata = getattr(message, "metadata", {}) or {}
+            if not isinstance(metadata, dict):
+                continue
+            contract = metadata.get("task_contract")
+            if isinstance(contract, dict) and (
+                contract.get("goal")
+                or contract.get("intent") not in {None, "", "answer_only"}
             ):
                 return True
         return False
@@ -2229,7 +2612,13 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         if mode not in {"coding", "terminal"}:
             return None
 
-        write_tools = {"code.edit_file", "code.replace_text", "filesystem.write_file"}
+        write_tools = {
+            "code.apply_patch",
+            "code.edit_file",
+            "code.replace_text",
+            "filesystem.transform_text",
+            "filesystem.write_file",
+        }
         write_successes = [
             event for event in tool_events
             if event.get("tool") in write_tools and event.get("status") == "success"
@@ -2238,7 +2627,28 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             event for event in tool_events
             if event.get("tool") in write_tools and event.get("status") == "failure"
         ]
+        invalid_verification_failures = [
+            event for event in tool_events
+            if _clf.is_invalid_verification_method_event(event)
+        ]
         claims_change = self._assistant_claims_code_changed(assistant_content)
+        if write_successes and invalid_verification_failures:
+            failed_tools = [
+                {
+                    "tool": event.get("tool") or "",
+                    "name": event.get("name") or event.get("tool") or "",
+                    "path": ((event.get("input") or {}).get("path") if isinstance(event.get("input"), dict) else "") or "",
+                    "error": event.get("error") or "",
+                    "task_id": event.get("task_id") or "",
+                }
+                for event in invalid_verification_failures
+            ]
+            return {
+                "reason": "invalid_verification_method",
+                "message": "注意：本轮文件已写入，但模型尝试使用长驻服务命令作为验证方式。系统未把该命令视为有效自动验证，仍需运行可退出的检查命令或由用户手动打开页面确认。",
+                "failed_tools": failed_tools[:8],
+                "tool_event_count": len(tool_events),
+            }
         if write_successes and write_failures:
             failed_tools = [
                 {
@@ -2393,6 +2803,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "truncated_for_context": len(text) > max_chars,
                 "raw_content": str(output.get("raw_content") or "")[:max_chars],
                 "usage_hint": output.get("usage_hint"),
+                "integrity": output.get("integrity"),
             }
             if len(text) > max_chars:
                 compact_output[key] += "\n... 文件内容过长，已压缩；如需更多内容，请按行号范围读取 ..."

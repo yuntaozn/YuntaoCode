@@ -3,10 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from runtime.agent_strategy.classifiers import is_verification_tool, is_write_tool
-
-
-RUN_RESULT_SCHEMA_VERSION = "0.1"
+from runtime.agent_strategy.classifiers import (
+    is_invalid_verification_method_event,
+    is_test_verification_event,
+    is_write_tool,
+    successful_verification_events,
+)
+from runtime.core.result import RUN_RESULT_SCHEMA_VERSION
 
 
 def build_run_result(
@@ -19,6 +22,7 @@ def build_run_result(
     expected_document_coverage: bool = False,
     contract_failed: bool = False,
     max_rounds_exceeded: bool = False,
+    convergence_stopped: bool = False,
 ) -> dict[str, Any]:
     """Build deterministic run facts from tool events.
 
@@ -29,7 +33,9 @@ def build_run_result(
     write_partials: list[dict[str, Any]] = []
     write_failures: list[dict[str, Any]] = []
     verification_successes: list[dict[str, Any]] = []
+    test_successes: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+    invalid_verification_failures: list[dict[str, Any]] = []
     effective_statuses: list[str] = []
 
     for event in tool_events:
@@ -38,6 +44,8 @@ def build_run_result(
         effective_statuses.append(status)
         if status == "failure":
             failures.append(_failure_record(workspace_path, event))
+            if is_invalid_verification_method_event(event):
+                invalid_verification_failures.append(event)
         if is_write_tool(tool_id):
             if status == "success":
                 write_successes.append(event)
@@ -46,22 +54,45 @@ def build_run_result(
                 write_partials.append(event)
             elif status == "failure":
                 write_failures.append(event)
-        if is_verification_tool(tool_id, mode) and status == "success":
-            verification_successes.append(event)
-
     written_paths = _unique(
-        _event_path(workspace_path, event)
+        path
         for event in write_successes
+        for path in _event_paths(workspace_path, event)
     )
+    verification_successes = successful_verification_events(tool_events, mode)
+    test_successes = [
+        event for event in verification_successes
+        if is_test_verification_event(event)
+    ]
     changed_paths = _changed_paths(change_summary) or written_paths
     verified = [_verification_record(workspace_path, event) for event in verification_successes]
     verified = [item for item in verified if item]
 
     risks: list[str] = []
+    failure_reasons = {
+        str((event.get("output") or {}).get("reason") or "").strip()
+        for event in tool_events
+        if isinstance(event.get("output"), dict)
+    }
+    if "truncated_tool_call" in failure_reasons:
+        risks.append("model_output_truncated")
+    if failure_reasons & {"malformed_tool_arguments", "non_object_tool_arguments"}:
+        risks.append("invalid_tool_call_protocol")
+    for event in tool_events:
+        for runtime_risk in event.get("runtime_risks") or []:
+            if isinstance(runtime_risk, dict) and runtime_risk.get("code"):
+                risks.append(str(runtime_risk["code"]))
     if requires_code_write and not write_successes:
         risks.append("expected_write_not_observed")
     if write_successes and not verification_successes:
         risks.append("write_not_verified")
+    code_artifact_written = _has_code_artifact(written_paths)
+    if requires_code_write and code_artifact_written and write_successes and not test_successes:
+        risks.append("test_not_observed")
+    if invalid_verification_failures:
+        risks.append("invalid_verification_method")
+        if write_successes:
+            risks.append("runtime_verification_not_observed")
     if write_successes and write_failures:
         risks.append("partial_write_failure")
     if write_partials:
@@ -70,6 +101,8 @@ def build_run_result(
         risks.append("execution_contract_failed")
     if max_rounds_exceeded:
         risks.append("max_rounds_exceeded")
+    if convergence_stopped:
+        risks.append("repeated_tool_failure")
     if failures and _failures_recovered(
         tool_events,
         effective_statuses,
@@ -89,12 +122,27 @@ def build_run_result(
     status = _result_status(
         has_tool_events=bool(tool_events),
         has_write_success=bool(write_successes),
-        has_failure=bool(failures) and "recovered_tool_failure" not in risks,
+        has_failure=(
+            bool(failures)
+            and "recovered_tool_failure" not in risks
+            and not (
+                bool(write_successes)
+                and len(invalid_verification_failures) == len(failures)
+            )
+        ),
+        has_invalid_verification_failure=bool(invalid_verification_failures),
         has_partial_write=bool(write_successes and write_failures),
         has_partial_resumable=bool(write_partials),
         has_document_coverage_failure=bool(coverage_failure),
+        has_missing_code_test=(
+            bool(requires_code_write)
+            and bool(code_artifact_written)
+            and bool(write_successes)
+            and not bool(test_successes)
+        ),
         contract_failed=contract_failed,
         max_rounds_exceeded=max_rounds_exceeded,
+        convergence_stopped=convergence_stopped,
     )
     return {
         "schema_version": RUN_RESULT_SCHEMA_VERSION,
@@ -106,6 +154,7 @@ def build_run_result(
             "write_partials": len(write_partials),
             "write_failures": len(write_failures),
             "verification_successes": len(verification_successes),
+            "test_successes": len(test_successes),
             "failures": len(failures),
         },
         "changed_paths": changed_paths,
@@ -117,6 +166,7 @@ def build_run_result(
             "requires_code_write": bool(requires_code_write),
             "contract_failed": bool(contract_failed),
             "max_rounds_exceeded": bool(max_rounds_exceeded),
+            "convergence_stopped": bool(convergence_stopped),
             "expected_document_coverage": bool(expected_document_coverage),
         },
     }
@@ -127,21 +177,28 @@ def _result_status(
     has_tool_events: bool,
     has_write_success: bool,
     has_failure: bool,
+    has_invalid_verification_failure: bool,
     has_partial_write: bool,
     has_partial_resumable: bool,
     has_document_coverage_failure: bool,
+    has_missing_code_test: bool,
     contract_failed: bool,
     max_rounds_exceeded: bool,
+    convergence_stopped: bool,
 ) -> str:
     if contract_failed:
         return "failure"
-    if max_rounds_exceeded:
+    if max_rounds_exceeded or convergence_stopped:
         return "stopped"
     if has_document_coverage_failure:
         return "partial"
     if has_partial_resumable:
         return "partial"
     if has_partial_write:
+        return "partial"
+    if has_write_success and has_invalid_verification_failure:
+        return "partial"
+    if has_missing_code_test:
         return "partial"
     if has_failure:
         return "failure"
@@ -160,6 +217,36 @@ def _changed_paths(change_summary: dict[str, Any] | None) -> list[str]:
     return _unique(paths)
 
 
+def _has_code_artifact(paths: list[str]) -> bool:
+    code_suffixes = {
+        ".bat",
+        ".cmd",
+        ".cjs",
+        ".css",
+        ".go",
+        ".htm",
+        ".html",
+        ".java",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".php",
+        ".ps1",
+        ".py",
+        ".rs",
+        ".sh",
+        ".svelte",
+        ".ts",
+        ".tsx",
+        ".vue",
+    }
+    for path in paths:
+        suffix = Path(str(path or "")).suffix.lower()
+        if suffix in code_suffixes:
+            return True
+    return False
+
+
 def _failure_record(workspace_path: str, event: dict[str, Any]) -> dict[str, Any]:
     return {
         "tool": str(event.get("tool") or ""),
@@ -172,6 +259,8 @@ def _effective_event_status(tool_id: str, event: dict[str, Any]) -> str:
     status = str(event.get("status") or "")
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
     if tool_id == "shell.run_command":
+        if output.get("timed_out") is True:
+            return "failure"
         try:
             exit_code = int(output.get("exit_code", 0) or 0)
         except (TypeError, ValueError):
@@ -187,10 +276,16 @@ def _effective_event_status(tool_id: str, event: dict[str, Any]) -> str:
 
 
 def _event_failure_message(event: dict[str, Any]) -> str:
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    if output.get("timed_out") is True:
+        event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
+        timeout = output.get("timeout") or event_input.get("timeout")
+        message = f"command timed out after {timeout}s" if timeout else "command timed out"
+        detail = str(output.get("stderr") or output.get("stdout") or "").strip()
+        return f"{message}: {detail}" if detail else message
     error = str(event.get("error") or "").strip()
     if error:
         return error
-    output = event.get("output") if isinstance(event.get("output"), dict) else {}
     stderr = str(output.get("stderr") or "").strip()
     stdout = str(output.get("stdout") or "").strip()
     if stderr:
@@ -227,6 +322,8 @@ def _event_indicates_progress(event: dict[str, Any]) -> bool:
         return True
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
     if tool_id == "shell.run_command":
+        if output.get("timed_out") is True:
+            return False
         try:
             return int(output.get("exit_code", 0) or 0) == 0
         except (TypeError, ValueError):
@@ -319,18 +416,36 @@ def _verification_record(workspace_path: str, event: dict[str, Any]) -> dict[str
 
 
 def _event_path(workspace_path: str, event: dict[str, Any]) -> str:
+    value = _raw_event_path_hint(event)
+    if not value:
+        return ""
+    return _relative_workspace_path(workspace_path, value)
+
+
+def _event_paths(workspace_path: str, event: dict[str, Any]) -> list[str]:
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    values = output.get("paths") if isinstance(output.get("paths"), list) else []
+    paths = [
+        _relative_workspace_path(workspace_path, str(value))
+        for value in values
+        if str(value or "").strip()
+    ]
+    if paths:
+        return paths
+    path = _event_path(workspace_path, event)
+    return [path] if path else []
+
+
+def _raw_event_path_hint(event: dict[str, Any]) -> str:
     event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
-    value = (
+    return str(
         output.get("path")
         or output.get("output_path")
         or event_input.get("output_path")
         or event_input.get("path")
         or ""
     )
-    if not value:
-        return ""
-    return _relative_workspace_path(workspace_path, str(value))
 
 
 def _relative_workspace_path(workspace_path: str, value: str) -> str:

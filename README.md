@@ -6,6 +6,12 @@
 
 YuntaoCode 关注的核心不是“再做一个 AI 聊天助手”，而是让本地任务可以被计划、执行、暂停、恢复、验证和审计。
 
+它当前最重要的开源目标，是把 AI 进入本地真实任务时必须面对的三件事做成清晰基座：
+
+* **Task Runtime**：任务状态、计划、步骤、执行、验证、恢复和结果。
+* **Context Runtime**：上下文选择、压缩、证据边界、长期记忆和上下文账本。
+* **Capability Runtime**：工具、权限、插件、能力契约和本地执行边界。
+
 ---
 
 ## 为什么会有 YuntaoCode
@@ -33,6 +39,23 @@ YuntaoCode 就是在这样的过程中自然演化出来的。
 
 ## 核心特性
 
+### 三层运行时（Runtime Foundation）
+
+YuntaoCode 的底层不是一组工具清单，而是三条可以长期演进的运行时主线：
+
+```text
+Task Runtime
+  管理用户目标、执行状态、计划、步骤、Trace、验证和恢复
+
+Context Runtime
+  管理任务相关上下文、证据、摘要、记忆和有效性边界
+
+Capability Runtime
+  管理工具能力、权限、确认、插件草案和外部能力接入
+```
+
+这三层共同决定一件事：模型可以参与任务判断和执行，但 Runtime 必须拥有状态、边界、证据和完成判定。
+
 ### 任务优先（Task First）
 
 YuntaoCode 把一次请求看作一个可管理的任务，而不是一次普通聊天：
@@ -50,7 +73,7 @@ YuntaoCode 把一次请求看作一个可管理的任务，而不是一次普通
 * 支持本地文档处理
 * 用户数据由用户自行掌控
 
-### 工具协同（Tool Collaboration）
+### 能力协同（Capability Collaboration）
 
 内置能力：
 
@@ -61,7 +84,7 @@ YuntaoCode 把一次请求看作一个可管理的任务，而不是一次普通
 * Web Access
 * Memory
 
-工具是任务执行的能力单元。支持通过插件扩展新的工具能力，但工具本身不是产品边界。
+工具是任务执行的能力单元。支持通过插件扩展新的工具能力，但工具本身不是产品边界；它们需要通过 Capability Contract 接入任务运行时。
 
 ### 长期记忆（Memory）
 
@@ -92,29 +115,31 @@ YuntaoCode 把一次请求看作一个可管理的任务，而不是一次普通
 ## 架构概览
 
 ```text
-             YuntaoCode Task Runtime
+             YuntaoCode Runtime Foundation
 
  ┌──────────────────────────────┐
- │ Task Runtime Core            │
+ │ runtime/core                 │
  └──────────────┬───────────────┘
                 │
 
-    ┌───────────┼───────────┬──────────────┐
+    ┌───────────┼───────────┐
 
-    ▼           ▼           ▼              ▼
+    ▼           ▼           ▼
 
- Task       Strategy    Context        Tools
- Model
+ Task       Context     Capability
+ Runtime    Runtime     Runtime
 
-    │           │                          │
+    │           │           │
 
- Lifecycle   Profiles / Policy /  ┌───────┼───────┐
- Audit       Prompts / Plan       ▼       ▼       ▼
- Recovery    Tracker          Filesystem Shell   Git
+    └───────────┼───────────┘
+                ▼
 
-                              Document  Web    Memory
+        Agent Strategy / Policy
 
-                             ...
+                │
+                ▼
+
+        Tools / Plugins / MCP
 
                 │
 
@@ -127,11 +152,11 @@ Python Runtime 是系统核心。
 
 Tauri 桌面端只是其中一种界面形式，Runtime 本身可以独立运行。
 
-当前实现已经包含工具调用、计划生成、阶段推进、确认、写入备份和执行记录。下一阶段的重点是把这些能力收束成更明确的 Task Model。
+当前实现已经包含工具调用、计划生成、阶段推进、确认、写入备份和执行记录。下一阶段的重点是把这些能力收束成更明确的 Task / Context / Capability Runtime。
 
 Agent Runtime 的策略层位于 `runtime/agent_strategy/`。它负责意图分类、内部 Profile、计划策略、阶段提示和执行计划生命周期，让 `conversation_runner.py` 尽量保持为编排层。
 
-Task Model 草案见 [docs/task-model.md](docs/task-model.md)，当前运行时基础契约见 [docs/runtime-foundation.md](docs/runtime-foundation.md)。
+Task Model 草案见 [docs/task-model.md](docs/task-model.md)，上下文运行时规划见 [docs/context-runtime.md](docs/context-runtime.md)，能力运行时规划见 [docs/capability-runtime.md](docs/capability-runtime.md)，当前运行时基础契约见 [docs/runtime-foundation.md](docs/runtime-foundation.md)。
 
 ---
 
@@ -245,7 +270,7 @@ python -m runtime.app --host 127.0.0.1 --port 8765
 
 ### 理解任务模型
 
-贡献新能力前，建议先阅读 [docs/task-model.md](docs/task-model.md) 和 [docs/runtime-foundation.md](docs/runtime-foundation.md)。
+贡献新能力前，建议先阅读 [docs/task-model.md](docs/task-model.md)、[docs/context-runtime.md](docs/context-runtime.md)、[docs/capability-runtime.md](docs/capability-runtime.md) 和 [docs/runtime-foundation.md](docs/runtime-foundation.md)。
 
 项目当前不鼓励优先堆叠应用场景。更推荐的贡献方向是：
 
@@ -327,15 +352,17 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 
 ## Roadmap
 
-### Phase 1：Task Foundation
+### Phase 1：Runtime Foundation
 
-目标：先把任务执行体系做清楚，而不是继续堆功能清单。
+目标：先把 Task / Context / Capability 三条运行时主线做清楚，而不是继续堆功能清单。
 
 * [ ] Task Model：任务、计划、步骤、状态、结果和元数据
 * [ ] Task Lifecycle：created、running、waiting、failed、completed、cancelled
 * [ ] Task Trace：模型输出、工具调用、确认、错误、验证和最终摘要
 * [ ] Task Recovery：暂停、恢复、失败重试、写入回退
 * [ ] Task Audit：可读的执行记录和可测试的状态迁移
+* [ ] Context Runtime：上下文选择、证据、压缩快照、记忆边界
+* [ ] Capability Runtime：能力契约、权限、确认、产物和验证规则
 
 ### Phase 2：Reusable Capabilities
 

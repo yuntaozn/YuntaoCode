@@ -26,6 +26,10 @@ foundation easier to understand, test, and extend.
 - `runtime/agent_strategy/`
   - Owns agent runtime strategy.
   - `classifiers.py`: intent, tool, progress, and stage classification helpers.
+  - `context_hygiene.py`: model-context cleanup before execution; keeps noisy
+    history from becoming examples for the model.
+  - `tool_result_risks.py`: converts tool-result facts into non-blocking,
+    model-facing risk evidence and audit records.
   - `profiles.py`: internal assistant profiles such as chat, analysis, coding,
     document, and paper workflows.
   - `policy.py`: request routing and deterministic planning gates.
@@ -42,6 +46,7 @@ foundation easier to understand, test, and extend.
 - `docs/`
   - Architecture, plugin, and protocol notes for contributors.
   - `task-model.md`: task, plan, step, trace, recovery, and template direction.
+  - `run-artifacts.md`: shared temporary artifacts across ToolTasks in one Run.
 
 ## Task Runtime Rules
 
@@ -62,6 +67,9 @@ foundation easier to understand, test, and extend.
 - Plan and routing decisions belong in `runtime/agent_strategy/policy.py`.
 - Stage sequences and round limits should flow through profiles instead of
   ad-hoc branches in the runner.
+- Model-context cleanup belongs in `runtime/agent_strategy/context_hygiene.py`.
+  Do not remove visible chat history to fix model pollution; sanitize only the
+  model-facing context and keep audit records intact.
 - Prompt text belongs in `runtime/agent_strategy/prompts.py`.
 - Plan lifecycle changes belong in `runtime/agent_strategy/plan_tracker.py`.
 - Keep extracted strategy helpers pure when possible. Avoid filesystem,

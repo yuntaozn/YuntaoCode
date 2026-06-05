@@ -43,9 +43,19 @@ class PluginsHandler(ApiHandler):
         })
 
     def post(self) -> None:
+        lang = self.get_lang()
         payload = self.parse_json_body()
         plugin_id = str(payload.get("plugin_id") or "").strip()
         enabled = bool(payload.get("enabled", True))
+        registered_plugin_ids = {tool["id"].split(".", 1)[0] for tool in self.runtime.registry.list_specs()}
+        ai_plugin_root = self.runtime.settings.data_dir / "ai-plugins"
+        draft_ids = {draft["id"] for draft in load_ai_plugin_drafts(ai_plugin_root, lang)}
+        policy_error = plugin_toggle_policy_error(plugin_id, registered_plugin_ids, draft_ids)
+        if policy_error:
+            status, reason = policy_error
+            self.set_status(status)
+            self.finish_json({"success": False, "error": reason})
+            return
         self.runtime.settings.update_plugin_setting(plugin_id, enabled)
         self.finish_json({"success": True})
 
@@ -53,6 +63,20 @@ class PluginsHandler(ApiHandler):
 def plugin_id_to_name(plugin_id: str, lang: str = "") -> str:
     """Translate plugin ID to display name. Falls back to ID itself."""
     return i18n.t(f"plugin.name.{plugin_id}", lang) or plugin_id
+
+
+def plugin_toggle_policy_error(
+    plugin_id: str,
+    registered_plugin_ids: set[str],
+    draft_plugin_ids: set[str],
+) -> tuple[int, str] | None:
+    if not plugin_id:
+        return 400, "plugin_id is required"
+    if plugin_id in draft_plugin_ids:
+        return 403, "AI plugin drafts are read-only and cannot be enabled from the plugin settings API"
+    if plugin_id not in registered_plugin_ids:
+        return 404, f"unknown plugin: {plugin_id}"
+    return None
 
 
 def load_ai_plugin_drafts(root: Path, lang: str = "") -> list[dict[str, Any]]:

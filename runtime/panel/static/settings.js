@@ -85,7 +85,8 @@ function renderSettings() {
     renderMemories();
 
     $("access-scope-input").value = settings?.access_scope || "project_only";
-    $("execution-mode-input").value = settings?.execution_mode || "auto";
+    $("planning-policy-input").value = settings?.planning_policy || planningPolicyFromLegacyExecutionMode(settings?.execution_mode);
+    $("confirmation-policy-input").value = settings?.confirmation_policy || "auto";
     $("backup-enabled-input").checked = backupSettings.enabled !== false;
     $("backup-keep-input").value = backupSettings.keep_rounds || 50;
     $("memory-enabled-input").checked = memorySettings.enabled !== false;
@@ -192,6 +193,21 @@ function renderModels() {
                 </div>
             </div>
             <div class="settings-inline">
+                <div class="settings-form-row">
+                    <label>${t('settings_js.max_output_tokens')}</label>
+                    <input data-model-field="max_output_tokens" type="number" min="0" step="1024" value="${Number(model.max_output_tokens || 0)}">
+                </div>
+                <div class="settings-form-row">
+                    <label>${t('settings_js.output_token_param')}</label>
+                    <select data-model-field="output_token_param">
+                        <option value="" ${!model.output_token_param ? "selected" : ""}>${t('settings_js.provider_default')}</option>
+                        <option value="max_tokens" ${model.output_token_param === "max_tokens" ? "selected" : ""}>max_tokens</option>
+                        <option value="max_completion_tokens" ${model.output_token_param === "max_completion_tokens" ? "selected" : ""}>max_completion_tokens</option>
+                        <option value="max_output_tokens" ${model.output_token_param === "max_output_tokens" ? "selected" : ""}>max_output_tokens</option>
+                    </select>
+                </div>
+            </div>
+            <div class="settings-inline">
                 <label class="checkbox-line compact">
                     <input data-model-field="supports_tools" type="checkbox" ${model.supports_tools !== false ? "checked" : ""}>
                     <span>${t('settings_js.support_tools')}</span>
@@ -269,10 +285,12 @@ function renderProviderOptions(selected) {
 
 function renderSummary() {
     const accessText = $("access-scope-input").value === "full_local" ? t('settings_js.summary_full') : t('settings_js.summary_project');
-    const modeMap = { conservative: t('settings_js.summary_conservative'), auto: t('settings_js.summary_auto'), aggressive: t('settings_js.summary_aggressive') };
-    const modeText = modeMap[$("execution-mode-input").value] || t('settings_js.summary_auto');
+    const planMap = { off: t('settings_js.plan_off'), auto: t('settings_js.plan_auto'), always: t('settings_js.plan_always') };
+    const confirmMap = { conservative: t('settings_js.confirm_conservative'), auto: t('settings_js.confirm_auto'), aggressive: t('settings_js.confirm_aggressive') };
+    const planning = planMap[$("planning-policy-input").value] || t('settings_js.plan_auto');
+    const confirmation = confirmMap[$("confirmation-policy-input").value] || t('settings_js.confirm_auto');
     const memoryCount = memoryEntries().filter((item) => item.enabled !== false).length;
-    $("settings-summary").textContent = t('settings_js.summary_text', {access: accessText, mode: modeText, models: modelEntries().length, memories: memoryCount});
+    $("settings-summary").textContent = t('settings_js.summary_text', {access: accessText, planning, confirmation, models: modelEntries().length, memories: memoryCount});
 }
 
 function renderBackups() {
@@ -374,6 +392,8 @@ function collectModels() {
             provider: item.querySelector('[data-model-field="provider"]').value,
             api_model: item.querySelector('[data-model-field="api_model"]').value.trim() || id,
             context_limit: Number(item.querySelector('[data-model-field="context_limit"]').value || 128000),
+            max_output_tokens: Number(item.querySelector('[data-model-field="max_output_tokens"]').value || 0),
+            output_token_param: item.querySelector('[data-model-field="output_token_param"]').value,
             supports_tools: item.querySelector('[data-model-field="supports_tools"]').checked,
             thinking_mode: item.querySelector('[data-model-field="thinking_mode"]').value,
             request_options: readJson(item.querySelector('[data-model-field="request_options"]').value, {}),
@@ -404,7 +424,8 @@ async function saveSettings() {
         body: JSON.stringify({
             default_model: $("default-model-input").value,
             access_scope: $("access-scope-input").value,
-            execution_mode: $("execution-mode-input").value,
+            planning_policy: $("planning-policy-input").value,
+            confirmation_policy: $("confirmation-policy-input").value,
             backups: {
                 enabled: $("backup-enabled-input").checked,
                 keep_rounds: Number($("backup-keep-input").value || 50),
@@ -423,13 +444,14 @@ async function saveSettings() {
     deletedProviderIds.clear();
     deletedModelIds.clear();
     localStorage.setItem("lit_model", settings.default_model || $("default-model-input").value);
-    localStorage.setItem("lit_execution_mode", settings.execution_mode || $("execution-mode-input").value);
-    localStorage.setItem("lit_plan_execution_mode", planModeForExecutionMode(settings.execution_mode || "auto"));
+    localStorage.setItem("lit_planning_policy", settings.planning_policy || $("planning-policy-input").value);
+    localStorage.setItem("lit_confirmation_policy", settings.confirmation_policy || $("confirmation-policy-input").value);
+    localStorage.setItem("lit_plan_execution_mode", settings.planning_policy || "auto");
     renderSettings();
     showToast(t('toast.settings_saved'));
 }
 
-function planModeForExecutionMode(value) {
+function planningPolicyFromLegacyExecutionMode(value) {
     return { conservative: "off", auto: "auto", aggressive: "always" }[value] || "auto";
 }
 
@@ -520,6 +542,8 @@ function addModel() {
         provider,
         api_model: modelId,
         context_limit: 128000,
+        max_output_tokens: 0,
+        output_token_param: "",
         supports_tools: true,
         thinking_mode: "",
         request_options: {},
@@ -597,7 +621,8 @@ function bindEvents() {
     $("restore-latest-backup-btn").addEventListener("click", () => restoreLatestBackup().catch((error) => showToast(error.message)));
     $("clear-backups-btn").addEventListener("click", () => clearBackups().catch((error) => showToast(error.message)));
     $("access-scope-input").addEventListener("change", renderSummary);
-    $("execution-mode-input").addEventListener("change", renderSummary);
+    $("planning-policy-input").addEventListener("change", renderSummary);
+    $("confirmation-policy-input").addEventListener("change", renderSummary);
     $("memory-filter-input").addEventListener("change", renderMemories);
     document.querySelectorAll("[data-settings-page-button]").forEach((button) => {
         button.addEventListener("click", () => {

@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
+import tempfile
 from typing import Any
 
+from .capability_governance import ai_plugin_draft_workspace_guard_message
 from .security import PathGuard
 from .task_store import TaskRecord, TaskStore
 from .tool_registry import ToolRegistry
@@ -16,6 +19,7 @@ class ToolContext:
     log: Any
     backup_file: Any | None = None
     settings: Any | None = None
+    temp_dir: Path | None = None
 
 
 class TaskRunner:
@@ -32,8 +36,10 @@ class TaskRunner:
         "document.create_bookmark_outline",
     }
     WRITE_TOOLS = {
+        "code.apply_patch",
         "code.edit_file",
         "code.replace_text",
+        "filesystem.transform_text",
         "filesystem.write_file",
         *DOCUMENT_WRITE_TOOLS,
     }
@@ -59,11 +65,20 @@ class TaskRunner:
         wait: bool = False,
         confirmed: bool = False,
         workspace_path: str | None = None,
+        artifact_scope_id: str | None = None,
     ) -> TaskRecord:
         tool_id = self.registry.resolve_id(tool_id)
         tool = self.registry.get(tool_id)
         if self.settings and not self.settings.is_tool_enabled(tool_id):
             raise PermissionError(f"plugin is disabled for tool: {tool_id}")
+        guard_message = ai_plugin_draft_workspace_guard_message(
+            tool_id=tool_id,
+            input_data=input_data,
+            workspace_path=workspace_path,
+            data_dir=getattr(self.settings, "data_dir", None),
+        )
+        if guard_message:
+            raise PermissionError(guard_message)
         if tool.spec.requires_confirmation and not confirmed:
             task = self.store.create(tool_id, input_data)
             self.store.update(
@@ -74,14 +89,23 @@ class TaskRunner:
             self.store.append_log(task.id, "warning", "tool requires confirmation")
             return self.store.get(task.id) or task
         task = self.store.create(tool_id, input_data)
-        coro = self._run(task.id, workspace_path=workspace_path)
+        coro = self._run(
+            task.id,
+            workspace_path=workspace_path,
+            artifact_scope_id=artifact_scope_id,
+        )
         if wait:
             await coro
         else:
             asyncio.create_task(coro)
         return self.store.get(task.id) or task
 
-    async def _run(self, task_id: str, workspace_path: str | None = None) -> None:
+    async def _run(
+        self,
+        task_id: str,
+        workspace_path: str | None = None,
+        artifact_scope_id: str | None = None,
+    ) -> None:
         task = self.store.get(task_id)
         if not task:
             return
@@ -116,12 +140,15 @@ class TaskRunner:
                 self.store.append_log(task_id, level, message, data)
 
             backup_file = backup_session.backup_file if backup_session else None
+            temp_dir = self._task_temp_dir(artifact_scope_id or task_id)
+            temp_dir.mkdir(parents=True, exist_ok=True)
             context = ToolContext(
                 path_guard=path_guard,
                 task_id=task_id,
                 log=log,
                 backup_file=backup_file,
                 settings=self.settings,
+                temp_dir=temp_dir,
             )
             output = await tool.handler(task.input, context)
             failure_reason = self._output_failure_reason(task.tool, output)
@@ -161,6 +188,10 @@ class TaskRunner:
         if output.get("error") is True:
             return _compact_failure_message(output, "tool reported an error")
         if tool_id == "shell.run_command":
+            if output.get("timed_out") is True:
+                timeout = output.get("timeout")
+                fallback = f"command timed out after {timeout}s" if timeout else "command timed out"
+                return _compact_failure_message(output, fallback)
             try:
                 exit_code = int(output.get("exit_code", 0) or 0)
             except (TypeError, ValueError):
@@ -171,6 +202,22 @@ class TaskRunner:
                     f"command exited with code {exit_code}",
                 )
         return ""
+
+    def _task_temp_dir(self, scope_id: str) -> Path:
+        data_dir = getattr(self.settings, "data_dir", None)
+        if data_dir:
+            root = Path(data_dir) / "task-artifacts"
+        elif self.store.storage_path:
+            root = self.store.storage_path.parent / "task-artifacts"
+        else:
+            root = Path(tempfile.gettempdir()) / "yuntaocode-task-artifacts"
+        safe_scope = "".join(
+            char for char in str(scope_id or "")
+            if char.isalnum() or char in {"-", "_"}
+        )[:128]
+        if not safe_scope:
+            raise ValueError("artifact scope id is required")
+        return root / safe_scope
 
     @staticmethod
     def _output_partial_reason(tool_id: str, output: Any) -> str:

@@ -11,7 +11,8 @@ const state = {
     backups: [],
     pinnedWorkspaceIds: loadPinnedWorkspaceIds(),
     openWorkspaceMenuId: "",
-    executionMode: loadExecutionMode(),
+    planningPolicy: loadPlanningPolicy(),
+    confirmationPolicy: loadConfirmationPolicy(),
     currentMode: "terminal",
     settings: null,
     currentWorkspaceId: localStorage.getItem("lit_workspace_id") || "",
@@ -53,22 +54,28 @@ function savePinnedWorkspaceIds() {
     localStorage.setItem("lit_pinned_workspace_ids", JSON.stringify(state.pinnedWorkspaceIds));
 }
 
-function normalizeExecutionMode(value) {
-    return ["conservative", "auto", "aggressive"].includes(value) ? value : "auto";
+function normalizePlanningPolicy(value) {
+    return ["off", "auto", "always"].includes(value) ? value : "auto";
 }
 
-function executionModeFromPlanMode(value) {
-    return { off: "conservative", auto: "auto", always: "aggressive" }[value] || "auto";
-}
-
-function planModeForExecutionMode(value) {
+function planningPolicyFromLegacyExecutionMode(value) {
     return { conservative: "off", auto: "auto", aggressive: "always" }[value] || "auto";
 }
 
-function loadExecutionMode() {
-    const stored = localStorage.getItem("lit_execution_mode");
-    if (stored) return normalizeExecutionMode(stored);
-    return executionModeFromPlanMode(localStorage.getItem("lit_plan_execution_mode") || "auto");
+function normalizeConfirmationPolicy(value) {
+    return ["conservative", "auto", "aggressive"].includes(value) ? value : "auto";
+}
+
+function loadPlanningPolicy() {
+    const stored = localStorage.getItem("lit_planning_policy");
+    if (stored) return normalizePlanningPolicy(stored);
+    const legacy = localStorage.getItem("lit_execution_mode");
+    if (legacy) return planningPolicyFromLegacyExecutionMode(legacy);
+    return normalizePlanningPolicy(localStorage.getItem("lit_plan_execution_mode") || "auto");
+}
+
+function loadConfirmationPolicy() {
+    return normalizeConfirmationPolicy(localStorage.getItem("lit_confirmation_policy") || "auto");
 }
 
 function normalizeModeId(modeId) {
@@ -253,8 +260,12 @@ async function loadAll() {
     }
     if ($("model-select")) $("model-select").value = state.model;
     setCurrentMode(settings.assistant_mode || localStorage.getItem("lit_mode") || state.currentMode);
-    state.executionMode = normalizeExecutionMode(settings.execution_mode || state.executionMode);
-    localStorage.setItem("lit_execution_mode", state.executionMode);
+    state.planningPolicy = normalizePlanningPolicy(
+        settings.planning_policy || planningPolicyFromLegacyExecutionMode(settings.execution_mode),
+    );
+    state.confirmationPolicy = normalizeConfirmationPolicy(settings.confirmation_policy || state.confirmationPolicy);
+    localStorage.setItem("lit_planning_policy", state.planningPolicy);
+    localStorage.setItem("lit_confirmation_policy", state.confirmationPolicy);
     state.pinnedWorkspaceIds = state.pinnedWorkspaceIds.filter((id) =>
         state.workspaces.some((item) => item.id === id),
     );
@@ -419,7 +430,8 @@ function renderSettings() {
     if ($("backup-enabled-input")) $("backup-enabled-input").checked = backups.enabled !== false;
     if ($("backup-keep-input")) $("backup-keep-input").value = backups.keep_rounds || 50;
     if ($("access-scope-input")) $("access-scope-input").value = state.settings?.access_scope || "project_only";
-    if ($("execution-mode-input")) $("execution-mode-input").value = state.executionMode;
+    if ($("planning-policy-input")) $("planning-policy-input").value = state.planningPolicy;
+    if ($("confirmation-policy-input")) $("confirmation-policy-input").value = state.confirmationPolicy;
     renderBackups();
 }
 
@@ -521,28 +533,55 @@ function renderCurrentWorkspace() {
         $("message-input").setAttribute("placeholder", modeConfig.placeholder);
     }
     renderPlanExecutionControl();
+    renderConfirmationExecutionControl();
 }
 
 function renderPlanExecutionControl() {
     const btn = $("plan-mode-btn");
     if (!btn) return;
-    const executionLabels = { conservative: t('plan.exec_conservative'), auto: t('plan.exec_auto'), aggressive: t('plan.exec_aggressive') };
-    btn.textContent = executionLabels[state.executionMode] || executionLabels.auto;
-    btn.classList.toggle("active", state.executionMode !== "conservative");
-    btn.setAttribute("data-plan-mode", planModeForExecutionMode(state.executionMode));
-    btn.setAttribute("data-execution-mode", state.executionMode);
+    const planningLabels = { off: t('plan.policy_off'), auto: t('plan.policy_auto'), always: t('plan.policy_always') };
+    btn.textContent = planningLabels[state.planningPolicy] || planningLabels.auto;
+    btn.classList.toggle("active", state.planningPolicy !== "off");
+    btn.setAttribute("data-plan-mode", state.planningPolicy);
 }
 
 function cyclePlanExecutionMode() {
-    const modes = ["auto", "aggressive", "conservative"];
-    const currentIndex = modes.indexOf(state.executionMode);
-    state.executionMode = modes[(currentIndex + 1) % modes.length];
-    localStorage.setItem("lit_execution_mode", state.executionMode);
-    localStorage.setItem("lit_plan_execution_mode", planModeForExecutionMode(state.executionMode));
+    const modes = ["auto", "always", "off"];
+    const currentIndex = modes.indexOf(state.planningPolicy);
+    state.planningPolicy = modes[(currentIndex + 1) % modes.length];
+    localStorage.setItem("lit_planning_policy", state.planningPolicy);
+    localStorage.setItem("lit_plan_execution_mode", state.planningPolicy);
     renderPlanExecutionControl();
     api("/settings", {
         method: "POST",
-        body: JSON.stringify({ execution_mode: state.executionMode }),
+        body: JSON.stringify({ planning_policy: state.planningPolicy }),
+    }).then((settings) => {
+        state.settings = settings;
+        renderSettings();
+    }).catch((error) => showToast(error.message));
+}
+
+function renderConfirmationExecutionControl() {
+    const btn = $("confirmation-mode-btn");
+    if (!btn) return;
+    const labels = {
+        conservative: t('plan.exec_conservative'),
+        auto: t('plan.exec_auto'),
+        aggressive: t('plan.exec_aggressive'),
+    };
+    btn.textContent = labels[state.confirmationPolicy] || labels.auto;
+    btn.setAttribute("data-confirmation-mode", state.confirmationPolicy);
+}
+
+function cycleConfirmationPolicy() {
+    const modes = ["auto", "aggressive", "conservative"];
+    const currentIndex = modes.indexOf(state.confirmationPolicy);
+    state.confirmationPolicy = modes[(currentIndex + 1) % modes.length];
+    localStorage.setItem("lit_confirmation_policy", state.confirmationPolicy);
+    renderConfirmationExecutionControl();
+    api("/settings", {
+        method: "POST",
+        body: JSON.stringify({ confirmation_policy: state.confirmationPolicy }),
     }).then((settings) => {
         state.settings = settings;
         renderSettings();
@@ -1037,6 +1076,9 @@ async function sendMessage(event) {
                 baseStatusText: t('status.thinking'),
                 startedAt: Date.now(),
                 lastEventAt: Date.now(),
+                lastProgressAt: Date.now(),
+                lastHeartbeatAt: 0,
+                consecutiveToolFailures: 0,
                 elapsedSeconds: 0,
             },
         },
@@ -1052,6 +1094,8 @@ async function sendMessage(event) {
         const metadata = streamingMessages[assistantIndex].metadata || {};
         metadata.pending = true;
         metadata.lastEventAt = Date.now();
+        metadata.lastProgressAt = metadata.lastEventAt;
+        metadata.waitingConfirmation = false;
         if (statusText) {
             metadata.baseStatusText = statusText;
             metadata.statusText = statusText;
@@ -1090,6 +1134,7 @@ async function sendMessage(event) {
     function showStatusBar(text) {
         statusBar.classList.remove("hidden");
         statusBarText.textContent = text || t('status.executing');
+        statusBarText.title = text || t('status.executing');
     }
     function hideStatusBar() {
         statusBar.classList.add("hidden");
@@ -1110,20 +1155,36 @@ async function sendMessage(event) {
     updateSendingState();
     renderConversations();
     progressTimer = setInterval(() => {
+        if (finished) return;
         const metadata = streamingMessages[assistantIndex].metadata || {};
         if (!metadata.pending) return;
         const now = Date.now();
         metadata.elapsedSeconds = elapsedSeconds(metadata.startedAt || Date.now());
-        metadata.silentSeconds = elapsedSeconds(metadata.lastEventAt || Date.now());
+        metadata.silentSeconds = elapsedSeconds(metadata.lastProgressAt || metadata.lastEventAt || Date.now());
         const baseStatusText = metadata.baseStatusText || metadata.statusText || t('status.executing');
-        if (metadata.silentSeconds >= 20) {
-            metadata.statusText = `${metadata.statusText || t('status.executing')}${t('status.waited')}${formatElapsed(metadata.elapsedSeconds)}`;
+        if (metadata.waitingConfirmation) {
+            metadata.statusText = baseStatusText;
+        } else if (metadata.strategyChangeRequired) {
+            metadata.statusText = metadata.strategyChangeText || t('status.strategy_change_required');
+        } else if ((metadata.consecutiveToolFailures || 0) >= 2) {
+            metadata.statusText = t('status.repeated_tool_failures', {
+                tool: metadata.lastFailedTool || t('status.unknown_tool'),
+                count: metadata.consecutiveToolFailures,
+            });
+        } else if (metadata.silentSeconds >= 15) {
+            const waitingPhases = [
+                t('status.waiting_phase_response'),
+                t('status.waiting_phase_connection'),
+                t('status.waiting_phase_no_output'),
+            ];
+            const waitingPhase = waitingPhases[Math.floor(metadata.elapsedSeconds / 5) % waitingPhases.length];
+            const aliveText = metadata.lastHeartbeatAt ? t('status.connection_alive') : t('status.waiting_update');
+            metadata.statusText = `${baseStatusText} · ${aliveText} · ${waitingPhase} · ${t('status.no_progress_for', {time: formatElapsed(metadata.silentSeconds)})}`;
+        } else {
+            metadata.statusText = baseStatusText;
         }
-        // 同步更新浮动状态栏耗时
-        metadata.statusText = metadata.silentSeconds >= 20
-            ? `${baseStatusText}${t('status.waited')}${formatElapsed(metadata.elapsedSeconds)}${t('status.model_still')}`
-            : baseStatusText;
         statusBarElapsed.textContent = formatElapsed(metadata.elapsedSeconds);
+        showStatusBar(metadata.statusText);
         streamingMessages[assistantIndex].metadata = metadata;
         lastProgressRenderAt = now;
         renderStreamMessages();
@@ -1134,8 +1195,9 @@ async function sendMessage(event) {
             content,
             model: state.model,
             mode: requestMode,
-            execution_mode: state.executionMode,
-            plan_mode: planModeForExecutionMode(state.executionMode),
+            planning_policy: state.planningPolicy,
+            confirmation_policy: state.confirmationPolicy,
+            plan_mode: state.planningPolicy,
             request_id: requestId,
         };
         if (imageDataUrl) {
@@ -1149,10 +1211,23 @@ async function sendMessage(event) {
                     throw new Error(formatErrorMessage(eventData.error, t('error.model_failed')));
                 }
                 if (eventData.event === "status") {
+                    const currentMetadata = streamingMessages[assistantIndex].metadata || {};
+                    if (eventData.status === "thinking") {
+                        currentMetadata.pending = true;
+                        currentMetadata.lastHeartbeatAt = Date.now();
+                        currentMetadata.connectionAlive = true;
+                        streamingMessages[assistantIndex].metadata = currentMetadata;
+                        showStatusBar(currentMetadata.statusText || currentMetadata.baseStatusText || t('status.thinking'));
+                        return;
+                    }
                     touchProgress(eventData.message || t('status.thinking'));
                     showStatusBar(eventData.message || t('status.thinking'));
+                    if (eventData.status === "strategy_change_required") {
+                        currentMetadata.strategyChangeRequired = true;
+                        currentMetadata.strategyChangeText = eventData.message || t('status.strategy_change_required');
+                    }
                     streamingMessages[assistantIndex].metadata = {
-                        ...(streamingMessages[assistantIndex].metadata || {}),
+                        ...currentMetadata,
                         pending: true,
                         statusText: eventData.message || t('status.thinking'),
                     };
@@ -1171,16 +1246,12 @@ async function sendMessage(event) {
                     renderStreamMessages();
                 }
                 if (eventData.event === "heartbeat") {
-                    const idleText = eventData.message
-                        || (eventData.idle_seconds
-                            ? `${t('status.model_still_processing')}${t('status.waited')}${formatElapsed(eventData.idle_seconds)}`
-                            : t('status.model_still_processing'));
-                    touchProgress(idleText);
-                    showStatusBar(idleText);
                     const metadata = streamingMessages[assistantIndex].metadata || {};
                     metadata.pending = true;
-                    metadata.statusText = idleText;
-                    metadata.baseStatusText = idleText;
+                    metadata.lastHeartbeatAt = Date.now();
+                    metadata.connectionAlive = eventData.connection_alive !== false;
+                    metadata.heartbeatPhase = eventData.phase || "";
+                    metadata.modelIdleSeconds = eventData.idle_seconds || 0;
                     streamingMessages[assistantIndex].metadata = metadata;
                     if (Date.now() - lastProgressRenderAt >= 5000) {
                         lastProgressRenderAt = Date.now();
@@ -1197,12 +1268,37 @@ async function sendMessage(event) {
                     renderStreamMessages();
                 }
                 if (eventData.event === "tool") {
+                    const toolName = eventData.name || eventData.tool;
                     const toolLabel = eventData.status === "running"
-                        ? t('tools.calling', {name: eventData.name || eventData.tool})
-                        : t('tools.completed', {name: eventData.name || eventData.tool});
+                        ? t('tools.calling', {name: toolName})
+                        : eventData.status === "failure"
+                            ? t('tools.failed', {name: toolName})
+                            : t('tools.completed', {name: toolName});
                     touchProgress(toolLabel);
                     showStatusBar(toolLabel);
                     const metadata = streamingMessages[assistantIndex].metadata || {};
+                    if (eventData.status === "failure") {
+                        const failureSignature = JSON.stringify([
+                            eventData.tool || toolName,
+                            eventData.error || "",
+                            eventData.input || {},
+                        ]);
+                        metadata.consecutiveToolFailures = metadata.lastFailureSignature === failureSignature
+                            ? (metadata.consecutiveToolFailures || 0) + 1
+                            : 1;
+                        metadata.lastFailureSignature = failureSignature;
+                        metadata.lastFailedTool = eventData.tool || toolName;
+                        metadata.lastFailureError = eventData.error || "";
+                    } else if (eventData.status === "success") {
+                        metadata.consecutiveToolFailures = 0;
+                        metadata.lastFailureSignature = "";
+                        metadata.lastFailedTool = "";
+                        metadata.lastFailureError = "";
+                    }
+                    if (eventData.status === "running") {
+                        metadata.strategyChangeRequired = false;
+                        metadata.strategyChangeText = "";
+                    }
                     const toolEvents = metadata.tool_events || [];
                     const existIdx = toolEvents.findIndex((e) => e.tool === eventData.tool && e.status === "running");
                     const toolEntry = {
@@ -1343,6 +1439,7 @@ async function sendMessage(event) {
                     streamingMessages[assistantIndex].metadata = {
                         ...(streamingMessages[assistantIndex].metadata || {}),
                         pending: true,
+                        waitingConfirmation: true,
                         statusText: eventData.message || t('status.waiting_confirm'),
                     };
                     renderStreamMessages();
@@ -1420,6 +1517,16 @@ function stopGeneration() {
 
 async function sendConfirmAction(action) {
     if (!state.currentConversationId) return;
+    const activeStream = state.activeStreams.get(state.currentConversationId);
+    const pendingAssistant = [...(activeStream?.messages || [])]
+        .reverse()
+        .find((message) => message?.role === "assistant" && message?.metadata?.pending);
+    if (pendingAssistant?.metadata) {
+        pendingAssistant.metadata.waitingConfirmation = false;
+        pendingAssistant.metadata.baseStatusText = action === "continue" ? t('status.continuing') : t('status.stopping');
+        pendingAssistant.metadata.statusText = pendingAssistant.metadata.baseStatusText;
+        pendingAssistant.metadata.lastProgressAt = Date.now();
+    }
     const actionsEl = $("status-bar-actions");
     if (actionsEl) actionsEl.classList.add("hidden");
     const statusText = $("streaming-status-text");
@@ -2182,6 +2289,7 @@ on("message-input", "keydown", (event) => {
 });
 on("upload-image-btn", "click", () => $("image-file-input")?.click());
 on("plan-mode-btn", "click", () => cyclePlanExecutionMode());
+on("confirmation-mode-btn", "click", () => cycleConfirmationPolicy());
 on("token-battery", "click", () => compressContext().catch((error) => showToast(error.message)));
 on("confirm-continue-btn", "click", () => sendConfirmAction("continue"));
 on("confirm-cancel-btn", "click", () => sendConfirmAction("cancel"));
@@ -2273,7 +2381,8 @@ async function saveSettings() {
             default_model: state.model,
             assistant_mode: state.currentMode,
             access_scope: $("access-scope-input") ? $("access-scope-input").value : "project_only",
-            execution_mode: $("execution-mode-input") ? $("execution-mode-input").value : state.executionMode,
+            planning_policy: $("planning-policy-input") ? $("planning-policy-input").value : state.planningPolicy,
+            confirmation_policy: $("confirmation-policy-input") ? $("confirmation-policy-input").value : state.confirmationPolicy,
             backups: {
                 enabled: $("backup-enabled-input") ? $("backup-enabled-input").checked : true,
                 keep_rounds: $("backup-keep-input") ? Number($("backup-keep-input").value || 50) : 50,
@@ -2283,11 +2392,14 @@ async function saveSettings() {
     });
     $("volcengine-key-input").value = "";
     $("qwen-key-input").value = "";
-    state.executionMode = normalizeExecutionMode(state.settings.execution_mode || state.executionMode);
-    localStorage.setItem("lit_execution_mode", state.executionMode);
-    localStorage.setItem("lit_plan_execution_mode", planModeForExecutionMode(state.executionMode));
+    state.planningPolicy = normalizePlanningPolicy(state.settings.planning_policy || state.planningPolicy);
+    state.confirmationPolicy = normalizeConfirmationPolicy(state.settings.confirmation_policy || state.confirmationPolicy);
+    localStorage.setItem("lit_planning_policy", state.planningPolicy);
+    localStorage.setItem("lit_confirmation_policy", state.confirmationPolicy);
+    localStorage.setItem("lit_plan_execution_mode", state.planningPolicy);
     renderSettings();
     renderPlanExecutionControl();
+    renderConfirmationExecutionControl();
     $("settings-dialog").close();
     showToast(t('toast.settings_saved'));
 }

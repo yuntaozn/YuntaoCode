@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from typing import Any
+
 import tornado.web
 
 from .base import ApiHandler
+from runtime.agent_strategy.confirmation_policy import decide_tool_confirmation
 from runtime.agent_strategy.classifiers import canonical_tool_id
 
 
@@ -22,6 +25,12 @@ class TasksHandler(ApiHandler):
         input_data = payload.get("input") or {}
         if not isinstance(input_data, dict):
             raise tornado.web.HTTPError(400, reason="input must be an object")
+        missing_fields = self.runtime.registry.missing_required_input_fields(tool_id, input_data)
+        if missing_fields:
+            raise tornado.web.HTTPError(
+                400,
+                reason=f"missing required tool input: {', '.join(missing_fields)}",
+            )
         workspace_path = None
         workspace_id = str(payload.get("workspace_id") or "").strip()
         if workspace_id:
@@ -30,32 +39,47 @@ class TasksHandler(ApiHandler):
                 raise tornado.web.HTTPError(404, reason="workspace not found")
             workspace_path = workspace.path
         confirmed = bool(payload.get("confirmed"))
-        if tool_spec.requires_confirmation and not confirmed:
-            task = await self.runtime.runner.submit(
-                tool_id,
-                input_data,
-                wait=False,
-                confirmed=False,
-                workspace_path=workspace_path,
-            )
+        confirmation_decision = decide_tool_confirmation(
+            self.runtime.settings.get_confirmation_policy(),
+            tool_id,
+            declared_confirmation=bool(tool_spec.requires_confirmation),
+        )
+        if confirmation_decision.requires_confirmation and not confirmed:
+            try:
+                task = await self.runtime.runner.submit(
+                    tool_id,
+                    input_data,
+                    wait=False,
+                    confirmed=False,
+                    workspace_path=workspace_path,
+                )
+            except PermissionError as exc:
+                raise tornado.web.HTTPError(403, reason=str(exc)) from exc
             self.set_status(409)
             self.finish_json({
                 "success": False,
                 "error": "tool requires confirmation",
-                "data": task.to_public_dict() | {"tool_spec": tool_spec.to_public_dict()},
+                "data": _task_public_dict(task) | {
+                    "tool_spec": tool_spec.to_public_dict(),
+                    "confirmation_decision": confirmation_decision.to_dict(),
+                },
             })
             return
 
-        task = await self.runtime.runner.submit(
-            tool_id,
-            input_data,
-            wait=bool(payload.get("wait")),
-            confirmed=confirmed,
-            workspace_path=workspace_path,
-        )
+        effective_confirmed = confirmed or not confirmation_decision.requires_confirmation
+        try:
+            task = await self.runtime.runner.submit(
+                tool_id,
+                input_data,
+                wait=bool(payload.get("wait")),
+                confirmed=effective_confirmed,
+                workspace_path=workspace_path,
+            )
+        except PermissionError as exc:
+            raise tornado.web.HTTPError(403, reason=str(exc)) from exc
         self.finish_json({
             "success": task.status != "failure",
-            "data": task.to_public_dict(),
+            "data": _task_public_dict(task),
         })
 
 
@@ -66,5 +90,26 @@ class TaskDetailHandler(ApiHandler):
             raise tornado.web.HTTPError(404, reason="task not found")
         self.finish_json({
             "success": task.status != "failure",
-            "data": task.to_public_dict(),
+            "data": _task_public_dict(task),
         })
+
+
+def _task_public_dict(task: Any) -> dict[str, Any]:
+    data = task.to_public_dict()
+    normalized_error = _normalized_task_error(data)
+    if normalized_error:
+        data["error"] = normalized_error
+    return data
+
+
+def _normalized_task_error(data: dict[str, Any]) -> str:
+    if str(data.get("tool") or "") != "shell.run_command":
+        return ""
+    output = data.get("output") if isinstance(data.get("output"), dict) else {}
+    if output.get("timed_out") is not True:
+        return ""
+    input_data = data.get("input") if isinstance(data.get("input"), dict) else {}
+    timeout = output.get("timeout") or input_data.get("timeout")
+    message = f"command timed out after {timeout}s" if timeout else "command timed out"
+    detail = str(output.get("stderr") or output.get("stdout") or "").strip()
+    return f"{message}: {detail}" if detail else message

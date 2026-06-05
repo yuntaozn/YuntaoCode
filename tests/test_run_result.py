@@ -30,7 +30,146 @@ def test_build_run_result_records_writes_verification_and_risks() -> None:
     assert result["written_paths"] == ["src/app.py"]
     assert result["counts"]["write_successes"] == 1
     assert result["counts"]["verification_successes"] == 1
+    assert result["counts"]["test_successes"] == 1
     assert result["risks"] == []
+
+
+def test_build_run_result_does_not_count_directory_listing_as_code_verification() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary={"files": [{"path": "model-viewer.html"}]},
+        requires_code_write=True,
+        tool_events=[
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/model-viewer.html"},
+            },
+            {
+                "tool": "shell.run_command",
+                "status": "success",
+                "input": {
+                    "command": "python",
+                    "args": ["-c", "import os; print(os.listdir('D:/workspace'))"],
+                },
+                "output": {"exit_code": 0, "stdout": "['model-viewer.html']"},
+            },
+        ],
+    )
+
+    assert result["counts"]["verification_successes"] == 0
+    assert result["counts"]["test_successes"] == 0
+    assert "write_not_verified" in result["risks"]
+    assert "test_not_observed" in result["risks"]
+
+
+def test_build_run_result_counts_reading_written_file_but_marks_no_test() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary={"files": [{"path": "model-viewer.html"}]},
+        requires_code_write=True,
+        tool_events=[
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/model-viewer.html"},
+            },
+            {
+                "tool": "filesystem.read_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/model-viewer.html"},
+            },
+        ],
+    )
+
+    assert result["counts"]["verification_successes"] == 1
+    assert result["counts"]["test_successes"] == 0
+    assert result["status"] == "partial"
+    assert "write_not_verified" not in result["risks"]
+    assert "test_not_observed" in result["risks"]
+
+
+def test_build_run_result_does_not_count_read_before_write_as_verification() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary={"files": [{"path": "model-viewer.html"}]},
+        requires_code_write=True,
+        tool_events=[
+            {
+                "tool": "filesystem.read_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/model-viewer.html"},
+            },
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/model-viewer.html"},
+            },
+        ],
+    )
+
+    assert result["counts"]["verification_successes"] == 0
+    assert "write_not_verified" in result["risks"]
+
+
+def test_build_run_result_does_not_count_test_before_latest_write() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="coding",
+        change_summary={"files": [{"path": "app.py"}]},
+        requires_code_write=True,
+        tool_events=[
+            {
+                "tool": "shell.run_command",
+                "status": "success",
+                "input": {"command": "pytest"},
+                "output": {"exit_code": 0},
+            },
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/app.py"},
+            },
+        ],
+    )
+
+    assert result["counts"]["verification_successes"] == 0
+    assert result["counts"]["test_successes"] == 0
+    assert result["status"] == "partial"
+    assert "test_not_observed" in result["risks"]
+
+
+def test_build_run_result_does_not_count_truncated_preview_as_verification() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary={"files": [{"path": "model-viewer.html"}]},
+        requires_code_write=True,
+        tool_events=[
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/model-viewer.html"},
+            },
+            {
+                "tool": "filesystem.read_text_preview",
+                "status": "success",
+                "input": {"path": "D:/workspace/model-viewer.html", "max_bytes": 5000},
+                "output": {
+                    "path": "D:/workspace/model-viewer.html",
+                    "truncated": True,
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["counts"]["verification_successes"] == 0
+    assert "write_not_verified" in result["risks"]
+    assert "test_not_observed" in result["risks"]
 
 
 def test_build_run_result_marks_partial_write_failures() -> None:
@@ -124,6 +263,70 @@ def test_build_run_result_treats_shell_nonzero_exit_as_failure() -> None:
     ]
 
 
+def test_build_run_result_reports_shell_timeout_before_exit_code() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        tool_events=[
+            {
+                "tool": "shell.run_command",
+                "status": "success",
+                "input": {"command": "python -m http.server 8000", "timeout": 10},
+                "output": {"exit_code": 1, "timed_out": True},
+                "error": "command exited with code 1",
+            },
+        ],
+    )
+
+    assert result["status"] == "failure"
+    assert result["failures"] == [
+        {
+            "tool": "shell.run_command",
+            "path": "",
+            "error": "command timed out after 10s",
+        }
+    ]
+
+
+def test_build_run_result_marks_invalid_verification_method_partial_after_write() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary={"files": [{"path": "viewer.html"}]},
+        requires_code_write=True,
+        tool_events=[
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/viewer.html"},
+                "output": {"path": "D:/workspace/viewer.html"},
+            },
+            {
+                "tool": "filesystem.read_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/viewer.html"},
+                "output": {"path": "D:/workspace/viewer.html"},
+            },
+            {
+                "tool": "shell.run_command",
+                "status": "failure",
+                "input": {"command": "python -m http.server 8080", "timeout": 5},
+                "output": {"exit_code": 1, "timed_out": True, "timeout": 5},
+                "error": "command timed out after 5s",
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["counts"]["write_successes"] == 1
+    assert result["counts"]["verification_successes"] == 1
+    assert result["counts"]["failures"] == 1
+    assert "invalid_verification_method" in result["risks"]
+    assert "runtime_verification_not_observed" in result["risks"]
+    assert "test_not_observed" in result["risks"]
+
+
 def test_build_run_result_allows_recovered_non_write_failure() -> None:
     result = build_run_result(
         workspace_path="D:/workspace",
@@ -213,3 +416,109 @@ def test_build_run_result_marks_low_document_coverage_partial() -> None:
             ),
         }
     ]
+
+
+def test_build_run_result_marks_repeated_failure_convergence_stop() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="coding",
+        change_summary=None,
+        convergence_stopped=True,
+        tool_events=[
+            {
+                "tool": "filesystem.write_file",
+                "status": "failure",
+                "input": {},
+                "output": {"reason": "invalid_tool_input"},
+                "error": "missing required: path, content",
+            },
+        ],
+    )
+
+    assert result["status"] == "stopped"
+    assert result["flags"]["convergence_stopped"] is True
+    assert "repeated_tool_failure" in result["risks"]
+
+
+def test_build_run_result_surfaces_tool_call_protocol_failures() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        tool_events=[
+            {
+                "tool": "filesystem.write_file",
+                "status": "failure",
+                "input": {},
+                "error": "The runtime did not execute incomplete arguments.",
+                "output": {"reason": "truncated_tool_call"},
+            },
+            {
+                "tool": "filesystem.write_file",
+                "status": "failure",
+                "input": {},
+                "error": "Malformed tool arguments.",
+                "output": {"reason": "malformed_tool_arguments"},
+            },
+        ],
+        change_summary=None,
+        mode="terminal",
+        requires_code_write=True,
+    )
+
+    assert result["status"] == "failure"
+    assert "model_output_truncated" in result["risks"]
+    assert "invalid_tool_call_protocol" in result["risks"]
+
+
+def test_build_run_result_surfaces_runtime_tool_result_risks() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        tool_events=[
+            {
+                "tool": "filesystem.read_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/viewer.html"},
+                "output": {
+                    "path": "D:/workspace/viewer.html",
+                    "integrity": {
+                        "checked": True,
+                        "valid": False,
+                        "issues": ["html appears escaped as text"],
+                    },
+                },
+                "runtime_risks": [
+                    {
+                        "code": "artifact_integrity_invalid",
+                        "blocking": False,
+                    }
+                ],
+            }
+        ],
+    )
+
+    assert "artifact_integrity_invalid" in result["risks"]
+
+
+def test_build_run_result_records_all_apply_patch_paths() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        tool_events=[
+            {
+                "tool": "code.apply_patch",
+                "status": "success",
+                "input": {"patch": "*** Begin Patch\n*** End Patch"},
+                "output": {
+                    "paths": [
+                        "D:/workspace/src/app.js",
+                        "D:/workspace/src/styles.css",
+                    ],
+                },
+            },
+        ],
+        change_summary=None,
+        mode="terminal",
+        requires_code_write=True,
+    )
+
+    assert result["written_paths"] == ["src/app.js", "src/styles.css"]

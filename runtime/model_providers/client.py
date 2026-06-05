@@ -150,7 +150,9 @@ async def stream_chat_completion(
                     yield {
                         "heartbeat": True,
                         "idle_seconds": int(idle_seconds),
-                        "message": "模型仍在处理，请稍候",
+                        "message": "正在等待模型响应",
+                        "phase": "model_stream",
+                        "connection_alive": True,
                     }
                     continue
                 # 空闲超时：连续 N 秒没有新数据，主动中断
@@ -209,6 +211,17 @@ def build_request_body(
     elif thinking_mode == "qwen":
         if enable_thinking:
             body["enable_thinking"] = enable_thinking
+
+    output_token_param = str(model_config.get("output_token_param") or "").strip()
+    try:
+        max_output_tokens = int(model_config.get("max_output_tokens") or 0)
+    except (TypeError, ValueError):
+        max_output_tokens = 0
+    if (
+        max_output_tokens > 0
+        and output_token_param in {"max_tokens", "max_completion_tokens", "max_output_tokens"}
+    ):
+        body[output_token_param] = max_output_tokens
 
     request_options: dict[str, Any] = {}
     if isinstance(provider.get("request_options"), dict):
@@ -321,6 +334,9 @@ def extract_stream_event(payload: dict[str, Any]) -> dict[str, Any]:
     tool_calls = normalize_tool_call_chunks(delta.get("tool_calls") or delta.get("function_call") or [])
     if tool_calls:
         event["tool_calls"] = tool_calls
+    finish_reason = choice.get("finish_reason")
+    if finish_reason is not None:
+        event["finish_reason"] = finish_reason
     if usage:
         event["usage"] = usage
     return event
@@ -348,6 +364,9 @@ def extract_direct_stream_event(payload: dict[str, Any]) -> dict[str, Any]:
     tool_calls = normalize_tool_call_chunks(payload.get("tool_calls") or payload.get("function_call") or [])
     if tool_calls:
         event["tool_calls"] = tool_calls
+    finish_reason = payload.get("finish_reason")
+    if finish_reason is not None:
+        event["finish_reason"] = finish_reason
     return event
 
 

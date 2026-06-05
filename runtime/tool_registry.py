@@ -95,6 +95,20 @@ class ToolRegistry:
     def list_specs(self) -> list[dict[str, Any]]:
         return [tool.spec.to_public_dict() for tool in self._tools.values()]
 
+    def missing_required_input_fields(
+        self,
+        tool_id: str,
+        input_data: dict[str, Any],
+    ) -> list[str]:
+        tool = self.get(tool_id)
+        schema = tool.spec.input_schema if isinstance(tool.spec.input_schema, dict) else {}
+        required = schema.get("required") if isinstance(schema.get("required"), list) else []
+        return [
+            str(field)
+            for field in required
+            if str(field) not in input_data or input_data.get(str(field)) is None
+        ]
+
     def check_plugin_dependencies(self, plugin_id: str) -> dict[str, bool]:
         result = {}
         for tool in self._tools.values():
