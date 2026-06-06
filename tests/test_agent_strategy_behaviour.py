@@ -171,6 +171,19 @@ async def test_fake_dangling_answer_gets_correction_prompt() -> None:
     assert "不要只说" in prompt
 
 
+def test_dangling_action_prompt_respects_declared_capability_boundary() -> None:
+    prompt = dangling_action_prompt(
+        "D:/workspace",
+        "I will create the file next.",
+        [],
+        "terminal",
+        allow_state_change=False,
+    )
+
+    assert "当前任务契约没有声明本地变更" in prompt
+    assert "不要创建或修改文件" in prompt
+
+
 def test_malformed_tool_call_gets_structured_call_correction_prompt() -> None:
     content = "让我先读取文件。<toolcall>filesystem.read_file</toolcall>"
 

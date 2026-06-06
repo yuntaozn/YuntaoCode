@@ -5,6 +5,7 @@ from runtime.agent_strategy.task_contract import (
     task_contract_context_messages,
     task_contract_prompt,
 )
+from runtime.conversation_runner import ConversationRunExecutor
 from runtime.run_events import canonical_run_event_name, compact_run_event
 
 
@@ -130,3 +131,64 @@ def test_task_contract_run_event_is_recordable() -> None:
     assert canonical_run_event_name(payload) == "task.contract"
     assert compact["event_name"] == "task.contract"
     assert compact["contract"]["intent"] == "write_required"
+
+
+def test_runtime_guidance_can_raise_document_size_contract() -> None:
+    executor = object.__new__(ConversationRunExecutor)
+    contract = default_task_contract(
+        task_intent="document_export",
+        mode="terminal",
+        planning_policy="auto",
+        confirmation_policy="auto",
+        workspace_path=r"D:\code\demo",
+        access_scope="workspace",
+        expected_min_output_chars=30000,
+    )
+
+    changed = executor._apply_guidance_contract_updates(contract, "raise the target to 50000 words")
+
+    assert changed is True
+    assert contract["expected_min_output_chars"] == 50000
+    assert "document_min_output_chars" in contract["success_conditions"]
+    assert "expected_min_output_chars" in contract["system_overrides"]
+
+
+def test_runtime_guidance_replaces_document_size_contract_with_latest_explicit_target() -> None:
+    executor = object.__new__(ConversationRunExecutor)
+    contract = default_task_contract(
+        task_intent="document_export",
+        mode="terminal",
+        planning_policy="auto",
+        confirmation_policy="auto",
+        workspace_path=r"D:\code\demo",
+        access_scope="workspace",
+        expected_min_output_chars=50000,
+    )
+
+    changed = executor._apply_guidance_contract_updates(contract, "30000 words is enough")
+
+    assert changed is True
+    assert contract["expected_min_output_chars"] == 30000
+
+
+def test_model_declared_document_size_is_preserved_by_contract_normalization() -> None:
+    fallback = default_task_contract(
+        task_intent="document_export",
+        mode="document",
+        planning_policy="auto",
+        confirmation_policy="auto",
+        workspace_path=r"D:\code\demo",
+        access_scope="workspace",
+    )
+
+    contract = merge_model_task_contract(
+        {
+            "intent": "document_export",
+            "requires_write": True,
+            "expected_min_output_chars": 30000,
+        },
+        fallback,
+    )
+
+    assert contract["expected_min_output_chars"] == 30000
+    assert "document_min_output_chars" in contract["success_conditions"]

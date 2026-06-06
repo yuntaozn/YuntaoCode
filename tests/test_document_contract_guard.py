@@ -160,6 +160,29 @@ def test_transform_text_output_preview_reports_integrity() -> None:
     assert preview["integrity"]["valid"] is True
 
 
+def test_task_contract_accepts_structured_artifact_facts_as_verification() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    contract = {
+        "requires_write": True,
+        "requires_verification": True,
+    }
+    events = [
+        {
+            "tool": "document.export_draft_docx",
+            "status": "success",
+            "input": {"path": r"D:\workspace\report.docx"},
+            "output": {
+                "path": r"D:\workspace\report.docx",
+                "file_size": 25000,
+                "content_chars": 30000,
+                "draft_stats": {"text_chars": 29000},
+            },
+        },
+    ]
+
+    assert handler._task_contract_failures(contract, events, "document") == []
+
+
 def test_execution_notice_reports_invalid_verification_method() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
 
@@ -257,6 +280,7 @@ async def test_model_task_contract_receives_recent_conversation_context(monkeypa
         ),
         hard_no_write_lock=False,
         expected_document_coverage=False,
+        expected_min_output_chars=0,
     )
 
     assert contract["intent"] == "write_required"

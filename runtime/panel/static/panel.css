@@ -386,11 +386,23 @@ button {
 }
 
 .item-title {
+    min-width: 0;
     overflow: hidden;
     font-size: 13px;
     font-weight: 650;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.item-title-row {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+}
+
+.item-title-row .item-title {
+    flex: 1 1 auto;
 }
 
 .item-subtitle {
@@ -472,6 +484,10 @@ button {
 }
 
 .workspace-name {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 7px;
     font-weight: 700;
 }
 
@@ -890,6 +906,29 @@ button {
     color: var(--danger);
     background: rgba(180, 35, 24, 0.08);
     border-color: rgba(180, 35, 24, 0.16);
+}
+
+.run-dot {
+    display: inline-block;
+    flex: 0 0 7px;
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: #22c55e;
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.16);
+    vertical-align: middle;
+}
+
+.run-dot.waiting {
+    background: #f59e0b;
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.18);
+}
+
+.current-workspace-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .tool-event.partial {

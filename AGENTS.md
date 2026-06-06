@@ -106,6 +106,7 @@ foundation easier to understand, test, and extend.
 Run the checks that match your change:
 
 ```bash
+python scripts/sync_release_version.py --check
 pytest
 python -m py_compile runtime/api/conversations.py runtime/conversation_runner.py
 node --check runtime/panel/static/panel.js
@@ -134,6 +135,8 @@ Update the relevant docs when behavior or extension points change:
 - `README.md` / `README.en.md` for public-facing usage and architecture.
 - `docs/architecture.md` for runtime architecture decisions.
 - `docs/plugin-system.md` for plugin direction.
+- `docs/versioning.md` for product release version synchronization and
+  independent compatibility-version boundaries.
 - `SECURITY.md` for boundary or permission changes.
 - `CHANGELOG.md` for user-visible changes.
 

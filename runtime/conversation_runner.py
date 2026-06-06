@@ -15,7 +15,11 @@ from runtime.conversation_interactions import (
     runtime_guidance as _runtime_guidance,
 )
 from runtime.model_providers.client import stream_chat_completion
-from runtime.agent_strategy.classifiers import finish_reason_indicates_truncation
+from runtime.agent_strategy import task_contract as _tc
+from runtime.agent_strategy.classifiers import (
+    finish_reason_indicates_truncation,
+    infer_requested_min_output_chars,
+)
 from runtime.agent_strategy.policy import deterministic_plan_gate, resolve_profile
 from runtime.agent_strategy.profiles import profile_to_public_dict
 from runtime.run_result import build_run_result
@@ -34,6 +38,22 @@ class ConversationRunExecutor:
         if callable(class_attr):
             return class_attr.__get__(self, self.__class__)
         return getattr(self._helper, name)
+
+    def _apply_guidance_contract_updates(
+        self,
+        task_contract: dict[str, Any],
+        guidance_text: str,
+    ) -> bool:
+        min_chars = infer_requested_min_output_chars(guidance_text)
+        if min_chars <= 0 or min_chars == int(task_contract.get("expected_min_output_chars") or 0):
+            return False
+        task_contract["expected_min_output_chars"] = min_chars
+        task_contract["success_conditions"] = _tc.success_conditions_for_contract(task_contract)
+        overrides = list(task_contract.get("system_overrides") or [])
+        overrides.append("expected_min_output_chars")
+        task_contract["system_overrides"] = list(dict.fromkeys(str(item) for item in overrides if item))
+        self._active_task_contract = task_contract
+        return True
 
     def write_event(self, payload: dict[str, Any]) -> None:
         self.runtime.run_events.emit(self._active_run_id, payload)
@@ -134,6 +154,7 @@ class ConversationRunExecutor:
         )
         hard_no_write_lock = self._has_no_write_instruction(content)
         expected_document_coverage = self._expects_full_document_output(content, conversation)
+        expected_min_output_chars = self._expected_min_output_chars(content, conversation)
         task_contract = self._build_task_contract(
             task_intent=task_intent,
             mode=effective_mode,
@@ -141,6 +162,7 @@ class ConversationRunExecutor:
             confirmation_policy=confirmation_policy,
             workspace_path=workspace.path,
             expected_document_coverage=expected_document_coverage,
+            expected_min_output_chars=expected_min_output_chars,
         )
         if self._should_use_model_task_contract(
             content,
@@ -162,6 +184,7 @@ class ConversationRunExecutor:
                 fallback_contract=task_contract,
                 hard_no_write_lock=hard_no_write_lock,
                 expected_document_coverage=expected_document_coverage,
+                expected_min_output_chars=expected_min_output_chars,
             )
         task_intent = str(task_contract.get("intent") or task_intent)
         code_change_intent = task_intent == "write_required"
@@ -328,6 +351,10 @@ class ConversationRunExecutor:
                 )
                 guidance_prompt, guidance_text = self._pop_runtime_guidance(conversation_id)
                 if guidance_prompt:
+                    if self._apply_guidance_contract_updates(task_contract, guidance_text):
+                        metadata["task_contract"] = task_contract
+                        self.write_event({"event": "task_contract", "contract": task_contract})
+                        await self.flush()
                     runtime_intervention_pending = True
                     runtime_intervention_count += 1
                     final_answer_mode = False
@@ -398,7 +425,7 @@ class ConversationRunExecutor:
                         _confirm_responses.pop(conversation_id, None)
                         self.write_event({
                             "event": "confirm",
-                            "message": f"已执行 {post_write_rounds} 轮，是否继续？（5 分钟内未响应将自动停止）",
+                            "message": f"已执行 {post_write_rounds} 轮，是否继续？",
                             "progress": {
                                 "rounds": post_write_rounds,
                                 "idle_rounds": post_write_idle_rounds,
@@ -410,11 +437,9 @@ class ConversationRunExecutor:
                             },
                         })
                         await self.flush()
-                        # 等待用户确认，最多 300 秒
+                        # 等待用户确认；确认态不设置自动超时。
                         try:
-                            await asyncio.wait_for(confirm_event.wait(), timeout=300.0)
-                        except asyncio.TimeoutError:
-                            pass
+                            await confirm_event.wait()
                         finally:
                             _pending_confirms.pop(conversation_id, None)
                         user_action = _confirm_responses.pop(conversation_id, "cancel")
@@ -557,6 +582,10 @@ class ConversationRunExecutor:
 
                 late_guidance_prompt, late_guidance_text = self._pop_runtime_guidance(conversation_id)
                 if late_guidance_prompt:
+                    if self._apply_guidance_contract_updates(task_contract, late_guidance_text):
+                        metadata["task_contract"] = task_contract
+                        self.write_event({"event": "task_contract", "contract": task_contract})
+                        await self.flush()
                     runtime_intervention_pending = True
                     runtime_intervention_count += 1
                     final_answer_mode = False
@@ -679,6 +708,7 @@ class ConversationRunExecutor:
                                 round_text,
                                 tool_events,
                                 effective_mode,
+                                allow_state_change=bool(task_contract.get("requires_write")),
                             ),
                         })
                         continue
@@ -925,7 +955,9 @@ class ConversationRunExecutor:
                             reason="truncated_tool_call",
                             message=(
                                 "The model response stopped at its output limit while building "
-                                "this tool call. The runtime did not execute incomplete arguments."
+                                "this tool call. The runtime did not execute incomplete arguments. "
+                                "Retry with materially smaller complete arguments; split large "
+                                "content across several tool calls."
                             ),
                         )
                         tool_events.append(tool_event)
@@ -1460,6 +1492,7 @@ class ConversationRunExecutor:
             mode=effective_mode,
             requires_code_write=bool(task_contract.get("requires_write")),
             expected_document_coverage=bool(task_contract.get("expected_document_coverage")),
+            expected_min_output_chars=int(task_contract.get("expected_min_output_chars") or 0),
             contract_failed=tool_contract_failed,
             max_rounds_exceeded=max_rounds_exceeded,
             convergence_stopped=convergence_stopped,

@@ -26,6 +26,7 @@ class TaskRunner:
     DOCUMENT_WRITE_TOOLS = {
         "document.export_markdown",
         "document.export_docx",
+        "document.export_draft_docx",
         "document.extract_pdf_to_docx",
         "document.translate_docx",
         "document.generate_docx_from_outline",

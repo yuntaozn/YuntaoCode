@@ -28,6 +28,7 @@ from .profiles import (
 DOCUMENT_WRITE_TOOL_IDS: frozenset[str] = frozenset({
     "document.export_markdown",
     "document.export_docx",
+    "document.export_draft_docx",
     "document.extract_pdf_to_docx",
     "document.translate_docx",
     "document.generate_docx_from_outline",
@@ -108,6 +109,7 @@ RECON_TOOL_IDS: frozenset[str] = frozenset({
     "filesystem.read_text_preview",
     "document.extract_docx_outline",
     "document.extract_pdf_text_preview",
+    "document.inspect_draft",
     "code.search_text",
     "code.list_project_files",
     "git.status",
@@ -331,6 +333,48 @@ def looks_like_full_document_output_request(content: str) -> bool:
         any(term in text for term in full_terms)
         and any(term in text for term in ("文档", "文件", "docx", "pdf", "word"))
     )
+
+
+def infer_requested_min_output_chars(content: str) -> int:
+    """Infer an explicit long-form output size requirement from user text.
+
+    This is only an audit/completion hint. It does not decide how the model
+    should write or which document workflow to use.
+    """
+    text = str(content or "").lower()
+    if not text:
+        return 0
+    if re.search(r"(几|數|数)\s*万\s*字", text):
+        return 20000
+    match = re.search(r"(\d+(?:\.\d+)?)\s*万\s*字", text)
+    if match:
+        return max(0, int(float(match.group(1)) * 10000))
+    match = re.search(r"([一二两三四五六七八九十])\s*万\s*字", text)
+    if match:
+        values = {
+            "一": 1,
+            "二": 2,
+            "两": 2,
+            "三": 3,
+            "四": 4,
+            "五": 5,
+            "六": 6,
+            "七": 7,
+            "八": 8,
+            "九": 9,
+            "十": 10,
+        }
+        return values.get(match.group(1), 0) * 10000
+    match = re.search(r"(\d{4,7})\s*(?:字|字符|汉字|中文字符)", text)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"(\d{4,7})\s*(?:chars?|characters?|words?)\b", text)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(?:k|thousand)\s*(?:chars?|characters?|words?)\b", text)
+    if match:
+        return max(0, int(float(match.group(1)) * 1000))
+    return 0
 
 
 def looks_like_paper_task(content: str) -> bool:
@@ -1026,6 +1070,41 @@ def successful_verification_events(
     ]
 
 
+def _nonnegative_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _artifact_write_has_verification_facts(
+    event: dict[str, Any],
+    *,
+    written_paths: set[str],
+) -> bool:
+    tool_id = canonical_tool_id(str(event.get("tool") or ""))
+    if not is_write_tool(tool_id):
+        return False
+    path = _event_path_hint(event)
+    if not path or (written_paths and not _path_matches_any(path, written_paths)):
+        return False
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    draft_stats = output.get("draft_stats") if isinstance(output.get("draft_stats"), dict) else {}
+    integrity = output.get("integrity") if isinstance(output.get("integrity"), dict) else {}
+    if integrity.get("checked") is True:
+        return integrity.get("valid") is True
+    file_size = _nonnegative_int(output.get("file_size"))
+    content_measure = max(
+        _nonnegative_int(output.get("content_chars")),
+        _nonnegative_int(output.get("text_chars")),
+        _nonnegative_int(output.get("paragraph_count")),
+        _nonnegative_int(output.get("nonempty_paragraph_count")),
+        _nonnegative_int(draft_stats.get("text_chars")),
+        _nonnegative_int(draft_stats.get("block_count")),
+    )
+    return file_size > 0 and content_measure > 0
+
+
 def _verification_scope_after_latest_write(
     tool_events: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], set[str]]:
@@ -1041,7 +1120,7 @@ def _verification_scope_after_latest_write(
         written_paths.update(_event_path_hints(event))
     if latest_write_index < 0:
         return tool_events, written_paths
-    return tool_events[latest_write_index + 1 :], written_paths
+    return tool_events[latest_write_index:], written_paths
 
 
 def is_meaningful_verification_event(
@@ -1067,6 +1146,8 @@ def is_meaningful_verification_event(
         if integrity.get("checked") is True and integrity.get("valid") is not True:
             return False
         return bool(path and _path_matches_any(path, written_paths or set()))
+    if _artifact_write_has_verification_facts(event, written_paths=written_paths or set()):
+        return True
     if not is_verification_tool(tool_id, mode):
         return False
     if tool_id == "shell.run_command":

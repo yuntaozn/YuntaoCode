@@ -418,6 +418,38 @@ def test_build_run_result_marks_low_document_coverage_partial() -> None:
     ]
 
 
+def test_build_run_result_marks_document_output_too_short_partial() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="document",
+        change_summary={"files": [{"path": "report.docx"}]},
+        requires_code_write=True,
+        expected_min_output_chars=20000,
+        tool_events=[
+            {
+                "tool": "document.export_draft_docx",
+                "status": "success",
+                "input": {"path": "D:/workspace/report.docx"},
+                "output": {
+                    "path": "D:/workspace/report.docx",
+                    "content_chars": 12132,
+                    "draft_stats": {"text_chars": 11475},
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert "document_output_too_short" in result["risks"]
+    assert result["failures"] == [
+        {
+            "tool": "document.export_draft_docx",
+            "path": "report.docx",
+            "error": "document output is shorter than requested: expected_min_chars=20000, output_chars=12132",
+        }
+    ]
+
+
 def test_build_run_result_marks_repeated_failure_convergence_stop() -> None:
     result = build_run_result(
         workspace_path="D:/workspace",

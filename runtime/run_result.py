@@ -20,6 +20,7 @@ def build_run_result(
     mode: str | None,
     requires_code_write: bool = False,
     expected_document_coverage: bool = False,
+    expected_min_output_chars: int = 0,
     contract_failed: bool = False,
     max_rounds_exceeded: bool = False,
     convergence_stopped: bool = False,
@@ -118,6 +119,14 @@ def build_run_result(
     if coverage_failure:
         failures.append(coverage_failure)
         risks.append("document_output_coverage_low")
+    min_output_failure = _document_min_output_failure(
+        workspace_path,
+        tool_events,
+        expected_min_output_chars=expected_min_output_chars,
+    )
+    if min_output_failure:
+        failures.append(min_output_failure)
+        risks.append("document_output_too_short")
 
     status = _result_status(
         has_tool_events=bool(tool_events),
@@ -134,6 +143,7 @@ def build_run_result(
         has_partial_write=bool(write_successes and write_failures),
         has_partial_resumable=bool(write_partials),
         has_document_coverage_failure=bool(coverage_failure),
+        has_document_min_output_failure=bool(min_output_failure),
         has_missing_code_test=(
             bool(requires_code_write)
             and bool(code_artifact_written)
@@ -168,6 +178,7 @@ def build_run_result(
             "max_rounds_exceeded": bool(max_rounds_exceeded),
             "convergence_stopped": bool(convergence_stopped),
             "expected_document_coverage": bool(expected_document_coverage),
+            "expected_min_output_chars": max(0, int(expected_min_output_chars or 0)),
         },
     }
 
@@ -181,6 +192,7 @@ def _result_status(
     has_partial_write: bool,
     has_partial_resumable: bool,
     has_document_coverage_failure: bool,
+    has_document_min_output_failure: bool,
     has_missing_code_test: bool,
     contract_failed: bool,
     max_rounds_exceeded: bool,
@@ -190,7 +202,7 @@ def _result_status(
         return "failure"
     if max_rounds_exceeded or convergence_stopped:
         return "stopped"
-    if has_document_coverage_failure:
+    if has_document_coverage_failure or has_document_min_output_failure:
         return "partial"
     if has_partial_resumable:
         return "partial"
@@ -356,17 +368,20 @@ def _document_coverage_failure(
 
     best_export: dict[str, Any] | None = None
     best_ratio = 0.0
+    export_tools = {"document.export_docx", "document.export_draft_docx"}
     for event in tool_events:
-        if str(event.get("tool") or "") != "document.export_docx":
+        tool_id = str(event.get("tool") or "")
+        if tool_id not in export_tools:
             continue
-        if _effective_event_status("document.export_docx", event) != "success":
+        if _effective_event_status(tool_id, event) != "success":
             continue
         output = event.get("output") if isinstance(event.get("output"), dict) else {}
+        draft_stats = output.get("draft_stats") if isinstance(output.get("draft_stats"), dict) else {}
         out_paragraphs = max(
             _safe_int(output.get("nonempty_paragraph_count")),
             _safe_int(output.get("paragraph_count")),
         )
-        out_chars = _safe_int(output.get("content_chars"))
+        out_chars = max(_safe_int(output.get("content_chars")), _safe_int(draft_stats.get("text_chars")))
         ratios: list[float] = []
         if source_paragraphs:
             ratios.append(out_paragraphs / max(source_paragraphs, 1))
@@ -381,18 +396,63 @@ def _document_coverage_failure(
         return None
 
     output = best_export.get("output") if isinstance(best_export.get("output"), dict) else {}
+    draft_stats = output.get("draft_stats") if isinstance(output.get("draft_stats"), dict) else {}
     out_paragraphs = max(
         _safe_int(output.get("nonempty_paragraph_count")),
         _safe_int(output.get("paragraph_count")),
     )
-    out_chars = _safe_int(output.get("content_chars"))
+    out_chars = max(_safe_int(output.get("content_chars")), _safe_int(draft_stats.get("text_chars")))
     return {
-        "tool": "document.export_docx",
+        "tool": str(best_export.get("tool") or "document.export_docx"),
         "path": _event_path(workspace_path, best_export),
         "error": (
             "document output coverage is too low: "
             f"source_paragraphs={source_paragraphs}, output_paragraphs={out_paragraphs}, "
             f"source_chars={source_chars}, output_chars={out_chars}"
+        ),
+    }
+
+
+def _document_min_output_failure(
+    workspace_path: str,
+    tool_events: list[dict[str, Any]],
+    *,
+    expected_min_output_chars: int,
+) -> dict[str, Any] | None:
+    expected = _safe_int(expected_min_output_chars)
+    if expected <= 0:
+        return None
+    export_tools = {
+        "document.export_docx",
+        "document.export_draft_docx",
+        "document.export_markdown",
+    }
+    best_export: dict[str, Any] | None = None
+    best_chars = 0
+    for event in tool_events:
+        tool_id = str(event.get("tool") or "")
+        if tool_id not in export_tools:
+            continue
+        if _effective_event_status(tool_id, event) != "success":
+            continue
+        output = event.get("output") if isinstance(event.get("output"), dict) else {}
+        draft_stats = output.get("draft_stats") if isinstance(output.get("draft_stats"), dict) else {}
+        chars = max(
+            _safe_int(output.get("content_chars")),
+            _safe_int(output.get("size")),
+            _safe_int(draft_stats.get("text_chars")),
+        )
+        if best_export is None or chars > best_chars:
+            best_export = event
+            best_chars = chars
+    if best_export is None or best_chars >= expected:
+        return None
+    return {
+        "tool": str(best_export.get("tool") or "document.export_docx"),
+        "path": _event_path(workspace_path, best_export),
+        "error": (
+            "document output is shorter than requested: "
+            f"expected_min_chars={expected}, output_chars={best_chars}"
         ),
     }
 

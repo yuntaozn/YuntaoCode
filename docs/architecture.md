@@ -65,7 +65,7 @@ Task
 - 让上下文来源、证据、摘要和未验证项可追踪。
 - 让工具通过 Capability Contract 接入，而不是只暴露函数名。
 
-Task Model 草案见 [task-model.md](task-model.md)，Context Runtime 规划见 [context-runtime.md](context-runtime.md)，Capability Runtime 规划见 [capability-runtime.md](capability-runtime.md)，当前代码层基础契约见 [runtime-foundation.md](runtime-foundation.md)。
+Task Model 草案见 [task-model.md](task-model.md)，Context Runtime 规划见 [context-runtime.md](context-runtime.md)，Capability Runtime 规划见 [capability-runtime.md](capability-runtime.md)，Document Draft Runtime 见 [document-draft-runtime.md](document-draft-runtime.md)，当前代码层基础契约见 [runtime-foundation.md](runtime-foundation.md)。
 
 ## 当前运行边界
 

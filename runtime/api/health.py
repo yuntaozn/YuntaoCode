@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from runtime.version import __version__
+
 from .base import ApiHandler
 
 
@@ -11,6 +13,6 @@ class HealthHandler(ApiHandler):
         self.finish_json({
             "success": True,
             "service": "local-intelligent-terminal",
-            "version": "0.1.0",
+            "version": __version__,
             "workspace_roots": [str(root) for root in self.runtime.runner.path_guard.workspace_roots],
         })

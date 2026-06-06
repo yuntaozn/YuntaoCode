@@ -452,6 +452,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         confirmation_policy: str,
         workspace_path: str,
         expected_document_coverage: bool = False,
+        expected_min_output_chars: int = 0,
         source: str = "policy",
     ) -> dict[str, Any]:
         return _tc.default_task_contract(
@@ -462,6 +463,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             workspace_path=workspace_path,
             access_scope=self.runtime.settings.get_access_scope(),
             expected_document_coverage=expected_document_coverage,
+            expected_min_output_chars=expected_min_output_chars,
             source=source,
         )
 
@@ -493,6 +495,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         fallback_contract: dict[str, Any],
         hard_no_write_lock: bool,
         expected_document_coverage: bool,
+        expected_min_output_chars: int,
     ) -> dict[str, Any]:
         prompt = _tc.task_contract_prompt(workspace_path, fallback_contract)
         try:
@@ -514,6 +517,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 fallback_contract,
                 hard_no_write_lock=hard_no_write_lock,
                 expected_document_coverage=expected_document_coverage,
+                expected_min_output_chars=expected_min_output_chars,
             )
         except Exception as exc:
             contract = _tc.merge_model_task_contract(
@@ -521,6 +525,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 fallback_contract,
                 hard_no_write_lock=hard_no_write_lock,
                 expected_document_coverage=expected_document_coverage,
+                expected_min_output_chars=expected_min_output_chars,
             )
             contract["source"] = "policy_fallback"
             contract["model_contract_error"] = str(exc)[:500]
@@ -552,6 +557,16 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             prompt += (
                 "\n文档覆盖要求：本轮是全文/整文档输出任务。生成文件后必须验证输出规模，"
                 "不能只验证文件存在；如果输出明显少于源文档，请明确说明未完整完成。\n"
+            )
+        try:
+            min_chars = int(contract.get("expected_min_output_chars") or 0)
+        except (TypeError, ValueError):
+            min_chars = 0
+        if min_chars > 0:
+            prompt += (
+                f"\nDocument size target: the user requested at least about {min_chars} characters. "
+                "After exporting, compare the tool-reported content_chars/text_chars with this target. "
+                "If the output is shorter, say it is not fully complete.\n"
             )
         return prompt
 
@@ -979,8 +994,16 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         unfinished_text: str,
         tool_events: list[dict[str, Any]],
         mode: str | None,
+        *,
+        allow_state_change: bool = True,
     ) -> str:
-        return _prp.dangling_action_prompt(workspace_path, unfinished_text, tool_events, mode)
+        return _prp.dangling_action_prompt(
+            workspace_path,
+            unfinished_text,
+            tool_events,
+            mode,
+            allow_state_change=allow_state_change,
+        )
 
     def _malformed_tool_call_prompt(self, workspace_path: str, unfinished_text: str) -> str:
         return _prp.malformed_tool_call_prompt(workspace_path, unfinished_text)
@@ -1088,6 +1111,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "runtime_verification_not_observed": "没有观察到可退出的运行时验证。",
                 "invalid_verification_method": "使用了无效的验证方式。",
                 "max_rounds_exceeded": "执行达到轮次上限。",
+                "document_output_too_short": "文档已导出，但实际内容字数少于用户要求，不能视为完整完成。",
             }
             for risk in risks[:8]:
                 lines.append(f"- {risk_messages.get(str(risk), str(risk))}")
@@ -1928,6 +1952,38 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "file_size": output.get("file_size"),
                 "backup": output.get("_backup"),
             }
+        elif tool_id == "document.export_draft_docx":
+            draft_stats = output.get("draft_stats") if isinstance(output.get("draft_stats"), dict) else {}
+            preview = {
+                "type": "file_write",
+                "path": output.get("path"),
+                "created": True,
+                "draft_id": output.get("draft_id"),
+                "content_chars": output.get("content_chars"),
+                "paragraph_count": output.get("paragraph_count"),
+                "section_count": draft_stats.get("section_count"),
+                "block_count": draft_stats.get("block_count"),
+                "text_chars": draft_stats.get("text_chars"),
+                "file_size": output.get("file_size"),
+                "backup": output.get("_backup"),
+            }
+        elif tool_id in {
+            "document.create_draft",
+            "document.append_draft_section",
+            "document.add_draft_citation",
+            "document.inspect_draft",
+        }:
+            stats = output.get("stats") if isinstance(output.get("stats"), dict) else {}
+            preview = {
+                "type": "document_draft",
+                "draft_id": output.get("draft_id"),
+                "title": output.get("title") or stats.get("title"),
+                "section_count": stats.get("section_count"),
+                "block_count": stats.get("block_count"),
+                "citation_count": stats.get("citation_count"),
+                "text_chars": stats.get("text_chars"),
+                "unknown_citation_ids": stats.get("unknown_citation_ids") or output.get("unknown_citation_ids"),
+            }
         elif tool_id == "document.translate_docx":
             preview = {
                 "type": "file_write",
@@ -2314,6 +2370,38 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         if self._looks_like_follow_up_execution(content):
             return self._previous_full_document_output_context(conversation, content)
         return False
+
+    def _expected_min_output_chars(self, content: str, conversation: Any | None = None) -> int:
+        direct = _clf.infer_requested_min_output_chars(content)
+        if direct > 0:
+            return direct
+        if conversation is None:
+            return 0
+        text = content.strip().lower()
+        if len(text) >= 80 and not self._looks_like_follow_up_execution(content):
+            return 0
+        for message in reversed(getattr(conversation, "messages", [])[-16:]):
+            if self._is_runtime_guidance_message(message):
+                continue
+            role = str(getattr(message, "role", "") or "")
+            previous_content = str(getattr(message, "content", "") or "")
+            if role == "user":
+                inherited = _clf.infer_requested_min_output_chars(previous_content)
+                if inherited > 0:
+                    return inherited
+                continue
+            metadata = getattr(message, "metadata", {}) or {}
+            if not isinstance(metadata, dict):
+                continue
+            contract = metadata.get("task_contract")
+            if isinstance(contract, dict):
+                try:
+                    inherited = int(contract.get("expected_min_output_chars") or 0)
+                except (TypeError, ValueError):
+                    inherited = 0
+                if inherited > 0:
+                    return inherited
+        return 0
 
     def _plan_has_pending_write_step(self, execution_plan: Any) -> bool:
         return _clf.plan_has_pending_write_step(execution_plan)

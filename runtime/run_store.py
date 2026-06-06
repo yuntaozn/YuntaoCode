@@ -129,9 +129,11 @@ class RunStore:
                 run.status = "failure"
             elif run.stage in {"max_tool_rounds", "recon_budget_exhausted"}:
                 run.status = "stopped"
-            elif run.status in {"waiting_confirmation"}:
+            elif run.status == "waiting_confirmation" and run.stage in {"resumed", "stopping"}:
                 run.status = "running"
-            if run.status not in {"failure", "success", "stopped"}:
+            elif run.status == "waiting_confirmation" and run.stage not in {"resumed", "stopping"}:
+                pass
+            if run.status not in {"failure", "success", "stopped", "waiting_confirmation"}:
                 run.status = "running"
         elif event_type == "tool":
             run.stage = "tool"

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yuntaocode"
-version = "0.1.0"
+dynamic = ["version"]
 description = "YuntaoCode - 云涛智能终端，本地优先的 AI Task Runtime 基座"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -81,6 +81,9 @@ yuntaocode = "runtime.app:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["runtime*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "runtime.version.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

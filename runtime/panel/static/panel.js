@@ -9,6 +9,7 @@ const state = {
     plugins: [],
     modes: [],
     backups: [],
+    activeRuns: [],
     pinnedWorkspaceIds: loadPinnedWorkspaceIds(),
     openWorkspaceMenuId: "",
     planningPolicy: loadPlanningPolicy(),
@@ -113,6 +114,102 @@ function isConversationStreaming(conversationId = state.currentConversationId) {
 
 function hasActiveStreams() {
     return state.activeStreams.size > 0;
+}
+
+function isRunActive(run) {
+    return ["running", "waiting_confirmation"].includes(String(run?.status || ""));
+}
+
+function activeRunsForConversation(conversationId) {
+    if (!conversationId) return [];
+    const runs = state.activeRuns.filter((run) => isRunActive(run) && run.conversation_id === conversationId);
+    const activeStream = state.activeStreams.get(conversationId);
+    if (activeStream && !runs.some((run) => run.id === `stream:${conversationId}`)) {
+        runs.push({
+            id: `stream:${conversationId}`,
+            conversation_id: conversationId,
+            workspace_id: activeStream.workspaceId || "",
+            status: activeStream.status || "running",
+            stage: activeStream.stage || "streaming",
+            message: activeStream.message || t('status.executing'),
+            updated_at: activeStream.updatedAt || new Date().toISOString(),
+        });
+    }
+    return runs.sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+}
+
+function activeRunsForWorkspace(workspaceId) {
+    if (!workspaceId) return [];
+    const runs = state.activeRuns.filter((run) => isRunActive(run) && run.workspace_id === workspaceId);
+    const seen = new Set(runs.map((run) => run.id).filter(Boolean));
+    for (const [conversationId, activeStream] of state.activeStreams) {
+        const conversation = state.conversations.find((item) => item.id === conversationId);
+        const streamWorkspaceId = activeStream?.workspaceId || conversation?.workspace_id || "";
+        if (streamWorkspaceId === workspaceId && !seen.has(`stream:${conversationId}`)) {
+            runs.push({
+                id: `stream:${conversationId}`,
+                conversation_id: conversationId,
+                workspace_id: workspaceId,
+                status: activeStream?.status || "running",
+                stage: activeStream?.stage || "streaming",
+                message: activeStream?.message || t('status.executing'),
+                updated_at: activeStream?.updatedAt || new Date().toISOString(),
+            });
+        }
+    }
+    return runs.sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+}
+
+function latestActiveRunForConversation(conversationId) {
+    const runs = activeRunsForConversation(conversationId);
+    return runs.sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")))[0] || null;
+}
+
+function activeRunLabel(run) {
+    if (String(run?.status || "") === "waiting_confirmation") {
+        return t('status.waiting_confirm');
+    }
+    const message = String(run?.message || "").trim();
+    const stage = String(run?.stage || "").trim();
+    return message || stage || t('conv.running');
+}
+
+function formatRunUpdated(run) {
+    if (String(run?.status || "") === "waiting_confirmation") {
+        return t('status.confirm_pause');
+    }
+    const updated = Date.parse(run?.updated_at || "");
+    if (!Number.isFinite(updated)) return "";
+    const seconds = Math.max(0, Math.floor((Date.now() - updated) / 1000));
+    return seconds < 3 ? t('status.connection_alive') : t('status.no_progress_for', {time: formatElapsed(seconds)});
+}
+
+function runDotMarkup(runs, fallbackActive = false) {
+    const activeRuns = Array.isArray(runs) ? runs.filter(isRunActive) : [];
+    if (!activeRuns.length && !fallbackActive) return "";
+    const waitingConfirm = activeRuns.some((run) => String(run?.status || "") === "waiting_confirmation");
+    const title = waitingConfirm ? t('status.waiting_confirm') : t('conv.running');
+    return `<span class="run-dot ${waitingConfirm ? "waiting" : ""}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"></span>`;
+}
+
+async function refreshActiveRuns() {
+    try {
+        const [running, waiting] = await Promise.all([
+            api("/runs?status=running"),
+            api("/runs?status=waiting_confirmation"),
+        ]);
+        const merged = [...(running || []), ...(waiting || [])];
+        const byId = new Map();
+        for (const run of merged) {
+            if (run?.id) byId.set(run.id, run);
+        }
+        state.activeRuns = Array.from(byId.values());
+        renderWorkspaces();
+        renderConversations();
+        renderCurrentWorkspace();
+    } catch (error) {
+        console.warn("refreshActiveRuns failed:", error);
+    }
 }
 
 function updateSendingState() {
@@ -293,6 +390,7 @@ async function loadAll() {
     renderPlugins();
     renderSettings();
     renderModes();
+    await refreshActiveRuns();
     await loadConversations();
     renderCurrentWorkspace();
     renderModelState();
@@ -341,11 +439,19 @@ function renderWorkspaces() {
     $("workspace-list").innerHTML = items.length ? items.map((item) => {
         const pinned = isWorkspacePinned(item.id);
         const menuOpen = state.openWorkspaceMenuId === item.id;
+        const workspaceRuns = activeRunsForWorkspace(item.id);
+        const latestRun = workspaceRuns[0] || null;
+        const subtitle = latestRun
+            ? `${activeRunLabel(latestRun)} - ${formatRunUpdated(latestRun)}`
+            : item.path;
         return `
         <div class="list-item workspace-item ${item.id === state.currentWorkspaceId ? "active" : ""}" data-workspace-id="${item.id}">
             <button class="workspace-main" data-workspace-select="${item.id}" title="${escapeHtml(item.path)}">
-                <div class="item-title">${pinned ? `<span class="pin-mark">${t('workspace.pinned')}</span>` : ""}${escapeHtml(item.name)}</div>
-                <div class="item-subtitle">${escapeHtml(item.path)}</div>
+                <div class="item-title-row">
+                    <div class="item-title">${pinned ? `<span class="pin-mark">${t('workspace.pinned')}</span>` : ""}${escapeHtml(item.name)}</div>
+                    ${runDotMarkup(workspaceRuns)}
+                </div>
+                <div class="item-subtitle">${escapeHtml(subtitle)}</div>
             </button>
             <div class="workspace-menu-wrap">
                 <button class="workspace-menu-button" data-workspace-menu="${item.id}" title="${t('workspace.ops')}" aria-expanded="${menuOpen ? "true" : "false"}">...</button>
@@ -369,12 +475,19 @@ function renderConversations() {
         : state.conversations;
 
     $("conversation-list").innerHTML = items.length ? items.map((item) => {
-        const running = isConversationStreaming(item.id);
+        const activeRun = latestActiveRunForConversation(item.id);
+        const running = isConversationStreaming(item.id) || Boolean(activeRun);
+        const subtitle = running
+            ? `${activeRunLabel(activeRun)} - ${activeRun ? formatRunUpdated(activeRun) : t('status.executing')}`
+            : t('conv.messages_count', {count: item.message_count});
         return `
         <div class="conv-item ${item.id === state.currentConversationId ? "active" : ""}">
             <button class="conv-main" data-conversation-id="${item.id}">
-                <div class="item-title">${escapeHtml(item.title)}${running ? ` <span class="conv-mode-tag">${t('conv.running')}</span>` : ""}</div>
-                <div class="item-subtitle">${t('conv.messages_count', {count: item.message_count})}</div>
+                <div class="item-title-row">
+                    <div class="item-title">${escapeHtml(item.title)}</div>
+                    ${runDotMarkup(activeRun ? [activeRun] : [], running)}
+                </div>
+                <div class="item-subtitle">${escapeHtml(subtitle)}</div>
             </button>
             <button class="conv-delete" data-delete-conversation="${item.id}" title="${t('conv.delete_title')}">×</button>
         </div>
@@ -525,8 +638,14 @@ async function clearBackups() {
 
 function renderCurrentWorkspace() {
     const workspace = getCurrentWorkspace();
-    $("current-workspace-name").textContent = workspace ? workspace.name : t('topbar.select_project');
-    $("current-workspace-path").textContent = workspace ? workspace.path : t('topbar.bind_conversation');
+    const workspaceRuns = workspace ? activeRunsForWorkspace(workspace.id) : [];
+    const latestRun = workspaceRuns[0] || null;
+    $("current-workspace-name").innerHTML = workspace
+        ? `<span class="current-workspace-title">${escapeHtml(workspace.name)}</span>${runDotMarkup(workspaceRuns)}`
+        : escapeHtml(t('topbar.select_project'));
+    $("current-workspace-path").textContent = latestRun
+        ? `${t('conv.running')} - ${activeRunLabel(latestRun)} - ${formatRunUpdated(latestRun)}`
+        : (workspace ? workspace.path : t('topbar.bind_conversation'));
     $("composer-meta").textContent = workspace ? `${workspace.name} · ${getModeLabel()}` : t('composer.select_project_first');
     const modeConfig = state.modes.find((m) => m.id === state.currentMode);
     if (modeConfig && modeConfig.placeholder) {
@@ -954,7 +1073,7 @@ function insertGuidanceMessage(conversationId, message, refreshOnly = false) {
                 }
             }
             if (insertAt >= 0) {
-                activeStream.messages.splice(insertAt, 0, message);
+                activeStream.messages.splice(insertAt + 1, 0, message);
             } else {
                 activeStream.messages.push(message);
             }
@@ -987,7 +1106,7 @@ function mergeStreamGuidanceMessages(conversationId, streamingMessages) {
             }
         }
         if (insertAt >= 0) {
-            streamingMessages.splice(insertAt, 0, message);
+            streamingMessages.splice(insertAt + 1, 0, message);
         } else {
             streamingMessages.push(message);
         }
@@ -1123,6 +1242,17 @@ async function sendMessage(event) {
             }
         });
     };
+    const updateActiveStreamState = (status = "running", stage = "streaming", message = "") => {
+        const activeStream = state.activeStreams.get(conversationId);
+        if (!activeStream) return;
+        activeStream.status = status;
+        activeStream.stage = stage;
+        activeStream.message = message || activeStream.message || t('status.executing');
+        activeStream.updatedAt = new Date().toISOString();
+        renderWorkspaces();
+        renderConversations();
+        renderCurrentWorkspace();
+    };
     renderStreamMessages(true);
 
     const statusBar = $("streaming-status-bar");
@@ -1142,6 +1272,7 @@ async function sendMessage(event) {
     }
     function showConfirmUI(message) {
         showStatusBar(message || t('status.confirm_pause'));
+        statusBarElapsed.textContent = "";
         statusBarActions.classList.remove("hidden");
     }
 
@@ -1149,11 +1280,21 @@ async function sendMessage(event) {
     statusBarElapsed.textContent = formatElapsed(0);
 
     const abortController = new AbortController();
-    state.activeStreams.set(conversationId, { abortController, messages: streamingMessages });
+    state.activeStreams.set(conversationId, {
+        abortController,
+        messages: streamingMessages,
+        workspaceId: state.currentWorkspaceId,
+        status: "running",
+        stage: "streaming",
+        message: t('status.thinking'),
+        updatedAt: new Date().toISOString(),
+    });
     state.abortController = abortController;
     state.pendingComposerSubmit = false;
     updateSendingState();
     renderConversations();
+    renderWorkspaces();
+    renderCurrentWorkspace();
     progressTimer = setInterval(() => {
         if (finished) return;
         const metadata = streamingMessages[assistantIndex].metadata || {};
@@ -1164,6 +1305,7 @@ async function sendMessage(event) {
         const baseStatusText = metadata.baseStatusText || metadata.statusText || t('status.executing');
         if (metadata.waitingConfirmation) {
             metadata.statusText = baseStatusText;
+            statusBarElapsed.textContent = "";
         } else if (metadata.strategyChangeRequired) {
             metadata.statusText = metadata.strategyChangeText || t('status.strategy_change_required');
         } else if ((metadata.consecutiveToolFailures || 0) >= 2) {
@@ -1179,11 +1321,13 @@ async function sendMessage(event) {
             ];
             const waitingPhase = waitingPhases[Math.floor(metadata.elapsedSeconds / 5) % waitingPhases.length];
             const aliveText = metadata.lastHeartbeatAt ? t('status.connection_alive') : t('status.waiting_update');
-            metadata.statusText = `${baseStatusText} · ${aliveText} · ${waitingPhase} · ${t('status.no_progress_for', {time: formatElapsed(metadata.silentSeconds)})}`;
+            metadata.statusText = `${baseStatusText} - ${aliveText} - ${waitingPhase} - ${t('status.no_progress_for', {time: formatElapsed(metadata.silentSeconds)})}`;
         } else {
             metadata.statusText = baseStatusText;
         }
-        statusBarElapsed.textContent = formatElapsed(metadata.elapsedSeconds);
+        if (!metadata.waitingConfirmation) {
+            statusBarElapsed.textContent = formatElapsed(metadata.elapsedSeconds);
+        }
         showStatusBar(metadata.statusText);
         streamingMessages[assistantIndex].metadata = metadata;
         lastProgressRenderAt = now;
@@ -1217,10 +1361,12 @@ async function sendMessage(event) {
                         currentMetadata.lastHeartbeatAt = Date.now();
                         currentMetadata.connectionAlive = true;
                         streamingMessages[assistantIndex].metadata = currentMetadata;
+                        updateActiveStreamState("running", "thinking", currentMetadata.statusText || currentMetadata.baseStatusText || t('status.thinking'));
                         showStatusBar(currentMetadata.statusText || currentMetadata.baseStatusText || t('status.thinking'));
                         return;
                     }
                     touchProgress(eventData.message || t('status.thinking'));
+                    updateActiveStreamState("running", eventData.status || "status", eventData.message || t('status.thinking'));
                     showStatusBar(eventData.message || t('status.thinking'));
                     if (eventData.status === "strategy_change_required") {
                         currentMetadata.strategyChangeRequired = true;
@@ -1242,6 +1388,7 @@ async function sendMessage(event) {
                     metadata.statusText = t('status.guidance_received');
                     streamingMessages[assistantIndex].metadata = metadata;
                     touchProgress(metadata.statusText);
+                    updateActiveStreamState("running", "guidance", metadata.statusText);
                     showStatusBar(metadata.statusText);
                     renderStreamMessages();
                 }
@@ -1253,6 +1400,7 @@ async function sendMessage(event) {
                     metadata.heartbeatPhase = eventData.phase || "";
                     metadata.modelIdleSeconds = eventData.idle_seconds || 0;
                     streamingMessages[assistantIndex].metadata = metadata;
+                    updateActiveStreamState("running", "heartbeat", metadata.statusText || metadata.baseStatusText || t('status.model_still_processing'));
                     if (Date.now() - lastProgressRenderAt >= 5000) {
                         lastProgressRenderAt = Date.now();
                         renderStreamMessages();
@@ -1275,6 +1423,7 @@ async function sendMessage(event) {
                             ? t('tools.failed', {name: toolName})
                             : t('tools.completed', {name: toolName});
                     touchProgress(toolLabel);
+                    updateActiveStreamState("running", "tool", toolLabel);
                     showStatusBar(toolLabel);
                     const metadata = streamingMessages[assistantIndex].metadata || {};
                     if (eventData.status === "failure") {
@@ -1325,6 +1474,7 @@ async function sendMessage(event) {
                 }
                 if (eventData.event === "plan_decision") {
                     touchProgress(t('status.preparing_plan'));
+                    updateActiveStreamState("running", "plan_decision", t('status.preparing_plan'));
                     const metadata = streamingMessages[assistantIndex].metadata || {};
                     metadata.plan_decision = eventData.decision || null;
                     metadata.pending = true;
@@ -1334,6 +1484,7 @@ async function sendMessage(event) {
                 }
                 if (eventData.event === "plan") {
                     touchProgress(t('status.exec_by_plan'));
+                    updateActiveStreamState("running", "plan", t('status.exec_by_plan'));
                     const metadata = streamingMessages[assistantIndex].metadata || {};
                     metadata.execution_plan = eventData.plan || null;
                     metadata.pending = true;
@@ -1343,6 +1494,7 @@ async function sendMessage(event) {
                 }
                 if (eventData.event === "plan_step") {
                     touchProgress(t('status.advancing_plan'));
+                    updateActiveStreamState("running", "plan_step", t('status.advancing_plan'));
                     const metadata = streamingMessages[assistantIndex].metadata || {};
                     const plan = metadata.execution_plan || { title: t('plan.exec_title'), steps: [] };
                     const steps = Array.isArray(plan.steps) ? [...plan.steps] : [];
@@ -1357,6 +1509,7 @@ async function sendMessage(event) {
                 }
                 if (eventData.event === "changes") {
                     touchProgress(t('status.organizing_changes'));
+                    updateActiveStreamState("running", "changes", t('status.organizing_changes'));
                     const metadata = streamingMessages[assistantIndex].metadata || {};
                     metadata.change_summary = eventData.summary || null;
                     metadata.pending = true;
@@ -1366,6 +1519,7 @@ async function sendMessage(event) {
                 }
                 if (eventData.event === "message_replace") {
                     touchProgress(t('status.correcting_tool'));
+                    updateActiveStreamState("running", "message_replace", t('status.correcting_tool'));
                     const metadata = streamingMessages[assistantIndex].metadata || {};
                     const currentContent = streamingMessages[assistantIndex].content || "";
                     const nextContent = eventData.message || "";
@@ -1398,6 +1552,7 @@ async function sendMessage(event) {
                 }
                 if (eventData.event === "message") {
                     touchProgress(t('status.generating'));
+                    updateActiveStreamState("running", "message", t('status.generating'));
                     if (!assistantStarted) {
                         streamingMessages[assistantIndex].content = "";
                         assistantStarted = true;
@@ -1435,7 +1590,7 @@ async function sendMessage(event) {
                 if (eventData.event === "confirm") {
                     // 后端请求用户确认，暂停流并显示确认UI
                     showConfirmUI(eventData.message || t('status.confirm_pause'));
-                    touchProgress(eventData.message || t('status.waiting_confirm'));
+                    updateActiveStreamState("waiting_confirmation", "waiting_confirmation", eventData.message || t('status.waiting_confirm'));
                     streamingMessages[assistantIndex].metadata = {
                         ...(streamingMessages[assistantIndex].metadata || {}),
                         pending: true,
@@ -1490,6 +1645,8 @@ async function sendMessage(event) {
         updateSendingState();
         state.abortController = state.activeStreams.get(state.currentConversationId)?.abortController || null;
         renderConversations();
+        renderWorkspaces();
+        renderCurrentWorkspace();
     }
 }
 
@@ -1526,6 +1683,14 @@ async function sendConfirmAction(action) {
         pendingAssistant.metadata.baseStatusText = action === "continue" ? t('status.continuing') : t('status.stopping');
         pendingAssistant.metadata.statusText = pendingAssistant.metadata.baseStatusText;
         pendingAssistant.metadata.lastProgressAt = Date.now();
+    }
+    if (activeStream) {
+        activeStream.status = "running";
+        activeStream.stage = action === "continue" ? "continuing" : "stopping";
+        activeStream.message = action === "continue" ? t('status.continuing') : t('status.stopping');
+        activeStream.updatedAt = new Date().toISOString();
+        renderWorkspaces();
+        renderCurrentWorkspace();
     }
     const actionsEl = $("status-bar-actions");
     if (actionsEl) actionsEl.classList.add("hidden");
@@ -1783,7 +1948,7 @@ function renderLiveStatus(message) {
         <div class="message-live-status">
             <span class="message-live-dot"></span>
             <span>${escapeHtml(text)}</span>
-            <em>${formatElapsed(elapsed)}</em>
+            ${metadata.waitingConfirmation ? "" : `<em>${formatElapsed(elapsed)}</em>`}
         </div>
     `;
 }
@@ -2311,6 +2476,9 @@ loadAll().catch((error) => {
     showToast(error.message);
     renderMessages([]);
 });
+setInterval(() => {
+    refreshActiveRuns();
+}, 5000);
 
 function showToast(message) {
     const existing = document.querySelector(".toast");

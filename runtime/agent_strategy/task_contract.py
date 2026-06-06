@@ -63,6 +63,7 @@ def default_task_contract(
     workspace_path: str,
     access_scope: str,
     expected_document_coverage: bool = False,
+    expected_min_output_chars: int = 0,
     source: str = "policy",
 ) -> dict[str, Any]:
     """Build the fallback contract used when the model proposal is missing."""
@@ -88,6 +89,7 @@ def default_task_contract(
         "requires_verification": requires_verification,
         "requires_plan": requires_plan,
         "expected_document_coverage": bool(expected_document_coverage),
+        "expected_min_output_chars": _safe_int(expected_min_output_chars),
         "deliverables": [],
         "first_action": "plan" if requires_plan else ("write" if requires_write else "answer"),
         "blockers": [],
@@ -104,6 +106,7 @@ def merge_model_task_contract(
     *,
     hard_no_write_lock: bool = False,
     expected_document_coverage: bool = False,
+    expected_min_output_chars: int = 0,
 ) -> dict[str, Any]:
     """Normalize a model contract and apply runtime-owned hard constraints."""
     if not isinstance(raw_contract, dict):
@@ -136,6 +139,7 @@ def merge_model_task_contract(
                 raw_contract.get("requires_plan"),
                 bool(fallback_contract.get("requires_plan")),
             ),
+            "expected_min_output_chars": _safe_int(raw_contract.get("expected_min_output_chars")),
             "deliverables": _normalize_deliverables(raw_contract.get("deliverables")),
             "first_action": _normalize_first_action(raw_contract.get("first_action"), requires_write),
             "blockers": _normalize_string_list(raw_contract.get("blockers"), limit=6, item_limit=180),
@@ -144,6 +148,10 @@ def merge_model_task_contract(
 
     contract["expected_document_coverage"] = (
         bool(contract.get("expected_document_coverage")) or bool(expected_document_coverage)
+    )
+    contract["expected_min_output_chars"] = max(
+        _safe_int(contract.get("expected_min_output_chars")),
+        _safe_int(expected_min_output_chars),
     )
 
     overrides = list(contract.get("system_overrides") or [])
@@ -159,6 +167,8 @@ def merge_model_task_contract(
 
     if contract.get("expected_document_coverage"):
         overrides.append("expected_document_coverage")
+    if _safe_int(contract.get("expected_min_output_chars")) > 0:
+        overrides.append("expected_min_output_chars")
 
     contract["system_overrides"] = list(dict.fromkeys(str(item) for item in overrides if item))
     contract["success_conditions"] = success_conditions_for_contract(contract)
@@ -184,6 +194,7 @@ def task_contract_prompt(workspace_path: str, fallback_contract: dict[str, Any])
         '  "requires_verification": true,\n'
         '  "requires_plan": false,\n'
         '  "deliverables": [{"kind": "file|answer|document|code", "path_hint": "", "description": ""}],\n'
+        '  "expected_min_output_chars": 0,\n'
         '  "first_action": "answer|read|search|plan|write|verify|ask_user|use_tool",\n'
         '  "blockers": [],\n'
         '  "confidence": 0.0\n'
@@ -230,6 +241,7 @@ def success_conditions_for_contract(contract: dict[str, Any]) -> list[str]:
         "write_tool_success" if contract.get("requires_write") else "",
         "verification_tool_success" if contract.get("requires_verification") else "",
         "document_output_coverage" if contract.get("expected_document_coverage") else "",
+        "document_min_output_chars" if _safe_int(contract.get("expected_min_output_chars")) > 0 else "",
         "final_answer_with_evidence",
     ]
     return [condition for condition in conditions if condition]
@@ -291,6 +303,13 @@ def _normalize_confidence(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
     return max(0.0, min(number, 1.0))
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _clean_text(value: Any, limit: int) -> str:

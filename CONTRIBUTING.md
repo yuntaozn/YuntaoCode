@@ -31,6 +31,7 @@ npm run build:ui
 Before opening a pull request, run the checks that match your change:
 
 ```bash
+python scripts/sync_release_version.py --check
 pytest
 python scripts/smoke_core.py
 ```
@@ -57,6 +58,9 @@ cargo check --manifest-path desktop-shell/src-tauri/Cargo.toml
 - Add tests for path access, write tools, task execution, plugin behavior, and model-provider compatibility when those areas change.
 - Do not include API keys, user data, local conversation data, packaged binaries, or generated build output.
 - Document user-visible behavior changes in `CHANGELOG.md`.
+- Change the product release version only in `runtime/version.py`, then run
+  `python scripts/sync_release_version.py`. Do not tie schema, settings,
+  plugin, or static asset versions to the product release version.
 
 ## Pull Requests
 

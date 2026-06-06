@@ -156,7 +156,7 @@ Tauri 桌面端只是其中一种界面形式，Runtime 本身可以独立运行
 
 Agent Runtime 的策略层位于 `runtime/agent_strategy/`。它负责意图分类、内部 Profile、计划策略、阶段提示和执行计划生命周期，让 `conversation_runner.py` 尽量保持为编排层。
 
-Task Model 草案见 [docs/task-model.md](docs/task-model.md)，上下文运行时规划见 [docs/context-runtime.md](docs/context-runtime.md)，能力运行时规划见 [docs/capability-runtime.md](docs/capability-runtime.md)，当前运行时基础契约见 [docs/runtime-foundation.md](docs/runtime-foundation.md)。
+Task Model 草案见 [docs/task-model.md](docs/task-model.md)，上下文运行时规划见 [docs/context-runtime.md](docs/context-runtime.md)，能力运行时规划见 [docs/capability-runtime.md](docs/capability-runtime.md)，文档草稿运行时见 [docs/document-draft-runtime.md](docs/document-draft-runtime.md)，当前运行时基础契约见 [docs/runtime-foundation.md](docs/runtime-foundation.md)。
 
 ---
 
@@ -270,7 +270,7 @@ python -m runtime.app --host 127.0.0.1 --port 8765
 
 ### 理解任务模型
 
-贡献新能力前，建议先阅读 [docs/task-model.md](docs/task-model.md)、[docs/context-runtime.md](docs/context-runtime.md)、[docs/capability-runtime.md](docs/capability-runtime.md) 和 [docs/runtime-foundation.md](docs/runtime-foundation.md)。
+贡献新能力前，建议先阅读 [docs/task-model.md](docs/task-model.md)、[docs/context-runtime.md](docs/context-runtime.md)、[docs/capability-runtime.md](docs/capability-runtime.md)、[docs/document-draft-runtime.md](docs/document-draft-runtime.md) 和 [docs/runtime-foundation.md](docs/runtime-foundation.md)。
 
 项目当前不鼓励优先堆叠应用场景。更推荐的贡献方向是：
 
@@ -415,6 +415,9 @@ YuntaoCode 同样适用于：
 当前版本：0.1.0
 
 状态：Active Development
+
+发布版本以 `runtime/version.py` 为唯一来源。发布准备与同步规则见
+[docs/versioning.md](docs/versioning.md)。
 
 在 v1.0 之前：
 

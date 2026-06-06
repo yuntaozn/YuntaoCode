@@ -11,7 +11,17 @@ import pytest
 from runtime.security import PathGuard
 from runtime.skills import pdf_parser
 from runtime.skills import document as document_tools
-from runtime.skills.document import export_docx, extract_pdf_to_docx, translate_docx
+from runtime.skills.document import (
+    add_draft_citation,
+    append_draft_section,
+    create_draft,
+    export_docx,
+    export_draft_docx,
+    extract_pdf_to_docx,
+    generate_docx_from_outline,
+    inspect_draft,
+    translate_docx,
+)
 
 
 @dataclass
@@ -25,6 +35,9 @@ class FakeContext:
 
 
 class FakeSettings:
+    def __init__(self, data_dir: Path | None = None) -> None:
+        self.data_dir = data_dir
+
     def get_default_model(self) -> str:
         return "fake-model"
 
@@ -126,6 +139,142 @@ async def test_export_docx_returns_content_size_metadata(tmp_path: Path) -> None
     assert result["paragraph_count"] >= 2
     assert result["nonempty_paragraph_count"] >= 2
     assert result["file_size"] > 0
+
+
+@pytest.mark.asyncio
+async def test_document_draft_can_append_inspect_and_export_docx(tmp_path: Path) -> None:
+    from docx import Document
+
+    context = FakeContext(PathGuard([tmp_path]), settings=FakeSettings(tmp_path / "runtime-data"))
+    created = await create_draft(
+        {
+            "title": "Long Report",
+            "sections": [{"section_id": "intro", "title": "Introduction", "level": 1}],
+        },
+        context,
+    )
+    draft_id = created["draft_id"]
+
+    citation = await add_draft_citation(
+        {
+            "draft_id": draft_id,
+            "citation": {
+                "citation_id": "src1",
+                "title": "Source One",
+                "author": "A. Author",
+                "year": "2026",
+            },
+        },
+        context,
+    )
+    appended = await append_draft_section(
+        {
+            "draft_id": draft_id,
+            "section_id": "intro",
+            "content": "This is the first complete paragraph for a long report.",
+            "citation_ids": [citation["citation"]["citation_id"]],
+        },
+        context,
+    )
+    inspected = await inspect_draft({"draft_id": draft_id}, context)
+    output_path = tmp_path / "long-report.docx"
+    exported = await export_draft_docx(
+        {
+            "draft_id": draft_id,
+            "path": str(output_path),
+        },
+        context,
+    )
+
+    doc = Document(str(output_path))
+    text = "\n".join(paragraph.text for paragraph in doc.paragraphs)
+
+    assert appended["stats"]["block_count"] == 1
+    assert inspected["stats"]["section_count"] == 1
+    assert inspected["stats"]["citation_count"] == 1
+    assert exported["draft_id"] == draft_id
+    assert exported["draft_stats"]["text_chars"] > 0
+    assert output_path.exists()
+    assert "Long Report" in text
+    assert "This is the first complete paragraph" in text
+    assert "References" in text
+
+
+@pytest.mark.asyncio
+async def test_export_draft_docx_prefers_output_path_over_workspace_path(tmp_path: Path) -> None:
+    context = FakeContext(PathGuard([tmp_path]), settings=FakeSettings(tmp_path / "runtime-data"))
+    created = await create_draft({"title": "Draft Export"}, context)
+    await append_draft_section(
+        {
+            "draft_id": created["draft_id"],
+            "title": "Body",
+            "content": "The exported document should use output_path when both fields are provided.",
+        },
+        context,
+    )
+
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    output_path = workspace_dir / "draft-export.docx"
+    result = await export_draft_docx(
+        {
+            "draft_id": created["draft_id"],
+            "path": str(workspace_dir),
+            "output_path": str(output_path),
+        },
+        context,
+    )
+
+    assert result["path"] == str(output_path.resolve())
+    assert output_path.exists()
+    assert not (tmp_path / "workspace.docx").exists()
+
+
+@pytest.mark.asyncio
+async def test_create_draft_can_import_existing_docx(tmp_path: Path) -> None:
+    from docx import Document
+
+    source_path = tmp_path / "existing.docx"
+    source = Document()
+    source.add_heading("Existing Section", level=1)
+    source.add_paragraph("Existing content must remain available when the draft is extended.")
+    source.save(str(source_path))
+
+    context = FakeContext(PathGuard([tmp_path]), settings=FakeSettings(tmp_path / "runtime-data"))
+    created = await create_draft({"source_path": str(source_path)}, context)
+    inspected = await inspect_draft({"draft_id": created["draft_id"]}, context)
+
+    assert created["source_path"] == str(source_path.resolve())
+    assert inspected["metadata"]["imported"] is True
+    assert inspected["metadata"]["source_type"] == "docx"
+    assert inspected["stats"]["section_count"] == 1
+    assert inspected["stats"]["block_count"] == 1
+    assert inspected["stats"]["text_chars"] >= len("Existing content")
+
+
+@pytest.mark.asyncio
+async def test_generate_docx_from_outline_accepts_output_path_and_returns_artifact_facts(
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "outline.docx"
+
+    result = await generate_docx_from_outline(
+        {
+            "output_path": str(output_path),
+            "title": "Outline",
+            "outline": [
+                {"level": 1, "text": "First section"},
+                {"level": 2, "text": "Second section"},
+            ],
+        },
+        FakeContext(PathGuard([tmp_path])),
+    )
+
+    assert result["path"] == str(output_path.resolve())
+    assert result["content_chars"] == len("First sectionSecond section")
+    assert result["nonempty_paragraph_count"] >= 3
+    assert result["file_size"] > 0
+    assert output_path.exists()
 
 
 @pytest.mark.asyncio

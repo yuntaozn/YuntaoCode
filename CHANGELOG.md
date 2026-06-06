@@ -21,6 +21,7 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 - Resumable Word translation checkpoints for long `document.translate_docx` tasks, including partial task status and UI progress details.
 - `filesystem.write_temp_file` and task-scoped temporary directories so one-off scripts and intermediate files do not pollute user projects.
 - Model-proposed `task_contract` normalization so task intent, deliverables, write requirements, verification requirements, and plan needs can be decided before execution and audited in run events.
+- Single-source product release versioning with synchronized desktop manifests, README labels, Runtime health output, and CI drift checks.
 
 ### Changed
 

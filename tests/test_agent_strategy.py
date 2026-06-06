@@ -36,6 +36,7 @@ from runtime.agent_strategy.classifiers import (
     canonical_tool_id,
     explorer_tool_ids,
     has_unresolved_tool_call_markup,
+    infer_requested_min_output_chars,
     is_recon_tool,
     is_invalid_verification_method_event,
     is_long_running_service_command,
@@ -195,6 +196,26 @@ class TestLooksLikeFullDocumentOutputRequest:
 
     def test_small_report_not_full_document(self):
         assert not looks_like_full_document_output_request("根据文档生成一个摘要报告")
+
+
+class TestInferRequestedMinOutputChars:
+    def test_few_ten_thousand_chars(self):
+        assert infer_requested_min_output_chars("我想这也应提供个几万字的内容吧") == 20000
+
+    def test_numeric_wan_chars(self):
+        assert infer_requested_min_output_chars("请写 3 万字左右") == 30000
+
+    def test_plain_numeric_chars(self):
+        assert infer_requested_min_output_chars("至少15000字") == 15000
+
+    def test_english_numeric_characters(self):
+        assert infer_requested_min_output_chars("at least 50000 characters") == 50000
+
+    def test_english_numeric_words_as_length_floor(self):
+        assert infer_requested_min_output_chars("raise the target to 50000 words") == 50000
+
+    def test_english_thousand_words_as_length_floor(self):
+        assert infer_requested_min_output_chars("write around 50k words") == 50000
 
 
 class TestLooksLikePaperTask:
@@ -914,6 +935,35 @@ class TestHasSuccessfulVerification:
         ]
 
         assert not has_successful_verification(events, "terminal")
+
+    def test_write_artifact_with_content_facts_counts_as_verification(self):
+        events = [
+            {
+                "tool": "document.export_draft_docx",
+                "status": "success",
+                "input": {"path": "report.docx"},
+                "output": {
+                    "path": "report.docx",
+                    "file_size": 12000,
+                    "content_chars": 24000,
+                    "draft_stats": {"text_chars": 23000},
+                },
+            },
+        ]
+
+        assert has_successful_verification(events, "document")
+
+    def test_write_artifact_without_content_facts_is_not_self_verifying(self):
+        events = [
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": "report.txt"},
+                "output": {"path": "report.txt", "file_size": 12000},
+            },
+        ]
+
+        assert not has_successful_verification(events, "document")
 
     def test_reading_incomplete_html_does_not_count_as_verification(self):
         events = [

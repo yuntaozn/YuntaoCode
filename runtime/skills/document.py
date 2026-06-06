@@ -10,6 +10,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List
 
+from runtime.document_drafts import (
+    add_citation,
+    add_section_block,
+    create_draft_record,
+    draft_stats,
+    draft_to_markdown,
+    inspect_draft_record,
+    load_draft,
+    save_draft,
+)
 from runtime.tool_registry import ToolRegistry, ToolSpec
 
 
@@ -604,6 +614,171 @@ async def export_docx(input_data: dict[str, Any], context: Any) -> dict[str, Any
         "nonempty_paragraph_count": nonempty_paragraph_count,
         "file_size": path.stat().st_size if path.exists() else 0,
     }
+
+
+def _document_draft_data_dir(context: Any) -> Path:
+    settings = getattr(context, "settings", None)
+    data_dir = getattr(settings, "data_dir", None)
+    if data_dir:
+        return Path(data_dir)
+    temp_dir = getattr(context, "temp_dir", None)
+    if temp_dir:
+        return Path(temp_dir) / "runtime-data"
+    raise RuntimeError("document draft tools require settings.data_dir or context.temp_dir")
+
+
+def _safe_document_draft_level(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _draft_record_from_docx(source_path: Path, title: str = "") -> dict[str, Any]:
+    try:
+        from docx import Document
+    except ImportError as exc:
+        raise RuntimeError("python-docx is required to import a Word document into a draft") from exc
+
+    doc = Document(str(source_path))
+    document_title = str(title or doc.core_properties.title or source_path.stem).strip() or source_path.stem
+    section_specs: list[dict[str, Any]] = []
+    section_blocks: list[list[str]] = []
+    current_index = -1
+
+    for paragraph in doc.paragraphs:
+        text = str(paragraph.text or "").strip()
+        if not text:
+            continue
+        style_name = str(getattr(paragraph.style, "name", "") or "")
+        heading_match = re.search(r"(?:heading|标题)\s*([1-6])", style_name, re.IGNORECASE)
+        if heading_match:
+            section_specs.append({
+                "title": text,
+                "level": int(heading_match.group(1)),
+            })
+            section_blocks.append([])
+            current_index = len(section_specs) - 1
+            continue
+        if current_index < 0:
+            section_specs.append({"section_id": "body", "title": "Body", "level": 1})
+            section_blocks.append([])
+            current_index = 0
+        section_blocks[current_index].append(text)
+
+    record = create_draft_record(
+        title=document_title,
+        sections=section_specs,
+        metadata={
+            "source_path": str(source_path.resolve()),
+            "source_type": "docx",
+            "imported": True,
+        },
+    )
+    for section, blocks in zip(record.get("sections") or [], section_blocks):
+        for text in blocks:
+            add_section_block(
+                record,
+                section_id=str(section.get("section_id") or ""),
+                content=text,
+                metadata={"imported": True},
+            )
+    return record
+
+
+async def create_draft(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    source_path_value = input_data.get("source_path")
+    if source_path_value:
+        source_path = context.path_guard.resolve(str(source_path_value))
+        if source_path.suffix.lower() != ".docx":
+            raise ValueError("document.create_draft source_path currently supports .docx files only")
+        record = _draft_record_from_docx(source_path, str(input_data.get("title") or ""))
+        record["metadata"].update(
+            input_data.get("metadata") if isinstance(input_data.get("metadata"), dict) else {}
+        )
+    else:
+        record = create_draft_record(
+            title=str(input_data.get("title") or "Untitled Draft"),
+            sections=input_data.get("sections") if isinstance(input_data.get("sections"), list) else [],
+            metadata=input_data.get("metadata") if isinstance(input_data.get("metadata"), dict) else {},
+        )
+    data_dir = _document_draft_data_dir(context)
+    record = save_draft(data_dir, record)
+    return {
+        "draft_id": record["draft_id"],
+        "title": record["title"],
+        "stats": draft_stats(record),
+        "source_path": record.get("metadata", {}).get("source_path"),
+        "message": (
+            "draft created; append content in complete, bounded blocks with "
+            "document.append_draft_section, inspect progress, then export with document.export_draft_docx"
+        ),
+    }
+
+
+async def append_draft_section(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    data_dir = _document_draft_data_dir(context)
+    record = load_draft(data_dir, str(input_data.get("draft_id") or ""))
+    citation_ids = input_data.get("citation_ids")
+    if not isinstance(citation_ids, list):
+        citation_ids = []
+    block = add_section_block(
+        record,
+        content=str(input_data.get("content") or ""),
+        section_id=str(input_data.get("section_id") or "").strip() or None,
+        title=str(input_data.get("title") or "").strip() or None,
+        level=_safe_document_draft_level(input_data.get("level")),
+        citation_ids=[str(item) for item in citation_ids],
+        metadata=input_data.get("metadata") if isinstance(input_data.get("metadata"), dict) else {},
+    )
+    record = save_draft(data_dir, record)
+    stats = draft_stats(record)
+    return {
+        "draft_id": record["draft_id"],
+        "block_id": block["block_id"],
+        "stats": stats,
+        "unknown_citation_ids": stats.get("unknown_citation_ids", []),
+    }
+
+
+async def add_draft_citation(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    data_dir = _document_draft_data_dir(context)
+    record = load_draft(data_dir, str(input_data.get("draft_id") or ""))
+    citation = input_data.get("citation")
+    if not isinstance(citation, dict):
+        citation = {key: value for key, value in input_data.items() if key != "draft_id"}
+    item = add_citation(record, citation)
+    record = save_draft(data_dir, record)
+    return {
+        "draft_id": record["draft_id"],
+        "citation": item,
+        "stats": draft_stats(record),
+    }
+
+
+async def inspect_draft(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    data_dir = _document_draft_data_dir(context)
+    record = load_draft(data_dir, str(input_data.get("draft_id") or ""))
+    return inspect_draft_record(record)
+
+
+async def export_draft_docx(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    data_dir = _document_draft_data_dir(context)
+    record = load_draft(data_dir, str(input_data.get("draft_id") or ""))
+    include_citations = bool(input_data.get("include_citations", True))
+    markdown = draft_to_markdown(record, include_citations=include_citations)
+    output_path = input_data.get("output_path") or input_data.get("path")
+    output = await export_docx(
+        {
+            "path": output_path,
+            "title": record.get("title") or "Document Draft",
+            "content": markdown,
+        },
+        context,
+    )
+    output["draft_id"] = record["draft_id"]
+    output["draft_stats"] = draft_stats(record)
+    return output
 
 
 def _resolve_translate_docx_output_path(input_data: dict[str, Any], context: Any, source_path: Path) -> Path:
@@ -1589,6 +1764,10 @@ async def generate_docx_from_outline(input_data: dict[str, Any], context: Any) -
         "path": str(path.resolve()),
         "title": title,
         "outline_count": len(outline),
+        "content_chars": sum(len(str(item.get("text") or "")) for item in outline),
+        "paragraph_count": len(doc.paragraphs),
+        "nonempty_paragraph_count": sum(1 for paragraph in doc.paragraphs if paragraph.text.strip()),
+        "file_size": path.stat().st_size if path.exists() else 0,
     }
 
 
@@ -2009,6 +2188,149 @@ def register_document_tools(registry: ToolRegistry) -> None:
     )
     registry.register(
         ToolSpec(
+            id="document.create_draft",
+            name="Create document draft",
+            description=(
+                "Create a persistent document draft state. Use this for long reports, papers, "
+                "book manuscripts, long translations, or any task that needs progressive writing "
+                "before a final export. When expanding an existing Word document, pass its .docx "
+                "path as source_path so the draft starts with the existing content instead of empty."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "source_path": {
+                        "type": "string",
+                        "description": "Optional existing .docx file to import before appending new content.",
+                    },
+                    "sections": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "section_id": {"type": "string"},
+                                "title": {"type": "string"},
+                                "level": {"type": "integer", "default": 1},
+                                "metadata": {"type": "object"},
+                            },
+                        },
+                    },
+                    "metadata": {"type": "object"},
+                },
+            },
+            capability="document.draft",
+            artifacts=["draft"],
+            retry_safe=True,
+        ),
+        create_draft,
+    )
+    registry.register(
+        ToolSpec(
+            id="document.append_draft_section",
+            name="Append document draft content",
+            description=(
+                "Append content to a document draft section, creating the section when needed. "
+                "This is the preferred write path for long-form content because the draft can be "
+                "inspected, resumed, and exported later. Keep each call complete and bounded; "
+                "use several calls when one complete block would exceed the model output budget."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "draft_id": {"type": "string"},
+                    "section_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "level": {"type": "integer", "default": 1},
+                    "content": {
+                        "type": "string",
+                        "description": "One complete content block.",
+                    },
+                    "citation_ids": {"type": "array", "items": {"type": "string"}},
+                    "metadata": {"type": "object"},
+                },
+                "required": ["draft_id", "content"],
+            },
+            capability="document.draft",
+            artifacts=["draft"],
+            retry_safe=True,
+        ),
+        append_draft_section,
+    )
+    registry.register(
+        ToolSpec(
+            id="document.add_draft_citation",
+            name="Add document draft citation",
+            description="Add a citation/source record to a document draft for papers, reports, or book notes.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "draft_id": {"type": "string"},
+                    "citation": {
+                        "type": "object",
+                        "properties": {
+                            "citation_id": {"type": "string"},
+                            "title": {"type": "string"},
+                            "source_type": {"type": "string"},
+                            "url": {"type": "string"},
+                            "doi": {"type": "string"},
+                            "author": {"type": "string"},
+                            "year": {"type": "string"},
+                            "note": {"type": "string"},
+                        },
+                    },
+                },
+                "required": ["draft_id", "citation"],
+            },
+            capability="document.draft",
+            artifacts=["draft"],
+            retry_safe=True,
+        ),
+        add_draft_citation,
+    )
+    registry.register(
+        ToolSpec(
+            id="document.inspect_draft",
+            name="Inspect document draft",
+            description="Inspect document draft structure, progress, citations, and missing references without exporting.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "draft_id": {"type": "string"},
+                },
+                "required": ["draft_id"],
+            },
+            capability="document.draft",
+            artifacts=["draft"],
+        ),
+        inspect_draft,
+    )
+    registry.register(
+        ToolSpec(
+            id="document.export_draft_docx",
+            name="Export document draft to Word",
+            description="Export a persistent document draft to .docx. The output path is protected by PathGuard and confirmation.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "draft_id": {"type": "string"},
+                    "path": {"type": "string"},
+                    "output_path": {"type": "string"},
+                    "include_citations": {"type": "boolean", "default": True},
+                },
+                "required": ["draft_id"],
+            },
+            requires_confirmation=True,
+            optional_dependencies=["docx"],
+            capability="document.draft_export",
+            artifacts=["docx", "draft"],
+            retry_safe=True,
+            idempotent=True,
+        ),
+        export_draft_docx,
+    )
+    registry.register(
+        ToolSpec(
             id="document.translate_docx",
             name="翻译 Word 文档",
             description=(
@@ -2066,6 +2388,7 @@ def register_document_tools(registry: ToolRegistry) -> None:
                 "properties": {
                     "path": {"type": "string"},
                     "title": {"type": "string", "default": "文档"},
+                    "output_path": {"type": "string"},
                     "outline": {
                         "type": "array",
                         "items": {
@@ -2077,7 +2400,7 @@ def register_document_tools(registry: ToolRegistry) -> None:
                         },
                     },
                 },
-                "required": ["path", "outline"],
+                "required": ["outline"],
             },
             requires_confirmation=True,
             optional_dependencies=["docx"],

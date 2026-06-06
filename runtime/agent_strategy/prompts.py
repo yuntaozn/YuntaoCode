@@ -200,10 +200,18 @@ def dangling_action_prompt(
     unfinished_text: str,
     tool_events: list[dict[str, Any]],
     mode: str | None,
+    *,
+    allow_state_change: bool = True,
 ) -> str:
     snippet = unfinished_text[-200:]
+    capability_boundary = (
+        "当前任务契约允许产生本地变更；需要执行时请选择与目标最接近的工具。"
+        if allow_state_change
+        else "当前任务契约没有声明本地变更；可继续读取或直接回答，不要创建或修改文件。"
+    )
     return (
         f"悬空动作：项目={workspace_path}。未完成：{snippet}\n"
+        f"{capability_boundary}\n"
         "请调用本地工具执行动作，或直接输出最终总结（变更文件+验证结果+风险）。"
         "不要只说'我先验证/我将检查/接下来处理'。"
     )
