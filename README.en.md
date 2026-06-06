@@ -328,6 +328,7 @@ Contributions are welcome. Please read:
 * [CONTRIBUTING.md](CONTRIBUTING.md)
 * [SECURITY.md](SECURITY.md)
 * [CHANGELOG.md](CHANGELOG.md)
+* [Versioning and release rules](docs/versioning.md)
 
 Do not commit API keys, local conversation data, user data, packaged binaries, or `node_modules`.
 
@@ -411,13 +412,9 @@ YuntaoCode can also be used for:
 
 ## Project Status
 
-Current Version: **0.1.0**
+Current Development Version: **0.1.0**
 
 Status: **Active Development**
-
-The product release version has a single source in `runtime/version.py`. See
-[docs/versioning.md](docs/versioning.md) for release preparation and
-synchronization rules.
 
 Before v1.0:
 

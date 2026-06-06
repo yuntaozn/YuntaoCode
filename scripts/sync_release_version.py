@@ -83,9 +83,9 @@ def _cargo_lock_with_version(path: Path, version: str) -> str:
 def _readme_with_version(path: Path, version: str) -> str:
     text = path.read_text(encoding="utf-8")
     if path.name == "README.en.md":
-        pattern = r"^(Current Version:\s*\*\*)[^*]+(\*\*)$"
+        pattern = r"^(Current Development Version:\s*\*\*)[^*]+(\*\*)$"
     else:
-        pattern = r"^(当前版本：)[^\s]+$"
+        pattern = r"^(当前开发版本：)[^\s]+$"
     replacement = rf"\g<1>{version}\g<2>" if path.name == "README.en.md" else rf"\g<1>{version}"
     return _replace_once(text, pattern, replacement, path=path)
 

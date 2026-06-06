@@ -325,6 +325,7 @@ AI 可以帮助创建插件草稿，但草稿必须写入隔离目录。完成�
 * [CONTRIBUTING.md](CONTRIBUTING.md)
 * [SECURITY.md](SECURITY.md)
 * [CHANGELOG.md](CHANGELOG.md)
+* [版本与发布规则](docs/versioning.md)
 
 请不要提交 API Key、本地对话记录、用户数据、打包产物或 `node_modules`。
 
@@ -412,12 +413,9 @@ YuntaoCode 同样适用于：
 
 ## 项目状态
 
-当前版本：0.1.0
+当前开发版本：0.1.0
 
 状态：Active Development
-
-发布版本以 `runtime/version.py` 为唯一来源。发布准备与同步规则见
-[docs/versioning.md](docs/versioning.md)。
 
 在 v1.0 之前：
 
