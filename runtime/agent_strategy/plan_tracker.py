@@ -90,7 +90,11 @@ def fallback_execution_plan(mode: str | None) -> dict[str, Any]:
         steps = [
             ("定位相关代码", "扫描目录并读取与需求相关的文件。", "code.list_project_files / filesystem.read_file"),
             ("分析修改点", "确认需要修改的函数、配置或页面，并控制影响范围。", "code.search_text"),
-            ("执行代码变更", "使用批量替换、精确编辑或写入工具完成修改。", "code.replace_text / code.edit_file / filesystem.write_file"),
+            (
+                "执行代码变更",
+                "使用批量替换、精确编辑或文本草稿最终写入工具完成修改。",
+                "code.replace_text / code.edit_file / filesystem.finalize_text_file",
+            ),
             ("验证结果", "运行可行的语法检查、测试或搜索验证。", "shell.run_command / git.status"),
             ("汇总变更", "列出修改文件、验证结果和剩余风险。", "git.diff / git.status"),
         ]
@@ -98,7 +102,7 @@ def fallback_execution_plan(mode: str | None) -> dict[str, Any]:
         steps = [
             ("建立材料护照", "扫描论文项目目录，识别草稿、文献、笔记、数据说明和参考资料。", "filesystem.scan_folder / code.list_project_files"),
             ("提取已确认事实", "读取核心文档，区分 raw、redacted、verified 信息，并列出未覆盖材料。", "filesystem.read_file / document.extract_docx_outline / document.extract_pdf_text_preview"),
-            ("形成论文产出", "根据用户目标生成大纲、综述、摘要、段落草稿、审稿回复或修改建议。", "本地模型 / filesystem.write_file"),
+            ("形成论文产出", "根据用户目标生成大纲、综述、摘要、段落草稿、审稿回复或修改建议。", "本地模型 / document.create_draft"),
             ("学术质量门", "检查幻觉引用、方法论捏造、实验结果捏造、过早锁定框架和贡献夸大风险。", "本地模型"),
             ("汇总结论", "列出依据、可用文本、待确认项和建议的下一步用户决策。", "本地模型"),
         ]

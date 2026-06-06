@@ -175,9 +175,24 @@ def merge_model_task_contract(
     return contract
 
 
-def task_contract_prompt(workspace_path: str, fallback_contract: dict[str, Any]) -> str:
+def task_contract_prompt(
+    workspace_path: str,
+    fallback_contract: dict[str, Any],
+    *,
+    capability_context: str = "",
+) -> str:
     """Prompt used for the model-side task contract judgment."""
-    return (
+    capability_block = ""
+    if str(capability_context or "").strip():
+        capability_block = (
+            "\nRuntime capability context for this contract judgment:\n"
+            f"{str(capability_context).strip()}\n"
+            "Capability rule: if the user asks to read, inspect, summarize, or analyze "
+            "a public website/URL and web.network_fetch or web.* tools are available, "
+            "classify it as read_only_analysis and choose first_action=read/search/use_tool. "
+            "Do not classify such requests as answer_only merely because the content is remote.\n"
+        )
+    return capability_block + (
         "请先判断本轮用户请求的任务契约，只输出 JSON，不要调用工具，不要解释。\n"
         f"当前项目目录：{workspace_path}\n"
         "你负责判断任务语义；系统负责权限、工具执行和完成验收。\n"
@@ -238,8 +253,8 @@ def task_contract_context_messages(
 
 def success_conditions_for_contract(contract: dict[str, Any]) -> list[str]:
     conditions = [
-        "write_tool_success" if contract.get("requires_write") else "",
-        "verification_tool_success" if contract.get("requires_verification") else "",
+        "target_deliverable_success" if contract.get("requires_write") else "",
+        "target_deliverable_verification" if contract.get("requires_verification") else "",
         "document_output_coverage" if contract.get("expected_document_coverage") else "",
         "document_min_output_chars" if _safe_int(contract.get("expected_min_output_chars")) > 0 else "",
         "final_answer_with_evidence",

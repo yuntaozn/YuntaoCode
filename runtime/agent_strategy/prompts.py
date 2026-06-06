@@ -142,7 +142,8 @@ def progress_observer_prompt(
     action_rule = ""
     if code_change_intent and not has_successful_write(tool_events):
         action_rule = (
-            "需要真实修改文件但尚未写入。请直接调用 code.edit_file / code.replace_text / filesystem.write_file，"
+            "需要真实修改文件但尚未写入。请直接调用 code.edit_file / code.replace_text，"
+            "若需要完整生成较大文本/代码文件，请使用 filesystem.create_text_draft / append_text_chunk / finalize_text_file，"
             "或只读取一个最小必要文件后写入。"
         )
     return (
@@ -182,7 +183,8 @@ def repeated_failure_strategy_prompt(
 def recon_budget_prompt(budget: int, workspace_path: str) -> str:
     return (
         f"侦察预算已用完（{budget} 次读取/搜索）。项目={workspace_path}。"
-        "下一轮必须推进：读取最小必要片段后调用 code.edit_file / code.replace_text / filesystem.write_file，"
+        "下一轮必须推进：读取最小必要片段后调用 code.edit_file / code.replace_text；"
+        "若是较大完整文件生成，改用 filesystem.create_text_draft / append_text_chunk / finalize_text_file，"
         "或明确说明缺少什么信息导致无法修改。不要用文字声称已修改。"
     )
 
@@ -243,6 +245,7 @@ def write_repair_prompt(
         missing_path_rule = (
             "\n本次失败是因为写入工具缺少 path 参数。下一轮必须先确定要写入的文件路径，"
             "然后调用 filesystem.write_file 时同时提供 path 和 content。"
+            "如果内容较长，请改用 filesystem.create_text_draft / append_text_chunk / finalize_text_file。"
             "如果是修改已有文件，优先读取目标文件后用 code.edit_file 或 code.replace_text；"
             "如果是创建新文件，path 必须是当前项目内的明确相对路径或绝对路径。"
         )
@@ -250,7 +253,8 @@ def write_repair_prompt(
     if force_full_file_rewrite:
         full_rewrite_rule = (
             "\n系统已检测到精确编辑连续失败。下一轮不要再调用 code.edit_file。"
-            "请先用 filesystem.read_file 读取目标文件当前内容，然后调用 filesystem.write_file 写回完整文件内容。"
+            "请先用 filesystem.read_file 读取目标文件当前内容；小文件可调用 filesystem.write_file 写回完整内容，"
+            "较大文件请改用 filesystem.create_text_draft / append_text_chunk / finalize_text_file。"
             "写回内容必须基于刚读取到的真实文件，只修改用户要求的部分。"
         )
     return (
@@ -262,7 +266,7 @@ def write_repair_prompt(
         "下一步请只做必要的修复：\n"
         "1. 如果是 old_text 未匹配或不唯一，先用 filesystem.read_file 读取目标文件相关片段；\n"
         "2. 基于实际文件内容重新调用 code.edit_file 或 code.replace_text；\n"
-        "3. 如果目标文件结构变化太大，允许使用 filesystem.write_file 写回完整文件，但必须基于刚读取到的真实内容；\n"
+        "3. 如果目标文件结构变化太大，小文件可使用 filesystem.write_file；较大文件必须使用 filesystem.create_text_draft / append_text_chunk / finalize_text_file；\n"
         "4. 写入成功后再进入验证，不要继续泛泛搜索。"
         f"{missing_path_rule}"
         f"{full_rewrite_rule}"
@@ -287,8 +291,8 @@ def execute_plan_prompt(plan: dict[str, Any], mode: str | None) -> str:
     code_rule = ""
     if mode == "coding":
         code_rule = (
-            "如果任务涉及代码变更，必须成功调用 code.edit_file、code.replace_text 或 filesystem.write_file 后，"
-            "才能声称已经修改完成。"
+            "如果任务涉及代码变更，必须成功生成或更新任务契约中的目标产物后，才能声称已经修改完成；"
+            "可按产物形态选择 code.edit_file、code.replace_text、filesystem.write_file 或 filesystem.finalize_text_file。"
         )
     return (
         "计划执行模式已开启。上面的计划是参考路线，不是固定轨道；"
@@ -357,12 +361,12 @@ def tool_contract_correction_prompt(workspace_path: str, write_only: bool = Fals
     if write_only:
         return (
             f"执行契约（压力模式）：项目={workspace_path}。"
-            "读取最小上下文后立即调用 code.edit_file / code.replace_text / filesystem.write_file，"
-            "或说明缺少什么导致无法修改。不要用文字声称已修改。"
+            "读取最小上下文后立即生成或更新目标产物；较小改动可用 code.edit_file / code.replace_text，"
+            "较大完整文件可用 filesystem.finalize_text_file，或说明缺少什么导致无法完成。不要用文字声称已修改。"
         )
     return (
-        f"执行契约：项目={workspace_path}。你未成功调用写入工具。"
-        "请先用 filesystem.read_file 定位代码，再调用 code.edit_file / code.replace_text / filesystem.write_file。"
+        f"执行契约：项目={workspace_path}。你还没有成功生成或更新任务目标产物。"
+        "请先用 filesystem.read_file 定位必要内容，再按产物形态选择 code.edit_file / code.replace_text；较大完整文件使用 filesystem 文本草稿工具最终写入。"
         "无法修改时必须说明原因。"
     )
 

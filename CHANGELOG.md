@@ -22,6 +22,8 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 - `filesystem.write_temp_file` and task-scoped temporary directories so one-off scripts and intermediate files do not pollute user projects.
 - Model-proposed `task_contract` normalization so task intent, deliverables, write requirements, verification requirements, and plan needs can be decided before execution and audited in run events.
 - Single-source product release versioning with synchronized desktop manifests, README labels, Runtime health output, and CI drift checks.
+- Controlled web artifact tools: `web.collect_site_assets` saves bounded website page/resource snapshots, and `web.capture_page` exports webpages as PDF or screenshots.
+- Text artifact draft tools for large text/code outputs: create a draft, append bounded chunks, inspect progress, and finalize to a validated workspace file.
 
 ### Changed
 
@@ -58,6 +60,8 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 - Reframe task contracts as model-declared, revisable task interpretations; deliverable paths are hints while the runtime audits execution evidence and truthfulness.
 - Added transactional `code.apply_patch` as the preferred incremental code-writing capability, with full-patch validation, PathGuard enforcement, backups, multi-file audit paths, and confirmation details.
 - Added provider-neutral, optional model output-budget declarations (`max_output_tokens` plus `output_token_param`) without guessing unsupported API parameters; low-level request options remain available as overrides.
+- Web tasks now prefer controlled asset/capture tools for website redesign, archival, screenshot, and PDF-export requests instead of asking the model to generate crawlers or oversized file writes.
+- Large HTML/code/config generation now routes through text artifact drafts instead of a single oversized `filesystem.write_file` call when the artifact may exceed model output limits.
 
 ### Known Gaps
 

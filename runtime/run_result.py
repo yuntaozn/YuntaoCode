@@ -9,6 +9,11 @@ from runtime.agent_strategy.classifiers import (
     is_write_tool,
     successful_verification_events,
 )
+from runtime.agent_strategy.tool_event_roles import (
+    deliverable_verification_events,
+    failed_deliverable_events,
+    successful_deliverable_events,
+)
 from runtime.core.result import RUN_RESULT_SCHEMA_VERSION
 
 
@@ -21,6 +26,7 @@ def build_run_result(
     requires_code_write: bool = False,
     expected_document_coverage: bool = False,
     expected_min_output_chars: int = 0,
+    task_contract: dict[str, Any] | None = None,
     contract_failed: bool = False,
     max_rounds_exceeded: bool = False,
     convergence_stopped: bool = False,
@@ -30,9 +36,8 @@ def build_run_result(
     The model may still write the final prose answer, but this structure is the
     runtime-owned source of truth for what actually happened.
     """
-    write_successes: list[dict[str, Any]] = []
-    write_partials: list[dict[str, Any]] = []
-    write_failures: list[dict[str, Any]] = []
+    state_write_successes: list[dict[str, Any]] = []
+    state_write_failures: list[dict[str, Any]] = []
     verification_successes: list[dict[str, Any]] = []
     test_successes: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
@@ -49,18 +54,44 @@ def build_run_result(
                 invalid_verification_failures.append(event)
         if is_write_tool(tool_id):
             if status == "success":
-                write_successes.append(event)
+                state_write_successes.append(event)
             elif status == "partial":
-                write_successes.append(event)
-                write_partials.append(event)
+                state_write_successes.append(event)
             elif status == "failure":
-                write_failures.append(event)
+                state_write_failures.append(event)
+
+    if isinstance(task_contract, dict):
+        write_successes = successful_deliverable_events(
+            tool_events,
+            task_contract=task_contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+        write_failures = failed_deliverable_events(
+            tool_events,
+            task_contract=task_contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+        verification_successes = deliverable_verification_events(
+            tool_events,
+            task_contract=task_contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+    else:
+        write_successes = state_write_successes
+        write_failures = state_write_failures
+        verification_successes = successful_verification_events(tool_events, mode)
+    write_partials = [
+        event for event in write_successes
+        if _effective_event_status(str(event.get("tool") or ""), event) == "partial"
+    ]
     written_paths = _unique(
         path
         for event in write_successes
         for path in _event_paths(workspace_path, event)
     )
-    verification_successes = successful_verification_events(tool_events, mode)
     test_successes = [
         event for event in verification_successes
         if is_test_verification_event(event)
@@ -105,10 +136,10 @@ def build_run_result(
     if convergence_stopped:
         risks.append("repeated_tool_failure")
     if failures and _failures_recovered(
-        tool_events,
-        effective_statuses,
-        write_failures=write_failures,
-    ):
+            tool_events,
+            effective_statuses,
+            write_failures=state_write_failures,
+        ):
         risks.append("recovered_tool_failure")
 
     coverage_failure = _document_coverage_failure(
@@ -123,6 +154,8 @@ def build_run_result(
         workspace_path,
         tool_events,
         expected_min_output_chars=expected_min_output_chars,
+        task_contract=task_contract,
+        mode=mode,
     )
     if min_output_failure:
         failures.append(min_output_failure)
@@ -418,6 +451,8 @@ def _document_min_output_failure(
     tool_events: list[dict[str, Any]],
     *,
     expected_min_output_chars: int,
+    task_contract: dict[str, Any] | None = None,
+    mode: str | None = None,
 ) -> dict[str, Any] | None:
     expected = _safe_int(expected_min_output_chars)
     if expected <= 0:
@@ -427,20 +462,35 @@ def _document_min_output_failure(
         "document.export_draft_docx",
         "document.export_markdown",
     }
+    if isinstance(task_contract, dict):
+        candidates = successful_deliverable_events(
+            tool_events,
+            task_contract=task_contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+    else:
+        candidates = [
+            event for event in tool_events
+            if str(event.get("tool") or "") in export_tools
+        ]
     best_export: dict[str, Any] | None = None
     best_chars = 0
-    for event in tool_events:
+    for event in candidates:
         tool_id = str(event.get("tool") or "")
-        if tool_id not in export_tools:
+        if not isinstance(task_contract, dict) and tool_id not in export_tools:
             continue
         if _effective_event_status(tool_id, event) != "success":
             continue
         output = event.get("output") if isinstance(event.get("output"), dict) else {}
         draft_stats = output.get("draft_stats") if isinstance(output.get("draft_stats"), dict) else {}
+        validation = output.get("validation") if isinstance(output.get("validation"), dict) else {}
         chars = max(
             _safe_int(output.get("content_chars")),
+            _safe_int(output.get("text_chars")),
             _safe_int(output.get("size")),
             _safe_int(draft_stats.get("text_chars")),
+            _safe_int(validation.get("text_chars")),
         )
         if best_export is None or chars > best_chars:
             best_export = event

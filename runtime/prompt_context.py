@@ -21,6 +21,38 @@ At this stage, AI-built plugin drafts are candidates in isolated directories onl
 One-off analysis scripts, intermediate JSON, probe outputs, and files that should not be committed should use filesystem.write_temp_file in the task temp directory. To run those temporary scripts, shell.run_command may use cwd="task_temp" or use_task_temp=true. Do not write temporary scripts into the user's project directory unless the user explicitly asks to keep the script as a project artifact.
 """
 
+_WEB_ACCESS_CAPABILITY_ADDENDUM = """
+
+## Web Access Capability Addendum
+When web.* tools are available and the user asks to view, read, inspect,
+summarize, or analyze a public website/URL, try web.extract_text first. Use
+web.render_page when the page depends on JavaScript rendering or ordinary HTTP
+text extraction is insufficient. Do not claim that websites cannot be accessed
+until the appropriate web tool has been tried or the capability is unavailable.
+If the tool fails, explain the actual tool failure instead of guessing.
+When the user asks to collect website materials/assets for redesign or archival,
+use web.collect_site_assets instead of generating crawler scripts or writing
+large gathered content with filesystem.write_file. When the user asks to save a
+webpage as a screenshot or PDF, use web.capture_page.
+"""
+
+_TEXT_WRITE_ROUTE_ADDENDUM = """
+
+## Text Write Route Addendum
+Use one text/code write capability for HTML, CSS, JavaScript, Python, Markdown,
+JSON, configuration files, and similar text artifacts. Choose the smallest
+route that matches the job:
+
+1. Existing local file, small targeted change: read the relevant snippet, then
+   use code.edit_file, code.replace_text, or code.apply_patch.
+2. New small complete file: use filesystem.write_file with path and content.
+3. Large complete text/code artifact or full rewrite that may exceed one model
+   output: use filesystem.create_text_draft, append complete bounded chunks,
+   inspect when useful, then write once with filesystem.finalize_text_file.
+
+Do not use draft chunks when a precise edit or small patch is enough, and do
+not retry oversized filesystem.write_file calls after truncation.
+"""
 
 def build_system_prompt(
     *,
@@ -36,6 +68,27 @@ def build_system_prompt(
     )
     if capability_context:
         prompt += "\n" + capability_context
+        if _has_web_capability_context(capability_context):
+            prompt += _WEB_ACCESS_CAPABILITY_ADDENDUM
+        if _has_text_write_context(capability_context):
+            prompt += _TEXT_WRITE_ROUTE_ADDENDUM
     if "Capability Extension Rules" in prompt:
         return prompt + _PLUGIN_DRAFT_BOUNDARY_EN
     return prompt + _PLUGIN_DRAFT_BOUNDARY_ZH
+
+
+def _has_web_capability_context(capability_context: str) -> bool:
+    text = str(capability_context or "")
+    return "web." in text or "web.network_fetch" in text
+
+
+def _has_text_write_context(capability_context: str) -> bool:
+    text = str(capability_context or "")
+    return (
+        "code.text_write" in text
+        or "filesystem.text_artifact_draft" in text
+        or "filesystem.finalize_text_file" in text
+        or "filesystem.write_file" in text
+        or "code.edit_file" in text
+        or "code.apply_patch" in text
+    )

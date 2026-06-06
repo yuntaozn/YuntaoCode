@@ -22,6 +22,7 @@ from runtime.agent_strategy import prompts as _prp
 from runtime.agent_strategy import plan_tracker as _pt
 from runtime.agent_strategy import policy as _pol
 from runtime.agent_strategy import task_contract as _tc
+from runtime.agent_strategy import tool_event_roles as _event_roles
 from runtime.agent_strategy import tool_result_risks as _tool_risks
 from runtime.model_providers import generate_chat_completion
 from runtime.model_providers.client import stream_chat_completion
@@ -265,6 +266,8 @@ class ConversationMessagesHandler(ApiHandler):
         return messages
 
     def _capability_context_prompt(self, mode_config: dict[str, Any] | None = None) -> str:
+        if not hasattr(self.runtime, "registry"):
+            return ""
         allowed_tools: set[str] | None = None
         if mode_config and "tools" in mode_config:
             allowed_tools = set(mode_config["tools"])
@@ -497,7 +500,16 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         expected_document_coverage: bool,
         expected_min_output_chars: int,
     ) -> dict[str, Any]:
-        prompt = _tc.task_contract_prompt(workspace_path, fallback_contract)
+        try:
+            lang = self.get_lang()
+        except Exception:
+            lang = ""
+        mode_config = get_mode_config(fallback_contract.get("assistant_mode"), lang)
+        prompt = _tc.task_contract_prompt(
+            workspace_path,
+            fallback_contract,
+            capability_context=self._capability_context_prompt(mode_config),
+        )
         try:
             decision_messages: list[dict[str, Any]] = [
                 {"role": "system", "content": prompt},
@@ -577,14 +589,27 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         mode: str | None,
     ) -> list[str]:
         failures: list[str] = []
-        if contract.get("requires_write") and not self._has_successful_write(tool_events):
-            failures.append("missing_write_tool_success")
+        workspace_path = str(contract.get("workspace_path") or "")
+        deliverables = _event_roles.successful_deliverable_events(
+            tool_events,
+            task_contract=contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+        verifications = _event_roles.deliverable_verification_events(
+            tool_events,
+            task_contract=contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+        if contract.get("requires_write") and not deliverables:
+            failures.append("missing_target_deliverable_success")
         if (
             contract.get("requires_verification")
-            and self._has_successful_write(tool_events)
-            and not self._has_successful_verification(tool_events, mode)
+            and deliverables
+            and not verifications
         ):
-            failures.append("missing_verification_tool_success")
+            failures.append("missing_target_deliverable_verification")
         return failures
 
     async def _decide_plan_execution(
@@ -1920,6 +1945,18 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "integrity": output.get("integrity"),
                 "backup": output.get("_backup"),
             }
+        elif tool_id == "filesystem.finalize_text_file":
+            preview = {
+                "type": "file_write",
+                "path": output.get("path"),
+                "created": bool(output.get("created")),
+                "size": output.get("size"),
+                "draft_id": output.get("draft_id"),
+                "draft_stats": output.get("draft_stats"),
+                "validation": output.get("validation"),
+                "artifact_kind": output.get("artifact_kind"),
+                "backup": output.get("_backup"),
+            }
         elif tool_id == "document.extract_pdf_to_docx":
             preview = {
                 "type": "file_write",
@@ -2700,20 +2737,13 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         if mode not in {"coding", "terminal"}:
             return None
 
-        write_tools = {
-            "code.apply_patch",
-            "code.edit_file",
-            "code.replace_text",
-            "filesystem.transform_text",
-            "filesystem.write_file",
-        }
         write_successes = [
             event for event in tool_events
-            if event.get("tool") in write_tools and event.get("status") == "success"
+            if self._is_write_tool(str(event.get("tool") or "")) and event.get("status") == "success"
         ]
         write_failures = [
             event for event in tool_events
-            if event.get("tool") in write_tools and event.get("status") == "failure"
+            if self._is_write_tool(str(event.get("tool") or "")) and event.get("status") == "failure"
         ]
         invalid_verification_failures = [
             event for event in tool_events

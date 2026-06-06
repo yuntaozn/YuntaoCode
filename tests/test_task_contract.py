@@ -51,7 +51,7 @@ def test_model_contract_can_raise_write_requirement() -> None:
     assert contract["requires_verification"] is True
     assert contract["first_action"] == "write"
     assert contract["deliverables"][0]["path_hint"] == "model-viewer.html"
-    assert "write_tool_success" in contract["success_conditions"]
+    assert "target_deliverable_success" in contract["success_conditions"]
 
 
 def test_hard_no_write_lock_overrides_model_contract() -> None:
@@ -103,6 +103,18 @@ def test_task_contract_prompt_contains_only_contract_request() -> None:
     assert "只输出 JSON" in prompt
     assert "requires_write" in prompt
     assert "系统负责权限、工具执行和完成验收" in prompt
+
+
+def test_task_contract_prompt_includes_runtime_capabilities_when_provided() -> None:
+    prompt = task_contract_prompt(
+        "D:\\code\\demo",
+        _fallback(),
+        capability_context="- web.network_fetch: Fetch network content; tools=web.extract_text, web.render_page",
+    )
+
+    assert "Runtime capability context" in prompt
+    assert "web.extract_text" in prompt
+    assert "classify it as read_only_analysis" in prompt
 
 
 def test_task_contract_context_keeps_recent_task_and_current_follow_up() -> None:

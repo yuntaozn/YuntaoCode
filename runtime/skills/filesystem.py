@@ -2,14 +2,31 @@ from __future__ import annotations
 
 import asyncio
 import html
+import json
 from pathlib import Path
 from typing import Any
 
+from runtime.text_artifacts import (
+    append_text_chunk as append_text_chunk_record,
+    create_text_draft_record,
+    inspect_text_draft_record,
+    load_text_draft,
+    save_text_draft,
+    text_draft_content,
+    text_draft_stats,
+)
 from runtime.tool_registry import ToolRegistry, ToolSpec
 
 MAX_READ_LINES = 500
 TEXT_TRANSFORMS = frozenset({
     "html_unescape",
+})
+TEXT_DRAFT_VALIDATORS = frozenset({
+    "auto",
+    "none",
+    "html",
+    "json",
+    "python",
 })
 
 
@@ -218,6 +235,96 @@ async def transform_text(input_data: dict[str, Any], context: Any) -> dict[str, 
     return await asyncio.to_thread(transform_text_sync, path, transform, context)
 
 
+async def create_text_draft(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    data_dir = _text_artifact_data_dir(context)
+    record = create_text_draft_record(
+        title=str(input_data.get("title") or "Untitled Text Artifact"),
+        path_hint=str(input_data.get("path_hint") or input_data.get("output_path") or ""),
+        language=str(input_data.get("language") or ""),
+        metadata=input_data.get("metadata") if isinstance(input_data.get("metadata"), dict) else {},
+    )
+    initial_content = str(input_data.get("content") or "")
+    if initial_content:
+        append_text_chunk_record(
+            record,
+            content=initial_content,
+            label="initial",
+            metadata={"source": "create_text_draft"},
+        )
+    record = save_text_draft(data_dir, record)
+    return {
+        "type": "text_artifact_draft",
+        "draft_id": record["draft_id"],
+        "title": record["title"],
+        "path_hint": record.get("path_hint") or "",
+        "language": record.get("language") or "",
+        "stats": text_draft_stats(record),
+        "message": (
+            "text draft created; append complete bounded chunks with "
+            "filesystem.append_text_chunk, inspect progress, then finalize with "
+            "filesystem.finalize_text_file"
+        ),
+    }
+
+
+async def append_text_chunk(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    data_dir = _text_artifact_data_dir(context)
+    record = load_text_draft(data_dir, str(input_data.get("draft_id") or ""))
+    sequence_value = input_data.get("sequence")
+    sequence = int(sequence_value) if sequence_value is not None else None
+    chunk = append_text_chunk_record(
+        record,
+        content=str(input_data.get("content") or ""),
+        label=str(input_data.get("label") or ""),
+        sequence=sequence,
+        metadata=input_data.get("metadata") if isinstance(input_data.get("metadata"), dict) else {},
+    )
+    record = save_text_draft(data_dir, record)
+    return {
+        "type": "text_artifact_draft",
+        "draft_id": record["draft_id"],
+        "chunk_id": chunk["chunk_id"],
+        "stats": text_draft_stats(record),
+    }
+
+
+async def inspect_text_draft(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    data_dir = _text_artifact_data_dir(context)
+    record = load_text_draft(data_dir, str(input_data.get("draft_id") or ""))
+    preview_chars = int(input_data.get("preview_chars") or 1200)
+    return inspect_text_draft_record(record, preview_chars=preview_chars)
+
+
+async def finalize_text_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    data_dir = _text_artifact_data_dir(context)
+    record = load_text_draft(data_dir, str(input_data.get("draft_id") or ""))
+    output_path_value = (
+        input_data.get("output_path")
+        or input_data.get("path")
+        or record.get("path_hint")
+    )
+    if not output_path_value:
+        raise ValueError("output_path is required")
+    path = context.path_guard.resolve(str(output_path_value))
+    content = text_draft_content(record)
+    if not content:
+        raise ValueError("text draft has no content")
+    validator = str(input_data.get("validator") or "auto").strip().lower() or "auto"
+    validation = validate_text_artifact_content(path, content, validator=validator)
+    if not validation["valid"]:
+        raise ValueError("text draft validation failed: " + ", ".join(validation["issues"]))
+    create_dirs = input_data.get("create_dirs", True)
+    output = await asyncio.to_thread(write_file_sync, path, content, bool(create_dirs), context)
+    output.update({
+        "type": "file_write",
+        "draft_id": record["draft_id"],
+        "draft_stats": text_draft_stats(record),
+        "validation": validation,
+        "artifact_kind": "text_file",
+    })
+    return output
+
+
 def transform_text_sync(path: Path, transform: str, context: Any) -> dict[str, Any]:
     raw = path.read_bytes()
     encoding = _detect_encoding(raw[:8192])
@@ -307,6 +414,62 @@ def inspect_text_artifact_integrity(path: Path, content: str) -> dict[str, Any]:
         "valid": not issues,
         "issues": issues,
         "kind": suffix.lstrip(".") or "text",
+    }
+
+
+def _text_artifact_data_dir(context: Any) -> Path:
+    settings = getattr(context, "settings", None)
+    data_dir = getattr(settings, "data_dir", None)
+    if data_dir:
+        return Path(data_dir)
+    temp_dir = getattr(context, "temp_dir", None)
+    if temp_dir:
+        return Path(temp_dir) / "runtime-data"
+    raise RuntimeError("text artifact draft tools require settings.data_dir or context.temp_dir")
+
+
+def validate_text_artifact_content(path: Path, content: str, *, validator: str = "auto") -> dict[str, Any]:
+    validator = str(validator or "auto").strip().lower() or "auto"
+    if validator not in TEXT_DRAFT_VALIDATORS:
+        raise ValueError(
+            "unsupported validator; supported validators: "
+            + ", ".join(sorted(TEXT_DRAFT_VALIDATORS))
+        )
+    suffix = path.suffix.lower()
+    effective = validator
+    if effective == "auto":
+        if suffix in {".html", ".htm"}:
+            effective = "html"
+        elif suffix == ".json":
+            effective = "json"
+        elif suffix == ".py":
+            effective = "python"
+        else:
+            effective = "none"
+
+    issues: list[str] = []
+    integrity = inspect_text_artifact_integrity(path, content)
+    if effective == "html":
+        if integrity.get("checked") and not integrity.get("valid"):
+            issues.extend(str(item) for item in integrity.get("issues") or [])
+    elif effective == "json":
+        try:
+            json.loads(content)
+        except json.JSONDecodeError as exc:
+            issues.append(f"invalid json: line {exc.lineno} column {exc.colno}")
+    elif effective == "python":
+        try:
+            compile(content, str(path), "exec")
+        except SyntaxError as exc:
+            issues.append(f"invalid python syntax: line {exc.lineno}")
+
+    return {
+        "validator": effective,
+        "valid": not issues,
+        "issues": issues,
+        "integrity": integrity,
+        "text_chars": len(content),
+        "line_count": len(content.splitlines()),
     }
 
 
@@ -412,6 +575,7 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
                 "required": ["path", "content"],
             },
             requires_confirmation=True,
+            capability="code.text_write",
         ),
         write_file,
     )
@@ -462,9 +626,111 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
                 "required": ["path", "content"],
             },
             requires_confirmation=False,
-            capability="filesystem.write_temp_file",
+            capability="filesystem.temp_artifact",
             artifacts=["task_temp_file"],
             retry_safe=True,
         ),
         write_temp_file,
+    )
+    registry.register(
+        ToolSpec(
+            id="filesystem.create_text_draft",
+            name="创建文本产物草稿",
+            description=(
+                "创建一个可分块追加的文本/代码/HTML 产物草稿。适合生成较大的 HTML、JS、Python、Markdown、"
+                "JSON 或配置文件，避免模型一次性调用 filesystem.write_file 时被输出截断。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "草稿标题"},
+                    "path_hint": {"type": "string", "description": "最终目标文件路径提示"},
+                    "language": {"type": "string", "description": "文本类型，例如 html、javascript、python、markdown"},
+                    "content": {"type": "string", "description": "可选初始内容"},
+                    "metadata": {"type": "object"},
+                },
+            },
+            requires_confirmation=False,
+            capability="code.text_write",
+            artifacts=["text_draft"],
+            retry_safe=True,
+        ),
+        create_text_draft,
+    )
+    registry.register(
+        ToolSpec(
+            id="filesystem.append_text_chunk",
+            name="追加文本草稿片段",
+            description=(
+                "向文本产物草稿追加一个完整、有边界的片段。每次只追加一小段完整代码或文本，"
+                "最终用 filesystem.finalize_text_file 写入真实文件。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "draft_id": {"type": "string"},
+                    "content": {"type": "string"},
+                    "label": {"type": "string"},
+                    "sequence": {"type": "integer"},
+                    "metadata": {"type": "object"},
+                },
+                "required": ["draft_id", "content"],
+            },
+            requires_confirmation=False,
+            capability="code.text_write",
+            artifacts=["text_draft"],
+            retry_safe=True,
+        ),
+        append_text_chunk,
+    )
+    registry.register(
+        ToolSpec(
+            id="filesystem.inspect_text_draft",
+            name="查看文本产物草稿",
+            description="查看文本产物草稿的片段数量、字符数和预览内容。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "draft_id": {"type": "string"},
+                    "preview_chars": {"type": "integer", "default": 1200},
+                },
+                "required": ["draft_id"],
+            },
+            requires_confirmation=False,
+            capability="code.text_write",
+            artifacts=["text_draft"],
+            retry_safe=True,
+            idempotent=True,
+        ),
+        inspect_text_draft,
+    )
+    registry.register(
+        ToolSpec(
+            id="filesystem.finalize_text_file",
+            name="文本草稿写入文件",
+            description=(
+                "将文本产物草稿最终写入工作区文件。写入前会执行 PathGuard、确认、备份和轻量校验；"
+                "HTML/JSON/Python 会按扩展名自动校验。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "draft_id": {"type": "string"},
+                    "output_path": {"type": "string", "description": "最终输出文件路径"},
+                    "path": {"type": "string", "description": "output_path 的兼容别名"},
+                    "validator": {
+                        "type": "string",
+                        "enum": sorted(TEXT_DRAFT_VALIDATORS),
+                        "default": "auto",
+                    },
+                    "create_dirs": {"type": "boolean", "default": True},
+                },
+                "required": ["draft_id"],
+            },
+            requires_confirmation=True,
+            capability="code.text_write",
+            artifacts=["text_file", "text_draft"],
+            retry_safe=True,
+        ),
+        finalize_text_file,
     )

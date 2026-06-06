@@ -36,13 +36,19 @@ class TaskRunner:
         "document.split_pdf",
         "document.create_bookmark_outline",
     }
+    WEB_WRITE_TOOLS = {
+        "web.collect_site_assets",
+        "web.capture_page",
+    }
     WRITE_TOOLS = {
         "code.apply_patch",
         "code.edit_file",
         "code.replace_text",
         "filesystem.transform_text",
         "filesystem.write_file",
+        "filesystem.finalize_text_file",
         *DOCUMENT_WRITE_TOOLS,
+        *WEB_WRITE_TOOLS,
     }
 
     def __init__(

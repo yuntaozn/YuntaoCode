@@ -151,12 +151,19 @@ Example:
   ],
   "first_action": "write",
   "success_conditions": [
-    "write_tool_success",
-    "verification_tool_success",
+    "target_deliverable_success",
+    "target_deliverable_verification",
     "final_answer_with_evidence"
   ]
 }
 ```
+
+Tool identity and task role are intentionally separate. `tool_id` tells the
+runtime whether a call can change local state, so it is used for permission,
+safety, and confirmation gates. A `tool_event` is interpreted inside the current
+task contract as evidence, draft, temporary artifact, target deliverable, or
+verification. Run completion is based on whether the declared target
+deliverable role was satisfied, not on a fixed list of tool IDs.
 
 The runtime can still override the model contract. For example, a user saying
 "only analyze" forces a read-only contract even if the model proposes a write.

@@ -6,6 +6,7 @@ from typing import Any
 
 AI_PLUGIN_DRAFT_WRITE_TOOLS = {
     "filesystem.write_file",
+    "filesystem.finalize_text_file",
     "code.apply_patch",
     "code.edit_file",
     "code.replace_text",

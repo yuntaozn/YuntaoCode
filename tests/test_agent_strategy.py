@@ -429,6 +429,9 @@ class TestIsWriteTool:
     def test_transform_text(self):
         assert is_write_tool("filesystem.transform_text")
 
+    def test_finalize_text_file(self):
+        assert is_write_tool("filesystem.finalize_text_file")
+
     def test_read_file_not_write(self):
         assert not is_write_tool("filesystem.read_file")
 
@@ -440,6 +443,10 @@ class TestIsWriteTool:
 
     def test_translate_docx(self):
         assert is_write_tool("document.translate_docx")
+
+    def test_web_artifact_tools(self):
+        assert is_write_tool("web.collect_site_assets")
+        assert is_write_tool("web.capture_page")
 
 
 class TestIsReconTool:

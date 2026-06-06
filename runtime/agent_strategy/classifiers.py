@@ -39,13 +39,20 @@ DOCUMENT_WRITE_TOOL_IDS: frozenset[str] = frozenset({
     "document.create_bookmark_outline",
 })
 
+WEB_WRITE_TOOL_IDS: frozenset[str] = frozenset({
+    "web.collect_site_assets",
+    "web.capture_page",
+})
+
 WRITE_TOOL_IDS: frozenset[str] = frozenset({
     "code.apply_patch",
     "code.edit_file",
     "code.replace_text",
     "filesystem.transform_text",
     "filesystem.write_file",
+    "filesystem.finalize_text_file",
     *DOCUMENT_WRITE_TOOL_IDS,
+    *WEB_WRITE_TOOL_IDS,
 })
 
 POST_WRITE_VERIFY_TOOL_IDS: frozenset[str] = frozenset({
@@ -1091,9 +1098,12 @@ def _artifact_write_has_verification_facts(
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
     draft_stats = output.get("draft_stats") if isinstance(output.get("draft_stats"), dict) else {}
     integrity = output.get("integrity") if isinstance(output.get("integrity"), dict) else {}
+    validation = output.get("validation") if isinstance(output.get("validation"), dict) else {}
+    if validation.get("valid") is True:
+        return True
     if integrity.get("checked") is True:
         return integrity.get("valid") is True
-    file_size = _nonnegative_int(output.get("file_size"))
+    file_size = max(_nonnegative_int(output.get("file_size")), _nonnegative_int(output.get("size")))
     content_measure = max(
         _nonnegative_int(output.get("content_chars")),
         _nonnegative_int(output.get("text_chars")),

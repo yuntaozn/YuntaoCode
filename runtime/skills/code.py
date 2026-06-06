@@ -827,6 +827,7 @@ def register_code_tools(registry: ToolRegistry) -> None:
                 "required": ["patch"],
             },
             requires_confirmation=True,
+            capability="code.text_write",
         ),
         apply_patch,
     )
@@ -849,6 +850,7 @@ def register_code_tools(registry: ToolRegistry) -> None:
                 "required": ["path", "old_text", "new_text"],
             },
             requires_confirmation=True,
+            capability="code.text_write",
         ),
         replace_text,
     )
@@ -877,6 +879,7 @@ def register_code_tools(registry: ToolRegistry) -> None:
                 "required": ["path", "edits"],
             },
             requires_confirmation=True,
+            capability="code.text_write",
         ),
         edit_file,
     )

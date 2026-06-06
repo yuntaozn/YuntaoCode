@@ -327,6 +327,76 @@ def test_build_run_result_marks_invalid_verification_method_partial_after_write(
     assert "test_not_observed" in result["risks"]
 
 
+def test_build_run_result_uses_contract_deliverable_instead_of_any_state_write() -> None:
+    contract = {
+        "requires_write": True,
+        "requires_verification": True,
+        "workspace_path": "D:/workspace/site",
+        "expected_min_output_chars": 2000,
+        "deliverables": [
+            {
+                "kind": "code",
+                "path_hint": "D:/workspace/site/index.html",
+                "description": "Homepage HTML",
+            }
+        ],
+    }
+    result = build_run_result(
+        workspace_path="D:/workspace/site",
+        mode="coding",
+        change_summary={"files": [{"path": "index.html"}]},
+        requires_code_write=True,
+        expected_min_output_chars=2000,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "web.collect_site_assets",
+                "status": "success",
+                "input": {"output_dir": "D:/workspace/site/site_assets"},
+                "output": {"index_path": "D:/workspace/site/site_assets/site-index.json"},
+            },
+            {
+                "tool": "filesystem.finalize_text_file",
+                "status": "success",
+                "input": {"output_path": "D:/workspace/site/index.html"},
+                "output": {
+                    "path": "D:/workspace/site/index.html",
+                    "size": 44851,
+                    "draft_stats": {"text_chars": 39559},
+                    "validation": {"valid": True, "text_chars": 39559},
+                },
+            },
+            {
+                "tool": "shell.run_command",
+                "status": "failure",
+                "input": {"command": "python -m http.server 12345 --bind 127.0.0.1"},
+                "output": {"reason": "invalid_verification_method", "exit_code": 1},
+                "error": "long-running service is not a valid verification command",
+            },
+            {
+                "tool": "filesystem.read_text_preview",
+                "status": "success",
+                "input": {"path": "D:/workspace/site/index.html"},
+                "output": {
+                    "path": "D:/workspace/site/index.html",
+                    "size": 44851,
+                    "truncated": False,
+                    "integrity": {"checked": True, "valid": True},
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["written_paths"] == ["index.html"]
+    assert result["counts"]["write_successes"] == 1
+    assert result["counts"]["verification_successes"] == 2
+    assert "write_not_verified" not in result["risks"]
+    assert "document_output_too_short" not in result["risks"]
+    assert "invalid_verification_method" in result["risks"]
+    assert "test_not_observed" in result["risks"]
+
+
 def test_build_run_result_allows_recovered_non_write_failure() -> None:
     result = build_run_result(
         workspace_path="D:/workspace",

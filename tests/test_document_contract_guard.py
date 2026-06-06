@@ -35,7 +35,7 @@ def test_task_contract_prompt_is_model_declaration_not_fixed_target() -> None:
         "routing_strategy": "model_first_task_contract",
         "requires_write": True,
         "requires_verification": True,
-        "success_conditions": ["write_tool_success"],
+        "success_conditions": ["target_deliverable_success"],
     })
 
     assert "模型声明的任务理解" in prompt
@@ -181,6 +181,52 @@ def test_task_contract_accepts_structured_artifact_facts_as_verification() -> No
     ]
 
     assert handler._task_contract_failures(contract, events, "document") == []
+
+
+def test_task_contract_uses_declared_deliverable_role_for_write_and_verification() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    contract = {
+        "requires_write": True,
+        "requires_verification": True,
+        "workspace_path": r"D:\workspace\site",
+        "deliverables": [
+            {
+                "kind": "code",
+                "path_hint": r"D:\workspace\site\index.html",
+                "description": "Homepage",
+            }
+        ],
+    }
+    events = [
+        {
+            "tool": "web.collect_site_assets",
+            "status": "success",
+            "input": {"output_dir": r"D:\workspace\site\site_assets"},
+            "output": {"index_path": r"D:\workspace\site\site_assets\site-index.json"},
+        },
+        {
+            "tool": "filesystem.finalize_text_file",
+            "status": "success",
+            "input": {"output_path": r"D:\workspace\site\index.html"},
+            "output": {
+                "path": r"D:\workspace\site\index.html",
+                "draft_stats": {"text_chars": 12000},
+                "validation": {"valid": True, "text_chars": 12000},
+            },
+        },
+        {
+            "tool": "filesystem.read_text_preview",
+            "status": "success",
+            "input": {"path": r"D:\workspace\site\index.html"},
+            "output": {
+                "path": r"D:\workspace\site\index.html",
+                "truncated": False,
+                "integrity": {"checked": True, "valid": True},
+            },
+        },
+    ]
+
+    assert handler._task_contract_failures(contract, events, "coding") == []
 
 
 def test_execution_notice_reports_invalid_verification_method() -> None:

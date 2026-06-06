@@ -538,7 +538,7 @@ class ConversationRunExecutor:
                                 "role": "system",
                                 "content": (
                                     "模型服务未接受 required 工具选择参数。下一轮仍提供执行相关工具，"
-                                    "请先读取必要上下文，再调用 code.edit_file、code.replace_text 或 filesystem.write_file。"
+                                    "请先读取必要上下文，再调用 code.edit_file、code.replace_text；较大完整文件请使用 filesystem 文本草稿工具最终写入。"
                                 ),
                             })
                             self.write_event({
@@ -1029,7 +1029,7 @@ class ConversationRunExecutor:
                                     "content": (
                                         "提示：本次读取与之前的同名同范围读取重复。"
                                         "如已掌握目标文件内容，请尽快调用 "
-                                        "code.edit_file / code.replace_text / filesystem.write_file 进入写入。"
+                                        "code.edit_file / code.replace_text 进入写入；较大完整文件请使用 filesystem.finalize_text_file。"
                                         "如需查看不同范围，请改变 start_line / end_line 参数。"
                                     ),
                                 }
@@ -1189,7 +1189,7 @@ class ConversationRunExecutor:
                                     "role": "system",
                                     "content": (
                                         "写入修复仍未完成。请基于刚才读取到的真实文件片段，"
-                                        "立即再次调用 code.edit_file、code.replace_text 或 filesystem.write_file。"
+                                        "立即再次调用 code.edit_file、code.replace_text；较大完整文件请使用 filesystem 文本草稿工具。"
                                     ),
                                 })
                                 self.write_event({
@@ -1409,14 +1409,14 @@ class ConversationRunExecutor:
         elif recon_budget_exceeded and tool_contract_failed:
             assistant_content = (
                 "未完成需要的写入/导出：模型一直停留在读取/搜索阶段，已经超过本轮允许的侦察预算，"
-                "系统已停止继续空转。本轮没有成功调用写入工具。"
+                "系统已停止继续空转。本轮没有成功生成或更新任务目标产物。"
             )
-        elif tool_contract_failed and "missing_verification_tool_success" in contract_failures:
+        elif tool_contract_failed and "missing_target_deliverable_verification" in contract_failures:
             model_content = "".join(content_parts).strip()
             assistant_content = (
                 f"{model_content}\n\n" if model_content else ""
             ) + (
-                "未完整完成：本轮已经有写入工具成功返回，但没有成功调用真实验证工具，"
+                "未完整完成：本轮已经生成或更新目标产物，但没有成功取得真实验证证据，"
                 "因此系统不会把它标记为完整完成。请继续下一轮执行验证。"
             )
         elif tool_contract_failed:
@@ -1424,7 +1424,7 @@ class ConversationRunExecutor:
             assistant_content = (
                 f"{model_content}\n\n" if model_content else ""
             ) + (
-                "未完成需要的写入/导出：模型没有成功调用本地写入或导出工具，"
+                "未完成需要的写入/导出：本轮没有成功生成或更新任务目标产物，"
                 "因此本轮没有生成或修改目标文件。"
             )
         else:
@@ -1493,6 +1493,7 @@ class ConversationRunExecutor:
             requires_code_write=bool(task_contract.get("requires_write")),
             expected_document_coverage=bool(task_contract.get("expected_document_coverage")),
             expected_min_output_chars=int(task_contract.get("expected_min_output_chars") or 0),
+            task_contract=task_contract,
             contract_failed=tool_contract_failed,
             max_rounds_exceeded=max_rounds_exceeded,
             convergence_stopped=convergence_stopped,

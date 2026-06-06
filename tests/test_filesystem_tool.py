@@ -7,6 +7,10 @@ import pytest
 
 from runtime.security import PathGuard
 from runtime.skills.filesystem import (
+    append_text_chunk,
+    create_text_draft,
+    finalize_text_file,
+    inspect_text_draft,
     read_file,
     read_text_preview,
     transform_text,
@@ -146,3 +150,65 @@ async def test_write_temp_file_rejects_parent_traversal(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError):
         await write_temp_file({"path": "../escape.py", "content": "bad"}, context)
+
+
+@pytest.mark.asyncio
+async def test_text_draft_can_append_and_finalize_html_file(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    context = FakeContext(PathGuard([workspace]), tmp_path / "task")
+
+    created = await create_text_draft(
+        {
+            "title": "Homepage",
+            "path_hint": str(workspace / "index.html"),
+            "language": "html",
+        },
+        context,
+    )
+    draft_id = created["draft_id"]
+    await append_text_chunk(
+        {"draft_id": draft_id, "content": "<!doctype html><html><body>\n"},
+        context,
+    )
+    await append_text_chunk(
+        {"draft_id": draft_id, "content": "<main>ok</main>\n</body></html>"},
+        context,
+    )
+
+    inspected = await inspect_text_draft({"draft_id": draft_id}, context)
+    finalized = await finalize_text_file(
+        {
+            "draft_id": draft_id,
+            "output_path": str(workspace / "index.html"),
+        },
+        context,
+    )
+
+    path = Path(finalized["path"])
+    assert inspected["stats"]["chunk_count"] == 2
+    assert finalized["validation"]["valid"] is True
+    assert finalized["draft_stats"]["text_chars"] == len(path.read_text(encoding="utf-8").replace("\r\n", "\n"))
+    assert path.read_text(encoding="utf-8").endswith("</body></html>")
+
+
+@pytest.mark.asyncio
+async def test_text_draft_rejects_invalid_json_on_finalize(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "config.json"
+    context = FakeContext(PathGuard([workspace]), tmp_path / "task")
+
+    created = await create_text_draft(
+        {
+            "title": "Bad JSON",
+            "path_hint": str(target),
+            "content": '{"missing": ',
+        },
+        context,
+    )
+
+    with pytest.raises(ValueError, match="invalid json"):
+        await finalize_text_file({"draft_id": created["draft_id"], "output_path": str(target)}, context)
+
+    assert not target.exists()

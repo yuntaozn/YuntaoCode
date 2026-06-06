@@ -25,22 +25,51 @@ def test_capability_from_explicit_pdf_tool_spec() -> None:
     assert capability.retry_safe is True
 
 
-def test_capability_catalog_groups_tools_by_namespace() -> None:
+def test_capability_catalog_keeps_read_files_separate_from_text_writes() -> None:
     catalog = build_capability_catalog([
         {"id": "filesystem.scan_folder", "requires_confirmation": False},
         {"id": "filesystem.read_file", "requires_confirmation": False},
         {"id": "filesystem.write_file", "requires_confirmation": True, "artifacts": ["file"]},
     ])
+    by_id = {item.id: item for item in catalog}
 
-    assert len(catalog) == 1
-    assert catalog[0].id == "filesystem.local_files"
-    assert catalog[0].tool_ids == (
+    assert by_id["filesystem.local_files"].tool_ids == (
         "filesystem.scan_folder",
         "filesystem.read_file",
-        "filesystem.write_file",
     )
-    assert catalog[0].requires_confirmation is True
-    assert catalog[0].artifacts == ("file",)
+    assert by_id["filesystem.local_files"].requires_confirmation is False
+    assert by_id["code.text_write"].tool_ids == ("filesystem.write_file",)
+    assert by_id["code.text_write"].requires_confirmation is True
+    assert by_id["code.text_write"].artifacts == ("file",)
+
+
+def test_capability_catalog_groups_all_text_code_write_routes() -> None:
+    catalog = build_capability_catalog([
+        {"id": "code.apply_patch", "requires_confirmation": True, "artifacts": ["file"]},
+        {"id": "code.edit_file", "requires_confirmation": True, "artifacts": ["file"]},
+        {"id": "code.replace_text", "requires_confirmation": True, "artifacts": ["file"]},
+        {"id": "filesystem.write_file", "requires_confirmation": True, "artifacts": ["file"]},
+        {"id": "filesystem.create_text_draft", "artifacts": ["text_draft"]},
+        {"id": "filesystem.append_text_chunk", "artifacts": ["text_draft"]},
+        {"id": "filesystem.inspect_text_draft", "artifacts": ["text_draft"]},
+        {"id": "filesystem.finalize_text_file", "requires_confirmation": True, "artifacts": ["file", "text_draft"]},
+    ])
+
+    [capability] = catalog
+
+    assert capability.id == "code.text_write"
+    assert capability.tool_ids == (
+        "code.apply_patch",
+        "code.edit_file",
+        "code.replace_text",
+        "filesystem.write_file",
+        "filesystem.create_text_draft",
+        "filesystem.append_text_chunk",
+        "filesystem.inspect_text_draft",
+        "filesystem.finalize_text_file",
+    )
+    assert capability.requires_confirmation is True
+    assert capability.artifacts == ("file", "text_draft")
 
 
 def test_capability_prompt_tells_model_not_to_invent_tools() -> None:

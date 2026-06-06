@@ -72,7 +72,7 @@ PREFIX_CAPABILITIES: dict[str, tuple[str, str, str]] = {
     "filesystem": (
         "filesystem.local_files",
         "Local Files",
-        "Read, scan, and write files inside the configured workspace boundary.",
+        "Read and scan files inside the configured workspace boundary.",
     ),
     "code": (
         "code.local_project",
@@ -107,7 +107,28 @@ PREFIX_CAPABILITIES: dict[str, tuple[str, str, str]] = {
 }
 
 
+TEXT_WRITE_CAPABILITY = (
+    "code.text_write",
+    "Text Write",
+    "Create or modify text/code files through one unified write route: precise edits or patches for existing files, direct writes for small complete files, and draft chunks only for large complete artifacts.",
+)
+
+TEMP_ARTIFACT_CAPABILITY = (
+    "filesystem.temp_artifact",
+    "Task Temporary Artifacts",
+    "Create temporary scripts, probe outputs, and intermediate files in the task temp directory instead of the user project.",
+)
+
 EXPLICIT_CAPABILITIES: dict[str, tuple[str, str, str]] = {
+    "code.apply_patch": TEXT_WRITE_CAPABILITY,
+    "code.edit_file": TEXT_WRITE_CAPABILITY,
+    "code.replace_text": TEXT_WRITE_CAPABILITY,
+    "filesystem.write_file": TEXT_WRITE_CAPABILITY,
+    "filesystem.create_text_draft": TEXT_WRITE_CAPABILITY,
+    "filesystem.append_text_chunk": TEXT_WRITE_CAPABILITY,
+    "filesystem.inspect_text_draft": TEXT_WRITE_CAPABILITY,
+    "filesystem.finalize_text_file": TEXT_WRITE_CAPABILITY,
+    "filesystem.write_temp_file": TEMP_ARTIFACT_CAPABILITY,
     "filesystem.transform_text": (
         "filesystem.text_transform",
         "Text Transform",
@@ -122,6 +143,16 @@ EXPLICIT_CAPABILITIES: dict[str, tuple[str, str, str]] = {
         "document.translate_docx",
         "Word Translation",
         "Translate a Word document into another language with checkpointed long-task progress.",
+    ),
+    "web.collect_site_assets": (
+        "web.site_assets",
+        "Site Assets",
+        "Collect public website pages and static assets into a bounded local snapshot with an index.",
+    ),
+    "web.capture_page": (
+        "web.page_capture",
+        "Web Page Capture",
+        "Render a public webpage and save it as PDF or screenshot for review and design reference.",
     ),
 }
 
