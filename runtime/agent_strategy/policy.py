@@ -81,11 +81,13 @@ def resolve_profile(
     mode: str | None,
     *,
     code_change_intent: bool = False,
+    state_change_intent: bool = False,
 ) -> AgentProfile:
     return profile_for_task_intent(
         task_intent,
         mode,
         code_change_intent=code_change_intent,
+        state_change_intent=state_change_intent,
     )
 
 

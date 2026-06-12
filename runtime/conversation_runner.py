@@ -16,6 +16,7 @@ from runtime.conversation_interactions import (
 )
 from runtime.model_providers.client import stream_chat_completion
 from runtime.agent_strategy import task_contract as _tc
+from runtime.agent_strategy import tool_event_roles as _event_roles
 from runtime.agent_strategy.classifiers import (
     finish_reason_indicates_truncation,
     infer_requested_min_output_chars,
@@ -73,6 +74,7 @@ class ConversationRunExecutor:
         payload: dict[str, Any],
         content: str,
         image_data: str,
+        attachments: list[Any],
         model: str,
         requested_mode: str | None,
         effective_mode: str,
@@ -83,14 +85,25 @@ class ConversationRunExecutor:
             workspace.to_public_dict(),
             mode=effective_mode,
         )
-        # If current message has image, convert last user message to multimodal format
-        if image_data and messages:
+        conversation_attachments = self.runtime.attachments.list_for_conversation(conversation_id)
+        self._active_attachment_ids = tuple(record.id for record in conversation_attachments)
+        image_attachments = [record for record in attachments if record.is_image]
+        # Current-turn images become multimodal input. Other attachments remain
+        # in the message catalog and are read through controlled tools.
+        if (image_data or image_attachments) and messages:
             last_msg = messages[-1]
             if last_msg.get("role") == "user":
                 parts: list[dict[str, Any]] = []
-                if content:
-                    parts.append({"type": "text", "text": content})
-                parts.append({"type": "image_url", "image_url": {"url": image_data}})
+                text_content = last_msg.get("content") or content
+                if text_content:
+                    parts.append({"type": "text", "text": text_content})
+                if image_data:
+                    parts.append({"type": "image_url", "image_url": {"url": image_data}})
+                for record in image_attachments:
+                    parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": self.runtime.attachments.data_url(record.id)},
+                    })
                 last_msg["content"] = parts
 
         context_hygiene_report = getattr(self, "_last_context_hygiene_report", {}) or {}
@@ -164,7 +177,12 @@ class ConversationRunExecutor:
             expected_document_coverage=expected_document_coverage,
             expected_min_output_chars=expected_min_output_chars,
         )
-        if self._should_use_model_task_contract(
+        inherited_contract = self._previous_task_contract_context(conversation, content)
+        direct_contract_inheritance = _tc.looks_like_execute_contract_followup(content)
+        if inherited_contract and direct_contract_inheritance and not hard_no_write_lock:
+            task_contract = _tc.inherit_task_contract_for_followup(inherited_contract, task_contract)
+            metadata["inherited_task_contract"] = True
+        elif self._should_use_model_task_contract(
             content,
             task_intent,
             hard_no_write_lock,
@@ -185,13 +203,16 @@ class ConversationRunExecutor:
                 hard_no_write_lock=hard_no_write_lock,
                 expected_document_coverage=expected_document_coverage,
                 expected_min_output_chars=expected_min_output_chars,
+                previous_contract=inherited_contract,
             )
         task_intent = str(task_contract.get("intent") or task_intent)
-        code_change_intent = task_intent == "write_required"
+        code_change_intent = bool(task_contract.get("requires_write"))
+        state_change_intent = bool(task_contract.get("requires_state_change"))
         agent_profile = resolve_profile(
             task_intent,
             effective_mode,
             code_change_intent=code_change_intent,
+            state_change_intent=state_change_intent,
         )
         plan_gate = deterministic_plan_gate(
             content,
@@ -221,6 +242,7 @@ class ConversationRunExecutor:
         metadata["agent_profile"] = profile_to_public_dict(agent_profile)
         metadata["hard_no_write_lock"] = hard_no_write_lock
         metadata["code_change_intent"] = code_change_intent
+        metadata["state_change_intent"] = state_change_intent
         metadata["planning_policy"] = planning_policy
         metadata["confirmation_policy"] = confirmation_policy
         # Deprecated compatibility alias for older UI/run readers.
@@ -244,11 +266,13 @@ class ConversationRunExecutor:
         required_tool_choice_supported = True
         read_file_ranges: list[dict[str, Any]] = []  # track file ranges already read to discourage exact repeats
         last_read_summary_key = ""
-        post_write_mode = False
-        post_write_rounds = 0
-        post_write_idle_rounds = 0
-        post_write_refusals = 0
-        post_write_confirmations = 0
+        post_deliverable_mode = False
+        post_deliverable_rounds = 0
+        post_deliverable_idle_rounds = 0
+        post_deliverable_refusals = 0
+        post_deliverable_confirmations = 0
+        round_had_post_deliverable_change = False
+        round_had_post_deliverable_verification = False
         consecutive_idle_timeouts = 0
         final_answer_mode = False
         verifier_retry_prompted = False
@@ -326,7 +350,11 @@ class ConversationRunExecutor:
                     "role": "assistant",
                     "content": self._format_execution_plan_for_context(execution_plan),
                 })
-                metadata["plan_execution_mode"] = "audit_only"
+                messages.append({
+                    "role": "system",
+                    "content": self._execute_plan_prompt(execution_plan, effective_mode),
+                })
+                metadata["plan_execution_mode"] = "audit_then_execute"
 
             staged_execution = False
             if staged_execution:
@@ -409,27 +437,44 @@ class ConversationRunExecutor:
                     round_tools = None
                     round_enable_thinking = False
                     round_reasoning_effort = "low"
-                elif self._has_successful_write(tool_events) and post_write_mode:
-                    post_write_rounds += 1
-                    # 如果上一轮有写入操作，重置空闲计数器（模型仍在积极写文件）
-                    if round_had_post_write_write:
-                        post_write_idle_rounds = 0
+                elif (
+                    self._has_successful_target_deliverable(
+                        task_contract,
+                        tool_events,
+                        workspace.path,
+                        effective_mode,
+                    )
+                    and post_deliverable_mode
+                ):
+                    post_deliverable_rounds += 1
+                    # 如果上一轮继续产生目标产物，重置空闲计数器。
+                    if round_had_post_deliverable_change:
+                        post_deliverable_idle_rounds = 0
                     else:
-                        post_write_idle_rounds += 1
+                        post_deliverable_idle_rounds += 1
                     # 达到终止条件时，先发确认事件给用户，等待响应
-                    if (post_write_idle_rounds > 3 or post_write_rounds > 10) and post_write_confirmations < 1:
+                    if (
+                        post_deliverable_idle_rounds > 3
+                        or post_deliverable_rounds > 10
+                    ) and post_deliverable_confirmations < 1:
                         # 发送确认事件并等待用户决策
-                        post_write_confirmations += 1
+                        post_deliverable_confirmations += 1
                         confirm_event = asyncio.Event()
                         _pending_confirms[conversation_id] = confirm_event
                         _confirm_responses.pop(conversation_id, None)
                         self.write_event({
                             "event": "confirm",
-                            "message": f"已执行 {post_write_rounds} 轮，是否继续？",
+                            "message": f"已执行 {post_deliverable_rounds} 轮，是否继续？",
                             "progress": {
-                                "rounds": post_write_rounds,
-                                "idle_rounds": post_write_idle_rounds,
-                                "writes": len([
+                                "rounds": post_deliverable_rounds,
+                                "idle_rounds": post_deliverable_idle_rounds,
+                                "deliverables": len(_event_roles.successful_deliverable_events(
+                                    tool_events,
+                                    task_contract=task_contract,
+                                    workspace_path=workspace.path,
+                                    mode=effective_mode,
+                                )),
+                                "file_writes": len([
                                     e for e in tool_events
                                     if e.get("status") == "success"
                                     and self._is_write_tool(str(e.get("tool") or ""))
@@ -445,7 +490,7 @@ class ConversationRunExecutor:
                         user_action = _confirm_responses.pop(conversation_id, "cancel")
                         if user_action == "continue":
                             # 用户确认继续，重置计数器
-                            post_write_idle_rounds = 0
+                            post_deliverable_idle_rounds = 0
                             self.write_event({
                                 "event": "status",
                                 "status": "resumed",
@@ -708,7 +753,7 @@ class ConversationRunExecutor:
                                 round_text,
                                 tool_events,
                                 effective_mode,
-                                allow_state_change=bool(task_contract.get("requires_write")),
+                                allow_state_change=bool(task_contract.get("requires_state_change")),
                             ),
                         })
                         continue
@@ -886,18 +931,21 @@ class ConversationRunExecutor:
                         continue
                     if (
                         task_contract.get("requires_verification")
-                        and self._has_successful_write(tool_events)
-                        and not self._has_successful_verification(tool_events, effective_mode)
+                        and self._has_successful_target_deliverable(
+                            task_contract,
+                            tool_events,
+                            workspace.path,
+                            effective_mode,
+                        )
+                        and not self._has_successful_target_verification(
+                            task_contract,
+                            tool_events,
+                            workspace.path,
+                            effective_mode,
+                        )
                     ):
                         self._discard_parts(content_parts, round_content_parts)
                         self._discard_parts(reasoning_parts, round_reasoning_parts)
-                        self.write_event({
-                            "event": "status",
-                            "status": "verification_contract_failed",
-                            "message": "写入已完成但没有成功验证；系统记录真实结果，不再注入验证纠偏提示。",
-                        })
-                        await self.flush()
-                        break
                         if not verifier_retry_prompted:
                             verifier_retry_prompted = True
                             messages.append({
@@ -907,27 +955,17 @@ class ConversationRunExecutor:
                             self.write_event({
                                 "event": "status",
                                 "status": "verifier_retry",
-                                "message": "写入已经完成，但尚未执行验证；正在要求模型调用真实验证工具。",
+                                "message": "目标产物已出现但尚未取得验证证据，正在要求模型调用只读验证能力。",
                             })
                             await self.flush()
                             continue
                         self.write_event({
                             "event": "status",
                             "status": "verification_contract_failed",
-                            "message": "写入已完成，但模型没有成功调用验证工具；正在进行进度纠偏。",
+                            "message": "目标产物已出现但没有成功验证；系统记录真实结果，不再继续空转。",
                         })
                         await self.flush()
-                        messages.append({
-                            "role": "system",
-                            "content": self._progress_observer_prompt(
-                                workspace.path,
-                                current_stage,
-                                tool_events,
-                                code_change_intent,
-                                "missing_verification_after_retry",
-                            ),
-                        })
-                        continue
+                        break
                     break
 
                 if round_content_parts:
@@ -943,8 +981,8 @@ class ConversationRunExecutor:
                     "content": "",
                     "tool_calls": tool_calls,
                 })
-                round_had_post_write_write = False
-                round_had_post_write_verify = False
+                round_had_post_deliverable_change = False
+                round_had_post_deliverable_verification = False
                 for tool_call in tool_calls:
                     tool_id, arguments = self._tool_call_details(tool_call, tool_name_map)
                     if finish_reason_indicates_truncation(round_finish_reason):
@@ -991,7 +1029,7 @@ class ConversationRunExecutor:
                         await self.flush()
                     self._active_tool_events = tool_events
                     self._active_current_stage = current_stage or ""
-                    self._active_post_write_mode = post_write_mode
+                    self._active_post_deliverable_mode = post_deliverable_mode
                     if (
                         code_change_intent
                         and not self._has_successful_write(tool_events)
@@ -1077,11 +1115,20 @@ class ConversationRunExecutor:
                         read_file_ranges.append(
                             self._read_file_range_record(arguments, tool_event)
                         )
-                    if post_write_mode and tool_event.get("status") == "success":
-                        if self._is_write_tool(tool_id):
-                            round_had_post_write_write = True
-                        elif self._is_post_write_verify_tool(tool_id):
-                            round_had_post_write_verify = True
+                    if post_deliverable_mode and tool_event.get("status") == "success":
+                        event_role = _event_roles.classify_tool_event_role(
+                            tool_event,
+                            task_contract=task_contract,
+                            workspace_path=workspace.path,
+                            mode=effective_mode,
+                        )
+                        if event_role == _event_roles.DELIVERABLE:
+                            round_had_post_deliverable_change = True
+                        elif (
+                            event_role == _event_roles.VERIFICATION
+                            or self._is_deliverable_verification_tool(tool_id)
+                        ):
+                            round_had_post_deliverable_verification = True
                     self.write_event({"event": "tool", **tool_event})
                     await self.flush()
                     if plan_step_index is not None and execution_plan:
@@ -1253,8 +1300,18 @@ class ConversationRunExecutor:
                                 continue
                         else:
                             continue
-                if self._has_successful_write(tool_events):
-                    if self._has_successful_verification(tool_events, effective_mode):
+                if self._has_successful_target_deliverable(
+                    task_contract,
+                    tool_events,
+                    workspace.path,
+                    effective_mode,
+                ):
+                    if self._has_successful_target_verification(
+                        task_contract,
+                        tool_events,
+                        workspace.path,
+                        effective_mode,
+                    ):
                         messages.append({
                             "role": "system",
                             "content": self._final_answer_prompt(workspace.path),
@@ -1263,27 +1320,30 @@ class ConversationRunExecutor:
                         self.write_event({
                             "event": "status",
                             "status": "success_conditions_met",
-                            "message": "写入与验证均已完成，正在生成最终结果",
+                            "message": "目标产物与验证均已完成，正在生成最终结果",
                         })
                         await self.flush()
                         continue
-                    if not post_write_mode:
-                        post_write_mode = True
+                    if not post_deliverable_mode:
+                        post_deliverable_mode = True
                         messages.append({
                             "role": "system",
-                            "content": self._post_write_prompt(workspace.path),
+                            "content": self._post_deliverable_prompt(workspace.path),
                         })
                         messages.pop()
                         self.write_event({
                             "event": "status",
-                            "status": "post_write_stage",
-                            "message": "写入已成功，进度观察器建议继续写入、验证或总结",
+                            "status": "post_deliverable_stage",
+                            "message": "目标产物已出现，进度观察器建议继续验证或总结",
                         })
                         await self.flush()
                         continue
-                    if post_write_rounds >= 3 and (
-                        round_had_post_write_verify
-                        or (post_write_refusals > 2 and not round_had_post_write_write)
+                    if post_deliverable_rounds >= 3 and (
+                        round_had_post_deliverable_verification
+                        or (
+                            post_deliverable_refusals > 2
+                            and not round_had_post_deliverable_change
+                        )
                     ):
                         messages.append({
                             "role": "system",
@@ -1293,7 +1353,7 @@ class ConversationRunExecutor:
                         self.write_event({
                             "event": "status",
                             "status": "finalizing",
-                            "message": "写入后执行已收束，正在生成最终结果",
+                            "message": "目标产物完成后的执行已收束，正在生成最终结果",
                         })
                         await self.flush()
                         continue
@@ -1461,10 +1521,10 @@ class ConversationRunExecutor:
             metadata["stagnant_rounds"] = stagnant_rounds
         if convergence_stopped:
             metadata["convergence_stopped"] = True
-        if post_write_mode:
-            metadata["post_write_mode_used"] = True
-            metadata["post_write_rounds"] = post_write_rounds
-            metadata["post_write_refusals"] = post_write_refusals
+        if post_deliverable_mode:
+            metadata["post_deliverable_mode_used"] = True
+            metadata["post_deliverable_rounds"] = post_deliverable_rounds
+            metadata["post_deliverable_refusals"] = post_deliverable_refusals
         if staged_execution:
             metadata["stage_round_counts"] = stage_round_counts
             metadata["stage_transitions"] = stage_transitions
@@ -1490,7 +1550,7 @@ class ConversationRunExecutor:
             tool_events=tool_events,
             change_summary=change_summary,
             mode=effective_mode,
-            requires_code_write=bool(task_contract.get("requires_write")),
+            requires_code_write=code_change_intent,
             expected_document_coverage=bool(task_contract.get("expected_document_coverage")),
             expected_min_output_chars=int(task_contract.get("expected_min_output_chars") or 0),
             task_contract=task_contract,
@@ -1524,6 +1584,7 @@ class ConversationRunExecutor:
                 tool_events,
                 change_summary,
                 effective_mode,
+                task_contract,
             )
             metadata["synthesized_final_answer"] = True
         execution_notice = self._build_execution_notice(

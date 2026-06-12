@@ -58,6 +58,7 @@ async function loadAll() {
     memories = memoryData.items || [];
     renderSettings();
     renderBackups();
+    applyI18n();
 }
 
 function providerEntries() {
@@ -116,7 +117,7 @@ function renderProviders() {
             <div class="settings-item-head">
                 <div class="settings-item-title">
                     <strong>${escapeHtml(provider.name || provider.id)}</strong>
-                    <span>${escapeHtml(provider.id)} · ${provider.has_api_key ? `Key ${escapeHtml(provider.api_key_hint)}` : t('settings_js.no_key')}</span>
+                    <span>${escapeHtml(provider.id)} · ${provider.has_api_key ? `Key ${escapeHtml(provider.api_key_hint)}` : t('settings_js.no_key')} · ${t('settings_js.linked_models', {count: linkedModelCount(provider.id)})}</span>
                 </div>
                 <button class="secondary-button danger-button" type="button" data-delete-provider="${escapeHtml(provider.id)}">${t('settings_js.remove_provider')}</button>
             </div>
@@ -168,9 +169,9 @@ function renderModels() {
             <div class="settings-item-head">
                 <div class="settings-item-title">
                     <strong>${escapeHtml(model.name || model.id)}</strong>
-                    <span>${escapeHtml(model.id)} · ${escapeHtml(model.provider || "")}</span>
+                    <span>${escapeHtml(model.id)} · ${escapeHtml(providerDisplayName(model.provider))} · ${escapeHtml(model.api_model || model.id)}</span>
                 </div>
-                <button class="secondary-button danger-button" type="button" data-delete-model="${escapeHtml(model.id)}">${t('settings_js.remove_provider')}</button>
+                <button class="secondary-button danger-button" type="button" data-delete-model="${escapeHtml(model.id)}">${t('settings_js.remove_model')}</button>
             </div>
             <div class="settings-inline">
                 <div class="settings-form-row">
@@ -212,14 +213,19 @@ function renderModels() {
                     <input data-model-field="supports_tools" type="checkbox" ${model.supports_tools !== false ? "checked" : ""}>
                     <span>${t('settings_js.support_tools')}</span>
                 </label>
-                <div class="settings-form-row">
-                    <label>${t('settings_js.thinking_mode')}</label>
-                    <select data-model-field="thinking_mode">
-                        <option value="" ${!model.thinking_mode ? "selected" : ""}>${t('settings_js.thinking_none')}</option>
-                        <option value="volcengine" ${model.thinking_mode === "volcengine" ? "selected" : ""}>${t('settings_js.thinking_volcengine')}</option>
-                        <option value="qwen" ${model.thinking_mode === "qwen" ? "selected" : ""}>${t('settings_js.thinking_qwen')}</option>
-                    </select>
-                </div>
+                <label class="checkbox-line compact">
+                    <input data-model-field="supports_reasoning_effort" type="checkbox" ${model.supports_reasoning_effort ? "checked" : ""}>
+                    <span>${t('settings_js.support_reasoning_effort')}</span>
+                </label>
+            </div>
+            <div class="settings-form-row">
+                <label>${t('settings_js.thinking_mode')}</label>
+                <select data-model-field="thinking_mode">
+                    <option value="" ${!model.thinking_mode ? "selected" : ""}>${t('settings_js.thinking_none')}</option>
+                    <option value="volcengine" ${model.thinking_mode === "volcengine" ? "selected" : ""}>${t('settings_js.thinking_volcengine')}</option>
+                    <option value="qwen" ${model.thinking_mode === "qwen" ? "selected" : ""}>${t('settings_js.thinking_qwen')}</option>
+                </select>
+                <span class="hint-line">${t('settings_js.thinking_mode_hint')}</span>
             </div>
             <div class="settings-form-row">
                 <label>${t('settings_js.model_params')}</label>
@@ -283,6 +289,15 @@ function renderProviderOptions(selected) {
     `).join("");
 }
 
+function providerDisplayName(providerId) {
+    const provider = providerEntries().find((item) => item.id === providerId);
+    return provider?.name || providerId || t('settings_js.no_provider_selected');
+}
+
+function linkedModelCount(providerId) {
+    return modelEntries().filter((model) => model.provider === providerId).length;
+}
+
 function renderSummary() {
     const accessText = $("access-scope-input").value === "full_local" ? t('settings_js.summary_full') : t('settings_js.summary_project');
     const planMap = { off: t('settings_js.plan_off'), auto: t('settings_js.plan_auto'), always: t('settings_js.plan_always') };
@@ -290,7 +305,14 @@ function renderSummary() {
     const planning = planMap[$("planning-policy-input").value] || t('settings_js.plan_auto');
     const confirmation = confirmMap[$("confirmation-policy-input").value] || t('settings_js.confirm_auto');
     const memoryCount = memoryEntries().filter((item) => item.enabled !== false).length;
-    $("settings-summary").textContent = t('settings_js.summary_text', {access: accessText, planning, confirmation, models: modelEntries().length, memories: memoryCount});
+    $("settings-summary").textContent = t('settings_js.summary_text', {
+        access: accessText,
+        planning,
+        confirmation,
+        providers: providerEntries().length,
+        models: modelEntries().length,
+        memories: memoryCount,
+    });
 }
 
 function renderBackups() {
@@ -395,6 +417,7 @@ function collectModels() {
             max_output_tokens: Number(item.querySelector('[data-model-field="max_output_tokens"]').value || 0),
             output_token_param: item.querySelector('[data-model-field="output_token_param"]').value,
             supports_tools: item.querySelector('[data-model-field="supports_tools"]').checked,
+            supports_reasoning_effort: item.querySelector('[data-model-field="supports_reasoning_effort"]').checked,
             thinking_mode: item.querySelector('[data-model-field="thinking_mode"]').value,
             request_options: readJson(item.querySelector('[data-model-field="request_options"]').value, {}),
             enabled: true,
@@ -524,6 +547,7 @@ function addProvider() {
         request_options: {},
     };
     deletedProviderIds.delete(providerId);
+    activeSettingsPage = "providers";
     renderSettings();
 }
 
@@ -545,10 +569,12 @@ function addModel() {
         max_output_tokens: 0,
         output_token_param: "",
         supports_tools: true,
+        supports_reasoning_effort: false,
         thinking_mode: "",
         request_options: {},
     });
     deletedModelIds.delete(modelId);
+    activeSettingsPage = "models";
     renderSettings();
 }
 
@@ -671,6 +697,9 @@ function bindEvents() {
 bindEvents();
 loadAll().catch((error) => showToast(error.message));
 
+if ($("plugins-btn")) $("plugins-btn").addEventListener("click", () => window.location.href = "/plugins-page");
+if ($("mcp-services-btn")) $("mcp-services-btn").addEventListener("click", () => window.location.href = "/mcp-services-page");
+
 // Language select initialization
 (function initLanguageSelect() {
     const select = $("language-select");
@@ -678,11 +707,11 @@ loadAll().catch((error) => showToast(error.message));
     select.value = getLocale();
     select.addEventListener("change", () => {
         setLocale(select.value);
-        // Re-render dynamic content after locale change
-        loadAll().catch((error) => showToast(error.message));
+        // Re-render dynamic content after locale change, then re-apply i18n
+        loadAll().then(() => applyI18n()).catch((error) => showToast(error.message));
     });
     window.addEventListener("locale-changed", () => {
         select.value = getLocale();
-        loadAll().catch((error) => showToast(error.message));
+        loadAll().then(() => applyI18n()).catch((error) => showToast(error.message));
     });
 })();

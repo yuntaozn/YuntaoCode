@@ -13,6 +13,7 @@ import tornado.ioloop
 import tornado.web
 
 from .api.backend import BackendLoginHandler
+from .api.attachments import AttachmentContentHandler, AttachmentDetailHandler, AttachmentsHandler
 from .api.backups import BackupRestoreHandler, BackupsHandler
 from .api.conversations import (
     ConversationCompressHandler,
@@ -26,6 +27,7 @@ from .api.conversations import (
 from .api.health import HealthHandler
 from .api.logs import LogsWebSocketHandler
 from .api.memories import MemoriesHandler, MemoryDetailHandler, MemoryPromptHandler
+from .api.mcp_services import McpServiceActionHandler, McpServiceDetailHandler, McpServicesHandler
 from .api.modes import ModesHandler
 from .api.panel import PanelHandler
 from .api.plugins import PluginsHandler
@@ -37,6 +39,7 @@ from .api.workspaces import WorkspaceDetailHandler, WorkspaceOpenHandler, Worksp
 from .config import RuntimeConfig
 from .conversation_store import ConversationStore
 from .backup_store import BackupStore
+from .attachment_store import AttachmentStore
 from .security import PathGuard
 from .settings_store import SettingsStore
 from .skills import register_builtin_tools
@@ -45,6 +48,7 @@ from .task_store import TaskStore
 from .tool_registry import ToolRegistry
 from .run_store import RunStore
 from .run_events import RunEventHub
+from .mcp_service_manager import McpServiceManager
 from .workspace_store import WorkspaceStore
 
 
@@ -60,12 +64,20 @@ class RuntimeState:
     backups: BackupStore
     runs: RunStore
     run_events: RunEventHub
+    mcp_services: McpServiceManager
+    attachments: AttachmentStore
+
+    def is_tool_available(self, spec: dict[str, Any]) -> bool:
+        if spec.get("source_type") != "mcp":
+            return True
+        return self.mcp_services.is_connected(str(spec.get("source_id") or ""))
 
 
 def build_runtime(config: RuntimeConfig) -> RuntimeState:
     registry = ToolRegistry()
     register_builtin_tools(registry)
     settings = SettingsStore()
+    attachments = AttachmentStore(settings.data_dir / "attachments.db", settings.data_dir / "attachments")
     store = TaskStore(settings.data_dir / "tasks.json")
     path_guard = PathGuard(config.workspace_roots)
     backups = BackupStore(settings.data_dir / "backups", path_guard)
@@ -75,11 +87,16 @@ def build_runtime(config: RuntimeConfig) -> RuntimeState:
         path_guard=path_guard,
         backup_store=backups,
         settings=settings,
+        attachment_store=attachments,
     )
     workspaces = WorkspaceStore(config.workspace_roots, path_guard, settings.data_dir / "workspaces.json")
     conversations = ConversationStore(settings.data_dir / "conversations.json")
-    runs = RunStore(settings.data_dir / "runs.json")
+    runs = RunStore.sqlite(
+        settings.data_dir / "runtime.db",
+        legacy_store_path=settings.data_dir / "runs.json",
+    )
     run_events = RunEventHub(runs)
+    mcp_services = McpServiceManager(settings.data_dir / "mcp-services.json", registry=registry)
     return RuntimeState(
         config=config,
         registry=registry,
@@ -91,6 +108,8 @@ def build_runtime(config: RuntimeConfig) -> RuntimeState:
         backups=backups,
         runs=runs,
         run_events=run_events,
+        mcp_services=mcp_services,
+        attachments=attachments,
     )
 
 
@@ -101,6 +120,7 @@ def make_app(runtime: RuntimeState) -> tornado.web.Application:
     return tornado.web.Application([
         (r"/", PanelHandler),
         (r"/plugins-page", PanelHandler, {"template_name": "plugins.html", **handler_kwargs}),
+        (r"/mcp-services-page", PanelHandler, {"template_name": "mcp-services.html", **handler_kwargs}),
         (r"/settings-page", PanelHandler, {"template_name": "settings.html", **handler_kwargs}),
         (r"/health", HealthHandler, handler_kwargs),
         (r"/settings", SettingsHandler, handler_kwargs),
@@ -111,7 +131,13 @@ def make_app(runtime: RuntimeState) -> tornado.web.Application:
         (r"/backups", BackupsHandler, handler_kwargs),
         (r"/modes", ModesHandler, handler_kwargs),
         (r"/plugins", PluginsHandler, handler_kwargs),
+        (r"/mcp-services/([^/]+)/actions", McpServiceActionHandler, handler_kwargs),
+        (r"/mcp-services/([^/]+)", McpServiceDetailHandler, handler_kwargs),
+        (r"/mcp-services", McpServicesHandler, handler_kwargs),
         (r"/tools", ToolsHandler, handler_kwargs),
+        (r"/attachments", AttachmentsHandler, handler_kwargs),
+        (r"/attachments/([^/]+)/content", AttachmentContentHandler, handler_kwargs),
+        (r"/attachments/([^/]+)", AttachmentDetailHandler, handler_kwargs),
         (r"/backend/login", BackendLoginHandler, handler_kwargs),
         (r"/workspaces/pick", WorkspacePickerHandler, handler_kwargs),
         (r"/workspaces/([^/]+)/open", WorkspaceOpenHandler, handler_kwargs),
@@ -169,6 +195,14 @@ def main() -> None:
         tornado.ioloop.IOLoop.current().start()
     except KeyboardInterrupt:
         print(json.dumps({"event": "stopped"}, ensure_ascii=False), file=sys.stderr)
+    finally:
+        try:
+            runtime.runs.close()
+        finally:
+            try:
+                runtime.attachments.close()
+            finally:
+                runtime.mcp_services.close()
 
 
 def find_free_port(host: str) -> int:

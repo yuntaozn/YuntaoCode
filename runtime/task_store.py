@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+from .persistence import AtomicJsonDocumentStorage, DocumentStorage
 
 
 TOOL_TASK_STORE_SCHEMA_VERSION = "0.1"
@@ -54,8 +55,14 @@ class TaskRecord:
 
 
 class TaskStore:
-    def __init__(self, storage_path: Path | None = None) -> None:
-        self.storage_path = storage_path
+    def __init__(
+        self,
+        storage_path: Path | None = None,
+        *,
+        storage: DocumentStorage | None = None,
+    ) -> None:
+        self._storage = storage if storage is not None else AtomicJsonDocumentStorage(storage_path)
+        self.storage_path = self._storage.path
         self._tasks: dict[str, TaskRecord] = {}
         self._subscribers: dict[str, set[Any]] = {}
         self._load()
@@ -120,12 +127,7 @@ class TaskStore:
         return task
 
     def _load(self) -> None:
-        if not self.storage_path or not self.storage_path.exists():
-            return
-        try:
-            data = json.loads(self.storage_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return
+        data = self._storage.load()
         items = data.get("tasks") if isinstance(data, dict) else None
         if not isinstance(items, list):
             return
@@ -163,21 +165,13 @@ class TaskStore:
             self._save()
 
     def _save(self) -> None:
-        if not self.storage_path:
-            return
-        self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         records = sorted(self._tasks.values(), key=lambda item: item.created_at)[-200:]
-        self.storage_path.write_text(
-            json.dumps(
-                {
-                    "schema_version": TOOL_TASK_STORE_SCHEMA_VERSION,
-                    "record_kind": "tool_task_store",
-                    "tasks": [item.to_public_dict() for item in records],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        self._storage.save(
+            {
+                "schema_version": TOOL_TASK_STORE_SCHEMA_VERSION,
+                "record_kind": "tool_task_store",
+                "tasks": [item.to_public_dict() for item in records],
+            }
         )
 
 

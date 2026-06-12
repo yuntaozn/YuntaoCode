@@ -1,7 +1,12 @@
 from runtime.agent_strategy.task_contract import (
+    apply_task_continuity,
     default_task_contract,
     extract_task_contract_json,
+    inherit_task_contract_for_followup,
+    looks_like_execute_contract_followup,
+    looks_like_task_revision_followup,
     merge_model_task_contract,
+    should_use_model_task_contract,
     task_contract_context_messages,
     task_contract_prompt,
 )
@@ -48,6 +53,7 @@ def test_model_contract_can_raise_write_requirement() -> None:
     assert contract["source"] == "model"
     assert contract["intent"] == "write_required"
     assert contract["requires_write"] is True
+    assert contract["requires_state_change"] is True
     assert contract["requires_verification"] is True
     assert contract["first_action"] == "write"
     assert contract["deliverables"][0]["path_hint"] == "model-viewer.html"
@@ -67,6 +73,7 @@ def test_hard_no_write_lock_overrides_model_contract() -> None:
 
     assert contract["intent"] == "read_only_analysis"
     assert contract["requires_write"] is False
+    assert contract["requires_state_change"] is False
     assert contract["requires_verification"] is False
     assert contract["deliverables"] == []
     assert "hard_no_write_lock" in contract["system_overrides"]
@@ -102,7 +109,35 @@ def test_task_contract_prompt_contains_only_contract_request() -> None:
 
     assert "只输出 JSON" in prompt
     assert "requires_write" in prompt
+    assert "requires_state_change" in prompt
     assert "系统负责权限、工具执行和完成验收" in prompt
+
+
+def test_model_contract_can_require_external_state_without_local_file_write() -> None:
+    contract = merge_model_task_contract(
+        {
+            "goal": "在 Blender 当前场景中创建模型",
+            "intent": "write_required",
+            "requires_write": False,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "deliverables": [
+                {
+                    "kind": "external_state",
+                    "path_hint": "",
+                    "description": "Blender 当前场景中的模型",
+                }
+            ],
+            "first_action": "use_tool",
+        },
+        _fallback("write_required"),
+    )
+
+    assert contract["intent"] == "write_required"
+    assert contract["requires_write"] is False
+    assert contract["requires_state_change"] is True
+    assert contract["requires_verification"] is True
+    assert "target_deliverable_success" in contract["success_conditions"]
 
 
 def test_task_contract_prompt_includes_runtime_capabilities_when_provided() -> None:
@@ -133,6 +168,232 @@ def test_task_contract_context_keeps_recent_task_and_current_follow_up() -> None
         {"role": "assistant", "content": "已创建 viewer.html"},
         {"role": "user", "content": "现在想加能选构件的能力"},
     ]
+
+
+def test_short_action_request_still_uses_model_contract() -> None:
+    assert should_use_model_task_contract(
+        "在 Blender 中建个二层小楼",
+        "answer_only",
+        False,
+    )
+
+
+def test_obvious_chat_can_skip_model_contract_without_recent_task() -> None:
+    assert not should_use_model_task_contract("你好", "answer_only", False)
+
+
+def test_obvious_chat_uses_model_contract_when_it_may_be_task_follow_up() -> None:
+    assert should_use_model_task_contract(
+        "好",
+        "answer_only",
+        False,
+        has_recent_task_context=True,
+    )
+
+
+def test_execute_followup_inherits_external_state_contract_without_file_write() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "在 Blender 中创建一个二层小楼的 3D 模型",
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "requires_plan": True,
+        "deliverables": [
+            {"kind": "external_state", "description": "Blender 场景中的二层小楼"}
+        ],
+        "first_action": "plan",
+    }
+
+    contract = inherit_task_contract_for_followup(previous, _fallback("answer_only"))
+
+    assert looks_like_execute_contract_followup("立即执行")
+    assert contract["source"] == "conversation_context"
+    assert contract["requires_write"] is False
+    assert contract["requires_state_change"] is True
+    assert contract["requires_plan"] is False
+    assert contract["first_action"] == "use_tool"
+    assert contract["deliverables"][0]["kind"] == "external_state"
+    assert "target_deliverable_success" in contract["success_conditions"]
+
+
+def test_revision_followup_preserves_previous_external_state_target() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "Create a two-story house in the current Blender scene",
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "deliverables": [
+            {"kind": "external_state", "description": "Current Blender scene"}
+        ],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "intent": "write_required",
+            "goal": "Improve the Blender Python script",
+            "requires_write": True,
+            "requires_state_change": True,
+            "deliverables": [
+                {"kind": "code", "path_hint": "build_house_v2.py"}
+            ],
+        },
+        _fallback("answer_only"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content="not good enough, try again",
+    )
+
+    assert looks_like_task_revision_followup("not good enough, try again")
+    assert contract["scope_relation"] == "revise"
+    assert contract["goal"] == previous["goal"]
+    assert contract["requires_write"] is False
+    assert contract["requires_state_change"] is True
+    assert contract["deliverables"][0]["kind"] == "external_state"
+    assert contract["revision_request"] == "not good enough, try again"
+
+
+def test_model_can_explicitly_replace_previous_task_target() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "Create a Blender scene",
+        "requires_write": False,
+        "requires_state_change": True,
+        "deliverables": [{"kind": "external_state"}],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "replace",
+            "intent": "write_required",
+            "goal": "Export a reusable script instead",
+            "requires_write": True,
+            "deliverables": [{"kind": "code", "path_hint": "house.py"}],
+        },
+        _fallback("answer_only"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content="Export a reusable script instead",
+    )
+
+    assert contract["scope_relation"] == "replace"
+    assert contract["goal"] == "Export a reusable script instead"
+    assert contract["requires_write"] is True
+    assert contract["deliverables"][0]["kind"] == "code"
+
+
+def test_model_explicit_new_relation_is_not_overridden_by_retry_fallback() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "Create a Blender scene",
+        "requires_write": False,
+        "requires_state_change": True,
+        "deliverables": [{"kind": "external_state"}],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "new",
+            "intent": "write_required",
+            "goal": "Create an unrelated report",
+            "requires_write": True,
+            "deliverables": [{"kind": "document", "path_hint": "report.docx"}],
+        },
+        _fallback("answer_only"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content="try again with this unrelated report",
+    )
+
+    assert contract["scope_relation"] == "new"
+    assert contract["scope_relation_source"] == "model"
+    assert contract["deliverables"][0]["kind"] == "document"
+
+
+def test_continuity_does_not_override_current_document_size_requirement() -> None:
+    previous = {
+        "intent": "document_export",
+        "goal": "Expand the report",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "expected_min_output_chars": 30000,
+        "deliverables": [{"kind": "document", "path_hint": "report.docx"}],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "revise",
+            "intent": "document_export",
+            "requires_write": True,
+            "expected_min_output_chars": 50000,
+            "deliverables": [{"kind": "document", "path_hint": "report.docx"}],
+        },
+        _fallback("document_export"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content="raise the target to 50000 characters",
+    )
+
+    assert contract["expected_min_output_chars"] == 50000
+
+
+def test_continuity_does_not_override_hard_no_write_lock() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "Modify the project",
+        "requires_write": True,
+        "requires_state_change": True,
+        "deliverables": [{"kind": "code", "path_hint": "app.py"}],
+    }
+    locked = merge_model_task_contract(
+        {"scope_relation": "revise", "requires_write": True},
+        _fallback("write_required"),
+        hard_no_write_lock=True,
+    )
+
+    contract = apply_task_continuity(
+        locked,
+        previous_contract=previous,
+        current_user_content="only analyze, do not modify",
+    )
+
+    assert contract["requires_write"] is False
+    assert contract["requires_state_change"] is False
+    assert contract["deliverables"] == []
+
+
+def test_deliverable_path_policy_defaults_to_hint_and_accepts_exact() -> None:
+    hinted = merge_model_task_contract(
+        {
+            "intent": "write_required",
+            "requires_write": True,
+            "deliverables": [{"kind": "code", "path_hint": "app.py"}],
+        },
+        _fallback("answer_only"),
+    )
+    exact = merge_model_task_contract(
+        {
+            "intent": "write_required",
+            "requires_write": True,
+            "deliverables": [
+                {"kind": "code", "path_hint": "app.py", "path_policy": "exact"}
+            ],
+        },
+        _fallback("answer_only"),
+    )
+
+    assert hinted["deliverables"][0]["path_policy"] == "hint"
+    assert exact["deliverables"][0]["path_policy"] == "exact"
 
 
 def test_task_contract_run_event_is_recordable() -> None:

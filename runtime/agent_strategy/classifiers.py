@@ -55,7 +55,7 @@ WRITE_TOOL_IDS: frozenset[str] = frozenset({
     *WEB_WRITE_TOOL_IDS,
 })
 
-POST_WRITE_VERIFY_TOOL_IDS: frozenset[str] = frozenset({
+DELIVERABLE_VERIFICATION_TOOL_IDS: frozenset[str] = frozenset({
     "shell.run_command",
     "git.status",
     "git.diff",
@@ -89,7 +89,7 @@ BARE_TAGGED_TOOL_CALL_IDS: frozenset[str] = frozenset({
     "git.status",
 })
 
-POST_WRITE_READ_TOOL_IDS: frozenset[str] = frozenset({
+DELIVERABLE_READ_TOOL_IDS: frozenset[str] = frozenset({
     "filesystem.read_file",
     "filesystem.read_text_preview",
     "filesystem.scan_folder",
@@ -157,7 +157,7 @@ def explorer_tool_ids(mode: str | None) -> set[str]:
 
 def verification_tool_ids(mode: str | None) -> set[str]:
     """Return the set of tool IDs that count as verification."""
-    ids: set[str] = set(POST_WRITE_VERIFY_TOOL_IDS)
+    ids: set[str] = set(DELIVERABLE_VERIFICATION_TOOL_IDS)
     if mode in {"document", "paper"}:
         ids |= {
             "filesystem.scan_folder",

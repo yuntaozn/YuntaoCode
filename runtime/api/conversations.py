@@ -46,6 +46,31 @@ from runtime.task_runner import ToolContext
 _active_stream_conversation_runs: dict[str, str] = {}
 
 
+def _message_content_with_attachment_catalog(content: str, metadata: dict[str, Any]) -> str:
+    attachments = metadata.get("attachments") if isinstance(metadata.get("attachments"), list) else []
+    rows: list[str] = []
+    for item in attachments:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        rows.append(
+            "- attachment_id={id}; name={name}; media_type={media_type}; size={size}".format(
+                id=str(item.get("id")),
+                name=str(item.get("name") or "attachment"),
+                media_type=str(item.get("media_type") or "application/octet-stream"),
+                size=int(item.get("size") or 0),
+            )
+        )
+    if not rows:
+        return content
+    catalog = (
+        "\n\nUser-provided immutable conversation attachments:\n"
+        + "\n".join(rows)
+        + "\nUse attachment.extract_text for text, PDF, or Word attachments. "
+        "Do not treat attachment storage as a project path."
+    )
+    return f"{content}{catalog}"
+
+
 class ConversationsHandler(ApiHandler):
     def get(self) -> None:
         workspace_id = self.get_argument("workspace_id", None)
@@ -98,7 +123,10 @@ class ConversationDetailHandler(ApiHandler):
                 if metadata.get("guidance") and metadata.get("during_run"):
                     continue
                 role = "assistant" if item.role == "assistant" else "user"
-                messages.append({"role": role, "content": item.content})
+                messages.append({
+                    "role": role,
+                    "content": _message_content_with_attachment_catalog(item.content, metadata),
+                })
             data["context_tokens"] = count_messages_tokens(messages)
             data["context_limit"] = get_context_limit(model, self.runtime.settings)
         else:
@@ -126,6 +154,7 @@ class ConversationDetailHandler(ApiHandler):
         deleted = self.runtime.conversations.delete(conversation_id)
         if not deleted:
             raise tornado.web.HTTPError(404, reason="conversation not found")
+        self.runtime.attachments.delete_for_conversation(conversation_id)
         self.finish_json({"success": True})
 
 
@@ -260,7 +289,10 @@ class ConversationMessagesHandler(ApiHandler):
             if metadata.get("guidance") and metadata.get("during_run"):
                 continue
             role = "assistant" if item.role == "assistant" else "user"
-            messages.append({"role": role, "content": item.content})
+            messages.append({
+                "role": role,
+                "content": _message_content_with_attachment_catalog(item.content, metadata),
+            })
         messages, hygiene_report = _ctx_hygiene.sanitize_model_context(messages)
         self._last_context_hygiene_report = hygiene_report
         return messages
@@ -277,6 +309,8 @@ class ConversationMessagesHandler(ApiHandler):
             if allowed_tools is not None and tool_id not in allowed_tools:
                 continue
             if not self.runtime.settings.is_tool_enabled(tool_id):
+                continue
+            if not self.runtime.is_tool_available(spec):
                 continue
             specs.append(spec)
         return format_capability_catalog_for_prompt(build_capability_catalog(specs))
@@ -301,12 +335,26 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         payload = self.parse_json_body()
         content = (payload.get("content") or "").strip()
         image_data = payload.get("image_data") or ""
-        if not content and not image_data:
+        raw_attachment_ids = payload.get("attachment_ids") or []
+        if not isinstance(raw_attachment_ids, list):
+            raise tornado.web.HTTPError(400, reason="attachment_ids must be an array")
+        attachment_ids = list(dict.fromkeys(str(item) for item in raw_attachment_ids if str(item)))
+        if len(attachment_ids) > 8:
+            raise tornado.web.HTTPError(400, reason="a message supports at most 8 attachments")
+        if not content and not image_data and not attachment_ids:
             raise tornado.web.HTTPError(400, reason="content is required")
 
         workspace = self.runtime.workspaces.get(conversation.workspace_id)
         if not workspace:
             raise tornado.web.HTTPError(404, reason="workspace not found")
+        try:
+            attachment_records = self.runtime.attachments.validate_for_message(
+                attachment_ids,
+                workspace_id=conversation.workspace_id,
+                conversation_id=conversation_id,
+            )
+        except ValueError as exc:
+            raise tornado.web.HTTPError(400, reason=str(exc)) from exc
 
         active_run_id = _active_stream_conversation_runs.get(conversation_id)
         if active_run_id:
@@ -326,9 +374,16 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         msg_metadata: dict[str, Any] = {}
         if image_data:
             msg_metadata["has_image"] = True
+        if attachment_records:
+            msg_metadata["attachments"] = [record.to_public_dict() for record in attachment_records]
+            msg_metadata["has_image"] = any(record.is_image for record in attachment_records)
         user_message = self.runtime.conversations.add_message(
-            conversation_id, "user", content or self.t("conv.image_placeholder"), msg_metadata,
+            conversation_id,
+            "user",
+            content or ("[Attachment]" if attachment_records else self.t("conv.image_placeholder")),
+            msg_metadata,
         )
+        self.runtime.attachments.bind_message(attachment_ids, user_message.id)
         self.write_event({"event": "user", "message": user_message.to_public_dict()})
         await self.flush()
 
@@ -339,7 +394,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             conversation_id=conversation_id,
             workspace_id=conversation.workspace_id,
             mode=effective_mode,
-            user_content=content or "[image]",
+            user_content=content or ("[attachment]" if attachment_records else "[image]"),
         )
         self._active_run_id = run.id
         self._active_conversation_id = conversation_id
@@ -362,6 +417,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                     payload=payload,
                     content=content,
                     image_data=image_data,
+                    attachments=attachment_records,
                     model=model,
                     requested_mode=requested_mode,
                     effective_mode=effective_mode,
@@ -477,16 +533,13 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         hard_no_write_lock: bool,
         conversation: Any | None = None,
     ) -> bool:
-        if hard_no_write_lock:
-            return False
         text = str(content or "").strip()
-        if not text:
-            return False
-        if fallback_intent in {"document_export", "paper_workflow", "write_required"}:
-            return True
-        if fallback_intent == "answer_only" and len(text) <= 16:
-            return self._has_recent_task_context(conversation, text)
-        return True
+        return _tc.should_use_model_task_contract(
+            text,
+            fallback_intent,
+            hard_no_write_lock,
+            has_recent_task_context=self._has_recent_task_context(conversation, text),
+        )
 
     async def _decide_task_contract(
         self,
@@ -499,6 +552,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         hard_no_write_lock: bool,
         expected_document_coverage: bool,
         expected_min_output_chars: int,
+        previous_contract: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         try:
             lang = self.get_lang()
@@ -509,6 +563,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             workspace_path,
             fallback_contract,
             capability_context=self._capability_context_prompt(mode_config),
+            previous_contract=previous_contract,
         )
         try:
             decision_messages: list[dict[str, Any]] = [
@@ -524,12 +579,17 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 tools=None,
             )
             parsed = _tc.extract_task_contract_json(answer)
-            return _tc.merge_model_task_contract(
+            contract = _tc.merge_model_task_contract(
                 parsed,
                 fallback_contract,
                 hard_no_write_lock=hard_no_write_lock,
                 expected_document_coverage=expected_document_coverage,
                 expected_min_output_chars=expected_min_output_chars,
+            )
+            return _tc.apply_task_continuity(
+                contract,
+                previous_contract=previous_contract,
+                current_user_content=user_content,
             )
         except Exception as exc:
             contract = _tc.merge_model_task_contract(
@@ -541,7 +601,11 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             )
             contract["source"] = "policy_fallback"
             contract["model_contract_error"] = str(exc)[:500]
-            return contract
+            return _tc.apply_task_continuity(
+                contract,
+                previous_contract=previous_contract,
+                current_user_content=user_content,
+            )
 
     def _task_contract_prompt(self, contract: dict[str, Any]) -> str:
         conditions = ", ".join(contract.get("success_conditions") or [])
@@ -559,6 +623,11 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             + i18n.t("contract.deliverables", lang, deliverables=deliverables)
             + f"任务路由：{contract.get('routing_strategy')}（模型理解任务，系统校验能力契约与执行结果）\n"
             + i18n.t("contract.must_write", lang, requires_write=str(bool(contract.get("requires_write"))))
+            + i18n.t(
+                "contract.must_change_state",
+                lang,
+                requires_state_change=str(bool(contract.get("requires_state_change"))),
+            )
             + i18n.t("contract.must_verify", lang, requires_verification=str(bool(contract.get("requires_verification"))))
             + i18n.t("contract.success", lang, conditions=conditions)
             + i18n.t("contract.write_rule", lang)
@@ -602,7 +671,10 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             workspace_path=workspace_path,
             mode=mode,
         )
-        if contract.get("requires_write") and not deliverables:
+        if (
+            (contract.get("requires_write") or contract.get("requires_state_change"))
+            and not deliverables
+        ):
             failures.append("missing_target_deliverable_success")
         if (
             contract.get("requires_verification")
@@ -810,6 +882,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 continue
             if not self.runtime.settings.is_tool_enabled(spec["id"]):
                 continue
+            if not self.runtime.is_tool_available(spec):
+                continue
             model_name = self._model_tool_name(spec["id"])
             name_map[model_name] = spec["id"]
             name_map[spec["id"]] = spec["id"]
@@ -880,11 +954,11 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         ids |= {"git.status", "git.diff", "git.log"}
         return ids
 
-    def _post_write_verify_tool_ids(self) -> set[str]:
-        return set(_clf.POST_WRITE_VERIFY_TOOL_IDS)
+    def _deliverable_verification_tool_ids(self) -> set[str]:
+        return set(_clf.DELIVERABLE_VERIFICATION_TOOL_IDS)
 
     def _verification_tool_ids(self, mode: str | None) -> set[str]:
-        ids = set(self._post_write_verify_tool_ids())
+        ids = set(self._deliverable_verification_tool_ids())
         if mode in {"document", "paper"}:
             ids |= {
                 "filesystem.scan_folder",
@@ -895,8 +969,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             }
         return ids
 
-    def _post_write_tool_ids(self) -> set[str]:
-        return self._write_tool_ids() | self._post_write_verify_tool_ids() | self._post_write_read_tool_ids()
+    def _post_deliverable_tool_ids(self) -> set[str]:
+        return self._write_tool_ids() | self._deliverable_verification_tool_ids() | self._deliverable_read_tool_ids()
 
     def _execution_pressure_tool_ids(self, mode: str | None) -> set[str]:
         return (
@@ -914,8 +988,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             }
         return self._write_tool_ids() | self._explorer_tool_ids(mode)
 
-    def _post_write_read_tool_ids(self) -> set[str]:
-        """允许在 post_write 阶段读取文件——多文件任务中创建后续文件前需要读取参考。"""
+    def _deliverable_read_tool_ids(self) -> set[str]:
+        """允许在目标产物出现后读取必要证据或参考。"""
         return {"filesystem.read_file", "filesystem.read_text_preview", "filesystem.scan_folder"}
 
     def _is_write_tool(self, tool_id: str) -> bool:
@@ -924,14 +998,14 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _is_state_changing_tool(self, tool_id: str) -> bool:
         return _clf.is_state_changing_tool(tool_id)
 
-    def _is_post_write_verify_tool(self, tool_id: str) -> bool:
-        return tool_id in self._post_write_verify_tool_ids()
+    def _is_deliverable_verification_tool(self, tool_id: str) -> bool:
+        return tool_id in self._deliverable_verification_tool_ids()
 
     def _is_verification_tool(self, tool_id: str, mode: str | None) -> bool:
         return tool_id in self._verification_tool_ids(mode)
 
-    def _is_post_write_tool(self, tool_id: str) -> bool:
-        return tool_id in self._post_write_tool_ids()
+    def _is_post_deliverable_tool(self, tool_id: str) -> bool:
+        return tool_id in self._post_deliverable_tool_ids()
 
     def _filter_tools_by_ids(
         self,
@@ -1205,10 +1279,32 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         tool_events: list[dict[str, Any]],
         change_summary: dict[str, Any] | None,
         mode: str | None,
+        task_contract: dict[str, Any] | None = None,
     ) -> str:
         write_paths: list[str] = []
         verify_lines: list[str] = []
         failure_lines: list[str] = []
+        target_deliverables = (
+            _event_roles.successful_deliverable_events(
+                tool_events,
+                task_contract=task_contract,
+                workspace_path=workspace_path,
+                mode=mode,
+            )
+            if isinstance(task_contract, dict)
+            else []
+        )
+        target_verifications = (
+            _event_roles.deliverable_verification_events(
+                tool_events,
+                task_contract=task_contract,
+                workspace_path=workspace_path,
+                mode=mode,
+            )
+            if isinstance(task_contract, dict)
+            else []
+        )
+        external_deliverable_lines: list[str] = []
         for event in tool_events:
             tool_id = str(event.get("tool") or "")
             status = str(event.get("status") or "")
@@ -1225,7 +1321,10 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             display_path = rel_path or str(path or "")
             if self._is_write_tool(tool_id) and status == "success" and display_path:
                 write_paths.append(display_path)
-            if self._is_verification_tool(tool_id, mode) and status == "success":
+            if (
+                self._is_verification_tool(tool_id, mode)
+                or event in target_verifications
+            ) and status == "success":
                 detail = tool_id
                 query = event_input.get("query")
                 if query:
@@ -1233,8 +1332,10 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 elif display_path:
                     detail += f"（{display_path}）"
                 verify_lines.append(detail)
-            if status == "failure":
-                error = str(event.get("error") or "").strip()
+            if event in target_deliverables and not display_path and status == "success":
+                external_deliverable_lines.append(tool_id)
+            if self._tool_event_failed(event):
+                error = self._tool_event_failure_message(event)
                 failure_lines.append(f"{tool_id}: {error[:160] if error else '失败'}")
 
         changed_paths: list[str] = []
@@ -1246,6 +1347,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             changed_paths = list(dict.fromkeys(write_paths))
         write_paths = list(dict.fromkeys(write_paths))
         verify_lines = list(dict.fromkeys(verify_lines))
+        external_deliverable_lines = list(dict.fromkeys(external_deliverable_lines))
 
         lines = ["系统检测到模型最终回复停在待执行语句，已按真实工具记录收束本轮结果。"]
         if changed_paths:
@@ -1256,9 +1358,16 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             lines.append("")
             lines.append("成功写入文件：")
             lines.extend(f"- {path}" for path in write_paths[:12])
+        elif external_deliverable_lines:
+            lines.append("")
+            lines.append("已观察到目标外部状态变更：")
+            lines.extend(f"- {item}" for item in external_deliverable_lines[:12])
         else:
             lines.append("")
-            lines.append("本轮没有观察到成功写入文件。")
+            if isinstance(task_contract, dict) and task_contract.get("requires_state_change"):
+                lines.append("本轮没有观察到成功完成目标外部状态变更。")
+            else:
+                lines.append("本轮没有观察到成功写入文件。")
 
         lines.append("")
         if verify_lines:
@@ -1390,18 +1499,20 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return ""
         tool_events = getattr(self, "_active_tool_events", [])
         current_stage = str(getattr(self, "_active_current_stage", "") or "")
-        post_write_mode = bool(getattr(self, "_active_post_write_mode", False))
+        post_deliverable_mode = bool(
+            getattr(self, "_active_post_deliverable_mode", False)
+        )
         verification_context = (
             _clf.has_successful_write(tool_events if isinstance(tool_events, list) else [])
             or current_stage == "verifier"
-            or post_write_mode
+            or post_deliverable_mode
         )
         if not verification_context:
             return ""
         command = _clf.shell_command_text(arguments)
         return (
             "检测到模型把长驻服务启动命令当作普通验证命令："
-            f"{command}。这类命令通常不会自行退出，不能作为本轮写入后的自动验证。"
+            f"{command}。这类命令通常不会自行退出，不能作为本轮目标产物完成后的自动验证。"
             "请改用可退出的语法检查、构建、测试、读取生成文件、git diff/status，"
             "或在最终总结中明确说明需要用户手动打开浏览器验证。"
         )
@@ -1564,6 +1675,15 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 message=f"插件已禁用，不能调用工具：{tool_id}",
             )
 
+        if not self.runtime.is_tool_available(self.runtime.registry.get_public_spec(tool_id)):
+            return self._skipped_tool_call(
+                tool_call,
+                tool_id,
+                arguments,
+                reason="capability_service_unavailable",
+                message=f"能力服务尚未连接，不能调用工具：{tool_id}",
+            )
+
         missing_fields = self.runtime.registry.missing_required_input_fields(tool_id, arguments)
         if missing_fields:
             return self._skipped_tool_call(
@@ -1626,6 +1746,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             confirmed=True,
             workspace_path=workspace_path,
             artifact_scope_id=getattr(self, "_active_run_id", "") or None,
+            attachment_ids=getattr(self, "_active_attachment_ids", ()),
         )
         event: dict[str, Any] = {
             "status": "running",
@@ -2061,6 +2182,14 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "truncated": bool(output.get("truncated")),
                 "integrity": output.get("integrity"),
             }
+        elif tool_id == "attachment.extract_text":
+            preview = {
+                "type": "attachment_text",
+                "attachment": output.get("attachment"),
+                "content": str(output.get("content") or "")[:4000],
+                "text_chars": output.get("text_chars"),
+                "truncated": bool(output.get("truncated")),
+            }
         elif tool_id == "git.diff":
             preview = {"type": "diff", "diff_preview": str(output.get("diff") or "")[:4000]}
         elif tool_id == "git.status":
@@ -2077,6 +2206,14 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "text": str(output.get("text") or "")[:4000],
                 "links": (output.get("links") or [])[:20],
                 "truncated": bool(output.get("truncated")),
+            }
+        elif any(output.get(key) for key in ("effects", "roles", "artifacts")):
+            preview = {
+                "type": "capability_result",
+                "content": str(output.get("content") or "")[:4000],
+                "effects": list(output.get("effects") or [])[:12],
+                "roles": list(output.get("roles") or [])[:12],
+                "artifacts": list(output.get("artifacts") or [])[:12],
             }
         else:
             return None
@@ -2339,6 +2476,53 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 return True
         return False
 
+    def _previous_task_contract_context(
+        self,
+        conversation: Any | None,
+        current_content: str,
+    ) -> dict[str, Any] | None:
+        if conversation is None:
+            return None
+        current = current_content.strip()
+        messages = list(getattr(conversation, "messages", [])[-20:])
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            if self._is_runtime_guidance_message(message):
+                continue
+            role = str(getattr(message, "role", "") or "")
+            previous_content = str(getattr(message, "content", "") or "").strip()
+            if role == "user" and previous_content == current:
+                continue
+            if role != "assistant":
+                continue
+            metadata = getattr(message, "metadata", {}) or {}
+            if not isinstance(metadata, dict):
+                continue
+            contract = metadata.get("task_contract")
+            if isinstance(contract, dict) and (
+                contract.get("goal")
+                or contract.get("intent") not in {None, "", "answer_only"}
+            ):
+                previous_user_content = ""
+                for previous in reversed(messages[:index]):
+                    if self._is_runtime_guidance_message(previous):
+                        continue
+                    if str(getattr(previous, "role", "") or "") != "user":
+                        continue
+                    candidate = str(getattr(previous, "content", "") or "").strip()
+                    if candidate and candidate != current:
+                        previous_user_content = candidate
+                        break
+                if (
+                    previous_user_content
+                    and _tc.looks_like_task_revision_followup(previous_user_content)
+                    and not contract.get("continuity_anchor")
+                    and contract.get("scope_relation_source") != "model"
+                ):
+                    continue
+                return contract
+        return None
+
     def _previous_document_export_context(self, conversation: Any | None, current_content: str) -> bool:
         if conversation is None:
             return False
@@ -2582,6 +2766,38 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _has_successful_verification(self, tool_events: list[dict[str, Any]], mode: str | None) -> bool:
         return _clf.has_successful_verification(tool_events, mode)
 
+    def _has_successful_target_deliverable(
+        self,
+        task_contract: dict[str, Any] | None,
+        tool_events: list[dict[str, Any]],
+        workspace_path: str,
+        mode: str | None,
+    ) -> bool:
+        if not isinstance(task_contract, dict):
+            return self._has_successful_write(tool_events)
+        return bool(_event_roles.successful_deliverable_events(
+            tool_events,
+            task_contract=task_contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        ))
+
+    def _has_successful_target_verification(
+        self,
+        task_contract: dict[str, Any] | None,
+        tool_events: list[dict[str, Any]],
+        workspace_path: str,
+        mode: str | None,
+    ) -> bool:
+        if not isinstance(task_contract, dict):
+            return self._has_successful_verification(tool_events, mode)
+        return bool(_event_roles.deliverable_verification_events(
+            tool_events,
+            task_contract=task_contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        ))
+
     def _is_recoverable_write_failure(self, tool_id: str, event: dict[str, Any]) -> bool:
         return _clf.is_recoverable_write_failure(tool_id, event)
 
@@ -2689,8 +2905,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _analysis_first_task_prompt(self, workspace_path: str) -> str:
         return _prp.analysis_first_task_prompt(workspace_path)
 
-    def _post_write_prompt(self, workspace_path: str) -> str:
-        return _prp.post_write_prompt(workspace_path)
+    def _post_deliverable_prompt(self, workspace_path: str) -> str:
+        return _prp.post_deliverable_prompt(workspace_path)
 
     def _final_answer_prompt(self, workspace_path: str) -> str:
         return _prp.final_answer_prompt(workspace_path)

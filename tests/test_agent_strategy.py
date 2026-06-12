@@ -77,7 +77,7 @@ from runtime.agent_strategy.prompts import (
     final_answer_prompt,
     format_execution_plan_for_context,
     max_rounds_message,
-    post_write_prompt,
+    post_deliverable_prompt,
     progress_observer_prompt,
     repeated_failure_strategy_prompt,
     read_only_task_prompt,
@@ -342,6 +342,13 @@ class TestClassifyTaskIntent:
 class TestAgentProfiles:
     def test_write_required_routes_to_coding(self):
         assert profile_for_task_intent("write_required", "terminal", code_change_intent=True).id == "coding"
+
+    def test_external_state_change_routes_to_execution(self):
+        assert profile_for_task_intent(
+            "write_required",
+            "terminal",
+            state_change_intent=True,
+        ).id == "execution"
 
     def test_document_export_routes_to_document(self):
         assert profile_for_task_intent("document_export", "terminal").id == "document"
@@ -926,7 +933,7 @@ class TestHasSuccessfulVerification:
 
         assert has_successful_verification(events, "terminal")
 
-    def test_read_before_write_does_not_count_as_post_write_verification(self):
+    def test_read_before_write_does_not_count_as_deliverable_verification(self):
         events = [
             {"tool": "filesystem.read_file", "status": "success", "input": {"path": "demo.html"}},
             {"tool": "filesystem.write_file", "status": "success", "input": {"path": "demo.html"}},
@@ -1387,6 +1394,13 @@ class TestPrompts:
         assert "Test Plan" in result
         assert "code.edit_file" in result
 
+    def test_execute_plan_prompt_does_not_create_user_confirmation_gate(self):
+        prompt = execute_plan_prompt({"title": "Test Plan", "steps": []}, "terminal")
+
+        assert "不要输出" in prompt
+        assert "确认" in prompt
+        assert "直接调用" in prompt
+
     def test_max_rounds_message(self):
         events = [{"tool": "filesystem.read_file", "status": "success"}]
         msg = max_rounds_message(10, events)
@@ -1399,3 +1413,9 @@ class TestPrompts:
     def test_verifier_retry_prompt_paper(self):
         prompt = verifier_retry_prompt("paper", "/tmp")
         assert "document.extract_docx_outline" in prompt
+
+    def test_post_deliverable_prompt_is_not_file_write_only(self):
+        prompt = post_deliverable_prompt("/tmp")
+
+        assert "目标产物" in prompt
+        assert "外部应用" in prompt

@@ -22,6 +22,8 @@ class TasksHandler(ApiHandler):
             raise tornado.web.HTTPError(404, reason=f"unknown tool: {tool_id}")
         if not self.runtime.settings.is_tool_enabled(tool_id):
             raise tornado.web.HTTPError(403, reason=f"plugin is disabled for tool: {tool_id}")
+        if not self.runtime.is_tool_available(self.runtime.registry.get_public_spec(tool_id)):
+            raise tornado.web.HTTPError(409, reason=f"capability service unavailable: {tool_id}")
         input_data = payload.get("input") or {}
         if not isinstance(input_data, dict):
             raise tornado.web.HTTPError(400, reason="input must be an object")

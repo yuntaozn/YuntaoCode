@@ -20,6 +20,8 @@ class ToolContext:
     backup_file: Any | None = None
     settings: Any | None = None
     temp_dir: Path | None = None
+    attachment_store: Any | None = None
+    attachment_ids: tuple[str, ...] = ()
 
 
 class TaskRunner:
@@ -58,12 +60,14 @@ class TaskRunner:
         path_guard: PathGuard,
         backup_store: Any | None = None,
         settings: Any | None = None,
+        attachment_store: Any | None = None,
     ) -> None:
         self.registry = registry
         self.store = store
         self.path_guard = path_guard
         self.backup_store = backup_store
         self.settings = settings
+        self.attachment_store = attachment_store
 
     async def submit(
         self,
@@ -73,6 +77,7 @@ class TaskRunner:
         confirmed: bool = False,
         workspace_path: str | None = None,
         artifact_scope_id: str | None = None,
+        attachment_ids: tuple[str, ...] | list[str] | None = None,
     ) -> TaskRecord:
         tool_id = self.registry.resolve_id(tool_id)
         tool = self.registry.get(tool_id)
@@ -100,6 +105,7 @@ class TaskRunner:
             task.id,
             workspace_path=workspace_path,
             artifact_scope_id=artifact_scope_id,
+            attachment_ids=tuple(str(item) for item in (attachment_ids or ()) if str(item)),
         )
         if wait:
             await coro
@@ -112,6 +118,7 @@ class TaskRunner:
         task_id: str,
         workspace_path: str | None = None,
         artifact_scope_id: str | None = None,
+        attachment_ids: tuple[str, ...] = (),
     ) -> None:
         task = self.store.get(task_id)
         if not task:
@@ -156,6 +163,8 @@ class TaskRunner:
                 backup_file=backup_file,
                 settings=self.settings,
                 temp_dir=temp_dir,
+                attachment_store=self.attachment_store,
+                attachment_ids=attachment_ids,
             )
             output = await tool.handler(task.input, context)
             failure_reason = self._output_failure_reason(task.tool, output)
@@ -242,7 +251,8 @@ class TaskRunner:
 def _compact_failure_message(output: dict[str, Any], fallback: str) -> str:
     stderr = str(output.get("stderr") or "").strip()
     stdout = str(output.get("stdout") or "").strip()
-    detail = stderr or stdout
+    message = str(output.get("message") or output.get("content") or "").strip()
+    detail = stderr or stdout or message
     if not detail:
         return fallback
     return f"{fallback}: {detail[:500]}"

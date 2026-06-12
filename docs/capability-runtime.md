@@ -24,6 +24,7 @@ Registered Tool / Plugin / MCP Server
 - 权限是否允许。
 - 是否需要用户确认。
 - 是否产生了预期 artifact。
+- 是否声明了实际 effect，以及它在当前任务中承担的 role。
 - 验证是否通过。
 
 ## Contract Shape
@@ -39,6 +40,8 @@ Registered Tool / Plugin / MCP Server
   "description": "Convert a PDF into a Word document.",
   "input_schema": {},
   "output_artifacts": ["docx"],
+  "effect_types": ["file_write"],
+  "task_roles": ["deliverable"],
   "permissions": {
     "filesystem": "workspace",
     "shell": "false",
@@ -155,13 +158,13 @@ User Request
 - `runtime/api/plugins.py`
   - 当前插件/能力分组展示。
 - `runtime/core/capability.py`
-  - CapabilityContract、PermissionSet 初始 schema。
+  - CapabilityContract、PermissionSet，以及 artifact、effect、task role 初始 schema。
 
 ## Next Steps
 
 短期建议：
 
-1. 将 ToolSpec 的能力元数据逐步映射为 CapabilityContract。
+1. 将 ToolSpec 的 artifact、effect、role 和权限元数据逐步映射为 CapabilityContract。
 2. 在 task_contract 之后增加可选 RouteProposal 验证事件。
 3. 在 RunResult 中记录 artifact 与 capability_id。
 4. 前端插件页区分 built-in capability、AI draft、future external provider。

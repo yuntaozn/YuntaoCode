@@ -43,6 +43,12 @@ DOCUMENT_PROFILE = AgentProfile(
     execution_mode="document",
     description="Document export, conversion, summarization, and file-oriented deliverables.",
 )
+EXECUTION_PROFILE = AgentProfile(
+    id="execution",
+    label="Capability Execution",
+    execution_mode="terminal",
+    description="External application, MCP, browser, database, and other capability-driven state changes.",
+)
 PAPER_PROFILE = AgentProfile(
     id="paper",
     label="Paper Workflow",
@@ -57,6 +63,7 @@ PROFILES: dict[str, AgentProfile] = {
         CHAT_PROFILE,
         ANALYSIS_PROFILE,
         CODING_PROFILE,
+        EXECUTION_PROFILE,
         DOCUMENT_PROFILE,
         PAPER_PROFILE,
     )
@@ -72,6 +79,7 @@ def profile_for_task_intent(
     mode: str | None,
     *,
     code_change_intent: bool = False,
+    state_change_intent: bool = False,
 ) -> AgentProfile:
     """Resolve the internal profile for a classified task intent."""
     if task_intent == "document_export":
@@ -80,6 +88,8 @@ def profile_for_task_intent(
         return PAPER_PROFILE
     if code_change_intent:
         return CODING_PROFILE
+    if state_change_intent:
+        return EXECUTION_PROFILE
     if task_intent == "write_required":
         if mode == "paper":
             return PAPER_PROFILE
@@ -104,6 +114,8 @@ def stage_sequence_for_profile(
     profile = get_profile(profile_id)
     if profile.id == "coding" or code_change_intent:
         return ["explorer", "editor", "verifier", "reviewer"]
+    if profile.id == "execution":
+        return ["explorer", "executor", "verifier", "reviewer"]
     if profile.id == "paper":
         if task_intent == "read_only_analysis":
             return ["explorer", "reviewer"]
@@ -130,7 +142,7 @@ def round_limit_for_profile(
         if profile.id == "document":
             return 4
         return 5
-    if stage in {"editor", "creator"}:
+    if stage in {"editor", "creator", "executor"}:
         return 5
     if stage == "writer":
         return 3

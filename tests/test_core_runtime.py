@@ -92,6 +92,8 @@ def test_capability_contract_confirmation_rules() -> None:
         capability_id="document.pdf_to_docx",
         tool_id="document.extract_pdf_to_docx",
         output_artifacts=("docx",),
+        effect_types=("file_write",),
+        task_roles=("deliverable",),
         permissions=PermissionSet(filesystem="workspace", shell="confirm_each"),
     )
 
@@ -99,6 +101,8 @@ def test_capability_contract_confirmation_rules() -> None:
 
     assert data["schema_version"] == "capability_contract.v1"
     assert data["output_artifacts"] == ["docx"]
+    assert data["effect_types"] == ["file_write"]
+    assert data["task_roles"] == ["deliverable"]
     assert needs_user_confirmation(contract)
 
 

@@ -152,7 +152,7 @@ function renderPluginCard(plugin) {
         .join("");
     const statusBadge = plugin.ai_draft
         ? `<span class="plugin-status-badge">${t('plugins_js.ai_draft')}</span>`
-        : "";
+        : `<span class="plugin-status-badge">${escapeHtml(sourceTypeLabel(plugin.source_type))}</span>`;
     const toggleHtml = isReadOnlyPlugin(plugin)
         ? ""
         : `<label class="toggle-switch">
@@ -181,7 +181,11 @@ function isDepsOk(plugin) {
 }
 
 function isReadOnlyPlugin(plugin) {
-    return Boolean(plugin.ai_draft || plugin.contract_sample);
+    return Boolean(plugin.ai_draft || plugin.contract_sample || plugin.source_type === "mcp");
+}
+
+function sourceTypeLabel(sourceType) {
+    return t(`plugins_js.source_${sourceType || "builtin"}`);
 }
 
 function dependencyRequirementEntries(requirements) {
@@ -203,6 +207,9 @@ function dependencyRequirementEntries(requirements) {
 // --- Events ---
 $("back-btn").addEventListener("click", () => {
     window.location.href = "/";
+});
+$("mcp-services-btn").addEventListener("click", () => {
+    window.location.href = "/mcp-services-page";
 });
 $("refresh-plugins-btn").addEventListener("click", () => loadPlugins());
 

@@ -113,7 +113,7 @@ def test_verification_runtime_guard_blocks_long_running_server_after_write() -> 
         }
     ]
     handler._active_current_stage = "verifier"
-    handler._active_post_write_mode = True
+    handler._active_post_deliverable_mode = True
 
     message = handler._verification_runtime_tool_guard(
         "shell.run_command",
@@ -122,7 +122,7 @@ def test_verification_runtime_guard_blocks_long_running_server_after_write() -> 
 
     assert message
     assert "长驻服务" in message
-    assert "不能作为本轮写入后的自动验证" in message
+    assert "不能作为本轮目标产物完成后的自动验证" in message
 
 
 def test_shell_output_preview_includes_timeout_fields() -> None:
@@ -276,6 +276,20 @@ def test_short_follow_up_uses_model_contract_when_conversation_has_task_context(
     )
 
 
+def test_short_action_request_uses_model_contract_without_task_context() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    conversation = SimpleNamespace(messages=[
+        SimpleNamespace(role="user", content="在 Blender 中建个二层小楼", metadata={}),
+    ])
+
+    assert handler._should_use_model_task_contract(
+        "在 Blender 中建个二层小楼",
+        "answer_only",
+        False,
+        conversation,
+    )
+
+
 def test_short_greeting_without_task_context_skips_model_contract() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
     conversation = SimpleNamespace(messages=[
@@ -287,6 +301,93 @@ def test_short_greeting_without_task_context_skips_model_contract() -> None:
         "answer_only",
         False,
         conversation,
+    )
+
+
+def test_previous_task_contract_context_finds_external_state_contract() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    previous_contract = {
+        "intent": "write_required",
+        "goal": "在 Blender 中创建一个二层小楼的 3D 模型",
+        "requires_write": False,
+        "requires_state_change": True,
+        "deliverables": [{"kind": "external_state"}],
+    }
+    conversation = SimpleNamespace(messages=[
+        SimpleNamespace(role="user", content="在blender中建个二层小楼", metadata={}),
+        SimpleNamespace(
+            role="assistant",
+            content="确认: 立即执行以上计划？[Y/n]",
+            metadata={"task_contract": previous_contract},
+        ),
+        SimpleNamespace(role="user", content="立即执行", metadata={}),
+    ])
+
+    assert (
+        handler._previous_task_contract_context(conversation, "立即执行")
+        == previous_contract
+    )
+
+
+def test_previous_task_contract_context_skips_unanchored_retry_contract() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    external_contract = {
+        "intent": "write_required",
+        "goal": "Create the model in Blender",
+        "requires_write": False,
+        "requires_state_change": True,
+        "deliverables": [{"kind": "external_state"}],
+    }
+    fallback_script_contract = {
+        "intent": "write_required",
+        "goal": "Write a Blender script",
+        "requires_write": True,
+        "requires_state_change": True,
+        "deliverables": [{"kind": "code", "path_hint": "house.py"}],
+    }
+    conversation = SimpleNamespace(messages=[
+        SimpleNamespace(role="user", content="Create a house in Blender", metadata={}),
+        SimpleNamespace(role="assistant", content="done", metadata={"task_contract": external_contract}),
+        SimpleNamespace(role="user", content="not good enough, try again", metadata={}),
+        SimpleNamespace(role="assistant", content="wrote a script", metadata={"task_contract": fallback_script_contract}),
+        SimpleNamespace(role="user", content="try again", metadata={}),
+    ])
+
+    assert (
+        handler._previous_task_contract_context(conversation, "try again")
+        == external_contract
+    )
+
+
+def test_previous_task_contract_context_keeps_model_declared_replacement() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    original_contract = {
+        "intent": "write_required",
+        "goal": "Create the model in Blender",
+        "requires_write": False,
+        "requires_state_change": True,
+        "deliverables": [{"kind": "external_state"}],
+    }
+    replacement_contract = {
+        "intent": "write_required",
+        "goal": "Write a reusable script instead",
+        "requires_write": True,
+        "requires_state_change": True,
+        "deliverables": [{"kind": "code", "path_hint": "house.py"}],
+        "scope_relation": "replace",
+        "scope_relation_source": "model",
+    }
+    conversation = SimpleNamespace(messages=[
+        SimpleNamespace(role="user", content="Create a house in Blender", metadata={}),
+        SimpleNamespace(role="assistant", content="done", metadata={"task_contract": original_contract}),
+        SimpleNamespace(role="user", content="not good enough, write a script instead", metadata={}),
+        SimpleNamespace(role="assistant", content="script ready", metadata={"task_contract": replacement_contract}),
+        SimpleNamespace(role="user", content="try again", metadata={}),
+    ])
+
+    assert (
+        handler._previous_task_contract_context(conversation, "try again")
+        == replacement_contract
     )
 
 
@@ -338,6 +439,60 @@ async def test_model_task_contract_receives_recent_conversation_context(monkeypa
     ]
     assert captured["messages"][-1]["content"] == "现在想加能选构件的能力"
     assert all(item["content"] != "large tool catalog" for item in captured["messages"])
+
+
+@pytest.mark.asyncio
+async def test_model_task_contract_revision_keeps_previous_semantic_target(
+    monkeypatch: Any,
+) -> None:
+    async def fake_generate_chat_completion(**kwargs: Any) -> tuple[str, dict[str, Any]]:
+        return (
+            '{"intent":"write_required","requires_write":true,'
+            '"goal":"Improve the generated script",'
+            '"deliverables":[{"kind":"code","path_hint":"house_v2.py"}]}',
+            {},
+        )
+
+    monkeypatch.setattr(conversations_api, "generate_chat_completion", fake_generate_chat_completion)
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    handler.runtime = SimpleNamespace(
+        settings=SimpleNamespace(get_access_scope=lambda: "project_only"),
+    )
+    previous = {
+        "intent": "write_required",
+        "goal": "Create the house in Blender",
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "deliverables": [{"kind": "external_state", "description": "Blender scene"}],
+    }
+
+    contract = await handler._decide_task_contract(
+        model="fake-model",
+        messages=[
+            {"role": "user", "content": "Create the house in Blender"},
+            {"role": "assistant", "content": "I wrote a script"},
+            {"role": "user", "content": "not good enough, try again"},
+        ],
+        workspace_path=r"D:\blender",
+        user_content="not good enough, try again",
+        fallback_contract=handler._build_task_contract(
+            task_intent="answer_only",
+            mode="terminal",
+            planning_policy="auto",
+            confirmation_policy="auto",
+            workspace_path=r"D:\blender",
+        ),
+        hard_no_write_lock=False,
+        expected_document_coverage=False,
+        expected_min_output_chars=0,
+        previous_contract=previous,
+    )
+
+    assert contract["scope_relation"] == "revise"
+    assert contract["goal"] == previous["goal"]
+    assert contract["requires_write"] is False
+    assert contract["deliverables"][0]["kind"] == "external_state"
 
 
 def test_document_contract_guard_blocks_translation_script_write() -> None:

@@ -25,6 +25,8 @@ class ToolSpec:
     optional_dependencies: list[str] | None = None
     capability: str | None = None
     artifacts: list[str] | None = None
+    effects: list[str] | None = None
+    roles: list[str] | None = None
     long_running: bool = False
     retry_safe: bool = False
     idempotent: bool = False
@@ -54,6 +56,8 @@ class ToolSpec:
             "dependencies": self.check_dependencies(),
             "capability": self.capability,
             "artifacts": list(self.artifacts or []),
+            "effects": list(self.effects or []),
+            "roles": list(self.roles or []),
             "long_running": self.long_running,
             "retry_safe": self.retry_safe,
             "idempotent": self.idempotent,
@@ -70,14 +74,49 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
         self._aliases: dict[str, str] = dict(DEFAULT_TOOL_ID_ALIASES)
+        self._provider_metadata: dict[str, dict[str, str]] = {}
 
     def register(self, spec: ToolSpec, handler: ToolHandler) -> None:
         if spec.id in self._tools:
             raise ValueError(f"tool already registered: {spec.id}")
         self._tools[spec.id] = Tool(spec=spec, handler=handler)
 
+    def unregister(self, tool_id: str) -> None:
+        resolved_id = self.resolve_id(tool_id)
+        self._tools.pop(resolved_id, None)
+
+    def unregister_source(self, *, source_type: str, source_id: str) -> list[str]:
+        removed: list[str] = []
+        for tool_id in list(self._tools):
+            public = self.get_public_spec(tool_id)
+            if public.get("source_type") == source_type and public.get("source_id") == source_id:
+                self._tools.pop(tool_id, None)
+                removed.append(tool_id)
+        for provider_id, metadata in list(self._provider_metadata.items()):
+            if metadata.get("source_type") == source_type and metadata.get("source_id") == source_id:
+                self._provider_metadata.pop(provider_id, None)
+        return removed
+
     def register_alias(self, alias: str, tool_id: str) -> None:
         self._aliases[normalize_tool_syntax(alias)] = normalize_tool_syntax(tool_id)
+
+    def set_provider_metadata(
+        self,
+        provider_id: str,
+        *,
+        source_type: str,
+        source_id: str | None = None,
+    ) -> None:
+        normalized_provider_id = str(provider_id or "").strip()
+        normalized_source_type = str(source_type or "").strip()
+        if not normalized_provider_id:
+            raise ValueError("provider_id is required")
+        if not normalized_source_type:
+            raise ValueError("source_type is required")
+        self._provider_metadata[normalized_provider_id] = {
+            "source_type": normalized_source_type,
+            "source_id": str(source_id or normalized_provider_id).strip(),
+        }
 
     def resolve_id(self, tool_id: str) -> str:
         value = normalize_tool_syntax(tool_id)
@@ -92,8 +131,17 @@ class ToolRegistry:
         except KeyError as exc:
             raise KeyError(f"unknown tool: {tool_id}") from exc
 
+    def get_public_spec(self, tool_id: str) -> dict[str, Any]:
+        tool = self.get(tool_id)
+        public = tool.spec.to_public_dict()
+        provider_id = tool.spec.id.split(".", 1)[0]
+        metadata = self._provider_metadata.get(provider_id, {})
+        public["source_type"] = metadata.get("source_type", "builtin")
+        public["source_id"] = metadata.get("source_id", provider_id)
+        return public
+
     def list_specs(self) -> list[dict[str, Any]]:
-        return [tool.spec.to_public_dict() for tool in self._tools.values()]
+        return [self.get_public_spec(tool.spec.id) for tool in self._tools.values()]
 
     def missing_required_input_fields(
         self,

@@ -37,6 +37,13 @@ foundation easier to understand, test, and extend.
   - `plan_tracker.py`: execution plan lifecycle helpers.
 - `runtime/api/`
   - Tornado API handlers and streaming endpoints.
+- `runtime/persistence.py`
+  - Owns shared mechanics for the current document-file backend.
+  - Store classes remain the runtime-facing repository boundary; do not add
+    direct operational-data file reads in API, strategy, or runner code.
+- `runtime/run_repository.py`
+  - Owns JSON compatibility and SQLite persistence for Run/RunEvent history.
+  - Keep lifecycle and event-driven state transitions in `RunStore`, not SQL.
 - `runtime/skills/`
   - Local tools. Keep file, shell, Git, and export boundaries explicit.
 - `runtime/panel/`
@@ -47,6 +54,7 @@ foundation easier to understand, test, and extend.
   - Architecture, plugin, and protocol notes for contributors.
   - `task-model.md`: task, plan, step, trace, recovery, and template direction.
   - `run-artifacts.md`: shared temporary artifacts across ToolTasks in one Run.
+  - `persistence-model.md`: operational data boundaries and SQLite direction.
 
 ## Task Runtime Rules
 

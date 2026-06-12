@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -11,19 +12,33 @@ from .memory_store import MemoryItem, MemoryStore
 
 logger = logging.getLogger(__name__)
 
-EXTRACTION_SYSTEM_PROMPT = """你是一个记忆提取助手。从下面的对话中提取值得长期记住的信息。
+# Tags that must be rejected at storage time — these indicate project-scoped facts.
+_BLOCKED_TAGS = frozenset({
+    "project_knowledge", "project-knowledge", "project knowledge",
+    "项目知识", "项目知识 - 技术栈",
+    "project_structure", "project-info",
+    "architecture_decision",
+    "technical_selection", "tech_stack", "technology_stack",
+    "技术选型", "技术栈",
+})
 
-提取类别:
-- 用户偏好 (代码风格、沟通方式、工具使用习惯、界面偏好)
-- 项目知识 (项目结构、技术栈、约定规范、常用路径)
-- 用户身份 (角色、团队、专业领域)
-- 重要决策 (架构选择、方案确认、技术选型)
+EXTRACTION_SYSTEM_PROMPT = """你是一个记忆提取助手。从对话中提取值得长期记住的**用户级**信息。
+
+只提取以下类别:
+- 用户偏好 (代码风格、沟通方式、工具使用习惯、界面偏好、工作习惯)
+- 用户身份 (角色、团队、专业领域、语言偏好)
+
+绝对不要提取:
+- 特定项目的结构、技术栈、部署信息、文件路径
+- 特定项目的架构决策或技术选型
+- 特定项目的依赖库、版本号、配置地址
+- 一次性的任务细节或临时操作
 
 规则:
-1. 只提取明确的事实和偏好，不提取临时任务细节
+1. 只提取跨项目通用的个人偏好和身份信息
 2. 每条记忆只包含一个事实，用一句简洁的中文概括
-3. 为每条记忆标注 1-3 个分类标签（英文）
-4. 不要提取已经在对话中临时处理的一次性信息
+3. 为每条记忆标注 1-2 个分类标签（英文），如 user_preference, user_identity
+4. 如果无法确定是否为跨项目通用信息，不要提取
 5. 如果没有值得提取的内容，返回空数组
 
 输出 JSON 格式:
@@ -139,6 +154,62 @@ async def extract_memories_from_conversation(
         return []
 
 
+_PUNCT_RE = re.compile(r"[,.;:!?\"'()\[\]{}<>,.;:\s，。、；：\u201c\u201d\u2018\u2019【】（）]+")
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize text for dedup: lowercase, collapse whitespace, strip punctuation."""
+    text = text.lower().strip()
+    text = _PUNCT_RE.sub(" ", text)
+    text = " ".join(text.split())
+    return text
+
+
+def _is_similar_to_existing(new_text: str, existing_normalized: set[str], threshold: float = 0.7) -> bool:
+    """Check if new_text is similar to any existing memory text.
+
+    Uses normalized exact match + substring containment + token overlap.
+    """
+    norm = _normalize_text(new_text)
+    if not norm:
+        return True
+
+    # 1. Exact normalized match
+    if norm in existing_normalized:
+        return True
+
+    # 2. Substring containment: if new text is contained in or contains existing
+    for existing in existing_normalized:
+        if len(norm) > 3 and len(existing) > 3:
+            if norm in existing or existing in norm:
+                return True
+
+    # 3. Character bigram overlap (works well for CJK text)
+    new_bigrams = set(norm[i:i+2] for i in range(len(norm) - 1)) if len(norm) >= 2 else set()
+    if new_bigrams:
+        for existing in existing_normalized:
+            existing_bigrams = set(existing[i:i+2] for i in range(len(existing) - 1)) if len(existing) >= 2 else set()
+            if not existing_bigrams:
+                continue
+            intersection = new_bigrams & existing_bigrams
+            union = new_bigrams | existing_bigrams
+            if union and len(intersection) / len(union) >= threshold:
+                return True
+
+    return False
+
+
+def _has_blocked_tags(tags: list[str]) -> bool:
+    """Check if any tag is in the project-scoped blacklist."""
+    for tag in tags:
+        normalized_tag = tag.strip().lower().replace("_", " ").replace("-", " ")
+        for blocked in _BLOCKED_TAGS:
+            blocked_normalized = blocked.lower().replace("_", " ").replace("-", " ")
+            if normalized_tag == blocked_normalized:
+                return True
+    return False
+
+
 async def extract_and_store_memories(
     store: MemoryStore,
     messages: list[dict[str, Any]],
@@ -153,30 +224,37 @@ async def extract_and_store_memories(
         return []
 
     stored: list[MemoryItem] = []
-    # Deduplicate against existing memories
-    existing_texts = set()
+    # Build normalized existing text set for fuzzy dedup
+    existing_normalized: set[str] = set()
     for item in store.list():
-        normalized = " ".join(item.text.lower().split())
-        existing_texts.add(normalized)
+        existing_normalized.add(_normalize_text(item.text))
 
     for candidate in candidates:
         text = str(candidate.get("text") or "").strip()
         if not text:
             continue
-        # Simple dedup check
-        normalized = " ".join(text.lower().split())
-        if normalized in existing_texts:
-            continue
-        existing_texts.add(normalized)
 
         tags = candidate.get("tags") or []
         if not isinstance(tags, list):
             tags = []
+        tags = [str(t).strip() for t in tags if str(t).strip()][:6]
+
+        # Reject project-scoped memories by tag
+        if _has_blocked_tags(tags):
+            logger.debug("Rejected project-scoped memory (blocked tag): %s", text[:80])
+            continue
+
+        # Fuzzy dedup against existing memories
+        if _is_similar_to_existing(text, existing_normalized):
+            logger.debug("Rejected duplicate memory: %s", text[:80])
+            continue
+
+        existing_normalized.add(_normalize_text(text))
 
         item = MemoryItem(
             id=f"mem_{uuid.uuid4().hex[:10]}",
-            text=text,
-            tags=[str(t).strip()[:24] for t in tags if str(t).strip()][:6],
+            text=text[:500],
+            tags=[str(t).strip()[:24] for t in tags],
             enabled=True,
             source="auto",
             conversation_id=conversation_id,

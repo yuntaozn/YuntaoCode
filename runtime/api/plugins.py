@@ -23,10 +23,14 @@ class PluginsHandler(ApiHandler):
         for plugin_id, tools in groups.items():
             dependency_status = self.runtime.registry.check_plugin_dependencies(plugin_id)
             enabled = plugin_settings.get(plugin_id, {}).get("enabled", True)
+            source_types = {str(tool.get("source_type") or "builtin") for tool in tools}
+            source_ids = {str(tool.get("source_id") or plugin_id) for tool in tools}
             plugins.append({
                 "id": plugin_id,
                 "name": i18n.t(f"plugin.name.{plugin_id}", lang) or plugin_id,
                 "description": i18n.t(f"plugin.desc.{plugin_id}", lang) or i18n.t("plugin.desc.default", lang),
+                "source_type": next(iter(source_types)) if len(source_types) == 1 else "mixed",
+                "source_id": next(iter(source_ids)) if len(source_ids) == 1 else None,
                 "enabled": enabled,
                 "local_only": all(bool(tool.get("local_only", True)) for tool in tools),
                 "dependencies": dependency_status,
@@ -48,9 +52,14 @@ class PluginsHandler(ApiHandler):
         plugin_id = str(payload.get("plugin_id") or "").strip()
         enabled = bool(payload.get("enabled", True))
         registered_plugin_ids = {tool["id"].split(".", 1)[0] for tool in self.runtime.registry.list_specs()}
+        managed_plugin_ids = {
+            tool["id"].split(".", 1)[0]
+            for tool in self.runtime.registry.list_specs()
+            if tool.get("source_type") == "mcp"
+        }
         ai_plugin_root = self.runtime.settings.data_dir / "ai-plugins"
         draft_ids = {draft["id"] for draft in load_ai_plugin_drafts(ai_plugin_root, lang)}
-        policy_error = plugin_toggle_policy_error(plugin_id, registered_plugin_ids, draft_ids)
+        policy_error = plugin_toggle_policy_error(plugin_id, registered_plugin_ids, draft_ids, managed_plugin_ids)
         if policy_error:
             status, reason = policy_error
             self.set_status(status)
@@ -69,11 +78,14 @@ def plugin_toggle_policy_error(
     plugin_id: str,
     registered_plugin_ids: set[str],
     draft_plugin_ids: set[str],
+    managed_plugin_ids: set[str] | None = None,
 ) -> tuple[int, str] | None:
     if not plugin_id:
         return 400, "plugin_id is required"
     if plugin_id in draft_plugin_ids:
         return 403, "AI plugin drafts are read-only and cannot be enabled from the plugin settings API"
+    if plugin_id in (managed_plugin_ids or set()):
+        return 403, "MCP capabilities are managed from the MCP services API"
     if plugin_id not in registered_plugin_ids:
         return 404, f"unknown plugin: {plugin_id}"
     return None
@@ -125,6 +137,7 @@ def ai_plugin_draft_to_public_dict(
         "id": plugin_id,
         "name": manifest.get("name_zh" if zh else "name") or manifest.get("name") or plugin_id,
         "description": manifest.get("description_zh" if zh else "description") or manifest.get("description") or "",
+        "source_type": "ai_draft",
         "enabled": False,
         "loadable": bool(runtime.get("loadable", False)),
         "ai_draft": True,

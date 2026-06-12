@@ -44,6 +44,24 @@ Capability Runtime
   能力契约、工具、权限、确认、插件草案、外部能力接入。
 ```
 
+外部能力接入进一步区分为：
+
+```text
+Plugin / Capability Catalog
+  展示任务可以使用的能力，以及能力来自内置、外部适配器或 MCP。
+
+MCP Service Manager
+  管理 MCP 配置、进程、传输、连接状态、日志和权限。
+
+MCP Protocol Adapter
+    完成握手、工具发现、调用和结果归一化，再将工具注册到 Capability Runtime。
+```
+
+MCP 进程运行不等于协议已连接。只有协议适配器完成握手并发现工具后，
+对应能力才可以进入模型上下文。详见 [mcp-services.md](mcp-services.md)。
+当前 stdio MCP 会话已经接通这条链路；Streamable HTTP 与 legacy SSE
+仍只提供配置和可达性检查，尚未建立协议会话。
+
 其中 Task Runtime 是用户目标的执行主线：
 
 ```text
@@ -64,6 +82,8 @@ Task
 - 让写入回退、失败重试、暂停恢复成为 Runtime 能力，而不是某个 prompt 的偶然表现。
 - 让上下文来源、证据、摘要和未验证项可追踪。
 - 让工具通过 Capability Contract 接入，而不是只暴露函数名。
+- 区分本地文件写入与更广义的可观察状态变更，让 MCP、CAD、数据库和浏览器
+  自动化通过统一的 `effects / roles / artifacts` 事实进入任务验收。
 
 Task Model 草案见 [task-model.md](task-model.md)，Context Runtime 规划见 [context-runtime.md](context-runtime.md)，Capability Runtime 规划见 [capability-runtime.md](capability-runtime.md)，Document Draft Runtime 见 [document-draft-runtime.md](document-draft-runtime.md)，当前代码层基础契约见 [runtime-foundation.md](runtime-foundation.md)。
 
@@ -93,7 +113,7 @@ User Request
 
 - `classifiers.py`：意图分类、工具分类、进度观察和阶段判断。
 - `capability_router.py`：能力契约、模型路由提案和提案验证。
-- `profiles.py`：内部执行 Profile，例如直接问答、项目分析、代码修改、文档工作流、论文工作流。
+- `profiles.py`：内部执行 Profile，例如直接问答、项目分析、代码修改、外部能力执行、文档工作流、论文工作流。
 - `policy.py`：请求路由和计划执行开关；确定性规则只承担安全边界与模型不可用时的回退，不替模型决定任务目标和执行策略。
 - `prompts.py`：阶段提示、修复提示、最终回答提示等 prompt 构建。
 - `plan_tracker.py`：执行计划的提取、归一化、推进和收尾。

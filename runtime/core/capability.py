@@ -36,6 +36,8 @@ class CapabilityContract:
     description: str = ""
     input_schema: dict[str, Any] = field(default_factory=dict)
     output_artifacts: tuple[str, ...] = field(default_factory=tuple)
+    effect_types: tuple[str, ...] = field(default_factory=tuple)
+    task_roles: tuple[str, ...] = field(default_factory=tuple)
     permissions: PermissionSet = field(default_factory=PermissionSet)
     long_running: bool = False
     retry_safe: bool = False
@@ -52,6 +54,8 @@ class CapabilityContract:
             "description": self.description,
             "input_schema": dict(self.input_schema),
             "output_artifacts": list(self.output_artifacts),
+            "effect_types": list(self.effect_types),
+            "task_roles": list(self.task_roles),
             "permissions": self.permissions.to_dict(),
             "long_running": self.long_running,
             "retry_safe": self.retry_safe,

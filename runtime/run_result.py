@@ -10,7 +10,10 @@ from runtime.agent_strategy.classifiers import (
     successful_verification_events,
 )
 from runtime.agent_strategy.tool_event_roles import (
+    deliverable_path_deviations,
     deliverable_verification_events,
+    event_effects,
+    event_declared_roles,
     failed_deliverable_events,
     successful_deliverable_events,
 )
@@ -87,6 +90,7 @@ def build_run_result(
         event for event in write_successes
         if _effective_event_status(str(event.get("tool") or ""), event) == "partial"
     ]
+    path_deviations = deliverable_path_deviations(write_successes, task_contract)
     written_paths = _unique(
         path
         for event in write_successes
@@ -116,8 +120,20 @@ def build_run_result(
                 risks.append(str(runtime_risk["code"]))
     if requires_code_write and not write_successes:
         risks.append("expected_write_not_observed")
+    requires_target_deliverable = (
+        isinstance(task_contract, dict)
+        and (
+            bool(task_contract.get("requires_write"))
+            or bool(task_contract.get("requires_state_change"))
+        )
+    )
+    missing_target_deliverable = bool(requires_target_deliverable and not write_successes)
+    if missing_target_deliverable:
+        risks.append("target_deliverable_not_observed")
     if write_successes and not verification_successes:
-        risks.append("write_not_verified")
+        risks.append("deliverable_not_verified")
+        if any(is_write_tool(str(event.get("tool") or "")) for event in write_successes):
+            risks.append("write_not_verified")
     code_artifact_written = _has_code_artifact(written_paths)
     if requires_code_write and code_artifact_written and write_successes and not test_successes:
         risks.append("test_not_observed")
@@ -129,6 +145,8 @@ def build_run_result(
         risks.append("partial_write_failure")
     if write_partials:
         risks.append("partial_write_resumable")
+    if path_deviations:
+        risks.append("deliverable_path_hint_changed")
     if contract_failed:
         risks.append("execution_contract_failed")
     if max_rounds_exceeded:
@@ -183,6 +201,7 @@ def build_run_result(
             and bool(write_successes)
             and not bool(test_successes)
         ),
+        has_missing_target_deliverable=missing_target_deliverable,
         contract_failed=contract_failed,
         max_rounds_exceeded=max_rounds_exceeded,
         convergence_stopped=convergence_stopped,
@@ -193,6 +212,14 @@ def build_run_result(
         "status": status,
         "counts": {
             "tool_events": len(tool_events),
+            "deliverable_successes": len(write_successes),
+            "file_write_successes": len(state_write_successes),
+            "external_state_changes": sum(
+                1
+                for event in tool_events
+                if _effective_event_status(str(event.get("tool") or ""), event) == "success"
+                and "external_state_change" in event_effects(event)
+            ),
             "write_successes": len(write_successes),
             "write_partials": len(write_partials),
             "write_failures": len(write_failures),
@@ -203,6 +230,7 @@ def build_run_result(
         "changed_paths": changed_paths,
         "written_paths": written_paths,
         "verified": verified[:12],
+        "deliverable_path_deviations": path_deviations[:12],
         "failures": failures[:12],
         "risks": _unique(risks),
         "flags": {
@@ -227,11 +255,14 @@ def _result_status(
     has_document_coverage_failure: bool,
     has_document_min_output_failure: bool,
     has_missing_code_test: bool,
+    has_missing_target_deliverable: bool,
     contract_failed: bool,
     max_rounds_exceeded: bool,
     convergence_stopped: bool,
 ) -> str:
     if contract_failed:
+        if has_write_success and not has_missing_target_deliverable:
+            return "partial"
         return "failure"
     if max_rounds_exceeded or convergence_stopped:
         return "stopped"
@@ -245,6 +276,8 @@ def _result_status(
         return "partial"
     if has_missing_code_test:
         return "partial"
+    if has_missing_target_deliverable:
+        return "failure"
     if has_failure:
         return "failure"
     if has_write_success or has_tool_events:
@@ -364,6 +397,10 @@ def _failures_recovered(
 def _event_indicates_progress(event: dict[str, Any]) -> bool:
     tool_id = str(event.get("tool") or "")
     if is_write_tool(tool_id):
+        return True
+    if "external_state_change" in event_effects(event):
+        return True
+    if "deliverable" in event_declared_roles(event):
         return True
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
     if tool_id == "shell.run_command":

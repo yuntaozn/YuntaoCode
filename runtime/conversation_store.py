@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import json
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+from .persistence import AtomicJsonDocumentStorage, DocumentStorage
 
 
 def utc_now() -> str:
@@ -19,6 +20,7 @@ def normalize_conversation_mode(value: Any) -> str:
 
 @dataclass
 class MessageRecord:
+    id: str
     role: str
     content: str
     created_at: str = field(default_factory=utc_now)
@@ -26,6 +28,7 @@ class MessageRecord:
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
+            "id": self.id,
             "role": self.role,
             "content": self.content,
             "created_at": self.created_at,
@@ -35,6 +38,7 @@ class MessageRecord:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "MessageRecord":
         return cls(
+            id=str(value.get("id") or uuid4()),
             role=str(value.get("role", "")),
             content=str(value.get("content", "")),
             created_at=str(value.get("created_at") or utc_now()),
@@ -84,8 +88,14 @@ class ConversationRecord:
 
 
 class ConversationStore:
-    def __init__(self, store_path: Path | None = None) -> None:
-        self.store_path = store_path
+    def __init__(
+        self,
+        store_path: Path | None = None,
+        *,
+        storage: DocumentStorage | None = None,
+    ) -> None:
+        self._storage = storage if storage is not None else AtomicJsonDocumentStorage(store_path)
+        self.store_path = self._storage.path
         self._conversations: dict[str, ConversationRecord] = {}
         self._load()
 
@@ -117,7 +127,7 @@ class ConversationStore:
         metadata: dict[str, Any] | None = None,
     ) -> MessageRecord:
         conversation = self._require(conversation_id)
-        message = MessageRecord(role=role, content=content, metadata=metadata or {})
+        message = MessageRecord(id=str(uuid4()), role=role, content=content, metadata=metadata or {})
         conversation.messages.append(message)
         conversation.updated_at = utc_now()
         if conversation.title == "新对话" and role == "user" and content.strip():
@@ -147,12 +157,7 @@ class ConversationStore:
         return False
 
     def _load(self) -> None:
-        if not self.store_path or not self.store_path.exists():
-            return
-        try:
-            value = json.loads(self.store_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return
+        value = self._storage.load()
         conversations = value.get("conversations") if isinstance(value, dict) else []
         if not isinstance(conversations, list):
             return
@@ -162,13 +167,10 @@ class ConversationStore:
                 self._conversations[record.id] = record
 
     def _save(self) -> None:
-        if not self.store_path:
-            return
-        self.store_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "conversations": [
                 item.to_public_dict(include_messages=True)
                 for item in self._conversations.values()
             ]
         }
-        self.store_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._storage.save(payload)

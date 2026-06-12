@@ -24,8 +24,7 @@ const state = {
     submitSeq: 0,
     isSending: false,
     abortController: null,
-    uploadedImage: null,
-    uploadedImageDataUrl: null,
+    pendingAttachments: [],
     contextTokens: 0,
     contextLimit: 0,
     search: "",
@@ -270,12 +269,16 @@ function formatErrorMessage(error, fallback) {
 }
 
 async function api(path, options = {}) {
+    const requestHeaders = {
+        ...headers(),
+        ...(options.headers || {}),
+    };
+    if (options.body instanceof FormData) {
+        delete requestHeaders["Content-Type"];
+    }
     const response = await fetch(path, {
         ...options,
-        headers: {
-            ...headers(),
-            ...(options.headers || {}),
-        },
+        headers: requestHeaders,
     });
     const raw = await response.text();
     let payload;
@@ -893,6 +896,7 @@ function renderMessage(message, key = "") {
                 ${renderToolEvents(message)}
                 ${renderExecutionNotice(message)}
                 ${renderChangeSummary(message)}
+                ${renderMessageAttachments(message)}
                 ${message.content ? `<div class="message-content">${formatMessageContent(message.content)}</div>` : ""}
             </div>
         </div>
@@ -1153,7 +1157,7 @@ async function sendMessage(event) {
         refreshComposerState();
         return;
     }
-    if (!content && !state.uploadedImage) return;
+    if (!content && !state.pendingAttachments.length) return;
     if (state.pendingComposerSubmit) {
         console.debug("[YuntaoCode] duplicate composer submit suppressed");
         return;
@@ -1178,13 +1182,30 @@ async function sendMessage(event) {
     const conversationId = state.currentConversationId;
     const requestMode = state.currentMode;
     const requestId = `stream-${Date.now()}-${++state.submitSeq}`;
+    let uploadedAttachments = [];
+    try {
+        uploadedAttachments = await uploadAttachmentFiles(
+            conversationId,
+            state.currentWorkspaceId,
+            state.pendingAttachments.map((item) => item.file),
+        );
+    } catch (error) {
+        state.pendingComposerSubmit = false;
+        updateSendingState();
+        setSendButtonState(false);
+        showToast(error.message);
+        return;
+    }
     input.value = "";
-    const imageDataUrl = state.uploadedImageDataUrl;
-    clearImageUpload();
+    clearAttachmentUpload();
     const previousMessages = [...state.currentMessages];
     const streamingMessages = [
         ...previousMessages,
-        { role: "user", content, metadata: {} },
+        {
+            role: "user",
+            content: content || t('attachment.placeholder'),
+            metadata: { attachments: uploadedAttachments },
+        },
         {
             role: "assistant",
             content: "",
@@ -1344,8 +1365,8 @@ async function sendMessage(event) {
             plan_mode: state.planningPolicy,
             request_id: requestId,
         };
-        if (imageDataUrl) {
-            body.image_data = imageDataUrl;
+        if (uploadedAttachments.length) {
+            body.attachment_ids = uploadedAttachments.map((item) => item.id);
         }
         await streamApi(
             `/conversations/${conversationId}/messages/stream`,
@@ -1621,9 +1642,16 @@ async function sendMessage(event) {
             }
             renderStreamMessages();
         } else {
+            await Promise.allSettled(uploadedAttachments.map((item) => api(`/attachments/${encodeURIComponent(item.id)}`, {
+                method: "DELETE",
+            })));
             const errorMessages = [
                 ...previousMessages,
-                { role: "user", content, metadata: {} },
+                {
+                    role: "user",
+                    content: content || t('attachment.placeholder'),
+                    metadata: { attachments: uploadedAttachments },
+                },
                 { role: "assistant", content: `Error: ${error.message}`, metadata: { error: true } },
             ];
             const activeStream = state.activeStreams.get(conversationId);
@@ -2383,6 +2411,7 @@ on("new-conversation-btn", "click", () => newConversation().catch((error) => sho
 on("focus-search-btn", "click", () => $("conversation-search-input")?.focus());
 on("open-settings-btn", "click", () => openAuxiliaryPage("/settings-page"));
 on("open-plugins-btn", "click", () => openAuxiliaryPage("/plugins-page"));
+on("open-mcp-services-btn", "click", () => openAuxiliaryPage("/mcp-services-page"));
 on("open-login-btn", "click", () => $("login-dialog").showModal());
 on("logout-btn", "click", () => logoutBackend());
 on("conversation-search-input", "input", (event) => {
@@ -2397,13 +2426,16 @@ on("message-input", "click", () => handleMentionInput());
 on("message-input", "paste", (event) => {
     const items = event.clipboardData?.items;
     if (!items) return;
+    const files = [];
     for (let i = 0; i < items.length; i++) {
-        if (items[i].type.startsWith("image/")) {
-            event.preventDefault();
+        if (items[i].kind === "file") {
             const file = items[i].getAsFile();
-            if (file) handleImageFile(file);
-            break;
+            if (file) files.push(file);
         }
+    }
+    if (files.length) {
+        event.preventDefault();
+        handleAttachmentFiles(files);
     }
 });
 on("message-input", "keyup", (event) => {
@@ -2452,15 +2484,14 @@ on("message-input", "keydown", (event) => {
         $("composer").dispatchEvent(new Event("submit", { cancelable: true }));
     }
 });
-on("upload-image-btn", "click", () => $("image-file-input")?.click());
+on("upload-attachment-btn", "click", () => $("attachment-file-input")?.click());
 on("plan-mode-btn", "click", () => cyclePlanExecutionMode());
 on("confirmation-mode-btn", "click", () => cycleConfirmationPolicy());
 on("token-battery", "click", () => compressContext().catch((error) => showToast(error.message)));
 on("confirm-continue-btn", "click", () => sendConfirmAction("continue"));
 on("confirm-cancel-btn", "click", () => sendConfirmAction("cancel"));
-on("image-file-input", "change", (event) => {
-    const file = event.target.files[0];
-    if (file) handleImageFile(file);
+on("attachment-file-input", "change", (event) => {
+    handleAttachmentFiles(Array.from(event.target.files || []));
 });
 
 window.addEventListener("beforeunload", (event) => {
@@ -2490,47 +2521,102 @@ function showToast(message) {
     setTimeout(() => toast.remove(), 3000);
 }
 
-function handleImageFile(file) {
-    if (!file || !file.type.startsWith("image/")) {
-        showToast(t('image.select_file'));
-        return;
+function handleAttachmentFiles(files) {
+    for (const file of files) {
+        if (state.pendingAttachments.length >= 8) {
+            showToast(t('attachment.max_count'));
+            break;
+        }
+        const limit = file.type.startsWith("image/") ? 10 * 1024 * 1024 : 25 * 1024 * 1024;
+        if (file.size > limit) {
+            showToast(t('attachment.too_large', {name: file.name}));
+            continue;
+        }
+        state.pendingAttachments.push({
+            file,
+            previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : "",
+        });
     }
-    if (file.size > 5 * 1024 * 1024) {
-        showToast(t('image.max_5mb'));
-        return;
-    }
-    state.uploadedImage = file;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        state.uploadedImageDataUrl = e.target.result;
-        renderImagePreview();
-    };
-    reader.readAsDataURL(file);
+    const input = $("attachment-file-input");
+    if (input) input.value = "";
+    renderAttachmentPreview();
 }
 
-function renderImagePreview() {
-    const preview = $("image-preview");
-    if (!state.uploadedImageDataUrl) {
+function renderAttachmentPreview() {
+    const preview = $("attachment-preview");
+    if (!preview) return;
+    if (!state.pendingAttachments.length) {
         preview.classList.add("hidden");
         preview.innerHTML = "";
         return;
     }
     preview.classList.remove("hidden");
-    preview.innerHTML = `
-        <div class="image-preview-item">
-            <img src="${state.uploadedImageDataUrl}" alt="${t('image.preview')}">
-            <button type="button" class="image-preview-remove" id="remove-image-btn" title="${t('image.remove')}">×</button>
+    preview.innerHTML = state.pendingAttachments.map((item, index) => `
+        <div class="attachment-preview-item">
+            ${item.previewUrl
+                ? `<img src="${item.previewUrl}" alt="${t('attachment.preview')}">`
+                : `<span class="attachment-file-icon">DOC</span>`}
+            <span class="attachment-preview-name" title="${escapeHtml(item.file.name)}">${escapeHtml(item.file.name)}</span>
+            <button type="button" class="attachment-preview-remove" data-attachment-index="${index}" title="${t('attachment.remove')}">×</button>
         </div>
-    `;
-    $("remove-image-btn").addEventListener("click", clearImageUpload);
+    `).join("");
+    preview.querySelectorAll("[data-attachment-index]").forEach((button) => {
+        button.addEventListener("click", () => removePendingAttachment(Number(button.dataset.attachmentIndex)));
+    });
 }
 
-function clearImageUpload() {
-    state.uploadedImage = null;
-    state.uploadedImageDataUrl = null;
-    const fileInput = $("image-file-input");
+function removePendingAttachment(index) {
+    const [removed] = state.pendingAttachments.splice(index, 1);
+    if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+    renderAttachmentPreview();
+}
+
+function clearAttachmentUpload() {
+    state.pendingAttachments.forEach((item) => {
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    });
+    state.pendingAttachments = [];
+    const fileInput = $("attachment-file-input");
     if (fileInput) fileInput.value = "";
-    renderImagePreview();
+    renderAttachmentPreview();
+}
+
+async function uploadAttachmentFiles(conversationId, workspaceId, files) {
+    const uploaded = [];
+    try {
+        for (const file of files) {
+            const form = new FormData();
+            form.append("workspace_id", workspaceId);
+            form.append("conversation_id", conversationId);
+            form.append("file", file, file.name);
+            uploaded.push(await api("/attachments", {method: "POST", body: form}));
+        }
+        return uploaded;
+    } catch (error) {
+        await Promise.allSettled(uploaded.map((item) => api(`/attachments/${encodeURIComponent(item.id)}`, {
+            method: "DELETE",
+        })));
+        throw error;
+    }
+}
+
+function renderMessageAttachments(message) {
+    const attachments = Array.isArray(message.metadata?.attachments) ? message.metadata.attachments : [];
+    if (!attachments.length) return "";
+    return `
+        <div class="message-attachments">
+            ${attachments.map((item) => item.is_image
+                ? `<a class="message-image-attachment" href="${item.content_url}" target="_blank" rel="noopener"><img src="${item.content_url}" alt="${escapeHtml(item.name || t('attachment.file'))}"></a>`
+                : `<a class="message-file-attachment" href="${item.content_url}" target="_blank" rel="noopener"><span class="attachment-file-icon">DOC</span><span>${escapeHtml(item.name || t('attachment.file'))}</span><small>${formatFileSize(item.size || 0)}</small></a>`
+            ).join("")}
+        </div>
+    `;
+}
+
+function formatFileSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 async function saveSettings() {

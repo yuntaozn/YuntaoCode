@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from .persistence import AtomicJsonDocumentStorage, DocumentStorage
 
 
 def _utc_now() -> str:
@@ -57,19 +58,19 @@ MAX_ACTIVE_MEMORIES = 50
 class MemoryStore:
     """Persistent memory store backed by a single JSON file with atomic writes."""
 
-    def __init__(self, store_path: Path) -> None:
-        self.store_path = store_path
+    def __init__(
+        self,
+        store_path: Path | None = None,
+        *,
+        storage: DocumentStorage | None = None,
+    ) -> None:
+        self._storage = storage if storage is not None else AtomicJsonDocumentStorage(store_path)
+        self.store_path = self._storage.path
         self._memories: dict[str, MemoryItem] = {}
         self._load()
 
     def _load(self) -> None:
-        if not self.store_path or not self.store_path.exists():
-            return
-        try:
-            raw = self.store_path.read_text(encoding="utf-8")
-            data = json.loads(raw)
-        except (json.JSONDecodeError, OSError):
-            return
+        data = self._storage.load()
         items = data.get("memories") if isinstance(data, dict) else []
         if not isinstance(items, list):
             return
@@ -80,20 +81,11 @@ class MemoryStore:
                     self._memories[mem.id] = mem
 
     def _save(self) -> None:
-        if not self.store_path:
-            return
-        self.store_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "version": 1,
             "memories": [m.to_dict() for m in self._memories.values()],
         }
-        # Atomic write: write to temp file then rename
-        tmp = self.store_path.with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        tmp.replace(self.store_path)
+        self._storage.save(payload)
 
     # ----- CRUD -----
 

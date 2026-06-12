@@ -1,4 +1,5 @@
 import json
+import sqlite3
 
 from runtime.run_store import RunStore
 
@@ -93,3 +94,167 @@ def test_run_store_keeps_waiting_confirmation_until_user_resumes(tmp_path) -> No
     )
     assert resumed is not None
     assert resumed.status == "running"
+
+
+def test_sqlite_run_store_persists_events_and_supports_indexed_filters(tmp_path) -> None:
+    database_path = tmp_path / "runtime.db"
+    store = RunStore.sqlite(database_path)
+    run = store.create(
+        conversation_id="conv_1",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="hello",
+    )
+    store.record_event(run.id, {
+        "schema_version": "0.1",
+        "event": "done",
+        "event_name": "run.completed",
+        "run_status": "success",
+    })
+    store.close()
+
+    reopened = RunStore.sqlite(database_path)
+    persisted = reopened.get(run.id)
+    filtered = reopened.list(
+        conversation_id="conv_1",
+        workspace_id="workspace_1",
+        status="success",
+    )
+
+    assert persisted is not None
+    assert persisted.events[-1]["event_name"] == "run.completed"
+    assert [item.id for item in filtered] == [run.id]
+    assert filtered[0].to_public_dict()["event_count"] == 1
+    reopened.close()
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+    assert "idx_runs_conversation_updated" in indexes
+    assert "idx_runs_workspace_updated" in indexes
+    assert "idx_runs_status_updated" in indexes
+    assert "idx_run_events_run_sequence" in indexes
+
+
+def test_sqlite_run_store_imports_legacy_json_once_and_keeps_source(tmp_path) -> None:
+    legacy_path = tmp_path / "runs.json"
+    legacy_store = RunStore(legacy_path)
+    legacy_run = legacy_store.create(
+        conversation_id="legacy_conv",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="legacy",
+    )
+    legacy_store.record_event(legacy_run.id, {
+        "event": "done",
+        "run_status": "success",
+    })
+    source_after_first_run = legacy_path.read_text(encoding="utf-8")
+
+    database_path = tmp_path / "runtime.db"
+    migrated = RunStore.sqlite(database_path, legacy_store_path=legacy_path)
+    assert migrated.get(legacy_run.id) is not None
+    sqlite_run = migrated.create(
+        conversation_id="sqlite_conv",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="new sqlite run",
+    )
+    migrated.record_event(sqlite_run.id, {
+        "event": "done",
+        "run_status": "success",
+    })
+    migrated.close()
+    assert legacy_path.read_text(encoding="utf-8") == source_after_first_run
+
+    extra_legacy_run = legacy_store.create(
+        conversation_id="legacy_conv",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="added after import",
+    )
+    reopened = RunStore.sqlite(database_path, legacy_store_path=legacy_path)
+
+    assert reopened.get(legacy_run.id) is not None
+    assert reopened.get(extra_legacy_run.id) is None
+    reopened.close()
+
+
+def test_sqlite_run_store_applies_run_and_event_retention(tmp_path) -> None:
+    store = RunStore.sqlite(tmp_path / "runtime.db", keep_runs=2, keep_events=2)
+    first = store.create(
+        conversation_id="conv_1",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="first",
+    )
+    for index in range(3):
+        store.record_event(first.id, {
+            "event": "status",
+            "status": f"stage_{index}",
+            "message": str(index),
+        })
+    retained_first = store.get(first.id)
+    assert retained_first is not None
+    assert [event["message"] for event in retained_first.events] == ["1", "2"]
+
+    second = store.create(
+        conversation_id="conv_1",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="second",
+    )
+    third = store.create(
+        conversation_id="conv_1",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="third",
+    )
+
+    assert store.get(first.id) is None
+    assert {item.id for item in store.list()} == {second.id, third.id}
+    store.close()
+
+
+def test_sqlite_run_store_startup_recovery_preserves_events(tmp_path) -> None:
+    database_path = tmp_path / "runtime.db"
+    store = RunStore.sqlite(database_path)
+    run = store.create(
+        conversation_id="conv_1",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="hello",
+    )
+    store.record_event(run.id, {
+        "event": "status",
+        "status": "thinking",
+        "message": "working",
+    })
+    store.close()
+
+    recovered_store = RunStore.sqlite(database_path)
+    recovered = recovered_store.get(run.id)
+
+    assert recovered is not None
+    assert recovered.status == "stopped"
+    assert recovered.stage == "interrupted"
+    assert recovered.events[-1]["message"] == "working"
+    recovered_store.close()
+
+
+def test_sqlite_run_store_rejects_newer_database_schema(tmp_path) -> None:
+    database_path = tmp_path / "runtime.db"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA user_version = 999")
+
+    try:
+        RunStore.sqlite(database_path)
+    except RuntimeError as exc:
+        assert "newer than supported" in str(exc)
+    else:
+        raise AssertionError("newer operational schema should be rejected")

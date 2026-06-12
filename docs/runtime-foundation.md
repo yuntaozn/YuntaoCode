@@ -28,6 +28,11 @@ It intentionally avoids Tornado, model-provider, filesystem, and network
 dependencies so API handlers, agent strategy, tools, and UI adapters can depend
 on the same foundation.
 
+Operational persistence is accessed through runtime Store classes rather than
+direct file reads. Run and RunEvent history now uses SQLite behind `RunStore`;
+the remaining JSON stores and incremental SQLite direction are documented in
+[persistence-model.md](persistence-model.md).
+
 ## Convergence Contract
 
 The runtime should not decide the task strategy for the model, but it must
@@ -122,8 +127,8 @@ Before a run enters planning or tool execution, the runtime now builds a
 The intended split is:
 
 - The model judges the task semantics: goal, intent, whether a write is
-  required, expected deliverables, first action, blockers, confidence, and
-  whether a plan is useful.
+  required, whether observable state must change, expected deliverables, first
+  action, blockers, confidence, and whether a plan is useful.
 - The runtime owns the contract shape, schema version, local security
   overrides, workspace scope, success conditions, and completion checks.
 
@@ -140,12 +145,14 @@ Example:
   "intent": "write_required",
   "goal": "Create an HTML model viewer demo",
   "requires_write": true,
+  "requires_state_change": true,
   "requires_verification": true,
   "requires_plan": false,
   "deliverables": [
     {
       "kind": "file",
       "path_hint": "model-viewer.html",
+      "path_policy": "hint",
       "description": "A Three.js GLB/GLTF model viewer example"
     }
   ],
@@ -158,12 +165,34 @@ Example:
 }
 ```
 
+Follow-up requests declare a `scope_relation`. `continue` and `revise` keep
+the previous task's semantic target while the model changes execution strategy
+or quality requirements. `replace` and `new` establish a different target.
+The runtime preserves a compact `continuity_anchor` for continued/revised
+tasks, preventing an intermediate fallback from silently becoming the next
+turn's product goal.
+
+Deliverable paths are soft hints by default. A successful artifact of the same
+declared kind may use another path and still satisfy the contract; the path
+deviation is recorded in `RunResult`. Use `path_policy="exact"` only when the
+user explicitly requires the precise path.
+
 Tool identity and task role are intentionally separate. `tool_id` tells the
 runtime whether a call can change local state, so it is used for permission,
 safety, and confirmation gates. A `tool_event` is interpreted inside the current
 task contract as evidence, draft, temporary artifact, target deliverable, or
 verification. Run completion is based on whether the declared target
 deliverable role was satisfied, not on a fixed list of tool IDs.
+
+`requires_write` specifically means that a local file artifact must be created
+or modified. `requires_state_change` covers the wider class of observable
+changes, including files, Blender/CAD scenes, browser sessions, databases, and
+other external applications. An external-state task can therefore set
+`requires_state_change=true` and `requires_write=false`.
+
+Tool providers may declare `effects`, `roles`, and `artifacts`. Successful tool
+results carry these facts into the event trace, allowing the runtime to audit
+external-state deliverables without hard-coding provider tool IDs.
 
 The runtime can still override the model contract. For example, a user saying
 "only analyze" forces a read-only contract even if the model proposes a write.
@@ -201,6 +230,7 @@ The model can still write a user-facing answer, but `RunResult` is the source of
 truth for:
 
 - successful writes
+- successful target deliverables, including external-state changes
 - failed writes
 - changed paths
 - verification tool calls

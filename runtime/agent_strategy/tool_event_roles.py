@@ -24,6 +24,7 @@ TEMPORARY = "temporary"
 VERIFICATION = "verification"
 STATE_CHANGE = "state_change"
 UNKNOWN = "unknown"
+EXTERNAL_STATE_CHANGE = "external_state_change"
 
 
 DRAFT_TOOL_IDS: frozenset[str] = frozenset({
@@ -64,12 +65,32 @@ def classify_tool_event_role(
     tool_id = canonical_tool_id(str(event.get("tool") or ""))
     paths = event_path_hints(event)
     contract_paths = deliverable_paths or contract_deliverable_paths(task_contract)
+    effects = event_effects(event)
+    declared_roles = event_declared_roles(event)
+    deliverable_kinds = contract_deliverable_kinds(task_contract)
 
     if paths and contract_paths and any(_path_matches_any(path, contract_paths) for path in paths):
-        if _status_is_success_or_partial(event) and _can_be_deliverable_event(event):
+        if (
+            _status_is_success_or_partial(event)
+            and _can_be_deliverable_for_contract(event, task_contract)
+        ):
             return DELIVERABLE
-        if is_meaningful_verification_event(event, mode, written_paths=contract_paths):
+        if _is_verification_event(event, mode, written_paths=contract_paths):
             return VERIFICATION
+
+    if (
+        _status_is_success_or_partial(event)
+        and EXTERNAL_STATE_CHANGE in effects
+        and (
+            "external_state" in deliverable_kinds
+            or (
+                isinstance(task_contract, dict)
+                and task_contract.get("requires_state_change")
+                and not task_contract.get("requires_write")
+            )
+        )
+    ):
+        return DELIVERABLE
 
     if tool_id in DRAFT_TOOL_IDS:
         return DRAFT
@@ -77,12 +98,14 @@ def classify_tool_event_role(
         return TEMPORARY
     if tool_id in EVIDENCE_TOOL_IDS:
         return EVIDENCE
+    if VERIFICATION in declared_roles and _status_is_success_or_partial(event):
+        return VERIFICATION
 
-    if _status_is_success_or_partial(event) and _can_be_deliverable_event(event):
-        if not contract_paths:
+    if _status_is_success_or_partial(event) and _can_be_deliverable_for_contract(event, task_contract):
+        if not contract_paths or _contract_allows_alternative_path(event, task_contract):
             return DELIVERABLE
         return STATE_CHANGE
-    if is_meaningful_verification_event(event, mode, written_paths=contract_paths):
+    if _is_verification_event(event, mode, written_paths=contract_paths):
         return VERIFICATION
     return UNKNOWN
 
@@ -122,10 +145,14 @@ def failed_deliverable_events(
         if str(event.get("status") or "") != "failure":
             continue
         tool_id = canonical_tool_id(str(event.get("tool") or ""))
-        if not _can_be_deliverable_event(event):
+        if not _can_be_deliverable_for_contract(event, task_contract):
             continue
         paths = event_path_hints(event)
-        if not contract_paths or (paths and any(_path_matches_any(path, contract_paths) for path in paths)):
+        if (
+            not contract_paths
+            or _contract_allows_alternative_path(event, task_contract)
+            or (paths and any(_path_matches_any(path, contract_paths) for path in paths))
+        ):
             result.append(event)
     return result
 
@@ -156,7 +183,7 @@ def deliverable_verification_events(
     return [
         event
         for event in scoped
-        if is_meaningful_verification_event(event, mode, written_paths=deliverable_paths)
+        if _is_verification_event(event, mode, written_paths=deliverable_paths)
     ]
 
 
@@ -172,6 +199,53 @@ def contract_deliverable_paths(task_contract: dict[str, Any] | None) -> set[str]
             if path:
                 result.add(path)
     return result
+
+
+def contract_deliverable_kinds(task_contract: dict[str, Any] | None) -> set[str]:
+    if not isinstance(task_contract, dict):
+        return set()
+    return {
+        str(item.get("kind") or "").strip().lower()
+        for item in task_contract.get("deliverables") or []
+        if isinstance(item, dict) and str(item.get("kind") or "").strip()
+    }
+
+
+def deliverable_path_deviations(
+    events: list[dict[str, Any]],
+    task_contract: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Return successful deliverables that used a different hinted path."""
+    hinted_paths = contract_deliverable_paths(task_contract)
+    if not hinted_paths:
+        return []
+    deviations: list[dict[str, Any]] = []
+    for event in events:
+        paths = event_path_hints(event)
+        if not paths or any(_path_matches_any(path, hinted_paths) for path in paths):
+            continue
+        deviations.append({
+            "tool": canonical_tool_id(str(event.get("tool") or "")),
+            "expected_path_hints": sorted(hinted_paths),
+            "actual_paths": sorted(paths),
+        })
+    return deviations
+
+
+def event_effects(event: dict[str, Any]) -> set[str]:
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    values = event.get("effects") or output.get("effects") or []
+    if not isinstance(values, list):
+        return set()
+    return {str(item).strip() for item in values if str(item).strip()}
+
+
+def event_declared_roles(event: dict[str, Any]) -> set[str]:
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    values = event.get("roles") or output.get("roles") or []
+    if not isinstance(values, list):
+        return set()
+    return {str(item).strip() for item in values if str(item).strip()}
 
 
 def event_path_hints(event: dict[str, Any]) -> set[str]:
@@ -194,10 +268,74 @@ def _can_be_deliverable_event(event: dict[str, Any]) -> bool:
     tool_id = canonical_tool_id(str(event.get("tool") or ""))
     if tool_id in DRAFT_TOOL_IDS or tool_id in TEMPORARY_TOOL_IDS:
         return False
-    return is_write_tool(tool_id)
+    return (
+        is_write_tool(tool_id)
+        or EXTERNAL_STATE_CHANGE in event_effects(event)
+        or DELIVERABLE in event_declared_roles(event)
+    )
+
+
+def _can_be_deliverable_for_contract(
+    event: dict[str, Any],
+    task_contract: dict[str, Any] | None,
+) -> bool:
+    if not _can_be_deliverable_event(event):
+        return False
+    deliverable_kinds = contract_deliverable_kinds(task_contract)
+    if not deliverable_kinds:
+        return True
+
+    tool_id = canonical_tool_id(str(event.get("tool") or ""))
+    if is_write_tool(tool_id):
+        return bool(deliverable_kinds & {"file", "code", "document"})
+    if EXTERNAL_STATE_CHANGE in event_effects(event):
+        return "external_state" in deliverable_kinds
+    if DELIVERABLE in event_declared_roles(event):
+        return bool(
+            event_path_hints(event)
+            and deliverable_kinds & {"file", "code", "document"}
+        )
+    return False
+
+
+def _contract_allows_alternative_path(
+    event: dict[str, Any],
+    task_contract: dict[str, Any] | None,
+) -> bool:
+    if not isinstance(task_contract, dict):
+        return True
+    tool_id = canonical_tool_id(str(event.get("tool") or ""))
+    if not is_write_tool(tool_id) and not (
+        DELIVERABLE in event_declared_roles(event)
+        and event_path_hints(event)
+    ):
+        return False
+    return any(
+        isinstance(item, dict)
+        and str(item.get("kind") or "").strip().lower() in {"file", "code", "document"}
+        and str(item.get("path_policy") or "hint").strip().lower() != "exact"
+        for item in task_contract.get("deliverables") or []
+    )
+
+
+def _is_verification_event(
+    event: dict[str, Any],
+    mode: str | None,
+    *,
+    written_paths: set[str],
+) -> bool:
+    if (
+        VERIFICATION in event_declared_roles(event)
+        and _status_is_success_or_partial(event)
+    ):
+        return True
+    return is_meaningful_verification_event(event, mode, written_paths=written_paths)
 
 
 def _status_is_success_or_partial(event: dict[str, Any]) -> bool:
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    if output.get("error") is True:
+        return False
     return str(event.get("status") or "") in {"success", "partial"}
 
 

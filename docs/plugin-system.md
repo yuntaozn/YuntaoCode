@@ -133,9 +133,18 @@ This flow is a future implementation target, not current behavior:
 7. Execute plugin tools only through Task Runtime tool calls.
 8. Write model output, tool calls, confirmations, errors, and generated artifacts into the task trace.
 
+## MCP Boundary
+
+MCP services are external capability providers, but their process, transport,
+connection, permission, and lifecycle management should not be folded into the
+ordinary plugin capability list. See [mcp-services.md](mcp-services.md).
+
+Connected MCP tools may appear in the plugin page as a read-only capability
+group. That entry is a live capability view, not an installed plugin and not a
+second lifecycle control surface.
+
 ## Open Questions
 
 - Whether external plugins should first run in-process or start with a subprocess boundary.
 - How plugin execution should report structured task artifacts.
-- How MCP tools map to plugin manifests without duplicating metadata.
 - How plugin signing should work after local plugin loading is stable.

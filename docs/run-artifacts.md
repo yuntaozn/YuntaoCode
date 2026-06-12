@@ -23,3 +23,14 @@ temporary directories.
 Run artifacts are not project changes and do not satisfy a requested write
 deliverable. They should remain isolated from the workspace until a verified
 result is explicitly written through a project write capability.
+
+## User Attachments Are Different
+
+Files uploaded by a user are immutable conversation inputs, not run artifacts
+and not project files. The runtime stores their bytes under its local data
+directory and keeps only attachment references in conversation messages.
+
+An attachment may be read only through an attachment capability authorized for
+the current conversation run. A task can create temporary derivatives in its
+run artifact directory, or explicitly write a verified output into the
+workspace, but attachment storage itself is never exposed as a project path.

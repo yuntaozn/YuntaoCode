@@ -81,6 +81,7 @@ YuntaoCode 把一次请求看作一个可管理的任务，而不是一次普通
 * Shell
 * Git
 * Document Processing
+* Conversation Attachments
 * Web Access
 * Memory
 

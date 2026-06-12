@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+from .persistence import AtomicJsonDocumentStorage, DocumentStorage
+from .run_repository import JsonRunRepository, RunRepository, SqliteRunRepository
 
 
 RUN_STORE_SCHEMA_VERSION = "0.1"
@@ -29,6 +31,7 @@ class RunRecord:
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
     events: list[dict[str, Any]] = field(default_factory=list)
+    stored_event_count: int | None = field(default=None, repr=False)
 
     def to_public_dict(self, include_events: bool = False) -> dict[str, Any]:
         data = {
@@ -44,7 +47,7 @@ class RunRecord:
             "message": self.message,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
-            "event_count": len(self.events),
+            "event_count": self.stored_event_count if self.stored_event_count is not None else len(self.events),
         }
         if include_events:
             data["events"] = self.events
@@ -64,16 +67,51 @@ class RunRecord:
             created_at=str(value.get("created_at") or utc_now()),
             updated_at=str(value.get("updated_at") or utc_now()),
             events=value.get("events") if isinstance(value.get("events"), list) else [],
+            stored_event_count=int(value["event_count"]) if isinstance(value.get("event_count"), int) else None,
         )
 
 
 class RunStore:
-    def __init__(self, store_path: Path | None = None, *, keep_runs: int = 200, keep_events: int = 300) -> None:
-        self.store_path = store_path
+    def __init__(
+        self,
+        store_path: Path | None = None,
+        *,
+        keep_runs: int = 200,
+        keep_events: int = 300,
+        storage: DocumentStorage | None = None,
+        repository: RunRepository | None = None,
+    ) -> None:
         self.keep_runs = keep_runs
         self.keep_events = keep_events
-        self._runs: dict[str, RunRecord] = {}
-        self._load()
+        if repository is not None:
+            self._repository = repository
+        else:
+            document_storage = storage if storage is not None else AtomicJsonDocumentStorage(store_path)
+            self._repository = JsonRunRepository(document_storage, keep_runs=keep_runs)
+        self.store_path = self._repository.path
+        self._recover_interrupted()
+
+    @classmethod
+    def sqlite(
+        cls,
+        database_path: Path,
+        *,
+        legacy_store_path: Path | None = None,
+        keep_runs: int = 200,
+        keep_events: int = 300,
+    ) -> "RunStore":
+        repository = SqliteRunRepository(
+            database_path,
+            keep_runs=keep_runs,
+            keep_events=keep_events,
+        )
+        if legacy_store_path is not None:
+            repository.import_legacy_document(AtomicJsonDocumentStorage(legacy_store_path))
+        return cls(
+            keep_runs=keep_runs,
+            keep_events=keep_events,
+            repository=repository,
+        )
 
     def create(
         self,
@@ -91,12 +129,12 @@ class RunStore:
             user_content=user_content[:500],
             message="run created",
         )
-        self._runs[record.id] = record
-        self._save()
+        self._repository.create(record.to_public_dict(include_events=True))
         return record
 
     def get(self, run_id: str) -> RunRecord | None:
-        return self._runs.get(run_id)
+        value = self._repository.get(run_id)
+        return RunRecord.from_dict(value) if value else None
 
     def list(
         self,
@@ -105,22 +143,24 @@ class RunStore:
         workspace_id: str | None = None,
         status: str | None = None,
     ) -> list[RunRecord]:
-        runs = list(self._runs.values())
-        if conversation_id:
-            runs = [item for item in runs if item.conversation_id == conversation_id]
-        if workspace_id:
-            runs = [item for item in runs if item.workspace_id == workspace_id]
-        if status:
-            runs = [item for item in runs if item.status == status]
-        return sorted(runs, key=lambda item: item.updated_at, reverse=True)
+        return [
+            RunRecord.from_dict(item)
+            for item in self._repository.list(
+                conversation_id=conversation_id,
+                workspace_id=workspace_id,
+                status=status,
+            )
+        ]
 
     def record_event(self, run_id: str, event: dict[str, Any]) -> RunRecord | None:
         run = self.get(run_id)
         if not run:
             return None
         event_type = str(event.get("event") or "")
-        run.events.append({"time": utc_now(), **event})
+        stored_event = {"time": utc_now(), **event}
+        run.events.append(stored_event)
         run.events = run.events[-self.keep_events:]
+        run.stored_event_count = len(run.events)
 
         if event_type == "status":
             run.stage = str(event.get("status") or run.stage)
@@ -164,47 +204,21 @@ class RunStore:
             run.message = event_type
 
         run.updated_at = utc_now()
-        self._save()
+        self._repository.append_event(
+            run.to_public_dict(include_events=True),
+            stored_event,
+        )
         return run
 
-    def _load(self) -> None:
-        if not self.store_path or not self.store_path.exists():
-            return
-        try:
-            value = json.loads(self.store_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return
-        runs = value.get("runs") if isinstance(value, dict) else []
-        if not isinstance(runs, list):
-            return
-        changed = False
-        for item in runs:
-            if isinstance(item, dict):
-                record = RunRecord.from_dict(item)
-                if record.status in {"running", "waiting_confirmation"}:
-                    record.status = "stopped"
-                    record.stage = "interrupted"
-                    record.message = "run interrupted before runtime startup"
-                    record.updated_at = utc_now()
-                    changed = True
-                self._runs[record.id] = record
-        if changed:
-            self._save()
+    def close(self) -> None:
+        self._repository.close()
 
-    def _save(self) -> None:
-        if not self.store_path:
-            return
-        self.store_path.parent.mkdir(parents=True, exist_ok=True)
-        records = sorted(self._runs.values(), key=lambda item: item.created_at)[-self.keep_runs:]
-        self.store_path.write_text(
-            json.dumps(
-                {
-                    "schema_version": RUN_STORE_SCHEMA_VERSION,
-                    "record_kind": "run_store",
-                    "runs": [item.to_public_dict(include_events=True) for item in records],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+    def _recover_interrupted(self) -> None:
+        for status in ("running", "waiting_confirmation"):
+            for value in self._repository.list(status=status):
+                record = RunRecord.from_dict(value)
+                record.status = "stopped"
+                record.stage = "interrupted"
+                record.message = "run interrupted before runtime startup"
+                record.updated_at = utc_now()
+                self._repository.update(record.to_public_dict(include_events=True))

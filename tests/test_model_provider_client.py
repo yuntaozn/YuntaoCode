@@ -115,3 +115,69 @@ def test_low_level_request_options_override_declared_output_budget() -> None:
     )
 
     assert body["max_tokens"] == 8192
+
+
+def test_build_request_body_uses_volcengine_thinking_adapter() -> None:
+    body = build_request_body(
+        provider_id="volcengine",
+        provider={},
+        model_config={"thinking_mode": "volcengine", "supports_reasoning_effort": True},
+        model="doubao",
+        messages=[{"role": "user", "content": "think"}],
+        stream=True,
+        enable_thinking=True,
+        reasoning_effort="high",
+        tools=None,
+    )
+
+    assert body["thinking"] == {"type": "enabled"}
+    assert body["reasoning_effort"] == "high"
+
+
+def test_build_request_body_disables_volcengine_thinking() -> None:
+    body = build_request_body(
+        provider_id="volcengine",
+        provider={},
+        model_config={"thinking_mode": "volcengine", "supports_reasoning_effort": True},
+        model="doubao",
+        messages=[{"role": "user", "content": "summarize"}],
+        stream=True,
+        enable_thinking=False,
+        reasoning_effort="low",
+        tools=None,
+    )
+
+    assert body["thinking"] == {"type": "disabled"}
+    assert "reasoning_effort" not in body
+
+
+def test_build_request_body_uses_qwen_thinking_adapter() -> None:
+    body = build_request_body(
+        provider_id="qwen",
+        provider={},
+        model_config={"thinking_mode": "qwen"},
+        model="qwen",
+        messages=[{"role": "user", "content": "think"}],
+        stream=True,
+        enable_thinking=True,
+        reasoning_effort="medium",
+        tools=None,
+    )
+
+    assert body["enable_thinking"] is True
+
+
+def test_build_request_body_disables_qwen_thinking_explicitly() -> None:
+    body = build_request_body(
+        provider_id="qwen",
+        provider={},
+        model_config={"thinking_mode": "qwen"},
+        model="qwen",
+        messages=[{"role": "user", "content": "summarize"}],
+        stream=True,
+        enable_thinking=False,
+        reasoning_effort="low",
+        tools=None,
+    )
+
+    assert body["enable_thinking"] is False

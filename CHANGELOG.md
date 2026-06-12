@@ -8,6 +8,9 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ### Added
 
+- Runtime-owned conversation attachments for images and files, including
+  persisted previews and controlled text extraction for text, PDF, and Word
+  inputs without placing uploads in project workspaces.
 - Open-source contribution guide, security policy, issue templates, pull request template, and CI workflow.
 - `AGENTS.md` with AI-assisted development conventions for runtime, tools, frontend streaming, safety, and verification.
 - `runtime/agent_strategy/` strategy modules for classifiers, profiles, policy, prompts, and plan tracking.
@@ -24,6 +27,23 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 - Single-source product release versioning with synchronized desktop manifests, README labels, Runtime health output, and CI drift checks.
 - Controlled web artifact tools: `web.collect_site_assets` saves bounded website page/resource snapshots, and `web.capture_page` exports webpages as PDF or screenshots.
 - Text artifact draft tools for large text/code outputs: create a draft, append bounded chunks, inspect progress, and finalize to a validated workspace file.
+- Independent MCP service management foundation with local configuration,
+  redacted secrets, explicit lifecycle actions, connection state, logs, and a
+  dedicated management page.
+- Generic stdio MCP sessions with protocol handshake, tool discovery, dynamic
+  capability binding, invocation, and disconnect cleanup.
+- A disabled Blender MCP example configuration for demonstrating the MCP
+  connection boundary without a Blender-specific built-in runtime adapter.
+- Generic MCP prerequisite checks for TCP endpoints and executable commands,
+  including separate Blender Add-on and `uvx` readiness indicators.
+- MCP executable resolution through the current Python runtime's `Scripts`
+  directory, plus local-first telemetry disablement for the Blender example.
+- Task contracts can distinguish local file writes from broader observable
+  state changes, including external application state.
+- Capability and MCP tool contracts can declare successful `effects`, task
+  `roles`, and artifact kinds for provider-neutral result auditing.
+- Shared atomic JSON persistence mechanics and an indexed SQLite Run/RunEvent
+  repository with one-time legacy `runs.json` import.
 
 ### Changed
 
@@ -62,6 +82,22 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 - Added provider-neutral, optional model output-budget declarations (`max_output_tokens` plus `output_token_param`) without guessing unsupported API parameters; low-level request options remain available as overrides.
 - Web tasks now prefer controlled asset/capture tools for website redesign, archival, screenshot, and PDF-export requests instead of asking the model to generate crawlers or oversized file writes.
 - Large HTML/code/config generation now routes through text artifact drafts instead of a single oversized `filesystem.write_file` call when the artifact may exceed model output limits.
+- Capability providers now expose their implementation source. MCP-sourced
+  tools remain outside model context until their service is protocol-connected,
+  while the plugin catalog remains a capability view rather than a service
+  lifecycle manager.
+- External-state capability runs are audited from tool effect facts instead of
+  being forced through the local file-write contract. MCP tool failures now
+  degrade individual binding health, and oversized provider logs are truncated.
+- Runtime run history now writes to `runtime.db` transactionally instead of
+  rewriting the full `runs.json` document for every event. Existing
+  `runs.json` data is imported once and retained as a migration snapshot.
+- Follow-up task contracts now preserve a semantic continuity anchor for
+  continued/revised work, preventing an implementation fallback from replacing
+  the user's original target.
+- Deliverable paths now default to soft hints. Same-kind alternative paths can
+  satisfy the task contract and are recorded as audit deviations; explicit
+  `path_policy=exact` remains available for strict path requirements.
 
 ### Known Gaps
 

@@ -97,6 +97,13 @@ def stage_prompt(
             "6. 如果工具调用成功，简短确认产出路径和文件大小即可。\n"
             "7. 如果工具调用失败或只完成部分段落，说明失败原因和已完成范围，不要伪造成功结果。"
         )
+    if stage == "executor":
+        return (
+            "你现在是 Executor（能力执行者）。职责：使用已注册能力完成真实的外部状态修改或任务动作。\n"
+            f"当前项目目录：{workspace_path}\n"
+            "工具是执行手段，任务契约是目标；根据实际结果调整后续动作，不要把外部状态修改误当成本地代码写入。\n"
+            "执行后应使用可用的读取、检查、截图或查询能力取得验证证据；工具失败时根据真实错误换策略。"
+        )
     if stage == "verifier":
         return (
             "你现在是 Verifier（验证者）。职责：写入成功后只做一次必要验证。\n"
@@ -297,6 +304,8 @@ def execute_plan_prompt(plan: dict[str, Any], mode: str | None) -> str:
     return (
         "计划执行模式已开启。上面的计划是参考路线，不是固定轨道；"
         "如工具结果、插话或文件结构显示原计划不合适，可以跳过、合并、拆分或追加步骤。"
+        "计划只是运行审计和协作上下文，不是新的人工确认门。不要输出“确认/是否执行/Y/n”等文本询问；"
+        "如果任务信息足够，请直接调用最合适的工具推进。运行时会负责权限、安全和确认策略。"
         "需要读取本地资料或代码时必须调用本地工具；每次工具返回后继续推进下一步。"
         f"{code_rule}"
         "最终回答要说明：完成了哪些步骤、使用了哪些文件或工具、结果和未完成/不确定项。"
@@ -319,15 +328,16 @@ def analysis_first_task_prompt(workspace_path: str) -> str:
     )
 
 
-def post_write_prompt(workspace_path: str) -> str:
+def post_deliverable_prompt(workspace_path: str) -> str:
     return (
-        f"已有写入成功。项目={workspace_path}。"
+        f"已有目标产物成功出现。项目={workspace_path}。"
         "现在优先调用真实验证工具，然后总结。除非验证返回了新的失败证据，或任务契约明确还有未生成的产物，"
-        "不要再次覆盖已经成功写入的同一文件。代码/HTML/脚本任务优先运行可行的语法检查、构建、测试或 lint；"
+        "不要重复执行已经成功完成的同一状态变更。代码/HTML/脚本任务优先运行可行的语法检查、构建、测试或 lint；"
+        "外部应用/MCP/浏览器/数据库等非文件产物，优先调用只读查询、状态读取、截图、检查或 evidence/verification 能力取证；"
         "不要把 dir/ls/os.listdir/Get-Item 这类目录或存在性检查当作测试通过。"
         "不要把 python -m http.server、npm run dev 等长驻服务命令当作普通验证命令。"
         "如果只能读取生成文件做内容检查，最终必须说明未运行测试。"
-        "最终回复须列出变更文件、验证情况和剩余风险。"
+        "最终回复须列出目标产物、验证情况和剩余风险。"
     )
 
 
@@ -350,6 +360,8 @@ def verifier_retry_prompt(mode: str | None, workspace_path: str) -> str:
     return (
         "验证阶段必须执行一次真实验证工具调用，不能只用文字说明已经验证。\n"
         f"当前项目目录：{workspace_path}\n"
+        "如果本轮目标是外部应用、MCP 服务、浏览器、数据库或其他非文件状态，请优先调用只读查询、状态读取、截图、检查或声明为 evidence/verification 的能力取得证据。"
+        "不要把再次执行状态变更当作验证。\n"
         "代码/HTML/脚本任务优先调用 shell.run_command 运行可行的语法检查、构建、测试或 lint，例如 pytest、python -m py_compile、node --check、npm test/build 等。"
         "不要使用 dir/ls/os.listdir/Get-Item 作为测试通过依据。"
         "不要启动 python -m http.server、npm run dev 等长驻服务作为普通验证命令；这类命令通常会超时。"

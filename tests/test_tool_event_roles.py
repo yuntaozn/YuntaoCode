@@ -57,6 +57,41 @@ def test_finalize_matching_contract_path_is_deliverable() -> None:
     ) == DELIVERABLE
 
 
+def test_default_path_hint_allows_same_kind_alternative_deliverable() -> None:
+    event = {
+        "tool": "filesystem.finalize_text_file",
+        "status": "success",
+        "input": {"output_path": "D:/workspace/site/index-v2.html"},
+        "output": {
+            "path": "D:/workspace/site/index-v2.html",
+            "validation": {"valid": True},
+        },
+    }
+
+    assert classify_tool_event_role(
+        event,
+        task_contract=_contract(),
+        workspace_path="D:/workspace/site",
+    ) == DELIVERABLE
+
+
+def test_exact_path_policy_rejects_alternative_deliverable_path() -> None:
+    contract = _contract()
+    contract["deliverables"][0]["path_policy"] = "exact"
+    event = {
+        "tool": "filesystem.finalize_text_file",
+        "status": "success",
+        "input": {"output_path": "D:/workspace/site/index-v2.html"},
+        "output": {"path": "D:/workspace/site/index-v2.html"},
+    }
+
+    assert classify_tool_event_role(
+        event,
+        task_contract=contract,
+        workspace_path="D:/workspace/site",
+    ) != DELIVERABLE
+
+
 def test_reading_contract_deliverable_after_write_counts_as_verification() -> None:
     events = [
         {
@@ -108,3 +143,124 @@ def test_reading_contract_deliverable_after_write_counts_as_verification() -> No
         task_contract=_contract(),
         workspace_path="D:/workspace/site",
     ) == VERIFICATION
+
+
+def test_external_state_effect_satisfies_external_state_deliverable() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "deliverables": [
+            {
+                "kind": "external_state",
+                "path_hint": "",
+                "description": "Current Blender scene",
+            }
+        ],
+    }
+    events = [
+        {
+            "tool": "mcp_blender.execute_blender_code",
+            "status": "success",
+            "output": {
+                "effects": ["external_state_change"],
+                "roles": ["deliverable"],
+            },
+        },
+        {
+            "tool": "mcp_blender.get_scene_info",
+            "status": "success",
+            "output": {"roles": ["evidence", "verification"]},
+        },
+    ]
+
+    deliverables = successful_deliverable_events(
+        events,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    )
+    verifications = deliverable_verification_events(
+        events,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    )
+
+    assert [event["tool"] for event in deliverables] == [
+        "mcp_blender.execute_blender_code"
+    ]
+    assert [event["tool"] for event in verifications] == [
+        "mcp_blender.get_scene_info"
+    ]
+
+
+def test_external_state_effect_does_not_satisfy_file_deliverable() -> None:
+    event = {
+        "tool": "mcp_blender.execute_blender_code",
+        "status": "success",
+        "output": {
+            "effects": ["external_state_change"],
+            "roles": ["deliverable"],
+        },
+    }
+
+    assert classify_tool_event_role(
+        event,
+        task_contract=_contract(),
+        workspace_path="D:/workspace/site",
+    ) != DELIVERABLE
+
+
+def test_error_output_does_not_satisfy_external_state_deliverable() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "deliverables": [{"kind": "external_state", "description": "Scene"}],
+    }
+    event = {
+        "tool": "mcp_blender.execute_blender_code",
+        "status": "success",
+        "output": {
+            "error": True,
+            "message": "Error executing code: material failed",
+            "effects": ["external_state_change"],
+            "roles": ["deliverable"],
+        },
+    }
+
+    assert classify_tool_event_role(
+        event,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) != DELIVERABLE
+    assert successful_deliverable_events(
+        [event],
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) == []
+
+
+def test_file_write_does_not_satisfy_external_state_deliverable() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "deliverables": [{"kind": "external_state", "description": "Blender scene"}],
+    }
+    event = {
+        "tool": "filesystem.write_file",
+        "status": "success",
+        "input": {"path": "D:/workspace/build_scene.py"},
+        "output": {"path": "D:/workspace/build_scene.py"},
+    }
+
+    assert classify_tool_event_role(
+        event,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) != DELIVERABLE
+    assert successful_deliverable_events(
+        [event],
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) == []

@@ -17,7 +17,7 @@ from .memory_store import MemoryStore
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "settings_version": 4,
+    "settings_version": 5,
     "backend_url": "http://127.0.0.1:8088",
     "default_model": "doubao-seed-2-0-pro-260215",
     "access_scope": "project_only",
@@ -272,6 +272,10 @@ class SettingsStore:
             self._settings["execution_mode"] = legacy_execution_mode_from_planning_policy(
                 self._settings["planning_policy"]
             )
+        if version < 5:
+            plugins = self._settings.get("plugins")
+            if isinstance(plugins, dict):
+                plugins.pop("blender", None)
         if version < DEFAULT_SETTINGS["settings_version"]:
             self._settings["settings_version"] = DEFAULT_SETTINGS["settings_version"]
             self._save()

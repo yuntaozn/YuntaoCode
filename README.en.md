@@ -81,6 +81,7 @@ Built-in capabilities include:
 * Shell
 * Git
 * Document Processing
+* Conversation Attachments
 * Web Access
 * Memory
 

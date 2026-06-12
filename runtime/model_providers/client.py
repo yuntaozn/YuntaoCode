@@ -209,8 +209,7 @@ def build_request_body(
         else:
             body["thinking"] = {"type": "disabled"}
     elif thinking_mode == "qwen":
-        if enable_thinking:
-            body["enable_thinking"] = enable_thinking
+        body["enable_thinking"] = bool(enable_thinking)
 
     output_token_param = str(model_config.get("output_token_param") or "").strip()
     try:

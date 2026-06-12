@@ -14,6 +14,8 @@ class CapabilityContract:
     description: str
     tool_ids: tuple[str, ...]
     artifacts: tuple[str, ...] = ()
+    effects: tuple[str, ...] = ()
+    roles: tuple[str, ...] = ()
     requires_confirmation: bool = False
     long_running: bool = False
     retry_safe: bool = False
@@ -28,6 +30,8 @@ class CapabilityContract:
             "description": self.description,
             "tool_ids": list(self.tool_ids),
             "artifacts": list(self.artifacts),
+            "effects": list(self.effects),
+            "roles": list(self.roles),
             "requires_confirmation": self.requires_confirmation,
             "long_running": self.long_running,
             "retry_safe": self.retry_safe,
@@ -69,6 +73,11 @@ class TaskRouteProposal:
 
 
 PREFIX_CAPABILITIES: dict[str, tuple[str, str, str]] = {
+    "attachment": (
+        "attachment.user_input",
+        "Conversation Attachments",
+        "Read user-provided, immutable conversation attachments without treating them as project files.",
+    ),
     "filesystem": (
         "filesystem.local_files",
         "Local Files",
@@ -186,10 +195,13 @@ def capability_from_tool_spec(spec: dict[str, Any]) -> CapabilityContract:
         description=description,
         tool_ids=(tool_id,) if tool_id else (),
         artifacts=tuple(str(item) for item in (spec.get("artifacts") or []) if item),
+        effects=tuple(str(item) for item in (spec.get("effects") or []) if item),
+        roles=tuple(str(item) for item in (spec.get("roles") or []) if item),
         requires_confirmation=bool(spec.get("requires_confirmation")),
         long_running=bool(spec.get("long_running")),
         retry_safe=bool(spec.get("retry_safe")),
         idempotent=bool(spec.get("idempotent")),
+        source=str(spec.get("source_type") or "builtin"),
     )
 
 
@@ -203,6 +215,8 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
                 "description": item.description,
                 "tool_ids": [],
                 "artifacts": set(),
+                "effects": set(),
+                "roles": set(),
                 "requires_confirmation": False,
                 "long_running": False,
                 "retry_safe": False,
@@ -212,6 +226,8 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
         )
         bucket["tool_ids"].extend(item.tool_ids)
         bucket["artifacts"].update(item.artifacts)
+        bucket["effects"].update(item.effects)
+        bucket["roles"].update(item.roles)
         bucket["requires_confirmation"] = bool(bucket["requires_confirmation"] or item.requires_confirmation)
         bucket["long_running"] = bool(bucket["long_running"] or item.long_running)
         bucket["retry_safe"] = bool(bucket["retry_safe"] or item.retry_safe)
@@ -224,6 +240,8 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
             description=str(bucket["description"]),
             tool_ids=tuple(dict.fromkeys(bucket["tool_ids"])),
             artifacts=tuple(sorted(bucket["artifacts"])),
+            effects=tuple(sorted(bucket["effects"])),
+            roles=tuple(sorted(bucket["roles"])),
             requires_confirmation=bool(bucket["requires_confirmation"]),
             long_running=bool(bucket["long_running"]),
             retry_safe=bool(bucket["retry_safe"]),
@@ -253,6 +271,10 @@ def format_capability_catalog_for_prompt(catalog: list[CapabilityContract], *, m
         flags: list[str] = []
         if item.artifacts:
             flags.append(f"artifacts={','.join(item.artifacts)}")
+        if item.effects:
+            flags.append(f"effects={','.join(item.effects)}")
+        if item.roles:
+            flags.append(f"roles={','.join(item.roles)}")
         if item.long_running:
             flags.append("long_running=true")
         if item.retry_safe:

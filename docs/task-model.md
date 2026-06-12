@@ -101,6 +101,7 @@ RouteProposal 是模型对任务的结构化理解，Capability 是 Runtime 对�
   "goal": "创建一个可以显示 3D 模型的 HTML 示例页",
   "intent": "write_required",
   "requires_write": true,
+  "requires_state_change": true,
   "requires_verification": true,
   "requires_plan": false,
   "deliverables": [
@@ -122,6 +123,22 @@ Runtime 负责：
 - 应用 `只分析/不要修改` 这类硬边界。
 - 校验写入、验证、文档覆盖等成功条件。
 - 记录 `task.contract` 事件，供审计和后续 UI 展示。
+
+`requires_write` 只表示任务必须产生或修改本地文件。
+`requires_state_change` 表示任务必须产生可观察状态变化，范围还包括 Blender/CAD
+场景、浏览器会话、数据库或其他外部应用。工具通过 `effects`、`roles` 和
+`artifacts` 将实际执行事实回传，Runtime 再判断目标产物角色是否满足。
+
+### Task Continuity And Deliverable Paths
+
+The model declares whether the current request is `new`, `continue`, `revise`,
+or `replace`. For `continue/revise`, Runtime keeps the previous semantic target
+as a `continuity_anchor`, while the current user request becomes the revision
+instruction. An execution fallback must not silently replace the user goal.
+
+`path_hint` is a preferred location rather than a completion lock. Runtime
+accepts a same-kind artifact written to another path and records the deviation
+for audit. Only `path_policy: "exact"` requires an exact path match.
 
 ## Lifecycle
 

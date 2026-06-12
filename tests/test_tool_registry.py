@@ -48,6 +48,8 @@ def test_list_specs_includes_public_metadata() -> None:
             local_only=True,
             capability="demo.read",
             artifacts=["text"],
+            effects=["external_state_change"],
+            roles=["evidence"],
             idempotent=True,
         ),
         _noop_handler,
@@ -66,11 +68,59 @@ def test_list_specs_includes_public_metadata() -> None:
             "dependencies": {},
             "capability": "demo.read",
             "artifacts": ["text"],
+            "effects": ["external_state_change"],
+            "roles": ["evidence"],
             "long_running": False,
             "retry_safe": False,
             "idempotent": True,
+            "source_type": "builtin",
+            "source_id": "demo",
         }
     ]
+
+
+def test_registry_exposes_provider_source_metadata() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            id="demo.get_scene_info",
+            name="Scene",
+            description="Read scene information",
+            input_schema={"type": "object"},
+        ),
+        _noop_handler,
+    )
+    registry.set_provider_metadata(
+        "demo",
+        source_type="external_adapter",
+        source_id="demo-adapter",
+    )
+
+    spec = registry.list_specs()[0]
+
+    assert spec["source_type"] == "external_adapter"
+    assert spec["source_id"] == "demo-adapter"
+    assert registry.get_public_spec("demo.get_scene_info") == spec
+
+
+def test_registry_can_unbind_all_tools_from_a_dynamic_source() -> None:
+    registry = ToolRegistry()
+    registry.set_provider_metadata("remote", source_type="mcp", source_id="remote")
+    registry.register(
+        ToolSpec(
+            id="remote.echo",
+            name="Echo",
+            description="Echo",
+            input_schema={"type": "object"},
+        ),
+        _noop_handler,
+    )
+
+    removed = registry.unregister_source(source_type="mcp", source_id="remote")
+
+    assert removed == ["remote.echo"]
+    with pytest.raises(KeyError):
+        registry.get("remote.echo")
 
 
 def test_registry_resolves_legacy_tool_aliases_without_listing_them() -> None:

@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="mcp_page.title">MCP 服务 - YuntaoCode</title>
+    <link rel="stylesheet" href="/static/panel.css?v=20260612-1">
+    <style>
+        .service-list { padding: 20px; overflow: auto; }
+        .plugin-group-item {
+            display: flex; align-items: center; justify-content: space-between; width: 100%;
+            padding: 8px 10px; border: 0; border-radius: 6px; background: transparent;
+            color: var(--text); text-align: left; font-size: 13px;
+        }
+        .plugin-group-item:hover, .plugin-group-item.active { background: var(--soft); }
+        .plugin-group-item.active { box-shadow: inset 3px 0 0 var(--primary); font-weight: 600; }
+        .service-card {
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 16px 18px;
+            margin-bottom: 12px;
+            background: var(--panel);
+        }
+        .service-card.disabled { opacity: 0.6; }
+        .service-head, .service-actions, .service-meta, .service-title-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .service-head { justify-content: space-between; align-items: flex-start; }
+        .service-title-row { flex-wrap: wrap; }
+        .service-title { margin: 0; font-size: 15px; }
+        .service-copy { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+        .service-meta { margin-top: 12px; flex-wrap: wrap; }
+        .service-chip, .state-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            min-height: 22px;
+            padding: 2px 7px;
+            border: 1px solid var(--line);
+            border-radius: 4px;
+            background: var(--soft);
+            color: var(--muted);
+            font-size: 11px;
+        }
+        .state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+        .state-connected .state-dot, .state-reachable .state-dot, .state-running .state-dot,
+        .state-dot.state-connected, .state-dot.state-reachable, .state-dot.state-running { background: var(--success); }
+        .state-failed .state-dot, .state-degraded .state-dot,
+        .state-dot.state-failed, .state-dot.state-degraded { background: var(--danger); }
+        .service-actions { margin-top: 14px; flex-wrap: wrap; }
+        .service-actions button { min-height: 30px; }
+        button:disabled { cursor: default; opacity: 0.45; }
+        .service-message { margin-top: 10px; color: var(--muted); font-size: 12px; }
+        .service-bindings, .service-prerequisites { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+        .service-bindings .tool-chip { display: inline-flex; align-items: center; gap: 5px; }
+        .service-bindings .binding-available .state-dot { background: var(--success); }
+        .service-bindings .binding-degraded .state-dot { background: var(--danger); }
+        .prerequisite-item {
+            display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px;
+            border: 1px solid var(--line); border-radius: 4px; color: var(--muted); font-size: 11px;
+        }
+        .prerequisite-item.ready .state-dot { background: var(--success); }
+        .prerequisite-item.missing .state-dot { background: var(--danger); }
+        .service-logs {
+            margin: 12px 0 0;
+            max-height: 150px;
+            overflow: auto;
+            padding: 10px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            background: var(--soft);
+            color: var(--text);
+            font-size: 11px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+        .empty-state { padding: 64px 20px; text-align: center; color: var(--muted); }
+        .service-form {
+            width: min(620px, calc(100vw - 32px));
+            max-height: calc(100dvh - 24px);
+            overflow: auto;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            color: var(--text);
+            padding: 0;
+        }
+        .service-form::backdrop { background: rgba(20, 24, 30, 0.35); }
+        .service-form-inner { padding: 18px; }
+        .service-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .service-form label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+        .service-form [hidden] { display: none !important; }
+        .service-form input, .service-form select, .service-form textarea {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 8px 10px;
+            border: 1px solid var(--line);
+            border-radius: 5px;
+            background: var(--panel);
+            color: var(--text);
+            font: inherit;
+        }
+        .service-form textarea { min-height: 74px; resize: vertical; }
+        .service-form .full { grid-column: 1 / -1; }
+        .service-form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+        .toast {
+            position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+            background: var(--text); color: white; padding: 8px 18px; border-radius: 6px;
+            font-size: 13px; z-index: 9999;
+        }
+        @media (max-width: 780px) {
+            .app-shell { grid-template-columns: minmax(0, 1fr); }
+            .nav-rail, .sidebar { display: none; }
+            .main-panel { min-width: 0; }
+            .topbar { padding: 10px 12px; gap: 8px; flex-direction: column; align-items: stretch; }
+            .topbar-right { width: 100%; gap: 6px; justify-content: flex-end; }
+            .service-list { padding: 12px; }
+            .service-form-grid { grid-template-columns: 1fr; }
+            .service-form .full { grid-column: auto; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="nav-rail" aria-label="主导航" data-i18n-aria-label="nav.main_nav">
+            <button class="rail-action" id="back-btn" title="返回对话" data-i18n-title="nav.back">←<span data-i18n="nav.back">返回</span></button>
+            <button class="rail-action" id="plugins-btn" title="插件" data-i18n-title="nav.plugins">⌘<span data-i18n="nav.plugins">插件</span></button>
+            <button class="rail-action active" id="mcp-main-btn" title="MCP 服务" data-i18n-title="nav.mcp_services">◇<span data-i18n="nav.mcp_services">MCP 服务</span></button>
+        </aside>
+
+        <aside class="sidebar" style="width: 240px;">
+            <section class="account-block">
+                <div>
+                    <div class="block-title" data-i18n="mcp_page.overview">服务总览</div>
+                    <div class="status-line" id="mcp-summary" data-i18n="settings_page.loading">读取中...</div>
+                </div>
+            </section>
+            <section class="sidebar-section">
+                <div class="section-title" data-i18n="mcp_page.services">服务</div>
+                <div class="plugin-group-list" id="mcp-service-groups"></div>
+            </section>
+        </aside>
+
+        <main class="main-panel">
+            <header class="topbar">
+                <div>
+                    <div class="workspace-name" data-i18n="mcp_page.heading">MCP 服务</div>
+                    <div class="workspace-path" data-i18n="mcp_page.subtitle">管理 MCP 服务配置、进程、连接状态和能力发现</div>
+                </div>
+                <div class="topbar-right">
+                    <button class="secondary-button" id="refresh-mcp-btn" data-i18n="mcp_page.refresh">刷新</button>
+                    <button class="primary-button" id="add-mcp-btn" data-i18n="mcp_page.add">新增服务</button>
+                </div>
+            </header>
+            <section class="chat-panel service-list">
+                <div id="mcp-service-list"></div>
+            </section>
+        </main>
+    </div>
+
+    <dialog class="service-form" id="mcp-dialog">
+        <form class="service-form-inner" id="mcp-form">
+            <div class="service-form-grid">
+                <label>
+                    <span data-i18n="mcp_page.service_id">服务 ID</span>
+                    <input id="mcp-id" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,79}">
+                </label>
+                <label>
+                    <span data-i18n="mcp_page.name">名称</span>
+                    <input id="mcp-name" required>
+                </label>
+                <label class="full">
+                    <span data-i18n="mcp_page.description">说明</span>
+                    <input id="mcp-description">
+                </label>
+                <label>
+                    <span data-i18n="mcp_page.transport">传输方式</span>
+                    <select id="mcp-transport">
+                        <option value="stdio">stdio</option>
+                        <option value="streamable_http">Streamable HTTP</option>
+                        <option value="legacy_sse">Legacy SSE</option>
+                    </select>
+                </label>
+                <label>
+                    <span data-i18n="mcp_page.enabled">启用配置</span>
+                    <select id="mcp-enabled">
+                        <option value="true" data-i18n="mcp_page.enabled_yes">启用</option>
+                        <option value="false" data-i18n="mcp_page.enabled_no">禁用</option>
+                    </select>
+                </label>
+                <label>
+                    <span data-i18n="mcp_page.installation_kind">安装来源</span>
+                    <select id="mcp-installation-kind">
+                        <option value="local_command" data-i18n="mcp_page.installation_local_command">本地命令</option>
+                        <option value="package_runner" data-i18n="mcp_page.installation_package_runner">包运行器</option>
+                        <option value="remote_endpoint" data-i18n="mcp_page.installation_remote_endpoint">远程端点</option>
+                        <option value="bundled" data-i18n="mcp_page.installation_bundled">随应用提供</option>
+                    </select>
+                </label>
+                <label class="package-field" hidden>
+                    <span data-i18n="mcp_page.package">包名称</span>
+                    <input id="mcp-package" placeholder="blender-mcp">
+                </label>
+                <label class="full stdio-field">
+                    <span data-i18n="mcp_page.command">启动命令</span>
+                    <input id="mcp-command" placeholder="uvx">
+                </label>
+                <label class="full stdio-field">
+                    <span data-i18n="mcp_page.args">参数 JSON</span>
+                    <textarea id="mcp-args" placeholder='["blender-mcp"]'></textarea>
+                </label>
+                <label class="full stdio-field">
+                    <span data-i18n="mcp_page.cwd">工作目录</span>
+                    <input id="mcp-cwd">
+                </label>
+                <label class="full stdio-field">
+                    <span data-i18n="mcp_page.env">环境变量 JSON</span>
+                    <textarea id="mcp-env" placeholder='{"TOKEN":"..."}'></textarea>
+                </label>
+                <label class="full endpoint-field" hidden>
+                    <span data-i18n="mcp_page.url">服务 URL</span>
+                    <input id="mcp-url" placeholder="http://127.0.0.1:3000/mcp">
+                </label>
+                <label class="full endpoint-field" hidden>
+                    <span data-i18n="mcp_page.health_url">健康检查 URL</span>
+                    <input id="mcp-health-url">
+                </label>
+                <label class="full endpoint-field" hidden>
+                    <span data-i18n="mcp_page.headers">请求头 JSON</span>
+                    <textarea id="mcp-headers" placeholder='{"Authorization":"Bearer ..."}'></textarea>
+                </label>
+                <label>
+                    <span data-i18n="mcp_page.permission_filesystem">文件权限</span>
+                    <select id="mcp-permission-filesystem">
+                        <option value="none">none</option>
+                        <option value="workspace">workspace</option>
+                        <option value="full_local">full_local</option>
+                    </select>
+                </label>
+                <label>
+                    <span data-i18n="mcp_page.permission_network">网络权限</span>
+                    <select id="mcp-permission-network">
+                        <option value="false">false</option>
+                        <option value="confirm_each">confirm_each</option>
+                        <option value="allow">allow</option>
+                    </select>
+                </label>
+                <label>
+                    <span data-i18n="mcp_page.permission_external_state">外部状态修改</span>
+                    <select id="mcp-permission-external-state">
+                        <option value="false">false</option>
+                        <option value="confirm_each">confirm_each</option>
+                        <option value="allow">allow</option>
+                    </select>
+                </label>
+                <label>
+                    <span data-i18n="mcp_page.permission_arbitrary_code">任意代码执行</span>
+                    <select id="mcp-permission-arbitrary-code">
+                        <option value="false">false</option>
+                        <option value="confirm_each">confirm_each</option>
+                        <option value="allow">allow</option>
+                    </select>
+                </label>
+            </div>
+            <div class="service-form-actions">
+                <button type="button" class="secondary-button" id="cancel-mcp-btn" data-i18n="settings.cancel">取消</button>
+                <button type="submit" class="primary-button" data-i18n="settings.save">保存</button>
+            </div>
+        </form>
+    </dialog>
+
+    <script src="/static/i18n.js?v=20260612-4"></script>
+    <script src="/static/mcp-services.js?v=20260612-6"></script>
+</body>
+</html>
