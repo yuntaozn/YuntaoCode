@@ -73,6 +73,12 @@ function memoryEntries() {
     return Array.isArray(memories) ? memories : [];
 }
 
+function memoryScopeLabel(memory) {
+    return memory?.scope === "workspace"
+        ? t("settings_js.memory_scope_workspace")
+        : t("settings_js.memory_scope_global");
+}
+
 function renderSettings() {
     settings.providers = settings.providers || {};
     settings.models = settings.models || [];
@@ -251,7 +257,7 @@ function renderMemories() {
         const sourceLabel = sourceLabels[memory.source] || memory.source || t('settings_js.source_manual');
         const createdAt = memory.created_at ? new Date(memory.created_at).toLocaleDateString() : "";
         const usageInfo = memory.usage_count ? t('settings_js.memory_usage', {count: memory.usage_count}) : "";
-        const metaInfo = [sourceLabel, createdAt, usageInfo].filter(Boolean).join(" · ");
+        const metaInfo = [memoryScopeLabel(memory), sourceLabel, createdAt, usageInfo].filter(Boolean).join(" · ");
 
         return `
         <div class="settings-item memory-item" data-memory-id="${escapeHtml(memory.id)}">

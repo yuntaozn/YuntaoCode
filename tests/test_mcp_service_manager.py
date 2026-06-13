@@ -187,6 +187,8 @@ def test_mcp_manager_seeds_disabled_blender_example_once(tmp_path: Path) -> None
     assert [item["id"] for item in blender["prerequisites"]] == ["blender-addon", "uvx"]
     assert blender["tool_policies"]["get_scene_info"]["risk"] == "read_only"
     assert blender["tool_policies"]["get_scene_info"]["roles"] == ["evidence", "verification"]
+    assert blender["tool_policies"]["get_scene_info"]["verification_strength"] == "weak"
+    assert blender["tool_policies"]["get_viewport_screenshot"]["verification_strength"] == "standard"
     assert blender["tool_policies"]["execute_blender_code"]["effects"] == [
         "external_state_change"
     ]

@@ -22,6 +22,7 @@ class ToolContext:
     temp_dir: Path | None = None
     attachment_store: Any | None = None
     attachment_ids: tuple[str, ...] = ()
+    workspace_id: str = ""
 
 
 class TaskRunner:
@@ -76,6 +77,7 @@ class TaskRunner:
         wait: bool = False,
         confirmed: bool = False,
         workspace_path: str | None = None,
+        workspace_id: str | None = None,
         artifact_scope_id: str | None = None,
         attachment_ids: tuple[str, ...] | list[str] | None = None,
     ) -> TaskRecord:
@@ -104,6 +106,7 @@ class TaskRunner:
         coro = self._run(
             task.id,
             workspace_path=workspace_path,
+            workspace_id=workspace_id,
             artifact_scope_id=artifact_scope_id,
             attachment_ids=tuple(str(item) for item in (attachment_ids or ()) if str(item)),
         )
@@ -117,6 +120,7 @@ class TaskRunner:
         self,
         task_id: str,
         workspace_path: str | None = None,
+        workspace_id: str | None = None,
         artifact_scope_id: str | None = None,
         attachment_ids: tuple[str, ...] = (),
     ) -> None:
@@ -165,6 +169,7 @@ class TaskRunner:
                 temp_dir=temp_dir,
                 attachment_store=self.attachment_store,
                 attachment_ids=attachment_ids,
+                workspace_id=str(workspace_id or ""),
             )
             output = await tool.handler(task.input, context)
             failure_reason = self._output_failure_reason(task.tool, output)

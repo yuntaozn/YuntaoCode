@@ -358,10 +358,12 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 
 目标：先把 Task / Context / Capability 三条运行时主线做清楚，而不是继续堆功能清单。
 
-* [ ] Task Model：任务、计划、步骤、状态、结果和元数据
-* [ ] Task Lifecycle：created、running、waiting、failed、completed、cancelled
+* [x] Task Model 基础：ProductTask、Run、ToolTask、状态、结果和运行血缘
+* [x] Run Lifecycle 基础：running、waiting_confirmation、paused、resumed、completed、failed、stopped
 * [ ] Task Trace：模型输出、工具调用、确认、错误、验证和最终摘要
-* [ ] Task Recovery：暂停、恢复、失败重试、写入回退
+* [x] Run Recovery 基础：暂停、恢复、Runbook、Replay Request
+* [x] Recovery Context 基础：Checkpoint、Context Snapshot、显式启动的 Replay Run
+* [ ] Task Recovery 深化：失败重试、写入回退、策略控制的自动 replay 执行
 * [ ] Task Audit：可读的执行记录和可测试的状态迁移
 * [ ] Context Runtime：上下文选择、证据、压缩快照、记忆边界
 * [ ] Capability Runtime：能力契约、权限、确认、产物和验证规则

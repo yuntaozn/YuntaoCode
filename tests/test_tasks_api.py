@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from runtime.api.tasks import _task_public_dict
+from runtime.api.tool_tasks import _tool_task_public_dict
 from runtime.task_store import TaskRecord
 
 
@@ -14,6 +14,6 @@ def test_task_public_dict_normalizes_shell_timeout_error() -> None:
         error="command exited with code 1",
     )
 
-    data = _task_public_dict(task)
+    data = _tool_task_public_dict(task)
 
     assert data["error"] == "command timed out after 10s"

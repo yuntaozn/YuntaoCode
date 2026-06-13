@@ -482,6 +482,105 @@ def test_build_run_result_accepts_verified_external_state_deliverable() -> None:
     assert "execution_contract_failed" not in result["risks"]
 
 
+def test_build_run_result_keeps_auxiliary_failure_auditable_without_failing_analysis() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        task_contract={
+            "intent": "read_only_analysis",
+            "requires_write": False,
+            "requires_state_change": False,
+            "requires_verification": False,
+            "deliverables": [{"kind": "answer"}],
+        },
+        tool_events=[
+            {
+                "tool": "filesystem.scan_folder",
+                "status": "success",
+                "input": {"path": "D:/workspace"},
+            },
+            {
+                "tool": "git.status",
+                "status": "failure",
+                "input": {"path": "D:/workspace"},
+                "error": "not a git repository",
+            },
+        ],
+    )
+
+    assert result["status"] == "success"
+    assert result["counts"]["incidental_failures"] == 1
+    assert result["counts"]["blocking_failures"] == 0
+    assert result["failure_details"] == [
+        {
+            "tool": "git.status",
+            "path": ".",
+            "role": "unknown",
+            "impact": "incidental",
+        }
+    ]
+    assert "incidental_tool_failure" in result["risks"]
+
+
+def test_build_run_result_marks_recovered_delivery_and_weak_verification_partial() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "deliverables": [{"kind": "external_state", "description": "House model"}],
+    }
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "mcp_demo.execute",
+                "status": "failure",
+                "declared_effects": ["external_state_change"],
+                "declared_roles": ["deliverable"],
+                "error": "first attempt failed",
+            },
+            {
+                "tool": "mcp_demo.execute",
+                "status": "success",
+                "output": {
+                    "effects": ["external_state_change"],
+                    "roles": ["deliverable"],
+                },
+            },
+            {
+                "tool": "mcp_demo.screenshot",
+                "status": "failure",
+                "declared_roles": ["verification"],
+                "declared_verification_strength": "standard",
+                "error": "screenshot unsupported",
+            },
+            {
+                "tool": "mcp_demo.scene_info",
+                "status": "success",
+                "output": {
+                    "roles": ["evidence", "verification"],
+                    "verification_strength": "weak",
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["counts"]["deliverable_successes"] == 1
+    assert result["counts"]["verification_successes"] == 1
+    assert result["counts"]["recovered_failures"] == 1
+    assert result["counts"]["degraded_failures"] == 1
+    assert result["required_verification_strength"] == "standard"
+    assert result["verification_evidence"][0]["strength"] == "weak"
+    assert result["verification_evidence"][0]["sufficient"] is False
+    assert "required_verification_not_satisfied" in result["risks"]
+    assert "verification_evidence_weak" in result["risks"]
+
+
 def test_build_run_result_marks_unverified_external_state_deliverable_partial() -> None:
     contract = {
         "requires_write": False,
@@ -839,3 +938,86 @@ def test_build_run_result_records_all_apply_patch_paths() -> None:
     )
 
     assert result["written_paths"] == ["src/app.js", "src/styles.css"]
+
+
+def test_build_run_result_records_capability_preflight_blocker() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        tool_events=[],
+        change_summary=None,
+        mode="terminal",
+        task_contract={
+            "requires_state_change": True,
+            "requires_write": False,
+            "deliverables": [{"kind": "external_state"}],
+        },
+        contract_failed=True,
+        preflight_blockers=[{
+            "code": "missing_external_state_capability",
+            "message": "No external-state capability is available.",
+        }],
+    )
+
+    assert result["status"] == "failure"
+    assert result["failures"][0]["tool"] == "capability.preflight"
+    assert "capability_preflight_blocked" in result["risks"]
+
+
+def test_build_run_result_records_optional_write_without_treating_it_as_contract_failure() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        tool_events=[
+            {
+                "tool": "code.edit_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/src/editor.js"},
+                "output": {"path": "D:/workspace/src/editor.js"},
+            },
+        ],
+        change_summary={"files": [{"path": "src/editor.js"}]},
+        mode="terminal",
+        requires_code_write=False,
+        task_contract={
+            "intent": "read_only_analysis",
+            "requires_write": False,
+            "requires_state_change": False,
+            "deliverables": [{"kind": "answer"}],
+        },
+    )
+
+    assert result["status"] == "success"
+    assert result["counts"]["file_write_successes"] == 1
+    assert result["counts"]["deliverable_successes"] == 0
+    assert result["written_paths"] == ["src/editor.js"]
+    assert result["observed_written_paths"] == ["src/editor.js"]
+    assert result["target_written_paths"] == []
+    assert result["flags"]["optional_state_change_observed"] is True
+    assert "optional_write_not_verified" in result["risks"]
+
+
+def test_build_run_result_does_not_warn_when_optional_write_is_verified() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        tool_events=[
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/src/editor.js"},
+                "output": {"path": "D:/workspace/src/editor.js"},
+            },
+            {
+                "tool": "filesystem.read_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/src/editor.js"},
+                "output": {"path": "D:/workspace/src/editor.js"},
+            },
+        ],
+        change_summary={"files": [{"path": "src/editor.js"}]},
+        mode="terminal",
+        requires_code_write=False,
+    )
+
+    assert result["status"] == "success"
+    assert result["flags"]["optional_state_change_observed"] is True
+    assert result["counts"]["verification_successes"] == 1
+    assert "optional_write_not_verified" not in result["risks"]

@@ -31,9 +31,10 @@ from .api.mcp_services import McpServiceActionHandler, McpServiceDetailHandler, 
 from .api.modes import ModesHandler
 from .api.panel import PanelHandler
 from .api.plugins import PluginsHandler
-from .api.runs import RunDetailHandler, RunEventsStreamHandler, RunsHandler
+from .api.runs import RunActionHandler, RunDetailHandler, RunEventsStreamHandler, RunsHandler
 from .api.settings import SettingsHandler
 from .api.tasks import TaskDetailHandler, TasksHandler
+from .api.tool_tasks import ToolTaskDetailHandler, ToolTasksHandler
 from .api.tools import ToolsHandler
 from .api.workspaces import WorkspaceDetailHandler, WorkspaceOpenHandler, WorkspacePickerHandler, WorkspacesHandler
 from .config import RuntimeConfig
@@ -48,6 +49,7 @@ from .task_store import TaskStore
 from .tool_registry import ToolRegistry
 from .run_store import RunStore
 from .run_events import RunEventHub
+from .product_task_store import ProductTaskStore
 from .mcp_service_manager import McpServiceManager
 from .workspace_store import WorkspaceStore
 
@@ -56,7 +58,8 @@ from .workspace_store import WorkspaceStore
 class RuntimeState:
     config: RuntimeConfig
     registry: ToolRegistry
-    store: TaskStore
+    tool_tasks: TaskStore
+    product_tasks: ProductTaskStore
     runner: TaskRunner
     workspaces: WorkspaceStore
     conversations: ConversationStore
@@ -78,12 +81,12 @@ def build_runtime(config: RuntimeConfig) -> RuntimeState:
     register_builtin_tools(registry)
     settings = SettingsStore()
     attachments = AttachmentStore(settings.data_dir / "attachments.db", settings.data_dir / "attachments")
-    store = TaskStore(settings.data_dir / "tasks.json")
+    tool_tasks = TaskStore(settings.data_dir / "tool-tasks.json")
     path_guard = PathGuard(config.workspace_roots)
     backups = BackupStore(settings.data_dir / "backups", path_guard)
     runner = TaskRunner(
         registry=registry,
-        store=store,
+        store=tool_tasks,
         path_guard=path_guard,
         backup_store=backups,
         settings=settings,
@@ -95,12 +98,14 @@ def build_runtime(config: RuntimeConfig) -> RuntimeState:
         settings.data_dir / "runtime.db",
         legacy_store_path=settings.data_dir / "runs.json",
     )
-    run_events = RunEventHub(runs)
+    product_tasks = ProductTaskStore(settings.data_dir / "runtime.db")
+    run_events = RunEventHub(runs, product_tasks=product_tasks)
     mcp_services = McpServiceManager(settings.data_dir / "mcp-services.json", registry=registry)
     return RuntimeState(
         config=config,
         registry=registry,
-        store=store,
+        tool_tasks=tool_tasks,
+        product_tasks=product_tasks,
         runner=runner,
         workspaces=workspaces,
         conversations=conversations,
@@ -151,10 +156,13 @@ def make_app(runtime: RuntimeState) -> tornado.web.Application:
         (r"/conversations/([^/]+)/confirm", ConversationConfirmHandler, handler_kwargs),
         (r"/conversations/([^/]+)/compress", ConversationCompressHandler, handler_kwargs),
         (r"/runs/([^/]+)/events/stream", RunEventsStreamHandler, handler_kwargs),
+        (r"/runs/([^/]+)/actions", RunActionHandler, handler_kwargs),
         (r"/runs/([^/]+)", RunDetailHandler, handler_kwargs),
         (r"/runs", RunsHandler, handler_kwargs),
         (r"/tasks", TasksHandler, handler_kwargs),
         (r"/tasks/([^/]+)", TaskDetailHandler, handler_kwargs),
+        (r"/tool-tasks", ToolTasksHandler, handler_kwargs),
+        (r"/tool-tasks/([^/]+)", ToolTaskDetailHandler, handler_kwargs),
         (r"/logs/([^/]+)", LogsWebSocketHandler, handler_kwargs),
         (r"/static/(.*)", tornado.web.StaticFileHandler, {"path": str(static_path)}),
     ], template_path=str(template_path), static_path=str(static_path))

@@ -10,6 +10,8 @@ const state = {
     modes: [],
     backups: [],
     activeRuns: [],
+    recentTasks: [],
+    pendingRunLaunch: null,
     pinnedWorkspaceIds: loadPinnedWorkspaceIds(),
     openWorkspaceMenuId: "",
     planningPolicy: loadPlanningPolicy(),
@@ -20,7 +22,7 @@ const state = {
     currentConversationId: localStorage.getItem("lit_conversation_id") || "",
     currentMessages: [],
     activeStreams: new Map(),
-    pendingComposerSubmit: false,
+    pendingComposerSubmits: new Set(),
     submitSeq: 0,
     isSending: false,
     abortController: null,
@@ -111,12 +113,21 @@ function isConversationStreaming(conversationId = state.currentConversationId) {
     return Boolean(conversationId && state.activeStreams.has(conversationId));
 }
 
+function composerSubmitKey(conversationId = state.currentConversationId) {
+    if (conversationId) return `conversation:${conversationId}`;
+    return `workspace:${state.currentWorkspaceId || "unassigned"}`;
+}
+
+function isComposerSubmitPending(conversationId = state.currentConversationId) {
+    return state.pendingComposerSubmits.has(composerSubmitKey(conversationId));
+}
+
 function hasActiveStreams() {
     return state.activeStreams.size > 0;
 }
 
 function isRunActive(run) {
-    return ["running", "waiting_confirmation"].includes(String(run?.status || ""));
+    return ["running", "waiting_confirmation", "paused"].includes(String(run?.status || ""));
 }
 
 function activeRunsForConversation(conversationId) {
@@ -168,6 +179,9 @@ function activeRunLabel(run) {
     if (String(run?.status || "") === "waiting_confirmation") {
         return t('status.waiting_confirm');
     }
+    if (String(run?.status || "") === "paused") {
+        return t('tasks.paused');
+    }
     const message = String(run?.message || "").trim();
     const stage = String(run?.stage || "").trim();
     return message || stage || t('conv.running');
@@ -187,17 +201,19 @@ function runDotMarkup(runs, fallbackActive = false) {
     const activeRuns = Array.isArray(runs) ? runs.filter(isRunActive) : [];
     if (!activeRuns.length && !fallbackActive) return "";
     const waitingConfirm = activeRuns.some((run) => String(run?.status || "") === "waiting_confirmation");
-    const title = waitingConfirm ? t('status.waiting_confirm') : t('conv.running');
-    return `<span class="run-dot ${waitingConfirm ? "waiting" : ""}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"></span>`;
+    const paused = activeRuns.some((run) => String(run?.status || "") === "paused");
+    const title = waitingConfirm ? t('status.waiting_confirm') : (paused ? t('tasks.paused') : t('conv.running'));
+    return `<span class="run-dot ${waitingConfirm ? "waiting" : ""} ${paused ? "paused" : ""}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}"></span>`;
 }
 
 async function refreshActiveRuns() {
     try {
-        const [running, waiting] = await Promise.all([
+        const [running, waiting, paused] = await Promise.all([
             api("/runs?status=running"),
             api("/runs?status=waiting_confirmation"),
+            api("/runs?status=paused"),
         ]);
-        const merged = [...(running || []), ...(waiting || [])];
+        const merged = [...(running || []), ...(waiting || []), ...(paused || [])];
         const byId = new Map();
         for (const run of merged) {
             if (run?.id) byId.set(run.id, run);
@@ -211,8 +227,102 @@ async function refreshActiveRuns() {
     }
 }
 
+async function refreshTaskHistory() {
+    if (!state.currentWorkspaceId) {
+        state.recentTasks = [];
+        renderTaskHistory();
+        return;
+    }
+    state.recentTasks = await api(`/tasks?workspace_id=${encodeURIComponent(state.currentWorkspaceId)}`) || [];
+    const details = await Promise.all(
+        state.recentTasks.slice(0, 20).map((task) => api(`/tasks/${encodeURIComponent(task.id)}`)),
+    );
+    state.recentTasks = details;
+    renderTaskHistory();
+}
+
+function renderTaskHistory() {
+    const list = $("task-history-list");
+    if (!list) return;
+    if (!state.recentTasks.length) {
+        list.innerHTML = `<div class="task-history-empty">${escapeHtml(t('tasks.empty'))}</div>`;
+        return;
+    }
+    list.innerHTML = state.recentTasks.map((task) => {
+        const runs = Array.isArray(task.runs) ? task.runs : [];
+        const runRows = runs.map((run) => {
+            const status = String(run.status || "");
+            const canPause = ["running", "waiting_confirmation"].includes(status);
+            const canResume = ["paused", "stopped", "failure", "partial"].includes(status);
+            const canStart = status === "created";
+            return `
+                <div class="task-run-row">
+                    <div class="task-run-main">
+                        <strong>#${Number(run.attempt || 1)} ${escapeHtml(status)}</strong>
+                        <span>${escapeHtml(run.message || run.stage || "")}</span>
+                    </div>
+                    <div class="task-run-actions">
+                        ${canPause ? `<button type="button" data-run-action="pause" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.pause'))}</button>` : ""}
+                        ${canResume ? `<button type="button" data-run-action="resume" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.resume'))}</button>` : ""}
+                        ${canStart ? `<button type="button" data-run-action="start" data-run-id="${escapeHtml(run.id)}" data-task-id="${escapeHtml(task.id)}" data-conversation-id="${escapeHtml(run.conversation_id || task.conversation_id || "")}" data-goal="${escapeHtml(task.goal || run.user_content || "")}">${escapeHtml(t('tasks.start'))}</button>` : ""}
+                        <button type="button" data-run-action="runbook" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.runbook'))}</button>
+                        <button type="button" data-run-action="replay" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.replay'))}</button>
+                    </div>
+                </div>
+            `;
+        }).join("");
+        return `
+            <section class="task-history-item">
+                <div class="task-history-head">
+                    <strong>${escapeHtml(task.goal || t('tasks.untitled'))}</strong>
+                    <span>${escapeHtml(task.state || "")} · ${Number(task.run_count || runs.length || 0)} Run</span>
+                </div>
+                <div class="task-run-list">${runRows || `<div class="task-history-empty">${escapeHtml(t('tasks.no_runs'))}</div>`}</div>
+            </section>
+        `;
+    }).join("");
+}
+
+async function runTaskHistoryAction(action, runId, button) {
+    if (action === "start") {
+        await startPreparedRun({
+            id: runId,
+            task_id: button.dataset.taskId || "",
+            conversation_id: button.dataset.conversationId || "",
+            goal: button.dataset.goal || "",
+        });
+        return;
+    }
+    const data = await api(`/runs/${encodeURIComponent(runId)}/actions`, {
+        method: "POST",
+        body: JSON.stringify({ action }),
+    });
+    if (action === "runbook") {
+        const output = $("task-runbook-output");
+        output.textContent = JSON.stringify(data, null, 2);
+        output.classList.remove("hidden");
+    } else if (action === "replay" || (action === "resume" && data?.prepared_run)) {
+        showToast(t('tasks.prepared'));
+    }
+    await Promise.all([refreshActiveRuns(), refreshTaskHistory()]);
+}
+
+async function startPreparedRun(prepared) {
+    if (!prepared?.id || !prepared?.conversation_id) return;
+    if (state.currentConversationId !== prepared.conversation_id) {
+        await loadConversation(prepared.conversation_id);
+    }
+    state.pendingRunLaunch = {
+        prepared_run_id: prepared.id,
+        task_id: prepared.task_id || "",
+    };
+    $("message-input").value = prepared.goal || t('tasks.continue_goal');
+    $("task-history-dialog")?.close();
+    $("composer")?.requestSubmit();
+}
+
 function updateSendingState() {
-    state.isSending = Boolean(state.pendingComposerSubmit || isConversationStreaming());
+    state.isSending = Boolean(isComposerSubmitPending() || isConversationStreaming());
     refreshComposerState();
 }
 
@@ -230,7 +340,33 @@ function openAuxiliaryPage(url) {
 }
 
 function refreshComposerState() {
-    setSendButtonState(Boolean(state.pendingComposerSubmit || isConversationStreaming()));
+    setSendButtonState(Boolean(isComposerSubmitPending() || isConversationStreaming()));
+}
+
+function syncCurrentConversationStreamStatus() {
+    const statusBar = $("streaming-status-bar");
+    const statusBarText = $("streaming-status-text");
+    const statusBarElapsed = $("streaming-status-elapsed");
+    const statusBarActions = $("status-bar-actions");
+    if (!statusBar || !statusBarText || !statusBarElapsed || !statusBarActions) return;
+    const activeStream = state.activeStreams.get(state.currentConversationId);
+    if (!activeStream) {
+        statusBar.classList.add("hidden");
+        statusBarActions.classList.add("hidden");
+        return;
+    }
+    const pendingAssistant = [...(activeStream.messages || [])]
+        .reverse()
+        .find((message) => message?.role === "assistant" && message?.metadata?.pending);
+    const metadata = pendingAssistant?.metadata || {};
+    const text = metadata.statusText || activeStream.message || t('status.executing');
+    statusBar.classList.remove("hidden");
+    statusBarText.textContent = text;
+    statusBarText.title = text;
+    statusBarElapsed.textContent = metadata.waitingConfirmation
+        ? ""
+        : formatElapsed(metadata.elapsedSeconds || 0);
+    statusBarActions.classList.toggle("hidden", !metadata.waitingConfirmation);
 }
 
 function elapsedSeconds(since) {
@@ -435,6 +571,8 @@ async function loadConversations() {
     } else {
         renderMessages([]);
     }
+    refreshComposerState();
+    syncCurrentConversationStreamStatus();
 }
 
 function renderWorkspaces() {
@@ -984,6 +1122,10 @@ async function newConversation() {
             body: JSON.stringify({ workspace_id: state.currentWorkspaceId, mode: state.currentMode }),
         });
         state.currentConversationId = conversation.id;
+        const pendingWorkspaceSubmitKey = composerSubmitKey("");
+        if (state.pendingComposerSubmits.delete(pendingWorkspaceSubmitKey)) {
+            state.pendingComposerSubmits.add(composerSubmitKey(conversation.id));
+        }
         state.contextTokens = 0;
         state.contextLimit = 0;
         localStorage.setItem("lit_conversation_id", conversation.id);
@@ -992,6 +1134,7 @@ async function newConversation() {
         renderContextBar();
         renderCurrentWorkspace();
         refreshComposerState();
+        syncCurrentConversationStreamStatus();
         $("message-input").focus();
     } catch (error) {
         showToast(error.message || t('conv.create_failed'));
@@ -1015,6 +1158,7 @@ async function loadConversation(conversationId) {
         renderMessages(activeStream?.messages || conversation.messages);
         renderConversations();
         refreshComposerState();
+        syncCurrentConversationStreamStatus();
     } catch (error) {
         showToast(error.message || t('error.load_failed'));
         console.error("loadConversation failed:", error);
@@ -1036,6 +1180,8 @@ async function deleteConversation(conversationId) {
         renderMessages([]);
         renderContextBar();
         renderCurrentWorkspace();
+        refreshComposerState();
+        syncCurrentConversationStreamStatus();
     }
     await loadConversations();
     showToast(t('conv.deleted'));
@@ -1158,11 +1304,12 @@ async function sendMessage(event) {
         return;
     }
     if (!content && !state.pendingAttachments.length) return;
-    if (state.pendingComposerSubmit) {
+    const initialSubmitKey = composerSubmitKey(activeConversationId);
+    if (state.pendingComposerSubmits.has(initialSubmitKey)) {
         console.debug("[YuntaoCode] duplicate composer submit suppressed");
         return;
     }
-    state.pendingComposerSubmit = true;
+    state.pendingComposerSubmits.add(initialSubmitKey);
     updateSendingState();
     setSendButtonState(true);
     try {
@@ -1170,35 +1317,42 @@ async function sendMessage(event) {
             await newConversation();
         }
     } catch (error) {
-        state.pendingComposerSubmit = false;
+        state.pendingComposerSubmits.delete(initialSubmitKey);
         updateSendingState();
         throw error;
     }
     if (!state.currentConversationId) {
-        state.pendingComposerSubmit = false;
+        state.pendingComposerSubmits.delete(initialSubmitKey);
         updateSendingState();
         return;
     }
     const conversationId = state.currentConversationId;
+    const conversationSubmitKey = composerSubmitKey(conversationId);
+    state.pendingComposerSubmits.delete(initialSubmitKey);
+    state.pendingComposerSubmits.add(conversationSubmitKey);
     const requestMode = state.currentMode;
+    const runLaunch = state.pendingRunLaunch;
+    const workspaceId = state.currentWorkspaceId;
+    const previousMessages = [...state.currentMessages];
+    const attachmentFiles = state.pendingAttachments.map((item) => item.file);
     const requestId = `stream-${Date.now()}-${++state.submitSeq}`;
     let uploadedAttachments = [];
     try {
         uploadedAttachments = await uploadAttachmentFiles(
             conversationId,
-            state.currentWorkspaceId,
-            state.pendingAttachments.map((item) => item.file),
+            workspaceId,
+            attachmentFiles,
         );
     } catch (error) {
-        state.pendingComposerSubmit = false;
+        state.pendingComposerSubmits.delete(conversationSubmitKey);
         updateSendingState();
-        setSendButtonState(false);
         showToast(error.message);
         return;
     }
-    input.value = "";
-    clearAttachmentUpload();
-    const previousMessages = [...state.currentMessages];
+    if (state.currentConversationId === conversationId) {
+        input.value = "";
+        clearAttachmentUpload();
+    }
     const streamingMessages = [
         ...previousMessages,
         {
@@ -1283,35 +1437,43 @@ async function sendMessage(event) {
     let confirmResolve = null;
 
     function showStatusBar(text) {
+        if (state.currentConversationId !== conversationId) return;
         statusBar.classList.remove("hidden");
         statusBarText.textContent = text || t('status.executing');
         statusBarText.title = text || t('status.executing');
     }
     function hideStatusBar() {
+        if (state.currentConversationId !== conversationId) return;
         statusBar.classList.add("hidden");
         statusBarActions.classList.add("hidden");
     }
+    function setStatusBarElapsed(text) {
+        if (state.currentConversationId === conversationId) {
+            statusBarElapsed.textContent = text;
+        }
+    }
     function showConfirmUI(message) {
+        if (state.currentConversationId !== conversationId) return;
         showStatusBar(message || t('status.confirm_pause'));
-        statusBarElapsed.textContent = "";
+        setStatusBarElapsed("");
         statusBarActions.classList.remove("hidden");
     }
 
     showStatusBar(t('status.thinking'));
-    statusBarElapsed.textContent = formatElapsed(0);
+    setStatusBarElapsed(formatElapsed(0));
 
     const abortController = new AbortController();
     state.activeStreams.set(conversationId, {
         abortController,
         messages: streamingMessages,
-        workspaceId: state.currentWorkspaceId,
+        workspaceId,
         status: "running",
         stage: "streaming",
         message: t('status.thinking'),
         updatedAt: new Date().toISOString(),
     });
     state.abortController = abortController;
-    state.pendingComposerSubmit = false;
+    state.pendingComposerSubmits.delete(conversationSubmitKey);
     updateSendingState();
     renderConversations();
     renderWorkspaces();
@@ -1326,7 +1488,7 @@ async function sendMessage(event) {
         const baseStatusText = metadata.baseStatusText || metadata.statusText || t('status.executing');
         if (metadata.waitingConfirmation) {
             metadata.statusText = baseStatusText;
-            statusBarElapsed.textContent = "";
+            setStatusBarElapsed("");
         } else if (metadata.strategyChangeRequired) {
             metadata.statusText = metadata.strategyChangeText || t('status.strategy_change_required');
         } else if ((metadata.consecutiveToolFailures || 0) >= 2) {
@@ -1347,7 +1509,7 @@ async function sendMessage(event) {
             metadata.statusText = baseStatusText;
         }
         if (!metadata.waitingConfirmation) {
-            statusBarElapsed.textContent = formatElapsed(metadata.elapsedSeconds);
+            setStatusBarElapsed(formatElapsed(metadata.elapsedSeconds));
         }
         showStatusBar(metadata.statusText);
         streamingMessages[assistantIndex].metadata = metadata;
@@ -1365,6 +1527,11 @@ async function sendMessage(event) {
             plan_mode: state.planningPolicy,
             request_id: requestId,
         };
+        if (runLaunch?.prepared_run_id) {
+            body.prepared_run_id = runLaunch.prepared_run_id;
+            body.task_id = runLaunch.task_id || "";
+            state.pendingRunLaunch = null;
+        }
         if (uploadedAttachments.length) {
             body.attachment_ids = uploadedAttachments.map((item) => item.id);
         }
@@ -1669,9 +1836,10 @@ async function sendMessage(event) {
         }
         hideStatusBar();
         state.activeStreams.delete(conversationId);
-        state.pendingComposerSubmit = false;
+        state.pendingComposerSubmits.delete(conversationSubmitKey);
         updateSendingState();
         state.abortController = state.activeStreams.get(state.currentConversationId)?.abortController || null;
+        syncCurrentConversationStreamStatus();
         renderConversations();
         renderWorkspaces();
         renderCurrentWorkspace();
@@ -1819,7 +1987,7 @@ async function ensureMentionFiles() {
     if (!workspace || state.mention.filesWorkspaceId === workspace.id) return;
     state.mention.filesWorkspaceId = workspace.id;
     state.mention.files = [];
-    const task = await api("/tasks", {
+    const task = await api("/tool-tasks", {
         method: "POST",
         body: JSON.stringify({
             tool: "code.list_project_files",
@@ -2412,6 +2580,21 @@ on("focus-search-btn", "click", () => $("conversation-search-input")?.focus());
 on("open-settings-btn", "click", () => openAuxiliaryPage("/settings-page"));
 on("open-plugins-btn", "click", () => openAuxiliaryPage("/plugins-page"));
 on("open-mcp-services-btn", "click", () => openAuxiliaryPage("/mcp-services-page"));
+on("open-task-history-btn", "click", () => {
+    const dialog = $("task-history-dialog");
+    const output = $("task-runbook-output");
+    if (output) output.classList.add("hidden");
+    refreshTaskHistory()
+        .then(() => dialog?.showModal())
+        .catch((error) => showToast(error.message));
+});
+on("close-task-history-btn", "click", () => $("task-history-dialog")?.close());
+on("task-history-list", "click", (event) => {
+    const button = event.target.closest("[data-run-action]");
+    if (!button) return;
+    runTaskHistoryAction(button.dataset.runAction, button.dataset.runId, button)
+        .catch((error) => showToast(error.message));
+});
 on("open-login-btn", "click", () => $("login-dialog").showModal());
 on("logout-btn", "click", () => logoutBackend());
 on("conversation-search-input", "input", (event) => {
@@ -2461,7 +2644,11 @@ on("backend-url-input", "change", (event) => {
 });
 on("composer", "submit", (event) => sendMessage(event).catch((error) => showToast(error.message)));
 on("send-btn", "click", (event) => {
-    if (state.isSending) {
+    if (isComposerSubmitPending()) {
+        event.preventDefault();
+        return;
+    }
+    if (isConversationStreaming()) {
         event.preventDefault();
         const input = $("message-input");
         const content = input?.value.trim() || "";

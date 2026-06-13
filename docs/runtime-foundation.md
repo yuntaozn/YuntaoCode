@@ -70,8 +70,8 @@ YuntaoCode uses two related but different concepts:
 - **ToolTask** is one local tool invocation: a filesystem read, shell command,
   Git operation, document export, and similar actions.
 
-The historical `/tasks` API currently manages ToolTask records. It remains
-compatible for now, but public records declare:
+The `/tasks` API manages product-level Tasks. Individual local tool invocation
+records use `/tool-tasks` and declare:
 
 ```json
 {
@@ -82,8 +82,8 @@ compatible for now, but public records declare:
 }
 ```
 
-Future product-level tasks should not overload these tool invocation records.
-They should be introduced as a separate Task model or a clearly named store.
+Product Tasks are persisted separately from ToolTasks and reference one or more
+Runs. Each replay or recovery attempt creates another Run under the same Task.
 
 ## Run Events
 
@@ -118,6 +118,33 @@ Current canonical event names include:
 - `run.result`
 - `run.completed`
 - `run.failed`
+
+## Pause, Resume, Replay, And Runbook
+
+YuntaoCode 0.1 treats pause/resume/replay as Run-level foundation features.
+This keeps them close to the persisted event trace while the product-level
+Task store is still being separated from historical ToolTask records.
+
+- `POST /runs/{run_id}/actions` with `{"action": "pause"}` marks the run as
+  paused through a persisted `run.status` event with `status="paused"`. The
+  active executor pauses at safe boundaries before the next model round or
+  tool call.
+- `{"action": "resume"}` records `status="resumed"` and releases the active
+  executor.
+- `{"action": "runbook"}` builds a deterministic runbook from persisted run
+  events: task contract, capability snapshot, plan, tool steps, status
+  timeline, result, risks, and failures.
+- `{"action": "replay"}` creates a new prepared Run under the same Task and
+  returns a replay request artifact. It does not execute tools until the user
+  explicitly starts the prepared Run.
+
+Run lineage is explicit through `task_id`, `parent_run_id`, `source_run_id`,
+`attempt`, and `resume_from_checkpoint_id`.
+
+Completed or partial Runs persist a recovery `ContextSnapshot` and
+`Checkpoint`. A recovered Run receives bounded runtime facts, evidence, and
+unresolved risks from the checkpoint instead of replaying the full failed
+conversation as instructions.
 
 ## Task Contract
 
@@ -190,9 +217,29 @@ changes, including files, Blender/CAD scenes, browser sessions, databases, and
 other external applications. An external-state task can therefore set
 `requires_state_change=true` and `requires_write=false`.
 
+These fields are completion requirements, not permission toggles. If a request
+is ambiguous, the model may still choose a state-changing repair strategy unless
+the user or runtime has set a hard no-write boundary. In that case `RunResult`
+records the observed write separately from target deliverable satisfaction
+instead of treating the task contract as an execution lock.
+
 Tool providers may declare `effects`, `roles`, and `artifacts`. Successful tool
 results carry these facts into the event trace, allowing the runtime to audit
 external-state deliverables without hard-coding provider tool IDs.
+
+Result convergence is role-aware. A failed target-deliverable action can block
+the Run, a failed required verification can degrade it to partial, and a failed
+auxiliary/evidence action remains auditable without automatically overriding a
+satisfied task goal. Failures that are followed by a successful replacement
+deliverable or sufficient verification are recorded as recovered.
+
+Verification is evidence with strength, not only a boolean tool role. Providers
+may declare `verification_strength` as `weak`, `standard`, or `strong`.
+Task contracts require `standard` evidence by default when
+`requires_verification=true`; coarse inspection may therefore support the
+summary without proving the requested outcome. `RunResult` records all
+verification evidence, its strength, whether it satisfied the contract, and
+role-aware failure impacts.
 
 The runtime can still override the model contract. For example, a user saying
 "only analyze" forces a read-only contract even if the model proposes a write.
@@ -278,6 +325,11 @@ records `invalid_verification_method` and keeps the task result partial instead
 of waiting for a server command to time out and treating the whole write as a
 hard failure.
 
+Optional model-initiated local writes are not treated as contract failures when
+the task did not require a write. If such a write has no observed verification,
+`RunResult` records `optional_write_not_verified` and the UI can present the
+result as modified-but-unverified without blocking the model's chosen strategy.
+
 Future UI work should prefer showing facts from `RunResult` over inferring task
 state from assistant text.
 
@@ -303,6 +355,13 @@ Context is a runtime resource, not just chat history. It should track:
 - summaries and memory;
 - unresolved, stale, or unverified facts;
 - recovery context after failures.
+
+Memory has a hard scope boundary. Global memory is limited to user-level
+preferences, communication style, identity, and cross-project habits. Workspace
+memory carries project-specific facts and is selected only when the current run
+uses the same `workspace_id`. Automatic extraction promotes only clear
+user-level facts into global memory; project facts require explicit
+workspace-scoped saving.
 
 ## Context Hygiene
 
@@ -353,6 +412,20 @@ Initial schemas are defined in `runtime/core/capability.py`:
 
 Design notes live in [capability-runtime.md](capability-runtime.md).
 
+Current runtime-level capability guards:
+
+- each run records a `capability_snapshot` event after `task_contract`;
+- the snapshot includes available tools, unavailable tools, capability groups,
+  and external-state effects declared by ToolSpec or MCP tool policies;
+- `capability_preflight` blocks tasks that explicitly target external
+  application state when no available capability reports
+  `external_state_change`;
+- when a target capability is declared for an external-state task, the model's
+  visible state-changing tools are restricted to that capability boundary;
+- execution still performs a second guard before running a tool, so malformed
+  native/tool-call variants cannot silently fall back to shell scripts or file
+  generation outside the preflight boundary.
+
 ## Temporary Artifacts
 
 One-off analysis scripts, probe files, intermediate JSON, and other files that
@@ -385,11 +458,10 @@ outputs still need explicit write tools such as `code.edit_file`,
 
 Recommended next steps:
 
-1. Introduce a product-level Task record separate from ToolTask.
-2. Make context snapshots and evidence records available to compression and
-   resume flows.
+1. Refine product-level Task lifecycle and task-level cancellation.
+2. Connect context snapshots to compression and longer-running resume flows.
 3. Map ToolSpec metadata into CapabilityContract.
 4. Persist confirmation requests and outcomes as first-class trace events.
 5. Split `conversation_runner.execute()` by controller responsibility.
 6. Teach the frontend to display `RunResult` explicitly.
-7. Add replay/resume semantics on top of versioned run events.
+7. Add checkpoint rollback and policy-controlled unattended Runbook execution.

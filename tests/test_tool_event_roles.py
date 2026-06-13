@@ -4,7 +4,10 @@ from runtime.agent_strategy.tool_event_roles import (
     VERIFICATION,
     classify_tool_event_role,
     deliverable_verification_events,
+    failed_tool_event_role,
+    sufficient_deliverable_verification_events,
     successful_deliverable_events,
+    verification_evidence_strength,
 )
 
 
@@ -208,6 +211,67 @@ def test_external_state_effect_does_not_satisfy_file_deliverable() -> None:
         task_contract=_contract(),
         workspace_path="D:/workspace/site",
     ) != DELIVERABLE
+
+
+def test_weak_external_state_inspection_is_not_sufficient_verification() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "deliverables": [{"kind": "external_state", "description": "Scene"}],
+    }
+    events = [
+        {
+            "tool": "mcp_demo.execute",
+            "status": "success",
+            "output": {
+                "effects": ["external_state_change"],
+                "roles": ["deliverable"],
+            },
+        },
+        {
+            "tool": "mcp_demo.inspect",
+            "status": "success",
+            "output": {
+                "roles": ["evidence", "verification"],
+                "verification_strength": "weak",
+            },
+        },
+    ]
+
+    assert verification_evidence_strength(events[-1]) == "weak"
+    assert deliverable_verification_events(
+        events,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) == [events[-1]]
+    assert sufficient_deliverable_verification_events(
+        events,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) == []
+
+
+def test_failed_tool_uses_declared_task_role_without_claiming_successful_effect() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "deliverables": [{"kind": "external_state", "description": "Scene"}],
+    }
+    event = {
+        "tool": "mcp_demo.execute",
+        "status": "failure",
+        "declared_effects": ["external_state_change"],
+        "declared_roles": ["deliverable"],
+        "error": "remote command failed",
+    }
+
+    assert failed_tool_event_role(
+        event,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) == DELIVERABLE
 
 
 def test_error_output_does_not_satisfy_external_state_deliverable() -> None:

@@ -2,7 +2,7 @@ from runtime.prompt_context import build_system_prompt
 
 
 class _Settings:
-    def get_memory_prompt(self, *, user_message: str = "") -> str:
+    def get_memory_prompt(self, *, user_message: str = "", workspace_id: str = "") -> str:
         return ""
 
 

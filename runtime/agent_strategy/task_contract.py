@@ -105,6 +105,7 @@ def default_task_contract(
         "requires_plan": requires_plan,
         "expected_document_coverage": bool(expected_document_coverage),
         "expected_min_output_chars": _safe_int(expected_min_output_chars),
+        "capability_ids": [],
         "deliverables": [],
         "first_action": "plan" if requires_plan else ("write" if requires_write else "answer"),
         "blockers": [],
@@ -169,6 +170,11 @@ def merge_model_task_contract(
                 bool(fallback_contract.get("requires_plan")),
             ),
             "expected_min_output_chars": _safe_int(raw_contract.get("expected_min_output_chars")),
+            "capability_ids": _normalize_string_list(
+                raw_contract.get("capability_ids") or raw_contract.get("target_capability_ids"),
+                limit=6,
+                item_limit=120,
+            ),
             "deliverables": _normalize_deliverables(raw_contract.get("deliverables")),
             "first_action": _normalize_first_action(
                 raw_contract.get("first_action"),
@@ -202,6 +208,7 @@ def merge_model_task_contract(
             "requires_write": False,
             "requires_state_change": False,
             "requires_verification": False,
+            "capability_ids": [],
             "deliverables": [],
             "first_action": "read",
         })
@@ -260,6 +267,7 @@ def apply_task_continuity(
         "requires_write",
         "requires_state_change",
         "requires_verification",
+        "capability_ids",
         "deliverables",
     ):
         if key in anchor:
@@ -285,6 +293,7 @@ def task_continuity_anchor(contract: dict[str, Any]) -> dict[str, Any]:
             "requires_write",
             "requires_state_change",
             "requires_verification",
+            "capability_ids",
             "deliverables",
         )
         if key in source
@@ -339,6 +348,7 @@ def task_contract_prompt(
         '  "requires_state_change": true,\n'
         '  "requires_verification": true,\n'
         '  "requires_plan": false,\n'
+        '  "capability_ids": ["optional runtime capability id from <available_capabilities>, e.g. mcp.blender"],\n'
         '  "deliverables": [{"kind": "file|answer|document|code|external_state", "path_hint": "", "path_policy": "hint|exact", "description": ""}],\n'
         '  "scope_relation": "new|continue|revise|replace",\n'
         '  "expected_min_output_chars": 0,\n'
@@ -489,6 +499,7 @@ def inherit_task_contract_for_followup(
         "requires_state_change",
         "requires_verification",
         "expected_document_coverage",
+        "capability_ids",
         "deliverables",
         "blockers",
         "confidence",
@@ -570,6 +581,7 @@ def _normalize_deliverables(value: Any) -> list[dict[str, str]]:
             "kind": _clean_text(item.get("kind"), 40) or "file",
             "path_hint": _clean_text(item.get("path_hint") or item.get("path"), 180),
             "path_policy": _normalize_path_policy(item.get("path_policy")),
+            "capability_id": _clean_text(item.get("capability_id"), 120),
             "description": _clean_text(item.get("description"), 240),
         })
     return result

@@ -11,6 +11,7 @@ from runtime.assistant_modes import get_mode_config
 from runtime.context_manager import compress_context, count_messages_tokens, get_context_limit
 from runtime.conversation_interactions import (
     confirm_responses as _confirm_responses,
+    paused_runs as _paused_runs,
     pending_confirms as _pending_confirms,
     runtime_guidance as _runtime_guidance,
 )
@@ -24,6 +25,7 @@ from runtime.agent_strategy.classifiers import (
 from runtime.agent_strategy.policy import deterministic_plan_gate, resolve_profile
 from runtime.agent_strategy.profiles import profile_to_public_dict
 from runtime.run_result import build_run_result
+from runtime.run_recovery import build_result_context_snapshot, format_recovery_context
 from runtime import i18n
 
 
@@ -65,6 +67,25 @@ class ConversationRunExecutor:
     def write_json_line(self, payload: dict[str, Any]) -> None:
         return None
 
+    async def _wait_if_paused(self) -> None:
+        run = self.runtime.runs.get(self._active_run_id)
+        if not run or run.status != "paused":
+            return
+        pause_event = _paused_runs.setdefault(self._active_run_id, asyncio.Event())
+        pause_event.clear()
+        self.write_event({
+            "event": "status",
+            "status": "paused",
+            "message": "Run paused; waiting for resume.",
+        })
+        await self.flush()
+        while True:
+            current = self.runtime.runs.get(self._active_run_id)
+            if not current or current.status != "paused":
+                return
+            await pause_event.wait()
+            pause_event.clear()
+
     async def execute(
         self,
         *,
@@ -80,11 +101,23 @@ class ConversationRunExecutor:
         effective_mode: str,
         run: Any,
     ) -> None:
+        self._active_workspace_id = str(conversation.workspace_id or "")
         messages = self._build_model_messages(
             conversation,
             workspace.to_public_dict(),
             mode=effective_mode,
         )
+        resume_checkpoint_id = str(getattr(run, "resume_from_checkpoint_id", "") or "")
+        if resume_checkpoint_id:
+            checkpoint = self.runtime.product_tasks.get_checkpoint(resume_checkpoint_id)
+            snapshot = None
+            if checkpoint and checkpoint.get("context_snapshot_id"):
+                snapshot = self.runtime.product_tasks.get_context_snapshot(
+                    str(checkpoint["context_snapshot_id"])
+                )
+            recovery_context = format_recovery_context(checkpoint, snapshot)
+            if recovery_context:
+                messages.append({"role": "system", "content": recovery_context})
         conversation_attachments = self.runtime.attachments.list_for_conversation(conversation_id)
         self._active_attachment_ids = tuple(record.id for record in conversation_attachments)
         image_attachments = [record for record in attachments if record.is_image]
@@ -223,12 +256,72 @@ class ConversationRunExecutor:
         )
         self._active_task_contract = task_contract
         self._active_confirmation_policy = confirmation_policy
+        capability_snapshot = self._build_capability_snapshot(mode_config)
+        capability_preflight = self._preflight_task_capabilities(task_contract, capability_snapshot)
+        self._active_capability_snapshot = capability_snapshot
+        self._active_capability_preflight = capability_preflight
+        metadata["capability_snapshot"] = capability_snapshot
+        metadata["capability_preflight"] = capability_preflight
         messages.append({
             "role": "system",
             "content": self._task_contract_prompt(task_contract),
         })
         self.write_event({"event": "task_contract", "contract": task_contract})
+        self.write_event({
+            "event": "capability_snapshot",
+            "snapshot": capability_snapshot,
+            "preflight": capability_preflight,
+        })
         await self.flush()
+        if not bool(capability_preflight.get("ok", True)):
+            self.write_event({
+                "event": "status",
+                "status": "capability_preflight_blocked",
+                "message": "Capability preflight blocked this run before model/tool execution.",
+            })
+            run_result = build_run_result(
+                workspace_path=workspace.path,
+                tool_events=[],
+                change_summary=None,
+                mode=effective_mode,
+                requires_code_write=code_change_intent,
+                expected_document_coverage=bool(task_contract.get("expected_document_coverage")),
+                expected_min_output_chars=int(task_contract.get("expected_min_output_chars") or 0),
+                task_contract=task_contract,
+                contract_failed=True,
+                preflight_blockers=capability_preflight.get("blockers") or [],
+            )
+            metadata["run_result"] = run_result
+            metadata["synthesized_final_answer"] = True
+            assistant_content = self._capability_preflight_failure_message(capability_preflight)
+            self.write_event({"event": "result", "result": run_result})
+            await self.flush()
+            assistant_message = self.runtime.conversations.add_message(
+                conversation_id,
+                "assistant",
+                assistant_content,
+                metadata,
+            )
+            done_event = {
+                "event": "done",
+                "conversation": conversation.to_public_dict(include_messages=True),
+                "assistant": assistant_message.to_public_dict(),
+                "context_tokens": context_tokens,
+                "context_limit": get_context_limit(model, self.runtime.settings),
+                "run_status": self._run_status_from_result(run_result),
+            }
+            self.write_event(done_event)
+            await self.flush()
+            return
+        allowed_tool_ids = capability_preflight.get("allowed_tool_ids")
+        if isinstance(allowed_tool_ids, list):
+            tools, tool_name_map = self._build_model_tools(
+                mode_config,
+                allowed_tool_ids={str(item) for item in allowed_tool_ids},
+            )
+            boundary_prompt = self._capability_boundary_prompt(capability_preflight)
+            if boundary_prompt:
+                messages.append({"role": "system", "content": boundary_prompt})
         if task_intent == "read_only_analysis":
             messages.append({
                 "role": "system",
@@ -248,6 +341,12 @@ class ConversationRunExecutor:
         # Deprecated compatibility alias for older UI/run readers.
         metadata["execution_mode"] = execution_mode
         metadata["task_contract"] = task_contract
+        metadata["task_id"] = str(getattr(run, "task_id", "") or "")
+        metadata["run_id"] = str(getattr(run, "id", "") or "")
+        metadata["source_run_id"] = str(getattr(run, "source_run_id", "") or "")
+        metadata["resume_from_checkpoint_id"] = str(
+            getattr(run, "resume_from_checkpoint_id", "") or ""
+        )
         missing_write_retries = 0
         tool_contract_failed = False
         max_rounds_exceeded = False
@@ -367,6 +466,7 @@ class ConversationRunExecutor:
                 metadata["stage_sequence"] = ["planner", *stage_sequence]
 
             for round_index in range(max_rounds):
+                await self._wait_if_paused()
                 round_start_event_count = len(tool_events)
                 round_tools = tools
                 round_tool_choice = None
@@ -984,6 +1084,7 @@ class ConversationRunExecutor:
                 round_had_post_deliverable_change = False
                 round_had_post_deliverable_verification = False
                 for tool_call in tool_calls:
+                    await self._wait_if_paused()
                     tool_id, arguments = self._tool_call_details(tool_call, tool_name_map)
                     if finish_reason_indicates_truncation(round_finish_reason):
                         tool_message, tool_event = self._skipped_tool_call(
@@ -1531,7 +1632,15 @@ class ConversationRunExecutor:
         if execution_plan:
             self._complete_remaining_plan_steps(
                 execution_plan,
-                failed=convergence_stopped or max_rounds_exceeded or tool_contract_failed or any(event.get("status") == "failure" for event in tool_events),
+                failed=(
+                    convergence_stopped
+                    or max_rounds_exceeded
+                    or tool_contract_failed
+                    or (
+                        any(event.get("status") == "failure" for event in tool_events)
+                        and not any(event.get("status") in {"success", "partial"} for event in tool_events)
+                    )
+                ),
                 had_tool_events=bool(tool_events),
             )
             metadata["execution_plan"] = execution_plan
@@ -1561,6 +1670,38 @@ class ConversationRunExecutor:
         metadata["run_result"] = run_result
         self.write_event({"event": "result", "result": run_result})
         await self.flush()
+        task_id = str(getattr(run, "task_id", "") or "")
+        if task_id:
+            snapshot_payload = build_result_context_snapshot(
+                task_id=task_id,
+                run_id=str(run.id),
+                task_contract=task_contract,
+                run_result=run_result,
+            )
+            snapshot_record = self.runtime.product_tasks.create_context_snapshot(
+                task_id=task_id,
+                run_id=str(run.id),
+                phase="recovery",
+                snapshot=snapshot_payload,
+            )
+            checkpoint = self.runtime.product_tasks.create_checkpoint(
+                task_id=task_id,
+                run_id=str(run.id),
+                kind="run_result",
+                state=str(run_result.get("status") or ""),
+                context_snapshot_id=snapshot_record["id"],
+                data={
+                    "run_result": run_result,
+                    "task_contract": task_contract,
+                },
+            )
+            metadata["context_snapshot_id"] = snapshot_record["id"]
+            metadata["checkpoint_id"] = checkpoint["id"]
+            self.write_event({
+                "event": "checkpoint",
+                "checkpoint": checkpoint,
+            })
+            await self.flush()
         run_result_status = str(run_result.get("status") or "")
         if run_result_status == "failure" and not (
             max_rounds_exceeded or tool_contract_failed
@@ -1594,6 +1735,7 @@ class ConversationRunExecutor:
             requires_code_write=code_change_intent,
             contract_failed=tool_contract_failed,
             max_rounds_exceeded=max_rounds_exceeded,
+            run_result=run_result,
         )
         if execution_notice:
             metadata["execution_notice"] = execution_notice
@@ -1628,13 +1770,19 @@ class ConversationRunExecutor:
 
         # Async memory extraction (non-blocking)
         if self.runtime.settings.is_memory_auto_extract_enabled() and not max_rounds_exceeded:
-            asyncio.create_task(self._extract_and_store_memories(messages, model, conversation_id))
+            asyncio.create_task(self._extract_and_store_memories(
+                messages,
+                model,
+                conversation_id,
+                workspace_id=str(conversation.workspace_id or ""),
+            ))
 
     async def _extract_and_store_memories(
         self,
         messages: list[dict[str, Any]],
         model: str,
         conversation_id: str,
+        workspace_id: str = "",
     ) -> None:
         """Async memory extraction - runs after the conversation response is sent."""
         try:
@@ -1646,6 +1794,7 @@ class ConversationRunExecutor:
                 model=model,
                 settings=self.runtime.settings,
                 conversation_id=conversation_id,
+                workspace_id=workspace_id,
             )
         except Exception:
             import logging

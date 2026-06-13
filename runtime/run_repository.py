@@ -12,7 +12,7 @@ from typing import Any, Protocol
 from .persistence import DocumentStorage
 
 
-OPERATIONAL_DB_SCHEMA_VERSION = 1
+OPERATIONAL_DB_SCHEMA_VERSION = 2
 LEGACY_RUNS_IMPORT_KEY = "legacy_runs_json_import_v1"
 
 
@@ -30,6 +30,7 @@ class RunRepository(Protocol):
         *,
         conversation_id: str | None = None,
         workspace_id: str | None = None,
+        task_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
@@ -68,6 +69,7 @@ class JsonRunRepository:
         *,
         conversation_id: str | None = None,
         workspace_id: str | None = None,
+        task_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
         records = list(self._records.values())
@@ -75,6 +77,8 @@ class JsonRunRepository:
             records = [item for item in records if item.get("conversation_id") == conversation_id]
         if workspace_id:
             records = [item for item in records if item.get("workspace_id") == workspace_id]
+        if task_id:
+            records = [item for item in records if item.get("task_id") == task_id]
         if status:
             records = [item for item in records if item.get("status") == status]
         return [
@@ -141,6 +145,7 @@ class SqliteRunRepository:
         *,
         conversation_id: str | None = None,
         workspace_id: str | None = None,
+        task_id: str | None = None,
         status: str | None = None,
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
@@ -148,6 +153,7 @@ class SqliteRunRepository:
         for column, value in (
             ("conversation_id", conversation_id),
             ("workspace_id", workspace_id),
+            ("task_id", task_id),
             ("status", status),
         ):
             if value:
@@ -276,21 +282,49 @@ class SqliteRunRepository:
                     CREATE INDEX IF NOT EXISTS idx_run_events_run_sequence
                     ON run_events(run_id, sequence);
                 """)
-                self._connection.execute(f"PRAGMA user_version = {OPERATIONAL_DB_SCHEMA_VERSION}")
+                self._connection.execute("PRAGMA user_version = 1")
+        if current < 2:
+            with self._connection:
+                columns = {
+                    str(row["name"])
+                    for row in self._connection.execute("PRAGMA table_info(runs)").fetchall()
+                }
+                additions = {
+                    "task_id": "TEXT NOT NULL DEFAULT ''",
+                    "parent_run_id": "TEXT NOT NULL DEFAULT ''",
+                    "source_run_id": "TEXT NOT NULL DEFAULT ''",
+                    "attempt": "INTEGER NOT NULL DEFAULT 1",
+                    "resume_from_checkpoint_id": "TEXT NOT NULL DEFAULT ''",
+                }
+                for name, declaration in additions.items():
+                    if name not in columns:
+                        self._connection.execute(
+                            f"ALTER TABLE runs ADD COLUMN {name} {declaration}"
+                        )
+                self._connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_runs_task_updated ON runs(task_id, updated_at DESC)"
+                )
+                self._connection.execute("PRAGMA user_version = 2")
 
     def _upsert_run(self, record: dict[str, Any]) -> None:
         self._connection.execute(
             """
             INSERT INTO runs (
                 id, schema_version, conversation_id, workspace_id, mode,
-                user_content, status, stage, message, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                user_content, task_id, parent_run_id, source_run_id, attempt,
+                resume_from_checkpoint_id, status, stage, message, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 schema_version = excluded.schema_version,
                 conversation_id = excluded.conversation_id,
                 workspace_id = excluded.workspace_id,
                 mode = excluded.mode,
                 user_content = excluded.user_content,
+                task_id = excluded.task_id,
+                parent_run_id = excluded.parent_run_id,
+                source_run_id = excluded.source_run_id,
+                attempt = excluded.attempt,
+                resume_from_checkpoint_id = excluded.resume_from_checkpoint_id,
                 status = excluded.status,
                 stage = excluded.stage,
                 message = excluded.message,
@@ -305,8 +339,9 @@ class SqliteRunRepository:
             """
             INSERT OR IGNORE INTO runs (
                 id, schema_version, conversation_id, workspace_id, mode,
-                user_content, status, stage, message, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                user_content, task_id, parent_run_id, source_run_id, attempt,
+                resume_from_checkpoint_id, status, stage, message, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             self._run_values(record),
         )
@@ -319,6 +354,11 @@ class SqliteRunRepository:
             str(record.get("workspace_id") or ""),
             str(record.get("mode") or "terminal"),
             str(record.get("user_content") or ""),
+            str(record.get("task_id") or ""),
+            str(record.get("parent_run_id") or ""),
+            str(record.get("source_run_id") or ""),
+            str(max(1, int(record.get("attempt") or 1))),
+            str(record.get("resume_from_checkpoint_id") or ""),
             str(record.get("status") or "running"),
             str(record.get("stage") or "created"),
             str(record.get("message") or ""),
@@ -370,6 +410,11 @@ class SqliteRunRepository:
             "workspace_id": str(row["workspace_id"]),
             "mode": str(row["mode"]),
             "user_content": str(row["user_content"]),
+            "task_id": str(row["task_id"]),
+            "parent_run_id": str(row["parent_run_id"]),
+            "source_run_id": str(row["source_run_id"]),
+            "attempt": int(row["attempt"] or 1),
+            "resume_from_checkpoint_id": str(row["resume_from_checkpoint_id"]),
             "status": str(row["status"]),
             "stage": str(row["stage"]),
             "message": str(row["message"]),

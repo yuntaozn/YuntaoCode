@@ -59,12 +59,13 @@ def build_system_prompt(
     settings: Any,
     mode_config: dict[str, Any],
     workspace_path: str,
+    workspace_id: str = "",
     user_message: str = "",
     capability_context: str = "",
 ) -> str:
     prompt = str(mode_config["system_prompt"]).format(
         workspace_path=workspace_path,
-        user_memory=settings.get_memory_prompt(user_message=user_message),
+        user_memory=settings.get_memory_prompt(user_message=user_message, workspace_id=workspace_id),
     )
     if capability_context:
         prompt += "\n" + capability_context

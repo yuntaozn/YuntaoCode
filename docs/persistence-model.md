@@ -10,6 +10,8 @@ Runtime code accesses persisted operational data through Store classes:
 
 - `TaskStore` owns ToolTask records and logs.
 - `RunStore` owns runs and run events.
+- `ProductTaskStore` owns product-level Tasks, recovery Checkpoints, and Context
+  Snapshots in the operational SQLite database.
 - `ConversationStore` owns conversations and messages.
 - `MemoryStore` owns reusable memory records.
 
@@ -20,6 +22,8 @@ The runtime currently uses a mixed backend:
 
 - `RunStore` uses the indexed SQLite database `runtime.db` for runs and run
   events.
+- `ProductTaskStore` uses the same operational database for Task relationships
+  and recovery artifacts; ToolTask records remain a separate local store.
 - `TaskStore`, `ConversationStore`, and `MemoryStore` still use compatible JSON
   documents through the shared `AtomicJsonDocumentStorage` adapter.
 

@@ -13,6 +13,7 @@ def test_capability_from_explicit_pdf_tool_spec() -> None:
         "capability": "document.pdf_to_docx",
         "requires_confirmation": True,
         "artifacts": ["docx"],
+        "verification_strength": "standard",
         "long_running": True,
         "retry_safe": True,
     })
@@ -20,6 +21,7 @@ def test_capability_from_explicit_pdf_tool_spec() -> None:
     assert capability.id == "document.pdf_to_docx"
     assert capability.tool_ids == ("document.extract_pdf_to_docx",)
     assert capability.artifacts == ("docx",)
+    assert capability.verification_strengths == ("standard",)
     assert capability.requires_confirmation is True
     assert capability.long_running is True
     assert capability.retry_safe is True

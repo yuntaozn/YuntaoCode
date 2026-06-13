@@ -94,6 +94,7 @@ def test_capability_contract_confirmation_rules() -> None:
         output_artifacts=("docx",),
         effect_types=("file_write",),
         task_roles=("deliverable",),
+        verification_strength="standard",
         permissions=PermissionSet(filesystem="workspace", shell="confirm_each"),
     )
 
@@ -103,6 +104,7 @@ def test_capability_contract_confirmation_rules() -> None:
     assert data["output_artifacts"] == ["docx"]
     assert data["effect_types"] == ["file_write"]
     assert data["task_roles"] == ["deliverable"]
+    assert data["verification_strength"] == "standard"
     assert needs_user_confirmation(contract)
 
 
@@ -110,6 +112,8 @@ def test_runtime_result_schema_is_core_owned() -> None:
     result = RuntimeResult(
         status="partial",
         counts={"tool_events": 2, "failures": 1},
+        verification_evidence=({"tool": "pytest", "strength": "strong"},),
+        failure_details=({"tool": "lint", "impact": "incidental"},),
         risks=("write_not_verified",),
     )
 
@@ -118,3 +122,5 @@ def test_runtime_result_schema_is_core_owned() -> None:
     assert data["schema_version"] == RUN_RESULT_SCHEMA_VERSION
     assert data["kind"] == "run_result"
     assert data["risks"] == ["write_not_verified"]
+    assert data["verification_evidence"][0]["strength"] == "strong"
+    assert data["failure_details"][0]["impact"] == "incidental"

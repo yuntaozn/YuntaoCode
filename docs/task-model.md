@@ -129,6 +129,15 @@ Runtime 负责：
 场景、浏览器会话、数据库或其他外部应用。工具通过 `effects`、`roles` 和
 `artifacts` 将实际执行事实回传，Runtime 再判断目标产物角色是否满足。
 
+`requires_write=false` is not a no-write permission lock. It means a local file
+write is not required for completion. When the user request is ambiguous, the
+model may still decide that a repair write is the best strategy unless the user
+explicitly asks for analysis only. Runtime records such writes as observed
+state changes and keeps them separate from target deliverable satisfaction.
+If an optional write is not followed by observed verification, Runtime records
+`optional_write_not_verified` as audit evidence instead of turning the task
+contract into a hard execution lock.
+
 ### Task Continuity And Deliverable Paths
 
 The model declares whether the current request is `new`, `continue`, `revise`,
@@ -280,6 +289,9 @@ Task Template 是比 prompt 更稳定的复用单元。
 现有代码已经有 Task Runtime 的雏形：
 
 - `runtime/core/task.py`：用户目标级 Task / Plan / Step 初始 schema，区别于一次工具调用的 ToolTask。
+- `runtime/product_task_store.py`：产品级 Task、Checkpoint、ContextSnapshot 的 SQLite 持久化边界。
+- `/tasks`：产品级 Task API；`/tool-tasks`：一次工具调用记录 API。
+- Replay / recovery 创建新的 Run，并通过 `source_run_id`、`parent_run_id` 和 `resume_from_checkpoint_id` 保留血缘。
 - `runtime/core/events.py`：TraceEvent 初始 schema 和稳定事件名方向。
 - `runtime/core/result.py`：RunResult 公共 schema 常量和结果事实结构。
 - `runtime/conversation_runner.py`：当前主编排层。

@@ -21,6 +21,10 @@ RISK_CODES: frozenset[str] = frozenset({
     "execution_contract_failed",
     "max_rounds_exceeded",
     "recovered_tool_failure",
+    "incidental_tool_failure",
+    "degraded_verification_failure",
+    "required_verification_not_satisfied",
+    "verification_evidence_weak",
     "document_output_coverage_low",
     "invalid_verification_method",
     "runtime_verification_not_observed",
@@ -34,7 +38,10 @@ class RuntimeResult:
     changed_paths: tuple[str, ...] = field(default_factory=tuple)
     written_paths: tuple[str, ...] = field(default_factory=tuple)
     verified: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    verification_evidence: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    required_verification_strength: str = "none"
     failures: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    failure_details: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     risks: tuple[str, ...] = field(default_factory=tuple)
     flags: dict[str, bool] = field(default_factory=dict)
 
@@ -47,7 +54,10 @@ class RuntimeResult:
             "changed_paths": list(self.changed_paths),
             "written_paths": list(self.written_paths),
             "verified": [dict(item) for item in self.verified],
+            "verification_evidence": [dict(item) for item in self.verification_evidence],
+            "required_verification_strength": self.required_verification_strength,
             "failures": [dict(item) for item in self.failures],
+            "failure_details": [dict(item) for item in self.failure_details],
             "risks": list(self.risks),
             "flags": dict(self.flags),
         }

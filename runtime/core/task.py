@@ -1,7 +1,7 @@
 """Product-level task schemas.
 
 These records describe the user-goal task model, not one local tool invocation.
-The historical /tasks API still stores ToolTask records in runtime.task_store.
+Product Tasks use /tasks; individual tool invocations use /tool-tasks.
 """
 
 from __future__ import annotations
@@ -66,6 +66,10 @@ class ProductTask:
     workspace_id: str = ""
     kind: str = ""
     state: TaskState = "created"
+    current_run_id: str = ""
+    run_count: int = 0
+    created_at: str = ""
+    updated_at: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,6 +82,10 @@ class ProductTask:
             "workspace_id": self.workspace_id,
             "kind": self.kind,
             "state": self.state,
+            "current_run_id": self.current_run_id,
+            "run_count": self.run_count,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
             "metadata": dict(self.metadata),
         }
 

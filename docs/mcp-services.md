@@ -107,9 +107,13 @@ Tool policies may declare:
 - `effects`: observable successful effects such as `external_state_change`;
 - `roles`: task roles such as `deliverable`, `evidence`, or `verification`;
 - `artifacts`: artifact kinds produced by a successful call.
+- `verification_strength`: `weak`, `standard`, or `strong` evidence supplied
+  by a successful verification call.
 
 These declarations describe successful result facts, not permission grants.
-Failed calls never receive the declared successful effects. Each discovered
+Failed calls never receive the declared successful effects. Their intended
+roles remain available to RunResult so the runtime can distinguish a failed
+deliverable, failed verification, and an incidental failure. Each discovered
 binding also exposes `health` and `last_error`, so a tool rejected by the
 external application can be shown as degraded without disconnecting the whole
 MCP service.

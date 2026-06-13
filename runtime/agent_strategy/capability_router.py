@@ -16,6 +16,7 @@ class CapabilityContract:
     artifacts: tuple[str, ...] = ()
     effects: tuple[str, ...] = ()
     roles: tuple[str, ...] = ()
+    verification_strengths: tuple[str, ...] = ()
     requires_confirmation: bool = False
     long_running: bool = False
     retry_safe: bool = False
@@ -32,6 +33,7 @@ class CapabilityContract:
             "artifacts": list(self.artifacts),
             "effects": list(self.effects),
             "roles": list(self.roles),
+            "verification_strengths": list(self.verification_strengths),
             "requires_confirmation": self.requires_confirmation,
             "long_running": self.long_running,
             "retry_safe": self.retry_safe,
@@ -197,6 +199,11 @@ def capability_from_tool_spec(spec: dict[str, Any]) -> CapabilityContract:
         artifacts=tuple(str(item) for item in (spec.get("artifacts") or []) if item),
         effects=tuple(str(item) for item in (spec.get("effects") or []) if item),
         roles=tuple(str(item) for item in (spec.get("roles") or []) if item),
+        verification_strengths=(
+            (str(spec.get("verification_strength")).strip(),)
+            if str(spec.get("verification_strength") or "").strip()
+            else ()
+        ),
         requires_confirmation=bool(spec.get("requires_confirmation")),
         long_running=bool(spec.get("long_running")),
         retry_safe=bool(spec.get("retry_safe")),
@@ -217,6 +224,7 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
                 "artifacts": set(),
                 "effects": set(),
                 "roles": set(),
+                "verification_strengths": set(),
                 "requires_confirmation": False,
                 "long_running": False,
                 "retry_safe": False,
@@ -228,6 +236,7 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
         bucket["artifacts"].update(item.artifacts)
         bucket["effects"].update(item.effects)
         bucket["roles"].update(item.roles)
+        bucket["verification_strengths"].update(item.verification_strengths)
         bucket["requires_confirmation"] = bool(bucket["requires_confirmation"] or item.requires_confirmation)
         bucket["long_running"] = bool(bucket["long_running"] or item.long_running)
         bucket["retry_safe"] = bool(bucket["retry_safe"] or item.retry_safe)
@@ -242,6 +251,7 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
             artifacts=tuple(sorted(bucket["artifacts"])),
             effects=tuple(sorted(bucket["effects"])),
             roles=tuple(sorted(bucket["roles"])),
+            verification_strengths=tuple(sorted(bucket["verification_strengths"])),
             requires_confirmation=bool(bucket["requires_confirmation"]),
             long_running=bool(bucket["long_running"]),
             retry_safe=bool(bucket["retry_safe"]),
@@ -275,6 +285,8 @@ def format_capability_catalog_for_prompt(catalog: list[CapabilityContract], *, m
             flags.append(f"effects={','.join(item.effects)}")
         if item.roles:
             flags.append(f"roles={','.join(item.roles)}")
+        if item.verification_strengths:
+            flags.append(f"verification={','.join(item.verification_strengths)}")
         if item.long_running:
             flags.append("long_running=true")
         if item.retry_safe:

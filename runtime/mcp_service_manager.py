@@ -75,9 +75,21 @@ DEFAULT_MCP_SERVICES: tuple[dict[str, Any], ...] = ({
         "arbitrary_code": "confirm_each",
     },
     "tool_policies": {
-        "get_scene_info": {"risk": "read_only", "roles": ["evidence", "verification"]},
-        "get_object_info": {"risk": "read_only", "roles": ["evidence", "verification"]},
-        "get_viewport_screenshot": {"risk": "read_only", "roles": ["verification"]},
+        "get_scene_info": {
+            "risk": "read_only",
+            "roles": ["evidence", "verification"],
+            "verification_strength": "weak",
+        },
+        "get_object_info": {
+            "risk": "read_only",
+            "roles": ["evidence", "verification"],
+            "verification_strength": "standard",
+        },
+        "get_viewport_screenshot": {
+            "risk": "read_only",
+            "roles": ["verification"],
+            "verification_strength": "standard",
+        },
         "execute_blender_code": {
             "risk": "state_change",
             "effects": ["external_state_change"],
@@ -240,6 +252,9 @@ def normalize_mcp_service(value: dict[str, Any], *, existing: dict[str, Any] | N
                     for item in values
                     if str(item).strip()
                 ][:12]
+        verification_strength = str(policy.get("verification_strength") or "").strip().lower()
+        if verification_strength in {"none", "weak", "standard", "strong"}:
+            normalized_policy["verification_strength"] = verification_strength
         if normalized_policy:
             tool_policies[str(tool_name)] = normalized_policy
     incoming_prerequisites = value.get("prerequisites")
@@ -728,6 +743,7 @@ class McpServiceManager:
             effects = self._tool_effects(service_id, remote_tool)
             roles = self._tool_roles(service_id, remote_tool)
             artifacts = self._tool_artifacts(service_id, remote_tool)
+            verification_strength = self._tool_verification_strength(service_id, remote_tool)
 
             async def handler(
                 input_data: dict[str, Any],
@@ -738,6 +754,7 @@ class McpServiceManager:
                 _effects: list[str] = effects,
                 _roles: list[str] = roles,
                 _artifacts: list[str] = artifacts,
+                _verification_strength: str = verification_strength,
             ) -> dict[str, Any]:
                 output = await self.call_tool(_service_id, _remote_name, input_data)
                 if not output.get("error"):
@@ -747,6 +764,8 @@ class McpServiceManager:
                         output["roles"] = list(_roles)
                     if _artifacts:
                         output["artifacts"] = list(_artifacts)
+                    if _verification_strength:
+                        output["verification_strength"] = _verification_strength
                 return output
 
             self.registry.register(
@@ -761,6 +780,7 @@ class McpServiceManager:
                     artifacts=artifacts,
                     effects=effects,
                     roles=roles,
+                    verification_strength=verification_strength or None,
                     long_running=bool(remote_tool.annotations.get("openWorldHint")),
                     idempotent=bool(remote_tool.annotations.get("readOnlyHint")),
                 ),
@@ -775,6 +795,7 @@ class McpServiceManager:
                 "effects": effects,
                 "roles": roles,
                 "artifacts": artifacts,
+                "verification_strength": verification_strength,
                 "health": "available",
                 "last_error": "",
             })
@@ -805,6 +826,12 @@ class McpServiceManager:
 
     def _tool_artifacts(self, service_id: str, tool: McpToolDefinition) -> list[str]:
         return self._tool_policy_values(service_id, tool.name, "artifacts")
+
+    def _tool_verification_strength(self, service_id: str, tool: McpToolDefinition) -> str:
+        policies = self.get_config(service_id).get("tool_policies") or {}
+        policy = policies.get(tool.name) if isinstance(policies, dict) else None
+        value = str(policy.get("verification_strength") or "").strip().lower() if isinstance(policy, dict) else ""
+        return value if value in {"none", "weak", "standard", "strong"} else ""
 
     def _tool_policy_values(self, service_id: str, tool_name: str, key: str) -> list[str]:
         policies = self.get_config(service_id).get("tool_policies") or {}

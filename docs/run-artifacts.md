@@ -17,7 +17,7 @@ Each ToolTask still has its own task ID, logs, status, and output record. Tools
 invoked by the same conversation Run share one isolated artifact directory so
 that a later tool can consume an earlier tool's temporary output.
 
-Direct `/tasks` API calls without a Run scope keep their existing per-ToolTask
+Direct `/tool-tasks` API calls without a Run scope keep their existing per-ToolTask
 temporary directories.
 
 Run artifacts are not project changes and do not satisfy a requested write

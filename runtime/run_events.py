@@ -5,6 +5,7 @@ from collections import defaultdict
 from typing import Any
 
 from .run_store import RunStore, utc_now
+from .product_task_store import ProductTaskStore
 
 
 RUN_EVENT_SCHEMA_VERSION = "0.1"
@@ -13,6 +14,7 @@ RECORDED_EVENT_TYPES = {
     "status",
     "tool",
     "context_hygiene",
+    "capability_snapshot",
     "task_contract",
     "plan_decision",
     "plan",
@@ -22,6 +24,7 @@ RECORDED_EVENT_TYPES = {
     "guidance",
     "error",
     "result",
+    "checkpoint",
     "done",
 }
 
@@ -29,8 +32,15 @@ RECORDED_EVENT_TYPES = {
 class RunEventHub:
     """Persist run events and broadcast compact status updates to live clients."""
 
-    def __init__(self, store: RunStore, *, queue_size: int = 300) -> None:
+    def __init__(
+        self,
+        store: RunStore,
+        *,
+        product_tasks: ProductTaskStore | None = None,
+        queue_size: int = 300,
+    ) -> None:
         self.store = store
+        self.product_tasks = product_tasks
         self.queue_size = queue_size
         self._subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = defaultdict(set)
 
@@ -45,6 +55,8 @@ class RunEventHub:
             record = self.store.record_event(run_id, compact)
             if record and record.events:
                 event_time = record.events[-1].get("time") or event_time
+            if record and self.product_tasks:
+                self.product_tasks.sync_from_run(record)
 
         live_event = {"time": event_time, **payload}
         self._broadcast(run_id, live_event)
@@ -129,6 +141,14 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
             "event_name": event_name,
             "report": payload.get("report"),
         }
+    if event_type == "capability_snapshot":
+        return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
+            "event": "capability_snapshot",
+            "event_name": event_name,
+            "snapshot": payload.get("snapshot"),
+            "preflight": payload.get("preflight"),
+        }
     if event_type == "guidance":
         return {
             "schema_version": RUN_EVENT_SCHEMA_VERSION,
@@ -173,6 +193,13 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
             "event_name": event_name,
             "result": payload.get("result"),
         }
+    if event_type == "checkpoint":
+        return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
+            "event": "checkpoint",
+            "event_name": event_name,
+            "checkpoint": payload.get("checkpoint"),
+        }
     result = {
         key: payload.get(key)
         for key in ("event", "decision", "plan")
@@ -204,6 +231,8 @@ def canonical_run_event_name(payload: dict[str, Any]) -> str:
         return "task.contract"
     if event_type == "context_hygiene":
         return "context.hygiene"
+    if event_type == "capability_snapshot":
+        return "capability.snapshot"
     if event_type == "plan_decision":
         return "plan.decision"
     if event_type == "plan":
@@ -220,6 +249,8 @@ def canonical_run_event_name(payload: dict[str, Any]) -> str:
         return "run.failed"
     if event_type == "result":
         return "run.result"
+    if event_type == "checkpoint":
+        return "checkpoint.created"
     if event_type == "done":
         return "run.completed"
     return event_type or "run.event"

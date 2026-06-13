@@ -13,6 +13,7 @@ from typing import Any
 from .classifiers import (
     canonical_tool_id,
     is_meaningful_verification_event,
+    is_test_verification_event,
     is_write_tool,
 )
 
@@ -25,6 +26,7 @@ VERIFICATION = "verification"
 STATE_CHANGE = "state_change"
 UNKNOWN = "unknown"
 EXTERNAL_STATE_CHANGE = "external_state_change"
+VERIFICATION_STRENGTHS: tuple[str, ...] = ("none", "weak", "standard", "strong")
 
 
 DRAFT_TOOL_IDS: frozenset[str] = frozenset({
@@ -144,8 +146,7 @@ def failed_deliverable_events(
     for event in tool_events:
         if str(event.get("status") or "") != "failure":
             continue
-        tool_id = canonical_tool_id(str(event.get("tool") or ""))
-        if not _can_be_deliverable_for_contract(event, task_contract):
+        if not _can_be_intended_deliverable_for_contract(event, task_contract):
             continue
         paths = event_path_hints(event)
         if (
@@ -185,6 +186,96 @@ def deliverable_verification_events(
         for event in scoped
         if _is_verification_event(event, mode, written_paths=deliverable_paths)
     ]
+
+
+def sufficient_deliverable_verification_events(
+    tool_events: list[dict[str, Any]],
+    *,
+    task_contract: dict[str, Any] | None,
+    workspace_path: str,
+    mode: str | None = None,
+) -> list[dict[str, Any]]:
+    required = required_verification_strength(task_contract)
+    return [
+        event
+        for event in deliverable_verification_events(
+            tool_events,
+            task_contract=task_contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+        if verification_strength_meets(
+            verification_evidence_strength(event, mode=mode),
+            required,
+        )
+    ]
+
+
+def required_verification_strength(task_contract: dict[str, Any] | None) -> str:
+    if not isinstance(task_contract, dict) or not task_contract.get("requires_verification"):
+        return "none"
+    value = str(task_contract.get("required_verification_strength") or "standard").strip().lower()
+    return value if value in VERIFICATION_STRENGTHS else "standard"
+
+
+def verification_evidence_strength(
+    event: dict[str, Any],
+    *,
+    mode: str | None = None,
+) -> str:
+    """Return how strongly a successful event verifies the task target.
+
+    Providers may declare a strength explicitly. Without a declaration, real
+    test/build checks are strong and other meaningful verification is
+    standard. A provider-declared verification role alone is standard for
+    compatibility; providers should declare ``weak`` for coarse inspection.
+    """
+    if not _status_is_success_or_partial(event):
+        return "none"
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    explicit = str(
+        event.get("verification_strength")
+        or event.get("declared_verification_strength")
+        or output.get("verification_strength")
+        or ""
+    ).strip().lower()
+    if explicit in VERIFICATION_STRENGTHS:
+        return explicit
+    if is_test_verification_event(event):
+        return "strong"
+    if VERIFICATION in event_declared_roles(event):
+        return "standard"
+    if is_meaningful_verification_event(event, mode, written_paths=event_path_hints(event)):
+        return "standard"
+    return "none"
+
+
+def verification_strength_meets(actual: str, required: str) -> bool:
+    try:
+        return VERIFICATION_STRENGTHS.index(actual) >= VERIFICATION_STRENGTHS.index(required)
+    except ValueError:
+        return False
+
+
+def failed_tool_event_role(
+    event: dict[str, Any],
+    *,
+    task_contract: dict[str, Any] | None,
+    workspace_path: str,
+    mode: str | None = None,
+) -> str:
+    """Classify the intended task role of a failed tool event."""
+    if str(event.get("status") or "") != "failure":
+        return UNKNOWN
+    intended_roles = event_intended_roles(event)
+    if _can_be_intended_deliverable_for_contract(event, task_contract):
+        return DELIVERABLE
+    if VERIFICATION in intended_roles:
+        return VERIFICATION
+    tool_id = canonical_tool_id(str(event.get("tool") or ""))
+    if EVIDENCE in intended_roles or tool_id in EVIDENCE_TOOL_IDS:
+        return EVIDENCE
+    return UNKNOWN
 
 
 def contract_deliverable_paths(task_contract: dict[str, Any] | None) -> set[str]:
@@ -248,6 +339,26 @@ def event_declared_roles(event: dict[str, Any]) -> set[str]:
     return {str(item).strip() for item in values if str(item).strip()}
 
 
+def event_intended_roles(event: dict[str, Any]) -> set[str]:
+    values = event.get("declared_roles") or []
+    if not isinstance(values, list):
+        values = []
+    return {
+        *event_declared_roles(event),
+        *(str(item).strip() for item in values if str(item).strip()),
+    }
+
+
+def event_intended_effects(event: dict[str, Any]) -> set[str]:
+    values = event.get("declared_effects") or []
+    if not isinstance(values, list):
+        values = []
+    return {
+        *event_effects(event),
+        *(str(item).strip() for item in values if str(item).strip()),
+    }
+
+
 def event_path_hints(event: dict[str, Any]) -> set[str]:
     event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
@@ -296,6 +407,21 @@ def _can_be_deliverable_for_contract(
             and deliverable_kinds & {"file", "code", "document"}
         )
     return False
+
+
+def _can_be_intended_deliverable_for_contract(
+    event: dict[str, Any],
+    task_contract: dict[str, Any] | None,
+) -> bool:
+    tool_id = canonical_tool_id(str(event.get("tool") or ""))
+    deliverable_kinds = contract_deliverable_kinds(task_contract)
+    intended_roles = event_intended_roles(event)
+    intended_effects = event_intended_effects(event)
+    if is_write_tool(tool_id):
+        return not deliverable_kinds or bool(deliverable_kinds & {"file", "code", "document"})
+    if EXTERNAL_STATE_CHANGE in intended_effects:
+        return not deliverable_kinds or "external_state" in deliverable_kinds
+    return DELIVERABLE in intended_roles
 
 
 def _contract_allows_alternative_path(

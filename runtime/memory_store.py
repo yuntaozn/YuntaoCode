@@ -22,6 +22,8 @@ class MemoryItem:
     tags: list[str] = field(default_factory=list)
     enabled: bool = True
     source: str = "manual"           # "manual" | "auto" | "conversation"
+    scope: str = "global"            # "global" | "workspace"
+    workspace_id: str = ""
     created_at: str = field(default_factory=_utc_now)
     updated_at: str = field(default_factory=_utc_now)
     usage_count: int = 0
@@ -33,12 +35,16 @@ class MemoryItem:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "MemoryItem":
+        scope = _normalize_scope(value.get("scope"), value.get("workspace_id"))
+        workspace_id = str(value.get("workspace_id") or "") if scope == "workspace" else ""
         return cls(
             id=str(value.get("id") or f"mem_{uuid.uuid4().hex[:10]}"),
             text=str(value.get("text") or ""),
             tags=list(value.get("tags") or []),
             enabled=bool(value.get("enabled", True)),
             source=str(value.get("source") or "manual"),
+            scope=scope,
+            workspace_id=workspace_id,
             created_at=str(value.get("created_at") or _utc_now()),
             updated_at=str(value.get("updated_at") or _utc_now()),
             usage_count=int(value.get("usage_count") or 0),
@@ -96,6 +102,18 @@ class MemoryStore:
             reverse=True,
         )
 
+    def list_applicable(self, workspace_id: str | None = None) -> list[MemoryItem]:
+        """Return global memories plus memories scoped to the current workspace."""
+        current_workspace_id = str(workspace_id or "").strip()
+        items: list[MemoryItem] = []
+        for item in self.list():
+            if item.scope == "workspace":
+                if current_workspace_id and item.workspace_id == current_workspace_id:
+                    items.append(item)
+                continue
+            items.append(item)
+        return items
+
     def get(self, memory_id: str) -> MemoryItem | None:
         return self._memories.get(memory_id)
 
@@ -103,6 +121,9 @@ class MemoryStore:
         if not item.text:
             raise ValueError("memory text must not be empty")
         item.text = item.text[:MAX_MEMORY_TEXT_CHARS]
+        item.scope = _normalize_scope(item.scope, item.workspace_id)
+        if item.scope != "workspace":
+            item.workspace_id = ""
         item.updated_at = _utc_now()
         self._memories[item.id] = item
         self._evict_if_needed()
@@ -123,6 +144,11 @@ class MemoryStore:
                 item.tags = [str(t).strip()[:24] for t in tags if str(t).strip()][:6]
         if "enabled" in patch:
             item.enabled = bool(patch["enabled"])
+        if "scope" in patch or "workspace_id" in patch:
+            scope = patch.get("scope", item.scope)
+            workspace_id = str(patch.get("workspace_id", item.workspace_id) or "")
+            item.scope = _normalize_scope(scope, workspace_id)
+            item.workspace_id = workspace_id if item.scope == "workspace" else ""
         item.updated_at = _utc_now()
         self._save()
         return item
@@ -226,6 +252,7 @@ class MemoryStore:
                     tags=list(raw.get("tags") or []),
                     enabled=bool(raw.get("enabled", True)),
                     source="manual",
+                    scope="global",
                 )
                 store._memories[item.id] = item
 
@@ -239,3 +266,10 @@ class MemoryStore:
                 settings_store._save()
 
         return store
+
+
+def _normalize_scope(scope: Any, workspace_id: Any = "") -> str:
+    value = str(scope or "").strip().lower()
+    if value in {"workspace", "project"} and str(workspace_id or "").strip():
+        return "workspace"
+    return "global"

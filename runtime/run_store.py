@@ -25,6 +25,11 @@ class RunRecord:
     workspace_id: str
     mode: str
     user_content: str
+    task_id: str = ""
+    parent_run_id: str = ""
+    source_run_id: str = ""
+    attempt: int = 1
+    resume_from_checkpoint_id: str = ""
     status: str = "running"
     stage: str = "created"
     message: str = ""
@@ -42,6 +47,11 @@ class RunRecord:
             "workspace_id": self.workspace_id,
             "mode": self.mode,
             "user_content": self.user_content,
+            "task_id": self.task_id,
+            "parent_run_id": self.parent_run_id,
+            "source_run_id": self.source_run_id,
+            "attempt": self.attempt,
+            "resume_from_checkpoint_id": self.resume_from_checkpoint_id,
             "status": self.status,
             "stage": self.stage,
             "message": self.message,
@@ -61,6 +71,11 @@ class RunRecord:
             workspace_id=str(value.get("workspace_id") or ""),
             mode=str(value.get("mode") or "terminal"),
             user_content=str(value.get("user_content") or ""),
+            task_id=str(value.get("task_id") or ""),
+            parent_run_id=str(value.get("parent_run_id") or ""),
+            source_run_id=str(value.get("source_run_id") or ""),
+            attempt=max(1, int(value.get("attempt") or 1)),
+            resume_from_checkpoint_id=str(value.get("resume_from_checkpoint_id") or ""),
             status=str(value.get("status") or "running"),
             stage=str(value.get("stage") or "created"),
             message=str(value.get("message") or ""),
@@ -120,6 +135,12 @@ class RunStore:
         workspace_id: str,
         mode: str,
         user_content: str,
+        task_id: str = "",
+        parent_run_id: str = "",
+        source_run_id: str = "",
+        attempt: int = 1,
+        resume_from_checkpoint_id: str = "",
+        status: str = "running",
     ) -> RunRecord:
         record = RunRecord(
             id=str(uuid4()),
@@ -127,6 +148,13 @@ class RunStore:
             workspace_id=workspace_id,
             mode=mode,
             user_content=user_content[:500],
+            task_id=task_id,
+            parent_run_id=parent_run_id,
+            source_run_id=source_run_id,
+            attempt=max(1, int(attempt or 1)),
+            resume_from_checkpoint_id=resume_from_checkpoint_id,
+            status=status,
+            stage="created",
             message="run created",
         )
         self._repository.create(record.to_public_dict(include_events=True))
@@ -141,6 +169,7 @@ class RunStore:
         *,
         conversation_id: str | None = None,
         workspace_id: str | None = None,
+        task_id: str | None = None,
         status: str | None = None,
     ) -> list[RunRecord]:
         return [
@@ -148,6 +177,7 @@ class RunStore:
             for item in self._repository.list(
                 conversation_id=conversation_id,
                 workspace_id=workspace_id,
+                task_id=task_id,
                 status=status,
             )
         ]
@@ -163,9 +193,19 @@ class RunStore:
         run.stored_event_count = len(run.events)
 
         if event_type == "status":
-            run.stage = str(event.get("status") or run.stage)
-            run.message = str(event.get("message") or run.message)
-            if run.stage in {"tool_contract_failed", "error"}:
+            incoming_status = str(event.get("status") or "").strip()
+            incoming_message = str(event.get("message") or "").strip()
+            if run.status == "paused" and incoming_status not in {"resumed", "stopping", "cancelled"}:
+                run.stage = "paused"
+                run.message = incoming_message or run.message
+            else:
+                run.stage = incoming_status or run.stage
+                run.message = incoming_message or run.message
+            if run.stage == "paused":
+                run.status = "paused"
+            elif run.stage == "resumed":
+                run.status = "running"
+            elif run.stage in {"tool_contract_failed", "error"}:
                 run.status = "failure"
             elif run.stage in {"max_tool_rounds", "recon_budget_exhausted"}:
                 run.status = "stopped"
@@ -173,7 +213,7 @@ class RunStore:
                 run.status = "running"
             elif run.status == "waiting_confirmation" and run.stage not in {"resumed", "stopping"}:
                 pass
-            if run.status not in {"failure", "success", "stopped", "waiting_confirmation"}:
+            if run.status not in {"failure", "success", "stopped", "waiting_confirmation", "paused"}:
                 run.status = "running"
         elif event_type == "tool":
             run.stage = "tool"
@@ -199,6 +239,16 @@ class RunStore:
             result = event.get("result") if isinstance(event.get("result"), dict) else {}
             status = str(result.get("status") or "").strip()
             run.message = f"result {status}".strip()
+        elif event_type == "checkpoint":
+            run.stage = "checkpoint"
+            run.message = "checkpoint created"
+        elif event_type == "capability_snapshot":
+            run.stage = "capability_snapshot"
+            preflight = event.get("preflight") if isinstance(event.get("preflight"), dict) else {}
+            if preflight.get("ok") is False:
+                run.message = "capability preflight blocked"
+            else:
+                run.message = "capability preflight ok"
         elif event_type in {"plan", "plan_decision", "plan_step", "changes"}:
             run.stage = event_type
             run.message = event_type
@@ -214,7 +264,7 @@ class RunStore:
         self._repository.close()
 
     def _recover_interrupted(self) -> None:
-        for status in ("running", "waiting_confirmation"):
+        for status in ("running", "waiting_confirmation", "paused"):
             for value in self._repository.list(status=status):
                 record = RunRecord.from_dict(value)
                 record.status = "stopped"

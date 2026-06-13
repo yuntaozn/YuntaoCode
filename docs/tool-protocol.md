@@ -24,7 +24,7 @@
 ## 提交任务
 
 ```http
-POST /tasks
+POST /tool-tasks
 Content-Type: application/json
 
 {
@@ -131,7 +131,7 @@ Runtime 会先完整解析并验证补丁涉及的全部文件，再执行写入
 
 ## ToolTask 与 Task 的边界
 
-当前 `/tasks` API 管理的是一次工具调用记录，也就是 `ToolTask`，不是未来产品层面的用户目标级 `Task`。
+当前 `/tool-tasks` API 管理一次工具调用记录，也就是 `ToolTask`；`/tasks` API 管理产品层面的用户目标级 `Task`。
 
 为了保持兼容，API 路径和旧字段暂时保留；为了让贡献者理解边界，公开记录会包含：
 

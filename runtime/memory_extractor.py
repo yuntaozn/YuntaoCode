@@ -22,6 +22,19 @@ _BLOCKED_TAGS = frozenset({
     "技术选型", "技术栈",
 })
 
+# Tags allowed for automatically promoted global memory. Auto extraction is
+# intentionally narrow: project facts must be saved explicitly with workspace
+# scope instead of leaking into global memory.
+_ALLOWED_GLOBAL_TAGS = frozenset({
+    "user_preference", "user-preference", "user preference",
+    "preference", "preferences",
+    "communication", "communication_preference", "communication-preference",
+    "tool_usage", "tool-usage", "workflow_preference", "workflow-preference",
+    "ui_preference", "ui-preference", "user_identity", "user-identity",
+    "user identity", "identity", "role",
+    "language_preference", "language-preference",
+})
+
 EXTRACTION_SYSTEM_PROMPT = """你是一个记忆提取助手。从对话中提取值得长期记住的**用户级**信息。
 
 只提取以下类别:
@@ -210,6 +223,26 @@ def _has_blocked_tags(tags: list[str]) -> bool:
     return False
 
 
+def _has_allowed_global_tags(tags: list[str]) -> bool:
+    """Check if tags clearly describe user-level global memory."""
+    for tag in tags:
+        normalized_tag = tag.strip().lower().replace("_", " ").replace("-", " ")
+        for allowed in _ALLOWED_GLOBAL_TAGS:
+            allowed_normalized = allowed.lower().replace("_", " ").replace("-", " ")
+            if normalized_tag == allowed_normalized:
+                return True
+    return False
+
+
+def _global_memory_texts_for_dedup(store: MemoryStore) -> set[str]:
+    """Return normalized global memory texts for auto-extraction dedup."""
+    return {
+        _normalize_text(item.text)
+        for item in store.list()
+        if item.scope != "workspace"
+    }
+
+
 async def extract_and_store_memories(
     store: MemoryStore,
     messages: list[dict[str, Any]],
@@ -217,6 +250,7 @@ async def extract_and_store_memories(
     settings: Any,
     *,
     conversation_id: str = "",
+    workspace_id: str = "",
 ) -> list[MemoryItem]:
     """Extract memories and store them. Returns list of newly stored items."""
     candidates = await extract_memories_from_conversation(messages, model, settings)
@@ -224,10 +258,9 @@ async def extract_and_store_memories(
         return []
 
     stored: list[MemoryItem] = []
-    # Build normalized existing text set for fuzzy dedup
-    existing_normalized: set[str] = set()
-    for item in store.list():
-        existing_normalized.add(_normalize_text(item.text))
+    # Auto extraction writes global memories only, so workspace memories should
+    # not affect whether a user-level global preference can be stored.
+    existing_normalized = _global_memory_texts_for_dedup(store)
 
     for candidate in candidates:
         text = str(candidate.get("text") or "").strip()
@@ -244,6 +277,10 @@ async def extract_and_store_memories(
             logger.debug("Rejected project-scoped memory (blocked tag): %s", text[:80])
             continue
 
+        if not _has_allowed_global_tags(tags):
+            logger.debug("Rejected memory without allowed global tag: %s", text[:80])
+            continue
+
         # Fuzzy dedup against existing memories
         if _is_similar_to_existing(text, existing_normalized):
             logger.debug("Rejected duplicate memory: %s", text[:80])
@@ -257,6 +294,8 @@ async def extract_and_store_memories(
             tags=[str(t).strip()[:24] for t in tags],
             enabled=True,
             source="auto",
+            scope="global",
+            workspace_id="",
             conversation_id=conversation_id,
         )
         try:

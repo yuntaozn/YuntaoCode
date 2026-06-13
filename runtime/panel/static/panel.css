@@ -394,6 +394,99 @@ button {
     white-space: nowrap;
 }
 
+.task-history-button {
+    min-height: 30px;
+    padding: 5px 9px;
+    font-size: 12px;
+}
+
+.task-history-panel {
+    width: min(860px, calc(100vw - 32px));
+    max-height: min(760px, calc(100vh - 32px));
+}
+
+.task-history-list,
+.task-run-list {
+    display: grid;
+    gap: 8px;
+}
+
+.task-history-list {
+    overflow: auto;
+    max-height: 520px;
+    padding-right: 4px;
+}
+
+.task-history-item {
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.54);
+}
+
+.task-history-head,
+.task-run-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.task-history-head {
+    margin-bottom: 8px;
+}
+
+.task-history-head span,
+.task-run-main span,
+.task-history-empty {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.task-run-row {
+    padding-top: 7px;
+    border-top: 1px solid var(--border);
+}
+
+.task-run-main {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+
+.task-run-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 5px;
+}
+
+.task-run-actions button {
+    padding: 4px 7px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    background: var(--panel);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.task-runbook-output {
+    overflow: auto;
+    max-height: 300px;
+    margin: 10px 0 0;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #f6f8fa;
+    font-size: 11px;
+    white-space: pre-wrap;
+}
+
+.run-dot.paused {
+    background: #d89b27;
+}
+
 .item-title-row {
     display: flex;
     min-width: 0;

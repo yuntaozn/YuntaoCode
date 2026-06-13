@@ -81,6 +81,24 @@ Recovery Context
 - `model_inferred`
 - `unverified`
 
+## Memory Scope
+
+Long-term memory is part of the context runtime, so it must have explicit
+scope boundaries:
+
+- `global` memory is for user-level preferences, communication style, identity,
+  language preference, and cross-project habits.
+- `workspace` memory is for project-specific facts such as architecture
+  decisions, paths, tech stack, task conventions, and local constraints.
+- Model context may receive only global memories plus memories for the current
+  `workspace_id`.
+- Automatic memory extraction is intentionally global-only and narrow: it should
+  store only high-confidence user-level facts. Project facts should be saved
+  explicitly through a workspace-scoped memory path.
+
+This prevents one project run from becoming hidden context for another project
+while still allowing the assistant to remember stable user preferences.
+
 ## Context Snapshot
 
 上下文压缩不应只是自然语言摘要，而应形成结构化快照：

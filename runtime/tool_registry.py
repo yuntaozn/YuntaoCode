@@ -27,6 +27,7 @@ class ToolSpec:
     artifacts: list[str] | None = None
     effects: list[str] | None = None
     roles: list[str] | None = None
+    verification_strength: str | None = None
     long_running: bool = False
     retry_safe: bool = False
     idempotent: bool = False
@@ -46,7 +47,7 @@ class ToolSpec:
         return result
 
     def to_public_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "id": self.id,
             "name": self.name,
             "description": self.description,
@@ -62,6 +63,9 @@ class ToolSpec:
             "retry_safe": self.retry_safe,
             "idempotent": self.idempotent,
         }
+        if self.verification_strength:
+            data["verification_strength"] = self.verification_strength
+        return data
 
 
 @dataclass(frozen=True)

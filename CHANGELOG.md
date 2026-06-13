@@ -38,6 +38,22 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
   including separate Blender Add-on and `uvx` readiness indicators.
 - MCP executable resolution through the current Python runtime's `Scripts`
   directory, plus local-first telemetry disablement for the Blender example.
+- Runtime-owned capability preflight and per-run capability snapshots, including
+  external-state fallback blocking and `RunResult` evidence for capability
+  blockers.
+- `RunResult` now separates target deliverable paths from observed local writes
+  so optional model-initiated repairs are auditable without turning the task
+  contract into an execution lock.
+- Optional model-initiated local writes without observed verification now emit
+  `optional_write_not_verified` and an execution notice while preserving the
+  model's chosen strategy.
+- Run-level pause/resume actions, deterministic Runbook generation, and Replay
+  Request artifacts for 0.1 recovery/audit foundations.
+- Product-level Task persistence with explicit Task/Run/ToolTask boundaries,
+  Run lineage, recovery Checkpoints, Context Snapshots, prepared Replay Runs,
+  and a task-history UI for pause/resume/Runbook/replay actions.
+- Workspace-scoped memory boundaries so model context receives only global
+  user-level memories plus memories from the current workspace.
 - Task contracts can distinguish local file writes from broader observable
   state changes, including external application state.
 - Capability and MCP tool contracts can declare successful `effects`, task
@@ -47,6 +63,12 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ### Changed
 
+- Scoped composer submission, send-button, and streaming-status state to the
+  current conversation so separate conversations can run in parallel without
+  occupying each other's controls.
+- Made RunResult convergence role-aware: blocking, degraded, incidental, and
+  recovered failures are audited separately, while verification evidence now
+  carries weak/standard/strong strength instead of a boolean-only signal.
 - Normalized repository metadata URLs in `pyproject.toml`.
 - Updated quick-start documentation with editable install, pytest, smoke test, and desktop UI build commands.
 - Reframed README and roadmap around a Task Runtime foundation instead of a feature/tool checklist.

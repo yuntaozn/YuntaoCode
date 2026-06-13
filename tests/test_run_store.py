@@ -96,6 +96,44 @@ def test_run_store_keeps_waiting_confirmation_until_user_resumes(tmp_path) -> No
     assert resumed.status == "running"
 
 
+def test_run_store_pause_resists_status_noise_until_resume(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.json")
+    run = store.create(
+        conversation_id="conv_1",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="hello",
+    )
+
+    paused = store.record_event(run.id, {
+        "event": "status",
+        "status": "paused",
+        "message": "user paused",
+    })
+    assert paused is not None
+    assert paused.status == "paused"
+    assert paused.stage == "paused"
+
+    noisy = store.record_event(run.id, {
+        "event": "status",
+        "status": "thinking",
+        "message": "late heartbeat",
+    })
+    assert noisy is not None
+    assert noisy.status == "paused"
+    assert noisy.stage == "paused"
+    assert noisy.message == "late heartbeat"
+
+    resumed = store.record_event(run.id, {
+        "event": "status",
+        "status": "resumed",
+        "message": "continue",
+    })
+    assert resumed is not None
+    assert resumed.status == "running"
+    assert resumed.stage == "resumed"
+
+
 def test_sqlite_run_store_persists_events_and_supports_indexed_filters(tmp_path) -> None:
     database_path = tmp_path / "runtime.db"
     store = RunStore.sqlite(database_path)
@@ -128,7 +166,7 @@ def test_sqlite_run_store_persists_events_and_supports_indexed_filters(tmp_path)
     reopened.close()
 
     with sqlite3.connect(database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
         indexes = {
             row[0]
             for row in connection.execute(
@@ -139,6 +177,36 @@ def test_sqlite_run_store_persists_events_and_supports_indexed_filters(tmp_path)
     assert "idx_runs_workspace_updated" in indexes
     assert "idx_runs_status_updated" in indexes
     assert "idx_run_events_run_sequence" in indexes
+    assert "idx_runs_task_updated" in indexes
+
+
+def test_sqlite_run_store_persists_task_and_replay_lineage(tmp_path) -> None:
+    database_path = tmp_path / "runtime.db"
+    store = RunStore.sqlite(database_path)
+    run = store.create(
+        conversation_id="conv_1",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="retry task",
+        task_id="task-1",
+        parent_run_id="run-parent",
+        source_run_id="run-source",
+        attempt=3,
+        resume_from_checkpoint_id="checkpoint-1",
+        status="created",
+    )
+    store.close()
+
+    reopened = RunStore.sqlite(database_path)
+    persisted = reopened.get(run.id)
+    assert persisted is not None
+    assert persisted.task_id == "task-1"
+    assert persisted.parent_run_id == "run-parent"
+    assert persisted.source_run_id == "run-source"
+    assert persisted.attempt == 3
+    assert persisted.resume_from_checkpoint_id == "checkpoint-1"
+    assert [item.id for item in reopened.list(task_id="task-1")] == [run.id]
+    reopened.close()
 
 
 def test_sqlite_run_store_imports_legacy_json_once_and_keeps_source(tmp_path) -> None:
@@ -244,6 +312,31 @@ def test_sqlite_run_store_startup_recovery_preserves_events(tmp_path) -> None:
     assert recovered.status == "stopped"
     assert recovered.stage == "interrupted"
     assert recovered.events[-1]["message"] == "working"
+    recovered_store.close()
+
+
+def test_sqlite_run_store_startup_recovery_stops_paused_runs(tmp_path) -> None:
+    database_path = tmp_path / "runtime.db"
+    store = RunStore.sqlite(database_path)
+    run = store.create(
+        conversation_id="conv_1",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="hello",
+    )
+    store.record_event(run.id, {
+        "event": "status",
+        "status": "paused",
+        "message": "paused by user",
+    })
+    store.close()
+
+    recovered_store = RunStore.sqlite(database_path)
+    recovered = recovered_store.get(run.id)
+
+    assert recovered is not None
+    assert recovered.status == "stopped"
+    assert recovered.stage == "interrupted"
     recovered_store.close()
 
 

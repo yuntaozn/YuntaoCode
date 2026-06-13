@@ -8,28 +8,69 @@ from typing import Any
 from runtime.tool_registry import ToolRegistry, ToolSpec
 
 
+_PROJECT_SCOPE_TAGS = frozenset({
+    "project",
+    "project knowledge",
+    "project structure",
+    "project info",
+    "architecture decision",
+    "technical selection",
+    "tech stack",
+    "technology stack",
+})
+
+
+def _parse_tags(raw: Any) -> list[str]:
+    if isinstance(raw, str):
+        parts = raw.replace("，", ",").replace("；", ",").replace(";", ",").split(",")
+        tags = [part.strip() for part in parts if part.strip()]
+    elif isinstance(raw, list):
+        tags = [str(part).strip() for part in raw if str(part).strip()]
+    else:
+        tags = []
+    return tags[:6]
+
+
+def _normalize_tag(tag: str) -> str:
+    return tag.strip().lower().replace("_", " ").replace("-", " ")
+
+
+def _memory_scope(args: dict[str, Any], tags: list[str]) -> str:
+    requested = str(args.get("scope") or "").strip().lower()
+    if requested in {"workspace", "project"}:
+        return "workspace"
+    if requested in {"global", "user"}:
+        return "global"
+    if any(_normalize_tag(tag) in _PROJECT_SCOPE_TAGS for tag in tags):
+        return "workspace"
+    return "global"
+
+
 async def _memory_save_handler(args: dict[str, Any], context: Any) -> dict[str, Any]:
     """AI saves a memory item."""
     text = str(args.get("text") or "").strip()
     if not text:
         return {"error": "text is required"}
 
-    tags_raw = args.get("tags")
-    if isinstance(tags_raw, str):
-        tags = [t.strip() for t in tags_raw.replace("，", ",").split(",") if t.strip()]
-    elif isinstance(tags_raw, list):
-        tags = [str(t).strip() for t in tags_raw if str(t).strip()]
-    else:
-        tags = []
+    tags = _parse_tags(args.get("tags"))
+    scope = _memory_scope(args, tags)
+    workspace_id = str(getattr(context, "workspace_id", "") or "")
+    if scope == "workspace" and not workspace_id:
+        return {
+            "error": True,
+            "message": "workspace-scoped memory requires a current workspace context",
+        }
 
     from runtime.memory_store import MemoryItem
 
     item = MemoryItem(
         id=f"mem_{uuid.uuid4().hex[:10]}",
         text=text[:500],
-        tags=tags[:6],
+        tags=tags,
         enabled=True,
         source="conversation",
+        scope=scope,
+        workspace_id=workspace_id if scope == "workspace" else "",
     )
     store = context.settings.memory_store
     saved = store.add(item)
@@ -37,7 +78,9 @@ async def _memory_save_handler(args: dict[str, Any], context: Any) -> dict[str, 
         "success": True,
         "id": saved.id,
         "text": saved.text,
-        "message": f"已保存记忆: {saved.text[:80]}",
+        "scope": saved.scope,
+        "workspace_id": saved.workspace_id,
+        "message": f"saved memory: {saved.text[:80]}",
     }
 
 
@@ -47,47 +90,47 @@ async def _memory_recall_handler(args: dict[str, Any], context: Any) -> dict[str
     limit = min(int(args.get("limit") or 10), 50)
 
     store = context.settings.memory_store
-    all_memories = store.list()
+    all_memories = store.list_applicable(getattr(context, "workspace_id", ""))
     enabled = [m for m in all_memories if m.enabled and m.text]
 
     if not enabled:
-        return {"memories": [], "message": "暂无可用记忆"}
+        return {"memories": [], "message": "no available memories"}
 
     if not query:
-        # Return most recently used/created
         selected = sorted(enabled, key=lambda m: m.updated_at, reverse=True)[:limit]
     else:
-        # Simple keyword matching
         import re
+
         query_tokens = set(re.findall(r"[\w\u4e00-\u9fff]+", query.lower()))
         query_tokens = {t for t in query_tokens if len(t) >= 2}
 
         scored = []
-        for m in enabled:
+        for memory in enabled:
             score = 0.0
-            text_tokens = set(re.findall(r"[\w\u4e00-\u9fff]+", m.text.lower()))
-            tag_tokens = set(t.lower() for t in m.tags)
+            text_tokens = set(re.findall(r"[\w\u4e00-\u9fff]+", memory.text.lower()))
+            tag_tokens = set(tag.lower() for tag in memory.tags)
             overlap = (text_tokens | tag_tokens) & query_tokens
             score += len(overlap) * 2.0
-            if m.usage_count > 5:
+            if memory.usage_count > 5:
                 score += 1.0
-            scored.append((m, score))
+            scored.append((memory, score))
 
-        scored.sort(key=lambda x: x[1], reverse=True)
-        selected = [m for m, _ in scored[:limit]]
+        scored.sort(key=lambda item: item[1], reverse=True)
+        selected = [memory for memory, _ in scored[:limit]]
 
     results = []
-    for m in selected:
+    for memory in selected:
         results.append({
-            "id": m.id,
-            "text": m.text,
-            "tags": m.tags,
-            "source": m.source,
-            "usage_count": m.usage_count,
+            "id": memory.id,
+            "text": memory.text,
+            "tags": memory.tags,
+            "source": memory.source,
+            "scope": memory.scope,
+            "workspace_id": memory.workspace_id,
+            "usage_count": memory.usage_count,
         })
 
-    # Record usage
-    store.batch_record_usage([m.id for m in selected])
+    store.batch_record_usage([memory.id for memory in selected])
 
     return {
         "memories": results,
@@ -99,22 +142,29 @@ def register_memory_tools(registry: ToolRegistry) -> None:
     registry.register(
         ToolSpec(
             id="memory.save",
-            name="保存记忆",
+            name="Save memory",
             description=(
-                "保存一条值得长期记住的信息到用户记忆库。"
-                "适合保存用户偏好、项目知识、重要决策等。"
-                "每条记忆应只包含一个事实，用一句话概括。"
+                "Save one long-term memory. Use global scope only for user "
+                "preferences, communication style, identity, and cross-project "
+                "habits. Use workspace scope for project facts, tech stack, "
+                "architecture decisions, paths, and task-specific knowledge. "
+                "Each memory should contain one concise fact."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "text": {
                         "type": "string",
-                        "description": "记忆内容，一句话概括（最多500字）",
+                        "description": "Memory text, summarized as one concise fact.",
                     },
                     "tags": {
                         "type": "string",
-                        "description": "分类标签，逗号分隔，如: preference, coding, project",
+                        "description": "Comma-separated tags, for example: preference, coding, project",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["global", "workspace"],
+                        "description": "global for user-level memory; workspace for project-specific facts",
                     },
                 },
                 "required": ["text"],
@@ -127,21 +177,21 @@ def register_memory_tools(registry: ToolRegistry) -> None:
     registry.register(
         ToolSpec(
             id="memory.recall",
-            name="回忆记忆",
+            name="Recall memory",
             description=(
-                "从用户记忆库中检索相关记忆。"
-                "可以按关键词搜索，也可以不传 query 获取最近使用的记忆。"
+                "Recall relevant memories. Results are automatically limited to "
+                "global memories plus memories from the current workspace."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "搜索关键词",
+                        "description": "Search keywords",
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "返回条数上限，默认 10",
+                        "description": "Maximum number of memories to return, default 10",
                     },
                 },
             },

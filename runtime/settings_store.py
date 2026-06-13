@@ -524,7 +524,7 @@ class SettingsStore:
     def get_memory_settings(self) -> dict[str, Any]:
         return normalize_memory_settings(self._settings.get("memories", {}))
 
-    def get_memory_prompt(self, *, user_message: str = "") -> str:
+    def get_memory_prompt(self, *, user_message: str = "", workspace_id: str = "") -> str:
         """Build memory prompt with optional relevance filtering."""
         mem_settings = self.get_memory_settings()
         prompt, _ = build_memory_prompt_from_store(
@@ -532,6 +532,7 @@ class SettingsStore:
             enabled=mem_settings.get("enabled", True),
             max_active=mem_settings.get("max_active", 30),
             user_message=user_message,
+            workspace_id=workspace_id,
         )
         return prompt
 

@@ -256,6 +256,30 @@ def test_execution_notice_reports_invalid_verification_method() -> None:
     assert "长驻服务" in notice["message"]
 
 
+def test_execution_notice_reports_optional_write_without_verification() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+
+    notice = handler._build_execution_notice(
+        "terminal",
+        "已修改 viewer.html",
+        [
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": r"D:\ifctool\viewer.html"},
+            },
+        ],
+        run_result={
+            "risks": ["optional_write_not_verified"],
+            "observed_written_paths": ["viewer.html"],
+        },
+    )
+
+    assert notice["reason"] == "optional_write_not_verified"
+    assert "未验证" in notice["message"]
+    assert notice["written_paths"] == ["viewer.html"]
+
+
 def test_short_follow_up_uses_model_contract_when_conversation_has_task_context() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
     conversation = SimpleNamespace(messages=[

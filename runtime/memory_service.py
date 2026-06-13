@@ -176,6 +176,7 @@ def build_memory_prompt_from_store(
     enabled: bool = True,
     max_active: int = DEFAULT_ACTIVE_MEMORIES,
     user_message: str = "",
+    workspace_id: str = "",
     max_prompt_chars: int = MAX_MEMORY_PROMPT_CHARS,
 ) -> tuple[str, list[str]]:
     """Build memory prompt with relevance filtering.
@@ -188,7 +189,7 @@ def build_memory_prompt_from_store(
     if max_active <= 0:
         return "用户记忆已启用，但当前注入上限为 0。", []
 
-    all_memories = store.list()
+    all_memories = store.list_applicable(workspace_id)
     enabled_items = [m for m in all_memories if m.enabled and m.text]
 
     if not enabled_items:
@@ -233,7 +234,9 @@ def build_memory_prompt_from_store(
     lines = []
     for item in selected:
         tags = item.tags or []
-        tag_text = f"[{', '.join(tags)}] " if tags else ""
+        scope_tag = "workspace" if item.scope == "workspace" else "global"
+        all_tags = [scope_tag, *tags]
+        tag_text = f"[{', '.join(all_tags)}] "
         lines.append(f"- {tag_text}{item.text}")
 
     prompt = "\n".join(lines)

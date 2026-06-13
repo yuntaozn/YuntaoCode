@@ -7,11 +7,16 @@ import pytest
 from runtime.memory_extractor import (
     EXTRACTION_SYSTEM_PROMPT,
     _BLOCKED_TAGS,
+    _ALLOWED_GLOBAL_TAGS,
+    _global_memory_texts_for_dedup,
+    _has_allowed_global_tags,
     _has_blocked_tags,
     _is_similar_to_existing,
     _normalize_text,
     _parse_extraction_result,
+    extract_and_store_memories,
 )
+from runtime.memory_store import MemoryItem, MemoryStore
 
 
 # --- Prompt contract ---
@@ -75,6 +80,86 @@ class TestTagBlacklist:
 
     def test_blocked_tags_set_is_not_empty(self):
         assert len(_BLOCKED_TAGS) > 5
+
+
+class TestGlobalTagAllowlist:
+    @pytest.mark.parametrize("tags", [
+        ["user_preference"],
+        ["user-preference"],
+        ["preference"],
+        ["communication"],
+        ["tool_usage"],
+        ["workflow_preference"],
+        ["ui_preference"],
+        ["user_identity"],
+        ["role"],
+        ["language_preference"],
+    ])
+    def test_accepts_user_level_tags(self, tags):
+        assert _has_allowed_global_tags(tags) is True
+
+    @pytest.mark.parametrize("tags", [
+        ["project"],
+        ["project_knowledge"],
+        ["tech_stack"],
+        ["architecture_decision"],
+        ["random"],
+        [],
+    ])
+    def test_rejects_non_user_level_tags(self, tags):
+        assert _has_allowed_global_tags(tags) is False
+
+    def test_allowed_global_tags_set_is_not_empty(self):
+        assert len(_ALLOWED_GLOBAL_TAGS) > 5
+
+
+class TestGlobalMemoryDedupScope:
+    def test_dedup_ignores_workspace_memories(self, tmp_path):
+        store = MemoryStore(tmp_path / "memories.json")
+        store.add(
+            MemoryItem(
+                id="workspace-memory",
+                text="User prefers concise replies",
+                scope="workspace",
+                workspace_id="workspace-1",
+            )
+        )
+
+        assert _global_memory_texts_for_dedup(store) == set()
+
+    @pytest.mark.asyncio
+    async def test_auto_extraction_can_store_global_memory_similar_to_workspace_memory(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        store = MemoryStore(tmp_path / "memories.json")
+        store.add(
+            MemoryItem(
+                id="workspace-memory",
+                text="User prefers concise replies",
+                scope="workspace",
+                workspace_id="workspace-1",
+            )
+        )
+
+        async def fake_extract(*_args, **_kwargs):
+            return [{"text": "User prefers concise replies", "tags": ["user_preference"]}]
+
+        monkeypatch.setattr("runtime.memory_extractor.extract_memories_from_conversation", fake_extract)
+
+        stored = await extract_and_store_memories(
+            store,
+            messages=[{"role": "user", "content": "please remember I prefer concise replies"}],
+            model="fake",
+            settings=object(),
+            conversation_id="conversation-1",
+            workspace_id="workspace-2",
+        )
+
+        assert len(stored) == 1
+        assert stored[0].scope == "global"
+        assert stored[0].workspace_id == ""
 
 
 # --- Normalize text ---

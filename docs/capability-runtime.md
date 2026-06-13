@@ -160,6 +160,19 @@ User Request
 - `runtime/core/capability.py`
   - CapabilityContract、PermissionSet，以及 artifact、effect、task role 初始 schema。
 
+Additional runtime guards now exist in `runtime/agent_strategy/capability_preflight.py`:
+
+- `capability_snapshot` captures the per-run available capability boundary.
+- Model-declared `task_contract.capability_ids` are validated against that
+  snapshot.
+- External-state tasks require an available capability with
+  `external_state_change`.
+- Fallback from a target external-state capability to shell scripts or ordinary
+  file generation is blocked by both visible-tool filtering and a second
+  execution-time guard.
+- Preflight blockers are recorded in `RunResult` as deterministic failure
+  evidence.
+
 ## Next Steps
 
 短期建议：

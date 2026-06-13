@@ -357,10 +357,12 @@ We believe that models will continue to change, but a stable, open, and extensib
 
 Goal: make the Task, Context, and Capability runtime lines clear before expanding the feature list.
 
-* [ ] Task Model: tasks, plans, steps, state, results, and metadata
-* [ ] Task Lifecycle: created, running, waiting, failed, completed, cancelled
+* [x] Task Model foundation: ProductTask, Run, ToolTask, state, results, and lineage
+* [x] Run Lifecycle foundation: running, waiting_confirmation, paused, resumed, completed, failed, stopped
 * [ ] Task Trace: model output, tool calls, confirmations, errors, verification, and final summary
-* [ ] Task Recovery: pause, resume, retry, and write rollback
+* [x] Run Recovery foundation: pause, resume, Runbook, and Replay Request
+* [x] Recovery Context foundation: Checkpoint, Context Snapshot, and explicitly started Replay Runs
+* [ ] Deeper Task Recovery: retry, write rollback, and policy-controlled automatic replay execution
 * [ ] Task Audit: readable execution records and testable state transitions
 * [ ] Context Runtime: context selection, evidence, compression snapshots, and memory boundaries
 * [ ] Capability Runtime: capability contracts, permissions, confirmations, artifacts, and verification rules

@@ -16,6 +16,7 @@ from runtime.agent_strategy.capability_router import (
     format_capability_catalog_for_prompt,
 )
 from runtime.agent_strategy import classifiers as _clf
+from runtime.agent_strategy import capability_preflight as _cap_preflight
 from runtime.agent_strategy import confirmation_policy as _cp
 from runtime.agent_strategy import context_hygiene as _ctx_hygiene
 from runtime.agent_strategy import prompts as _prp
@@ -114,6 +115,7 @@ class ConversationDetailHandler(ApiHandler):
                 settings=self.runtime.settings,
                 mode_config=mode_config,
                 workspace_path=workspace.path,
+                workspace_id=workspace.id,
             )
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt}
@@ -280,6 +282,7 @@ class ConversationMessagesHandler(ApiHandler):
             settings=self.runtime.settings,
             mode_config=mode_config,
             workspace_path=workspace["path"],
+            workspace_id=str(workspace.get("id") or ""),
             user_message=latest_user_message,
             capability_context=self._capability_context_prompt(mode_config),
         )
@@ -300,6 +303,14 @@ class ConversationMessagesHandler(ApiHandler):
     def _capability_context_prompt(self, mode_config: dict[str, Any] | None = None) -> str:
         if not hasattr(self.runtime, "registry"):
             return ""
+        specs = [
+            spec
+            for spec in self._capability_tool_specs(mode_config)
+            if bool(spec.get("available"))
+        ]
+        return format_capability_catalog_for_prompt(build_capability_catalog(specs))
+
+    def _capability_tool_specs(self, mode_config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         allowed_tools: set[str] | None = None
         if mode_config and "tools" in mode_config:
             allowed_tools = set(mode_config["tools"])
@@ -310,10 +321,74 @@ class ConversationMessagesHandler(ApiHandler):
                 continue
             if not self.runtime.settings.is_tool_enabled(tool_id):
                 continue
-            if not self.runtime.is_tool_available(spec):
-                continue
-            specs.append(spec)
-        return format_capability_catalog_for_prompt(build_capability_catalog(specs))
+            item = dict(spec)
+            item["available"] = bool(self.runtime.is_tool_available(spec))
+            specs.append(item)
+        return specs
+
+    def _build_capability_snapshot(self, mode_config: dict[str, Any] | None = None) -> dict[str, Any]:
+        specs = self._capability_tool_specs(mode_config)
+        state_changing_tool_ids = {
+            str(spec.get("id") or "")
+            for spec in specs
+            if (
+                _clf.is_state_changing_tool(str(spec.get("id") or ""))
+                or "external_state_change" in set(spec.get("effects") or [])
+            )
+        }
+        return _cap_preflight.build_capability_snapshot(
+            specs,
+            state_changing_tool_ids=state_changing_tool_ids,
+        )
+
+    def _preflight_task_capabilities(
+        self,
+        task_contract: dict[str, Any],
+        capability_snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        return _cap_preflight.preflight_task_capabilities(task_contract, capability_snapshot)
+
+    def _capability_fallback_guard(self, tool_id: str) -> str:
+        preflight = getattr(self, "_active_capability_preflight", None)
+        if _cap_preflight.tool_allowed_by_preflight(preflight, tool_id):
+            return ""
+        targets = ", ".join(preflight.get("target_capability_ids") or []) if isinstance(preflight, dict) else ""
+        if targets:
+            return (
+                f"Tool {tool_id} is outside the target capability boundary ({targets}). "
+                "The runtime blocked this fallback so an external-state task cannot silently become another implementation path."
+            )
+        return (
+            f"Tool {tool_id} is outside the current capability preflight boundary. "
+            "Use an available target capability or report the capability blocker."
+        )
+
+    def _capability_preflight_failure_message(self, preflight: dict[str, Any]) -> str:
+        messages = _cap_preflight.preflight_blocker_messages(preflight)
+        lines = [
+            "未完成：当前任务需要的能力在本轮运行前检查中不可用，系统已阻止自动降级到其他实现路径。",
+        ]
+        if messages:
+            lines.append("")
+            lines.append("能力阻断原因：")
+            lines.extend(f"- {message}" for message in messages[:6])
+        lines.extend([
+            "",
+            "请在 MCP 服务或相关能力连接正常后重试；系统不会把外部应用状态变更任务静默改成脚本或普通文件产物。",
+        ])
+        return "\n".join(lines)
+
+    def _capability_boundary_prompt(self, preflight: dict[str, Any]) -> str:
+        allowed = preflight.get("allowed_tool_ids") if isinstance(preflight, dict) else None
+        if not isinstance(allowed, list):
+            return ""
+        targets = ", ".join(preflight.get("target_capability_ids") or [])
+        return (
+            "Capability preflight boundary: this run targets "
+            f"{targets or 'an external-state capability'}. "
+            "Use only the provided tools that remain visible in this round for state-changing work. "
+            "Do not fall back to shell scripts, local file generation, or another provider unless the user explicitly changes the task goal."
+        )
 
 class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def flush(self, include_footers: bool = False) -> asyncio.Task[None]:
@@ -390,12 +465,61 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         model = payload.get("model") or self.runtime.settings.get_default_model()
         requested_mode = getattr(conversation, "mode", None)
         effective_mode = self._effective_mode(requested_mode, content, conversation)
-        run = self.runtime.runs.create(
-            conversation_id=conversation_id,
-            workspace_id=conversation.workspace_id,
-            mode=effective_mode,
-            user_content=content or ("[attachment]" if attachment_records else "[image]"),
-        )
+        source_run_id = str(payload.get("source_run_id") or "").strip()
+        parent_run_id = str(payload.get("parent_run_id") or source_run_id).strip()
+        resume_from_checkpoint_id = str(payload.get("resume_from_checkpoint_id") or "").strip()
+        prepared_run_id = str(payload.get("prepared_run_id") or "").strip()
+        task_id = str(payload.get("task_id") or "").strip()
+        prepared_run = self.runtime.runs.get(prepared_run_id) if prepared_run_id else None
+        if prepared_run_id and not prepared_run:
+            raise tornado.web.HTTPError(404, reason="prepared run not found")
+        if prepared_run and prepared_run.status != "created":
+            raise tornado.web.HTTPError(409, reason=f"prepared run is not startable: {prepared_run.status}")
+        if prepared_run and (
+            prepared_run.conversation_id != conversation_id
+            or prepared_run.workspace_id != conversation.workspace_id
+        ):
+            raise tornado.web.HTTPError(409, reason="prepared run belongs to another conversation or workspace")
+        if prepared_run:
+            task_id = prepared_run.task_id
+        product_task = self.runtime.product_tasks.get(task_id) if task_id else None
+        if task_id and not product_task:
+            raise tornado.web.HTTPError(404, reason="task not found")
+        if product_task and product_task.workspace_id != conversation.workspace_id:
+            raise tornado.web.HTTPError(409, reason="task belongs to another workspace")
+        if not product_task:
+            product_task = self.runtime.product_tasks.create(
+                goal=content or ("Process attachments" if attachment_records else "Process image"),
+                conversation_id=conversation_id,
+                workspace_id=conversation.workspace_id,
+                kind="conversation_task",
+                metadata={"source": "conversation"},
+            )
+        if prepared_run:
+            run = prepared_run
+            source_run_id = run.source_run_id
+            resume_from_checkpoint_id = run.resume_from_checkpoint_id
+            payload["source_run_id"] = source_run_id
+            payload["resume_from_checkpoint_id"] = resume_from_checkpoint_id
+            self.runtime.run_events.emit(run.id, {
+                "event": "status",
+                "status": "resumed",
+                "message": "prepared replay run started",
+            })
+        else:
+            attempt = max(1, int(product_task.run_count or 0) + 1)
+            run = self.runtime.runs.create(
+                conversation_id=conversation_id,
+                workspace_id=conversation.workspace_id,
+                mode=effective_mode,
+                user_content=content or ("[attachment]" if attachment_records else "[image]"),
+                task_id=product_task.id,
+                parent_run_id=parent_run_id,
+                source_run_id=source_run_id,
+                attempt=attempt,
+                resume_from_checkpoint_id=resume_from_checkpoint_id,
+            )
+            self.runtime.product_tasks.attach_run(product_task.id, run.id)
         self._active_run_id = run.id
         self._active_conversation_id = conversation_id
         _active_stream_conversation_runs[conversation_id] = run.id
@@ -665,7 +789,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             workspace_path=workspace_path,
             mode=mode,
         )
-        verifications = _event_roles.deliverable_verification_events(
+        verifications = _event_roles.sufficient_deliverable_verification_events(
             tool_events,
             task_contract=contract,
             workspace_path=workspace_path,
@@ -871,18 +995,25 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     ) -> None:
         _pt.complete_remaining_plan_steps(execution_plan, failed=failed, had_tool_events=had_tool_events)
 
-    def _build_model_tools(self, mode_config: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    def _build_model_tools(
+        self,
+        mode_config: dict[str, Any] | None = None,
+        *,
+        allowed_tool_ids: set[str] | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, str]]:
         allowed_tools: set[str] | None = None
         if mode_config and "tools" in mode_config:
             allowed_tools = set(mode_config["tools"])
         tools: list[dict[str, Any]] = []
         name_map: dict[str, str] = {}
-        for spec in self.runtime.registry.list_specs():
+        for spec in self._capability_tool_specs(mode_config):
             if allowed_tools is not None and spec["id"] not in allowed_tools:
+                continue
+            if allowed_tool_ids is not None and spec["id"] not in allowed_tool_ids:
                 continue
             if not self.runtime.settings.is_tool_enabled(spec["id"]):
                 continue
-            if not self.runtime.is_tool_available(spec):
+            if not bool(spec.get("available")):
                 continue
             model_name = self._model_tool_name(spec["id"])
             name_map[model_name] = spec["id"]
@@ -996,7 +1127,13 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         return _clf.is_write_tool(tool_id)
 
     def _is_state_changing_tool(self, tool_id: str) -> bool:
-        return _clf.is_state_changing_tool(tool_id)
+        if _clf.is_state_changing_tool(tool_id):
+            return True
+        try:
+            spec = self.runtime.registry.get(tool_id).spec
+        except KeyError:
+            return False
+        return "external_state_change" in set(spec.effects or [])
 
     def _is_deliverable_verification_tool(self, tool_id: str) -> bool:
         return tool_id in self._deliverable_verification_tool_ids()
@@ -1656,7 +1793,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
 
         try:
             tool_id = self.runtime.registry.resolve_id(tool_id)
-            self.runtime.registry.get(tool_id)
+            tool_spec = self.runtime.registry.get(tool_id).spec
         except KeyError:
             return self._skipped_tool_call(
                 tool_call,
@@ -1682,6 +1819,16 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 arguments,
                 reason="capability_service_unavailable",
                 message=f"能力服务尚未连接，不能调用工具：{tool_id}",
+            )
+
+        guard_message = self._capability_fallback_guard(tool_id)
+        if guard_message:
+            return self._skipped_tool_call(
+                tool_call,
+                tool_id,
+                arguments,
+                reason="capability_fallback_blocked",
+                message=guard_message,
             )
 
         missing_fields = self.runtime.registry.missing_required_input_fields(tool_id, arguments)
@@ -1745,6 +1892,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             wait=False,
             confirmed=True,
             workspace_path=workspace_path,
+            workspace_id=getattr(self, "_active_workspace_id", ""),
             artifact_scope_id=getattr(self, "_active_run_id", "") or None,
             attachment_ids=getattr(self, "_active_attachment_ids", ()),
         )
@@ -1755,6 +1903,9 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "input": arguments,
             "task_id": task.id,
             "confirmation_decision": confirmation_decision.to_dict(),
+            "declared_effects": list(tool_spec.effects or []),
+            "declared_roles": list(tool_spec.roles or []),
+            "declared_verification_strength": tool_spec.verification_strength,
         }
         self.write_event({"event": "tool", **event})
         await self.flush()
@@ -1764,7 +1915,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         last_progress_at = started_at
         while task.status in {"queued", "running"}:
             await asyncio.sleep(10)
-            current = self.runtime.store.get(task.id) or task
+            current = self.runtime.tool_tasks.get(task.id) or task
             new_logs = current.logs[last_log_count:]
             if new_logs:
                 last_log_count = len(current.logs)
@@ -1797,7 +1948,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "progress": progress,
             })
             await self.flush()
-        task = self.runtime.store.get(task.id) or task
+        task = self.runtime.tool_tasks.get(task.id) or task
         output_preview = self._tool_output_preview(tool_id, task.output)
         task_error = task.error
         if task.status == "failure":
@@ -1816,6 +1967,9 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "task_id": task.id,
             "error": task_error,
             "output": output_preview,
+            "declared_effects": list(tool_spec.effects or []),
+            "declared_roles": list(tool_spec.roles or []),
+            "declared_verification_strength": tool_spec.verification_strength,
         }
         tool_payload = _tool_risks.attach_tool_result_risks({
             "tool": tool_id,
@@ -2207,13 +2361,14 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "links": (output.get("links") or [])[:20],
                 "truncated": bool(output.get("truncated")),
             }
-        elif any(output.get(key) for key in ("effects", "roles", "artifacts")):
+        elif any(output.get(key) for key in ("effects", "roles", "artifacts", "verification_strength")):
             preview = {
                 "type": "capability_result",
                 "content": str(output.get("content") or "")[:4000],
                 "effects": list(output.get("effects") or [])[:12],
                 "roles": list(output.get("roles") or [])[:12],
                 "artifacts": list(output.get("artifacts") or [])[:12],
+                "verification_strength": output.get("verification_strength"),
             }
         else:
             return None
@@ -2438,6 +2593,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "partial_write_tool_failed",
                 "no_successful_write_tool",
                 "max_tool_rounds",
+                "optional_write_not_verified",
             }:
                 return True
             execution_plan = metadata.get("execution_plan")
@@ -2791,7 +2947,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     ) -> bool:
         if not isinstance(task_contract, dict):
             return self._has_successful_verification(tool_events, mode)
-        return bool(_event_roles.deliverable_verification_events(
+        return bool(_event_roles.sufficient_deliverable_verification_events(
             tool_events,
             task_contract=task_contract,
             workspace_path=workspace_path,
@@ -2949,6 +3105,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         requires_code_write: bool = False,
         contract_failed: bool = False,
         max_rounds_exceeded: bool = False,
+        run_result: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         if mode not in {"coding", "terminal"}:
             return None
@@ -2998,6 +3155,18 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "reason": "partial_write_tool_failed",
                 "message": "注意：本轮已有写入工具成功执行，但也存在写入工具失败。请以变更清单和工具调用记录为准，失败项可能仍需继续处理。",
                 "failed_tools": failed_tools[:8],
+                "tool_event_count": len(tool_events),
+            }
+
+        result_risks = run_result.get("risks") if isinstance(run_result, dict) else []
+        if isinstance(result_risks, list) and "optional_write_not_verified" in result_risks:
+            written_paths = run_result.get("observed_written_paths") if isinstance(run_result, dict) else []
+            if not isinstance(written_paths, list):
+                written_paths = []
+            return {
+                "reason": "optional_write_not_verified",
+                "message": "注意：模型本轮主动写入了本地文件，但系统没有观察到后续运行、预览或读取验证。请把本轮结果视为已修改、未验证，而不是已确认修复。",
+                "written_paths": [str(path) for path in written_paths[:8]],
                 "tool_event_count": len(tool_events),
             }
 
@@ -3210,6 +3379,7 @@ class ConversationCompressHandler(ApiHandler):
             settings=self.runtime.settings,
             mode_config=mode_config,
             workspace_path=workspace.path,
+            workspace_id=workspace.id,
         )
 
         # Build the full message list
