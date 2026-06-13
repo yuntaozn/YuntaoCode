@@ -9,6 +9,7 @@ import pytest
 
 from runtime.api import conversations as conversations_api
 from runtime.api.conversations import ConversationMessagesStreamHandler
+from runtime.agent_strategy.document_contract_guard import document_contract_tool_guard_message
 
 
 def _handler_with_contract() -> ConversationMessagesStreamHandler:
@@ -532,6 +533,34 @@ def test_document_contract_guard_blocks_translation_script_write() -> None:
 
     assert message
     assert "document.translate_docx" in message
+
+
+def test_document_contract_guard_pure_helper_requires_document_coverage() -> None:
+    message = document_contract_tool_guard_message(
+        "filesystem.write_file",
+        {
+            "path": r"D:\code\demo\translate_to_chinese.py",
+            "content": "from deep_translator import GoogleTranslator\n",
+        },
+        {
+            "intent": "document_export",
+            "expected_document_coverage": True,
+        },
+    )
+    skipped = document_contract_tool_guard_message(
+        "filesystem.write_file",
+        {
+            "path": r"D:\code\demo\translate_to_chinese.py",
+            "content": "from deep_translator import GoogleTranslator\n",
+        },
+        {
+            "intent": "document_export",
+            "expected_document_coverage": False,
+        },
+    )
+
+    assert "document.translate_docx" in message
+    assert skipped == ""
 
 
 def test_document_contract_guard_blocks_translation_shell_fallback() -> None:

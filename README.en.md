@@ -319,6 +319,19 @@ See the extension contract draft in [docs/plugin-system.md](docs/plugin-system.m
 
 AI may help create plugin drafts, but drafts must stay isolated. After completion, test/dependency summaries plus one manual confirmation can move the draft into a future controlled registration or enablement path. See [docs/capability-governance.md](docs/capability-governance.md).
 
+### MCP Services Directory
+
+External MCP service source copies, service-level reference material, and
+integration notes live under `mcp-services/`. For example,
+`mcp-services/blender-mcp/` is a local reference copy of the Blender MCP
+service. It is not a built-in `runtime.skills.*` module and is not imported by
+the Runtime automatically.
+
+MCP service enablement, connection state, permissions, logs, tool discovery, and
+capability bindings remain owned by the MCP Service Manager. The default
+Blender example uses the explicit `uvx blender-mcp` package runner and connects
+only after the user enables and starts the service.
+
 ---
 
 ## Open Source Collaboration

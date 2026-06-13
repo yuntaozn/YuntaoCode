@@ -62,6 +62,11 @@ MCP 进程运行不等于协议已连接。只有协议适配器完成握手并�
 当前 stdio MCP 会话已经接通这条链路；Streamable HTTP 与 legacy SSE
 仍只提供配置和可达性检查，尚未建立协议会话。
 
+仓库中的 `mcp-services/` 目录只用于放置 MCP 服务源码副本、第三方参考资料
+和服务级集成说明。它不属于 `runtime/skills/` 内置能力目录，Runtime 也不会
+自动从该目录导入代码。MCP 服务是否启用、如何启动、哪些工具进入模型上下文，
+仍由 MCP Service Manager 和 Capability Runtime 决定。
+
 其中 Task Runtime 是用户目标的执行主线：
 
 ```text
@@ -113,6 +118,8 @@ User Request
 
 - `classifiers.py`：意图分类、工具分类、进度观察和阶段判断。
 - `capability_router.py`：能力契约、模型路由提案和提案验证。
+- `conversation_task_context.py`：根据对话历史判断追问是否继承上一轮任务、
+  写入上下文、文档输出上下文和字数目标。
 - `profiles.py`：内部执行 Profile，例如直接问答、项目分析、代码修改、外部能力执行、文档工作流、论文工作流。
 - `policy.py`：请求路由和计划执行开关；确定性规则只承担安全边界与模型不可用时的回退，不替模型决定任务目标和执行策略。
 - `prompts.py`：阶段提示、修复提示、最终回答提示等 prompt 构建。
@@ -121,6 +128,8 @@ User Request
 新增能力时优先扩展这些模块，而不是继续向 `conversation_runner.py`
 主循环里堆分支。`conversation_runner.py` 应尽量保持为编排层：
 它负责串起上下文压缩、计划、模型流、工具调用、确认机制和最终消息落库。
+工具事件的前端预览、进度摘要和回填给模型的压缩 payload 由
+`runtime/tool_event_presentation.py` 负责，避免 API Handler 直接承载展示规则。
 
 后续演进方向是让第一层任务理解更多交给模型，Runtime 负责能力目录与执行契约：
 

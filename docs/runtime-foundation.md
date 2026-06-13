@@ -198,6 +198,10 @@ or quality requirements. `replace` and `new` establish a different target.
 The runtime preserves a compact `continuity_anchor` for continued/revised
 tasks, preventing an intermediate fallback from silently becoming the next
 turn's product goal.
+Conversation-history inheritance is implemented in
+`runtime/agent_strategy/conversation_task_context.py` so follow-up routing,
+previous write context, document export context, and inherited output-length
+goals can be tested without Tornado handlers.
 
 Deliverable paths are soft hints by default. A successful artifact of the same
 declared kind may use another path and still satisfy the contract; the path
@@ -226,6 +230,9 @@ instead of treating the task contract as an execution lock.
 Tool providers may declare `effects`, `roles`, and `artifacts`. Successful tool
 results carry these facts into the event trace, allowing the runtime to audit
 external-state deliverables without hard-coding provider tool IDs.
+Tool progress snapshots, frontend previews, and compact model-facing tool
+payloads are presentation mechanics owned by `runtime/tool_event_presentation.py`;
+they should not decide whether a task succeeded.
 
 Result convergence is role-aware. A failed target-deliverable action can block
 the Run, a failed required verification can degrade it to partial, and a failed
@@ -425,6 +432,12 @@ Current runtime-level capability guards:
 - execution still performs a second guard before running a tool, so malformed
   native/tool-call variants cannot silently fall back to shell scripts or file
   generation outside the preflight boundary.
+
+Tool execution guards have a stable pre-confirmation order for a resolved tool:
+plugin enablement, service availability, capability fallback boundary, required
+input fields, AI-built plugin draft boundary, document contract boundary, and
+runtime verification method checks. A guard failure returns a deterministic
+reason and message before manual confirmation is requested.
 
 ## Temporary Artifacts
 

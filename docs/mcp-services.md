@@ -60,6 +60,11 @@ For Blender specifically:
 - A disabled `blender` example definition is created during the MCP service
   schema migration. It uses the explicit `uvx blender-mcp` package-runner
   command and never starts automatically.
+- MCP service source/reference trees live under `mcp-services/<service-id>/`.
+  A local source copy, such as `mcp-services/blender-mcp/`, is third-party
+  reference material for the MCP service boundary. It is not a built-in Python
+  skill, not an automatically loaded plugin, and not required by the default
+  `uvx blender-mcp` connection path.
 
 ## Runtime Concepts
 

@@ -18,11 +18,17 @@ from runtime.agent_strategy.capability_router import (
 from runtime.agent_strategy import classifiers as _clf
 from runtime.agent_strategy import capability_preflight as _cap_preflight
 from runtime.agent_strategy import confirmation_policy as _cp
+from runtime.agent_strategy import conversation_task_context as _task_ctx
 from runtime.agent_strategy import context_hygiene as _ctx_hygiene
+from runtime.agent_strategy.document_contract_guard import document_contract_tool_guard_message
 from runtime.agent_strategy import prompts as _prp
 from runtime.agent_strategy import plan_tracker as _pt
 from runtime.agent_strategy import policy as _pol
 from runtime.agent_strategy import task_contract as _tc
+from runtime.agent_strategy.tool_execution_guard import (
+    ToolExecutionGuardChecks,
+    evaluate_tool_execution_guard,
+)
 from runtime.agent_strategy import tool_event_roles as _event_roles
 from runtime.agent_strategy import tool_result_risks as _tool_risks
 from runtime.model_providers import generate_chat_completion
@@ -42,6 +48,7 @@ from runtime.conversation_interactions import (
 )
 from runtime.prompt_context import build_system_prompt
 from runtime.task_runner import ToolContext
+from runtime import tool_event_presentation as _tool_present
 
 
 _active_stream_conversation_runs: dict[str, str] = {}
@@ -1560,71 +1567,11 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
 
     def _document_contract_tool_guard(self, tool_id: str, arguments: dict[str, Any]) -> str:
         contract = getattr(self, "_active_task_contract", None)
-        if not isinstance(contract, dict):
-            return ""
-        if contract.get("intent") != "document_export" or not contract.get("expected_document_coverage"):
-            return ""
-
-        if tool_id == "filesystem.write_file":
-            target = str(
-                arguments.get("path")
-                or arguments.get("output_path")
-                or arguments.get("file_path")
-                or ""
-            )
-            suffix = Path(target).suffix.lower()
-            content = str(arguments.get("content") or "")
-            script_suffixes = {".py", ".ps1", ".bat", ".cmd", ".js", ".mjs", ".ts", ".sh"}
-            script_markers = (
-                "deep_translator",
-                "googletranslator",
-                "translate_to_chinese",
-                "python-docx",
-                "from docx import",
-                "pip install",
-            )
-            script_text = f"{target}\n{content}".lower()
-            pdf_script_markers = (
-                "pdf2docx",
-                "pymupdf",
-                "fitz.open",
-                "from fitz import",
-                "convert_pdf",
-                "pdf_to_word",
-            )
-            if suffix in script_suffixes and (
-                any(marker in script_text for marker in pdf_script_markers)
-                or ("pdf" in script_text and any(term in script_text for term in ("docx", "word")))
-            ):
-                return (
-                    "当前任务是 PDF 转 Word / 图文文档输出，不能通过临时脚本绕过内置文档工具。"
-                    "请直接调用 document.extract_pdf_to_docx；如果用户要求图片和文字顺序保留，请传入 mode=text_with_images。"
-                )
-            if suffix in script_suffixes or any(marker in content.lower() for marker in script_markers):
-                return (
-                    "当前任务是全文文档输出/翻译，不能通过临时脚本实现。"
-                    "请直接调用 document.translate_docx；如果源文件是 PDF 转 Word，请调用 document.extract_pdf_to_docx。"
-                )
-
-        if tool_id == "shell.run_command":
-            args = arguments.get("args") if isinstance(arguments.get("args"), list) else []
-            command_text = " ".join(str(part) for part in [arguments.get("command"), *args] if part is not None).lower()
-            pdf_shell_terms = ("pdf2docx", "pymupdf", "fitz", "convert_pdf", "pdf_to_word")
-            if any(term in command_text for term in pdf_shell_terms) or (
-                "pdf" in command_text and any(term in command_text for term in ("docx", "word"))
-            ):
-                return (
-                    "当前任务是 PDF 转 Word / 图文文档输出，不能用 shell 或脚本绕过内置文档工具。"
-                    "请直接调用 document.extract_pdf_to_docx；如果用户要求图片和文字顺序保留，请传入 mode=text_with_images。"
-                )
-            blocked_terms = ("pip", "python", "py ", "deep_translator", "googletranslator", "translate", ".py")
-            if any(term in command_text for term in blocked_terms):
-                return (
-                    "当前任务是全文文档输出/翻译，不能用 shell 或脚本绕过内置文档工具。"
-                    "请直接调用 document.translate_docx，并让工具负责覆盖率与完成状态。"
-                )
-
-        return ""
+        return document_contract_tool_guard_message(
+            tool_id,
+            arguments,
+            contract if isinstance(contract, dict) else None,
+        )
 
     def _verification_runtime_tool_guard(self, tool_id: str, arguments: dict[str, Any]) -> str:
         if tool_id != "shell.run_command":
@@ -1665,6 +1612,29 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             input_data=arguments,
             workspace_path=workspace_path,
             data_dir=getattr(getattr(self.runtime, "settings", None), "data_dir", None),
+        )
+
+    def _tool_execution_guard_decision(
+        self,
+        tool_id: str,
+        arguments: dict[str, Any],
+        workspace_path: str | None,
+    ):
+        return evaluate_tool_execution_guard(
+            tool_id,
+            arguments,
+            workspace_path,
+            ToolExecutionGuardChecks(
+                is_tool_enabled=self.runtime.settings.is_tool_enabled,
+                is_tool_available=lambda current_tool_id: self.runtime.is_tool_available(
+                    self.runtime.registry.get_public_spec(current_tool_id)
+                ),
+                missing_required_input_fields=self.runtime.registry.missing_required_input_fields,
+                capability_fallback_message=self._capability_fallback_guard,
+                ai_plugin_draft_workspace_message=self._ai_plugin_draft_workspace_guard,
+                document_contract_message=self._document_contract_tool_guard,
+                verification_runtime_message=self._verification_runtime_tool_guard,
+            ),
         )
 
     def _runtime_confirmation_message(
@@ -1803,75 +1773,14 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 message=f"未知工具：{tool_id}。请改用当前工具列表中的规范工具 ID。",
             )
 
-        if not self.runtime.settings.is_tool_enabled(tool_id):
+        guard_decision = self._tool_execution_guard_decision(tool_id, arguments, workspace_path)
+        if guard_decision:
             return self._skipped_tool_call(
                 tool_call,
                 tool_id,
                 arguments,
-                reason="plugin_disabled",
-                message=f"插件已禁用，不能调用工具：{tool_id}",
-            )
-
-        if not self.runtime.is_tool_available(self.runtime.registry.get_public_spec(tool_id)):
-            return self._skipped_tool_call(
-                tool_call,
-                tool_id,
-                arguments,
-                reason="capability_service_unavailable",
-                message=f"能力服务尚未连接，不能调用工具：{tool_id}",
-            )
-
-        guard_message = self._capability_fallback_guard(tool_id)
-        if guard_message:
-            return self._skipped_tool_call(
-                tool_call,
-                tool_id,
-                arguments,
-                reason="capability_fallback_blocked",
-                message=guard_message,
-            )
-
-        missing_fields = self.runtime.registry.missing_required_input_fields(tool_id, arguments)
-        if missing_fields:
-            return self._skipped_tool_call(
-                tool_call,
-                tool_id,
-                arguments,
-                reason="invalid_tool_input",
-                message=(
-                    f"工具调用缺少必填参数：{', '.join(missing_fields)}。"
-                    "请补全参数后重新发送结构化工具调用；无效调用不会进入人工确认。"
-                ),
-            )
-
-        guard_message = self._ai_plugin_draft_workspace_guard(tool_id, arguments, workspace_path)
-        if guard_message:
-            return self._skipped_tool_call(
-                tool_call,
-                tool_id,
-                arguments,
-                reason="ai_plugin_draft_workspace_guard",
-                message=guard_message,
-            )
-
-        guard_message = self._document_contract_tool_guard(tool_id, arguments)
-        if guard_message:
-            return self._skipped_tool_call(
-                tool_call,
-                tool_id,
-                arguments,
-                reason="document_contract_guard",
-                message=guard_message,
-            )
-
-        guard_message = self._verification_runtime_tool_guard(tool_id, arguments)
-        if guard_message:
-            return self._skipped_tool_call(
-                tool_call,
-                tool_id,
-                arguments,
-                reason="invalid_verification_method",
-                message=guard_message,
+                reason=guard_decision.reason,
+                message=guard_decision.message,
             )
 
         confirmation_decision = self._runtime_confirmation_decision(tool_id)
@@ -1988,100 +1897,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         }, event
 
     def _tool_progress_snapshot(self, tool_id: str, task: Any) -> dict[str, Any]:
-        logs = task.logs if getattr(task, "logs", None) else []
-        snapshot: dict[str, Any] = {
-            "tool": tool_id,
-            "task_id": getattr(task, "id", ""),
-            "status": getattr(task, "status", ""),
-        }
-        if logs:
-            latest = logs[-1]
-            snapshot["last_log_message"] = latest.get("message")
-            snapshot["last_log_level"] = latest.get("level")
-            snapshot["last_log_time"] = latest.get("time")
-
-        if tool_id == "document.translate_docx":
-            for log_event in reversed(logs):
-                message = str(log_event.get("message") or "")
-                if not (
-                    message.startswith("translation progress ")
-                    or message.startswith("translation batch started ")
-                    or message.startswith("translation source loaded ")
-                ):
-                    continue
-                raw_progress = message.rsplit(" ", 1)[-1]
-                if "/" not in raw_progress:
-                    continue
-                done_text, total_text = raw_progress.split("/", 1)
-                try:
-                    done = int(done_text)
-                    total = int(total_text)
-                except ValueError:
-                    continue
-                data = log_event.get("data") if isinstance(log_event.get("data"), dict) else {}
-                phase = "progress"
-                if message.startswith("translation batch started "):
-                    phase = "batch_started"
-                elif message.startswith("translation source loaded "):
-                    phase = "source_loaded"
-                snapshot.update({
-                    "kind": "document_translation",
-                    "phase": phase,
-                    "done": done,
-                    "total": total,
-                    "percent": round((done / total) * 100, 1) if total else 0,
-                    "translated": data.get("translated"),
-                    "failed": data.get("failed"),
-                    "source_chars_done": data.get("source_chars_done"),
-                    "source_chars_total": data.get("source_chars_total"),
-                    "engine": data.get("engine"),
-                    "translation_profile": data.get("translation_profile"),
-                    "manifest_path": data.get("manifest_path"),
-                    "resumable": data.get("resumable"),
-                })
-                break
-        elif tool_id == "document.extract_pdf_to_docx":
-            for log_event in reversed(logs):
-                message = str(log_event.get("message") or "")
-                if not (
-                    message.startswith("pdf conversion started ")
-                    or message.startswith("pdf page converted ")
-                    or message.startswith("pdf docx saving ")
-                    or message.startswith("pdf docx saved ")
-                ):
-                    continue
-                raw_progress = message.rsplit(" ", 1)[-1]
-                if "/" not in raw_progress:
-                    continue
-                done_text, total_text = raw_progress.split("/", 1)
-                try:
-                    done = int(done_text)
-                    total = int(total_text)
-                except ValueError:
-                    continue
-                data = log_event.get("data") if isinstance(log_event.get("data"), dict) else {}
-                phase = str(data.get("phase") or "progress")
-                if message.startswith("pdf conversion started "):
-                    phase = "started"
-                elif message.startswith("pdf docx saving "):
-                    phase = "saving"
-                elif message.startswith("pdf docx saved "):
-                    phase = "saved"
-                snapshot.update({
-                    "kind": "pdf_to_docx",
-                    "phase": phase,
-                    "done": done,
-                    "total": total,
-                    "percent": round((done / total) * 100, 1) if total else 0,
-                    "source_pages": data.get("source_pages"),
-                    "text_block_count": data.get("text_block_count"),
-                    "image_count": data.get("image_count"),
-                    "skipped_image_count": data.get("skipped_image_count"),
-                    "mode": data.get("mode"),
-                    "file_size": data.get("file_size"),
-                })
-                break
-        return snapshot
+        return _tool_present.tool_progress_snapshot(tool_id, task)
 
     def _tool_progress_message(
         self,
@@ -2091,60 +1907,14 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         stale_seconds: int,
         progress: dict[str, Any],
     ) -> str:
-        name = self._tool_display_name(tool_id)
-        if progress.get("kind") == "document_translation":
-            phase = str(progress.get("phase") or "progress")
-            if phase == "source_loaded":
-                lead = f"{name}仍在运行：已读取源文档，等待第一批翻译"
-            elif phase == "batch_started":
-                lead = f"{name}仍在运行：正在翻译下一批，已完成 {progress.get('done')}/{progress.get('total')} 段"
-            else:
-                lead = f"{name}仍在运行：已处理 {progress.get('done')}/{progress.get('total')} 段"
-            parts = [
-                lead,
-                f"{progress.get('percent')}%",
-                f"失败 {progress.get('failed') or 0} 段",
-                f"已等待 {elapsed_seconds}s",
-            ]
-            source_done = progress.get("source_chars_done")
-            source_total = progress.get("source_chars_total")
-            if isinstance(source_done, int) and isinstance(source_total, int) and source_total > 0:
-                char_percent = round((source_done / source_total) * 100, 1)
-                parts.insert(2, f"字符进度 {char_percent}%")
-            if stale_seconds >= 60:
-                parts.append(f"最近 {stale_seconds}s 没有新进度，可能正在等待模型响应")
-            return "；".join(parts)
-
-        if progress.get("kind") == "pdf_to_docx":
-            phase = str(progress.get("phase") or "progress")
-            done = progress.get("done")
-            total = progress.get("total")
-            if phase == "started":
-                lead = f"{name}仍在运行：已开始解析 PDF，等待第一页结果"
-            elif phase == "saving":
-                lead = f"{name}仍在运行：正在保存 Word 文件，已处理 {done}/{total} 页"
-            elif phase == "saved":
-                lead = f"{name}仍在运行：Word 文件已保存，正在收束结果"
-            else:
-                lead = f"{name}仍在运行：已处理 {done}/{total} 页"
-            parts = [
-                lead,
-                f"{progress.get('percent')}%",
-                f"文字块 {progress.get('text_block_count') or 0}",
-                f"图片 {progress.get('image_count') or 0}",
-                f"已等待 {elapsed_seconds}s",
-            ]
-            skipped = progress.get("skipped_image_count")
-            if isinstance(skipped, int) and skipped > 0:
-                parts.insert(4, f"跳过图片 {skipped}")
-            if stale_seconds >= 60:
-                parts.append(f"最近 {stale_seconds}s 没有新页面进度，可能正在处理大图片或保存文件")
-            return "；".join(parts)
-
-        last_log = str(progress.get("last_log_message") or "").strip()
-        if last_log:
-            return f"{name}仍在运行：{last_log}；已等待 {elapsed_seconds}s"
-        return f"{name}仍在运行，已等待 {elapsed_seconds}s"
+        return _tool_present.tool_progress_message(
+            tool_id,
+            task,
+            elapsed_seconds,
+            stale_seconds,
+            progress,
+            display_name=self._tool_display_name(tool_id),
+        )
 
     def _tool_display_name(self, tool_id: str) -> str:
         try:
@@ -2153,226 +1923,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return tool_id
 
     def _tool_output_preview(self, tool_id: str, output: Any) -> dict[str, Any] | None:
-        """Extract a small preview of tool output for frontend rich rendering."""
-        if not output or not isinstance(output, dict):
-            return None
-        preview: dict[str, Any] = {}
-        if tool_id == "shell.run_command":
-            stdout = str(output.get("stdout") or "")[:4000]
-            stderr = str(output.get("stderr") or "")[:2000]
-            preview = {
-                "type": "shell",
-                "exit_code": output.get("exit_code"),
-                "stdout": stdout,
-                "stderr": stderr,
-                "timed_out": bool(output.get("timed_out")),
-                "timeout": output.get("timeout"),
-            }
-        elif tool_id == "code.apply_patch":
-            preview = {
-                "type": "patch",
-                "path": output.get("path"),
-                "paths": (output.get("paths") or [])[:40],
-                "file_count": output.get("file_count"),
-                "operation_count": output.get("operation_count"),
-                "hunk_count": output.get("hunk_count"),
-                "backup": output.get("_backup"),
-            }
-        elif tool_id == "code.edit_file":
-            preview = {
-                "type": "diff",
-                "path": output.get("path"),
-                "diff_preview": str(output.get("diff_preview") or "")[:4000],
-                "backup": output.get("_backup"),
-            }
-        elif tool_id == "code.replace_text":
-            preview = {
-                "type": "bulk_replace",
-                "root": output.get("root"),
-                "old_text": output.get("old_text"),
-                "new_text": output.get("new_text"),
-                "dry_run": bool(output.get("dry_run")),
-                "changed_files": (output.get("changed_files") or [])[:80],
-                "changed_file_count": output.get("changed_file_count"),
-                "matched_file_count": output.get("matched_file_count"),
-                "replacement_count": output.get("replacement_count"),
-                "truncated": bool(output.get("truncated")),
-                "backup": output.get("_backup"),
-            }
-        elif tool_id == "filesystem.write_file":
-            preview = {
-                "type": "file_write",
-                "path": output.get("path"),
-                "created": bool(output.get("created")),
-                "size": output.get("size"),
-                "integrity": output.get("integrity"),
-                "backup": output.get("_backup"),
-            }
-        elif tool_id == "filesystem.transform_text":
-            preview = {
-                "type": "file_transform",
-                "path": output.get("path"),
-                "transform": output.get("transform"),
-                "changed": bool(output.get("changed")),
-                "before_size": output.get("before_size"),
-                "after_size": output.get("after_size"),
-                "integrity_before": output.get("integrity_before"),
-                "integrity": output.get("integrity"),
-                "backup": output.get("_backup"),
-            }
-        elif tool_id == "filesystem.finalize_text_file":
-            preview = {
-                "type": "file_write",
-                "path": output.get("path"),
-                "created": bool(output.get("created")),
-                "size": output.get("size"),
-                "draft_id": output.get("draft_id"),
-                "draft_stats": output.get("draft_stats"),
-                "validation": output.get("validation"),
-                "artifact_kind": output.get("artifact_kind"),
-                "backup": output.get("_backup"),
-            }
-        elif tool_id == "document.extract_pdf_to_docx":
-            preview = {
-                "type": "file_write",
-                "path": output.get("path"),
-                "created": True,
-                "size": output.get("pages_parsed"),
-                "mode": output.get("mode") or "text_only",
-                "image_count": output.get("image_count"),
-                "text_block_count": output.get("text_block_count"),
-                "file_size": output.get("file_size"),
-                "backup": output.get("_backup"),
-            }
-        elif tool_id == "document.extract_docx_outline":
-            preview = {
-                "type": "docx_outline",
-                "path": output.get("path"),
-                "paragraph_count": output.get("paragraph_count"),
-                "text_chars": output.get("text_chars"),
-                "table_count": output.get("table_count"),
-                "strategy": output.get("strategy"),
-            }
-        elif tool_id == "document.export_docx":
-            preview = {
-                "type": "file_write",
-                "path": output.get("path"),
-                "created": True,
-                "content_chars": output.get("content_chars"),
-                "paragraph_count": output.get("paragraph_count"),
-                "nonempty_paragraph_count": output.get("nonempty_paragraph_count"),
-                "file_size": output.get("file_size"),
-                "backup": output.get("_backup"),
-            }
-        elif tool_id == "document.export_draft_docx":
-            draft_stats = output.get("draft_stats") if isinstance(output.get("draft_stats"), dict) else {}
-            preview = {
-                "type": "file_write",
-                "path": output.get("path"),
-                "created": True,
-                "draft_id": output.get("draft_id"),
-                "content_chars": output.get("content_chars"),
-                "paragraph_count": output.get("paragraph_count"),
-                "section_count": draft_stats.get("section_count"),
-                "block_count": draft_stats.get("block_count"),
-                "text_chars": draft_stats.get("text_chars"),
-                "file_size": output.get("file_size"),
-                "backup": output.get("_backup"),
-            }
-        elif tool_id in {
-            "document.create_draft",
-            "document.append_draft_section",
-            "document.add_draft_citation",
-            "document.inspect_draft",
-        }:
-            stats = output.get("stats") if isinstance(output.get("stats"), dict) else {}
-            preview = {
-                "type": "document_draft",
-                "draft_id": output.get("draft_id"),
-                "title": output.get("title") or stats.get("title"),
-                "section_count": stats.get("section_count"),
-                "block_count": stats.get("block_count"),
-                "citation_count": stats.get("citation_count"),
-                "text_chars": stats.get("text_chars"),
-                "unknown_citation_ids": stats.get("unknown_citation_ids") or output.get("unknown_citation_ids"),
-            }
-        elif tool_id == "document.translate_docx":
-            preview = {
-                "type": "file_write",
-                "path": output.get("path"),
-                "created": True,
-                "complete": bool(output.get("complete")),
-                "status": output.get("status"),
-                "partial_resumable": bool(output.get("partial_resumable")),
-                "source_nonempty_paragraph_count": output.get("source_nonempty_paragraph_count"),
-                "target_nonempty_goal": output.get("target_nonempty_goal"),
-                "translated_paragraph_count": output.get("translated_paragraph_count"),
-                "failed_paragraph_count": output.get("failed_paragraph_count"),
-                "source_chars_done": output.get("source_chars_done"),
-                "source_chars_total": output.get("source_chars_total"),
-                "manifest_path": output.get("manifest_path"),
-                "stopped_reason": output.get("stopped_reason"),
-                "file_size": output.get("file_size"),
-                "backup": output.get("_backup"),
-            }
-        elif tool_id == "filesystem.read_file":
-            preview = {
-                "type": "file_read",
-                "path": output.get("path"),
-                "total_lines": output.get("total_lines"),
-                "start_line": output.get("start_line"),
-                "end_line": output.get("end_line"),
-                "truncated": bool(output.get("truncated")),
-                "remaining_lines": output.get("remaining_lines"),
-                "next_start_line": output.get("next_start_line"),
-                "next_end_line": output.get("next_end_line"),
-                "integrity": output.get("integrity"),
-            }
-        elif tool_id == "filesystem.read_text_preview":
-            preview = {
-                "type": "file_preview",
-                "path": output.get("path"),
-                "size": output.get("size"),
-                "truncated": bool(output.get("truncated")),
-                "integrity": output.get("integrity"),
-            }
-        elif tool_id == "attachment.extract_text":
-            preview = {
-                "type": "attachment_text",
-                "attachment": output.get("attachment"),
-                "content": str(output.get("content") or "")[:4000],
-                "text_chars": output.get("text_chars"),
-                "truncated": bool(output.get("truncated")),
-            }
-        elif tool_id == "git.diff":
-            preview = {"type": "diff", "diff_preview": str(output.get("diff") or "")[:4000]}
-        elif tool_id == "git.status":
-            preview = {"type": "git_status", "files": (output.get("files") or [])[:40]}
-        elif tool_id == "git.log":
-            preview = {"type": "git_log", "commits": (output.get("commits") or [])[:10]}
-        elif tool_id.startswith("web."):
-            preview = {
-                "type": "web",
-                "url": output.get("url") or output.get("final_url"),
-                "final_url": output.get("final_url") or output.get("url"),
-                "status_code": output.get("status_code"),
-                "title": output.get("title") or "",
-                "text": str(output.get("text") or "")[:4000],
-                "links": (output.get("links") or [])[:20],
-                "truncated": bool(output.get("truncated")),
-            }
-        elif any(output.get(key) for key in ("effects", "roles", "artifacts", "verification_strength")):
-            preview = {
-                "type": "capability_result",
-                "content": str(output.get("content") or "")[:4000],
-                "effects": list(output.get("effects") or [])[:12],
-                "roles": list(output.get("roles") or [])[:12],
-                "artifacts": list(output.get("artifacts") or [])[:12],
-                "verification_strength": output.get("verification_strength"),
-            }
-        else:
-            return None
-        return preview
+        return _tool_present.tool_output_preview(tool_id, output)
 
     async def _capture_git_status(
         self,
@@ -2501,8 +2052,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         return str(path_value or "").replace("\\", "/")
 
     def _is_runtime_guidance_message(self, message: Any) -> bool:
-        metadata = getattr(message, "metadata", {}) or {}
-        return bool(metadata.get("guidance") and metadata.get("during_run"))
+        return _task_ctx.is_runtime_guidance_message(message)
 
     def _discard_parts(self, target: list[str], parts: list[str]) -> None:
         if not parts:
@@ -2557,229 +2107,29 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         return "\n".join(lines)
 
     def _previous_write_context(self, conversation: Any | None, current_content: str) -> bool:
-        if conversation is None:
-            return False
-        current = current_content.strip()
-        for message in reversed(getattr(conversation, "messages", [])[-16:]):
-            if self._is_runtime_guidance_message(message):
-                continue
-            role = str(getattr(message, "role", "") or "")
-            previous_content = str(getattr(message, "content", "") or "")
-            if previous_content.strip() == current:
-                continue
-            metadata = getattr(message, "metadata", {}) or {}
-            if role == "user":
-                if self._has_no_write_instruction(previous_content):
-                    return False
-                if self._looks_like_code_change_request(previous_content):
-                    return True
-                continue
-            if role != "assistant" or not isinstance(metadata, dict):
-                continue
-            contract = metadata.get("task_contract")
-            if isinstance(contract, dict) and contract.get("requires_write"):
-                return True
-            if metadata.get("task_intent") in {"write_required", "document_export"}:
-                return True
-            if metadata.get("code_change_intent") is True:
-                return True
-            change_summary = metadata.get("change_summary")
-            if isinstance(change_summary, dict) and int(change_summary.get("file_count") or 0) > 0:
-                return True
-            execution_notice = metadata.get("execution_notice")
-            if isinstance(execution_notice, dict) and execution_notice.get("reason") in {
-                "tool_contract_failed",
-                "write_tool_failed",
-                "partial_write_tool_failed",
-                "no_successful_write_tool",
-                "max_tool_rounds",
-                "optional_write_not_verified",
-            }:
-                return True
-            execution_plan = metadata.get("execution_plan")
-            if self._plan_has_pending_write_step(execution_plan):
-                return True
-            content_hint = previous_content.lower()
-            if "继续" in content_hint and any(
-                term in content_hint
-                for term in ("优化", "修改", "写入", "创建", "未完成", "剩余", "页面", "seo")
-            ):
-                return True
-        return False
+        return _task_ctx.previous_write_context(conversation, current_content)
 
     def _has_recent_task_context(self, conversation: Any | None, current_content: str) -> bool:
-        """Return whether a short request belongs to an existing conversation task."""
-        if conversation is None:
-            return False
-        current = current_content.strip()
-        for message in reversed(getattr(conversation, "messages", [])[-12:]):
-            if self._is_runtime_guidance_message(message):
-                continue
-            role = str(getattr(message, "role", "") or "")
-            previous_content = str(getattr(message, "content", "") or "").strip()
-            if role == "user" and previous_content and previous_content != current:
-                return True
-            if role != "assistant":
-                continue
-            metadata = getattr(message, "metadata", {}) or {}
-            if not isinstance(metadata, dict):
-                continue
-            contract = metadata.get("task_contract")
-            if isinstance(contract, dict) and (
-                contract.get("goal")
-                or contract.get("intent") not in {None, "", "answer_only"}
-            ):
-                return True
-        return False
+        return _task_ctx.has_recent_task_context(conversation, current_content)
 
     def _previous_task_contract_context(
         self,
         conversation: Any | None,
         current_content: str,
     ) -> dict[str, Any] | None:
-        if conversation is None:
-            return None
-        current = current_content.strip()
-        messages = list(getattr(conversation, "messages", [])[-20:])
-        for index in range(len(messages) - 1, -1, -1):
-            message = messages[index]
-            if self._is_runtime_guidance_message(message):
-                continue
-            role = str(getattr(message, "role", "") or "")
-            previous_content = str(getattr(message, "content", "") or "").strip()
-            if role == "user" and previous_content == current:
-                continue
-            if role != "assistant":
-                continue
-            metadata = getattr(message, "metadata", {}) or {}
-            if not isinstance(metadata, dict):
-                continue
-            contract = metadata.get("task_contract")
-            if isinstance(contract, dict) and (
-                contract.get("goal")
-                or contract.get("intent") not in {None, "", "answer_only"}
-            ):
-                previous_user_content = ""
-                for previous in reversed(messages[:index]):
-                    if self._is_runtime_guidance_message(previous):
-                        continue
-                    if str(getattr(previous, "role", "") or "") != "user":
-                        continue
-                    candidate = str(getattr(previous, "content", "") or "").strip()
-                    if candidate and candidate != current:
-                        previous_user_content = candidate
-                        break
-                if (
-                    previous_user_content
-                    and _tc.looks_like_task_revision_followup(previous_user_content)
-                    and not contract.get("continuity_anchor")
-                    and contract.get("scope_relation_source") != "model"
-                ):
-                    continue
-                return contract
-        return None
+        return _task_ctx.previous_task_contract_context(conversation, current_content)
 
     def _previous_document_export_context(self, conversation: Any | None, current_content: str) -> bool:
-        if conversation is None:
-            return False
-        current = current_content.strip()
-        for message in reversed(getattr(conversation, "messages", [])[-16:]):
-            if self._is_runtime_guidance_message(message):
-                continue
-            role = str(getattr(message, "role", "") or "")
-            previous_content = str(getattr(message, "content", "") or "")
-            if previous_content.strip() == current:
-                continue
-            metadata = getattr(message, "metadata", {}) or {}
-            if role == "user":
-                if self._has_no_write_instruction(previous_content):
-                    return False
-                if self._looks_like_document_export_request(previous_content):
-                    return True
-                continue
-            if role != "assistant":
-                continue
-            if isinstance(metadata, dict):
-                contract = metadata.get("task_contract")
-                if isinstance(contract, dict) and contract.get("intent") == "document_export":
-                    return True
-                if metadata.get("task_intent") == "document_export":
-                    return True
-            content_hint = previous_content.lower()
-            if "pdf" in content_hint and any(term in content_hint for term in ("word", "docx", "转存", "转换", "提取")):
-                return True
-        return False
+        return _task_ctx.previous_document_export_context(conversation, current_content)
 
     def _previous_full_document_output_context(self, conversation: Any | None, current_content: str) -> bool:
-        if conversation is None:
-            return False
-        current = current_content.strip()
-        for message in reversed(getattr(conversation, "messages", [])[-16:]):
-            if self._is_runtime_guidance_message(message):
-                continue
-            role = str(getattr(message, "role", "") or "")
-            previous_content = str(getattr(message, "content", "") or "")
-            if previous_content.strip() == current:
-                continue
-            metadata = getattr(message, "metadata", {}) or {}
-            if role == "user":
-                if self._has_no_write_instruction(previous_content):
-                    return False
-                if self._looks_like_full_document_output_request(previous_content):
-                    return True
-                continue
-            if role != "assistant" or not isinstance(metadata, dict):
-                continue
-            contract = metadata.get("task_contract")
-            if isinstance(contract, dict) and contract.get("expected_document_coverage"):
-                return True
-        return False
+        return _task_ctx.previous_full_document_output_context(conversation, current_content)
 
     def _expects_full_document_output(self, content: str, conversation: Any | None = None) -> bool:
-        if self._looks_like_full_document_output_request(content):
-            return True
-        text = content.strip().lower()
-        if conversation is not None and len(text) < 80 and any(
-            term in text
-            for term in ("没看到", "没生成", "没成功", "上次", "再做", "再翻译", "继续")
-        ):
-            return self._previous_full_document_output_context(conversation, content)
-        if self._looks_like_follow_up_execution(content):
-            return self._previous_full_document_output_context(conversation, content)
-        return False
+        return _task_ctx.expects_full_document_output(content, conversation)
 
     def _expected_min_output_chars(self, content: str, conversation: Any | None = None) -> int:
-        direct = _clf.infer_requested_min_output_chars(content)
-        if direct > 0:
-            return direct
-        if conversation is None:
-            return 0
-        text = content.strip().lower()
-        if len(text) >= 80 and not self._looks_like_follow_up_execution(content):
-            return 0
-        for message in reversed(getattr(conversation, "messages", [])[-16:]):
-            if self._is_runtime_guidance_message(message):
-                continue
-            role = str(getattr(message, "role", "") or "")
-            previous_content = str(getattr(message, "content", "") or "")
-            if role == "user":
-                inherited = _clf.infer_requested_min_output_chars(previous_content)
-                if inherited > 0:
-                    return inherited
-                continue
-            metadata = getattr(message, "metadata", {}) or {}
-            if not isinstance(metadata, dict):
-                continue
-            contract = metadata.get("task_contract")
-            if isinstance(contract, dict):
-                try:
-                    inherited = int(contract.get("expected_min_output_chars") or 0)
-                except (TypeError, ValueError):
-                    inherited = 0
-                if inherited > 0:
-                    return inherited
-        return 0
-
+        return _task_ctx.expected_min_output_chars(content, conversation)
     def _plan_has_pending_write_step(self, execution_plan: Any) -> bool:
         return _clf.plan_has_pending_write_step(execution_plan)
 
@@ -2789,41 +2139,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         mode: str | None,
         conversation: Any | None = None,
     ) -> str:
-        if self._has_no_write_instruction(content):
-            return "read_only_analysis"
-        if self._looks_like_follow_up_execution(content) and self._previous_document_export_context(conversation, content):
-            return "document_export"
-        if self._looks_like_follow_up_execution(content) and self._previous_write_context(conversation, content):
-            return "write_required"
-        if self._user_requests_code_change(content, "coding"):
-            return "write_required"
-        if self._looks_like_document_export_request(content):
-            return "document_export"
-        if self._looks_like_paper_task(content):
-            return "paper_workflow"
-        if mode == "coding":
-            if self._user_requests_code_change(content, mode):
-                return "write_required"
-            if self._looks_like_read_only_request(content):
-                return "read_only_analysis"
-            if self._looks_like_follow_up_execution(content) and conversation is not None:
-                for message in reversed(getattr(conversation, "messages", [])[-8:]):
-                    if self._is_runtime_guidance_message(message):
-                        continue
-                    if getattr(message, "role", "") != "user":
-                        continue
-                    previous_content = str(getattr(message, "content", "") or "")
-                    if previous_content.strip() == content.strip():
-                        continue
-                    if self._has_no_write_instruction(previous_content):
-                        return "read_only_analysis"
-                    if self._user_requests_code_change(previous_content, "coding"):
-                        return "write_required"
-            return "answer_only"
-        if self._looks_like_read_only_request(content):
-            return "read_only_analysis"
-        return "answer_only"
-
+        return _task_ctx.classify_task_intent(content, mode, conversation)
     def _has_no_write_instruction(self, content: str) -> bool:
         return _clf.has_no_write_instruction(content)
 
@@ -2845,34 +2161,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         content: str,
         conversation: Any | None = None,
     ) -> str:
-        if requested_mode == "coding":
-            return "coding"
-        if requested_mode == "paper":
-            return "paper"
-        if self._looks_like_follow_up_execution(content) and self._previous_document_export_context(conversation, content):
-            return "document"
-        if self._looks_like_follow_up_execution(content) and self._previous_write_context(conversation, content):
-            return "coding"
-        if self._user_requests_code_change(content, "coding"):
-            return "coding"
-        if self._looks_like_paper_task(content):
-            return "paper"
-        if self._looks_like_follow_up_execution(content) and conversation is not None:
-            for message in reversed(getattr(conversation, "messages", [])[-8:]):
-                if self._is_runtime_guidance_message(message):
-                    continue
-                if getattr(message, "role", "") != "user":
-                    continue
-                previous_content = str(getattr(message, "content", "") or "")
-                if previous_content.strip() == content.strip():
-                    continue
-                if self._user_requests_code_change(previous_content, "coding"):
-                    return "coding"
-                if self._looks_like_paper_task(previous_content):
-                    return "paper"
-        if self._looks_like_document_export_request(content):
-            return "document"
-        return requested_mode or "terminal"
+        return _task_ctx.effective_mode(requested_mode, content, conversation)
 
     def _looks_like_paper_task(self, content: str) -> bool:
         return _clf.looks_like_paper_task(content)
@@ -2892,29 +2181,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         mode: str | None,
         conversation: Any | None = None,
     ) -> bool:
-        if self._has_no_write_instruction(content):
-            return False
-        if self._user_requests_code_change(content, mode):
-            return True
-        if self._looks_like_follow_up_execution(content) and self._previous_write_context(conversation, content):
-            return True
-        if mode != "coding" or not self._looks_like_follow_up_execution(content):
-            return False
-        if conversation is None:
-            return False
-        for message in reversed(getattr(conversation, "messages", [])[-8:]):
-            if self._is_runtime_guidance_message(message):
-                continue
-            if getattr(message, "role", "") != "user":
-                continue
-            previous_content = str(getattr(message, "content", "") or "")
-            if previous_content.strip() == content.strip():
-                continue
-            if self._has_no_write_instruction(previous_content):
-                return False
-            if self._looks_like_code_change_request(previous_content) or self._user_requests_code_change(previous_content, "coding"):
-                return True
-        return False
+        return _task_ctx.code_change_intent(content, mode, conversation)
 
     def _has_successful_write(self, tool_events: list[dict[str, Any]]) -> bool:
         return _clf.has_successful_write(tool_events)
@@ -3248,99 +2515,10 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         return any(term in text for term in claim_terms) and any(term in text for term in code_terms)
 
     def _compact_tool_payload(self, payload: dict[str, Any], limit: int = 40000) -> str:
-        text = json.dumps(self._summarize_tool_payload(payload), ensure_ascii=False)
-        if len(text) <= limit:
-            return text
-        return text[:limit] + "\n... 工具结果过长，已截断 ..."
+        return _tool_present.compact_tool_payload(payload, limit=limit)
 
     def _summarize_tool_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        tool_id = str(payload.get("tool") or "")
-        output = payload.get("output")
-        if not isinstance(output, dict):
-            return payload
-
-        compacted = dict(payload)
-        if tool_id == "filesystem.scan_folder":
-            compacted["output"] = {
-                "root": output.get("root"),
-                "folder_count": output.get("folder_count"),
-                "file_count": output.get("file_count"),
-                "folders": (output.get("folders") or [])[:120],
-                "files": (output.get("files") or [])[:260],
-                "truncated_for_context": True,
-            }
-        elif tool_id == "code.list_project_files":
-            compacted["output"] = {
-                "root": output.get("root"),
-                "file_count": output.get("file_count"),
-                "truncated": output.get("truncated"),
-                "files": (output.get("files") or [])[:500],
-                "truncated_for_context": True,
-            }
-        elif tool_id == "code.search_text":
-            compacted["output"] = {
-                "root": output.get("root"),
-                "query": output.get("query"),
-                "match_count": output.get("match_count"),
-                "truncated": output.get("truncated"),
-                "matches": (output.get("matches") or [])[:80],
-                "truncated_for_context": True,
-            }
-        elif tool_id in {"filesystem.read_file", "filesystem.read_text_preview"}:
-            key = "content" if "content" in output else "text"
-            text = str(output.get(key) or "")
-            max_chars = 50000
-            compact_output = {
-                key: text[:max_chars],
-                "path": output.get("path"),
-                "size": output.get("size"),
-                "total_lines": output.get("total_lines"),
-                "start_line": output.get("start_line"),
-                "end_line": output.get("end_line"),
-                "encoding": output.get("encoding"),
-                "truncated": output.get("truncated") or len(text) > max_chars,
-                "remaining_lines": output.get("remaining_lines"),
-                "next_start_line": output.get("next_start_line"),
-                "next_end_line": output.get("next_end_line"),
-                "suggested_next_call": output.get("suggested_next_call"),
-                "truncated_for_context": len(text) > max_chars,
-                "raw_content": str(output.get("raw_content") or "")[:max_chars],
-                "usage_hint": output.get("usage_hint"),
-                "integrity": output.get("integrity"),
-            }
-            if len(text) > max_chars:
-                compact_output[key] += "\n... 文件内容过长，已压缩；如需更多内容，请按行号范围读取 ..."
-                raw_text = str(output.get("raw_content") or "")
-                if len(raw_text) > max_chars:
-                    compact_output["raw_content"] = raw_text[:max_chars] + "\n... raw_content 同样已截断 ..."
-            compacted["output"] = compact_output
-        elif tool_id == "shell.run_command":
-            compacted["output"] = {
-                **output,
-                "stdout": str(output.get("stdout") or "")[:20000],
-                "stderr": str(output.get("stderr") or "")[:12000],
-                "truncated_for_context": True,
-            }
-        elif tool_id == "document.extract_docx_outline":
-            text = str(output.get("text") or "")
-            max_chars = 50000
-            compacted["output"] = {
-                **output,
-                "text": text[:max_chars],
-                "text_chars": output.get("text_chars") or len(text),
-                "truncated_for_context": len(text) > max_chars,
-            }
-            if len(text) > max_chars:
-                compacted["output"]["text"] += "\n... 文档内容过长，已截断；如需全文处理，请使用专门的文档转换/翻译工具或分批读取 ... "
-        elif tool_id.startswith("web."):
-            compacted["output"] = {
-                **output,
-                "text": str(output.get("text") or "")[:50000],
-                "html_preview": str(output.get("html_preview") or "")[:15000],
-                "links": (output.get("links") or [])[:80],
-                "truncated_for_context": True,
-            }
-        return compacted
+        return _tool_present.summarize_tool_payload(payload)
 
     def write_event(self, payload: dict[str, Any]) -> None:
         self._record_run_event(payload)

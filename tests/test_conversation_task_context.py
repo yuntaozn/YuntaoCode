@@ -1,0 +1,76 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from runtime.agent_strategy.conversation_task_context import (
+    code_change_intent,
+    effective_mode,
+    expected_min_output_chars,
+    previous_task_contract_context,
+    previous_write_context,
+)
+
+
+def _message(role: str, content: str, metadata: dict | None = None) -> SimpleNamespace:
+    return SimpleNamespace(role=role, content=content, metadata=metadata or {})
+
+
+def test_previous_task_contract_context_skips_unanchored_retry_contract() -> None:
+    external_contract = {
+        "intent": "write_required",
+        "goal": "Create the model in Blender",
+        "requires_write": False,
+        "requires_state_change": True,
+        "deliverables": [{"kind": "external_state"}],
+    }
+    fallback_script_contract = {
+        "intent": "write_required",
+        "goal": "Write a Blender script",
+        "requires_write": True,
+        "requires_state_change": True,
+        "deliverables": [{"kind": "code", "path_hint": "house.py"}],
+    }
+    conversation = SimpleNamespace(messages=[
+        _message("user", "Create a house in Blender"),
+        _message("assistant", "done", {"task_contract": external_contract}),
+        _message("user", "not good enough, try again"),
+        _message("assistant", "wrote a script", {"task_contract": fallback_script_contract}),
+        _message("user", "try again"),
+    ])
+
+    assert previous_task_contract_context(conversation, "try again") == external_contract
+
+
+def test_follow_up_inherits_previous_write_context_for_mode_and_intent() -> None:
+    conversation = SimpleNamespace(messages=[
+        _message("user", "创建一个 viewer.html 示例页"),
+        _message(
+            "assistant",
+            "已创建文件",
+            {
+                "task_contract": {
+                    "intent": "write_required",
+                    "requires_write": True,
+                    "goal": "创建 viewer.html 示例页",
+                }
+            },
+        ),
+        _message("user", "继续加选择构件功能"),
+    ])
+
+    assert previous_write_context(conversation, "继续加选择构件功能")
+    assert effective_mode(None, "继续加选择构件功能", conversation) == "coding"
+    assert code_change_intent("继续加选择构件功能", "coding", conversation)
+
+
+def test_expected_min_output_chars_uses_current_request_before_history() -> None:
+    conversation = SimpleNamespace(messages=[
+        _message("user", "写一篇 50000 字报告"),
+        _message(
+            "assistant",
+            "已生成报告",
+            {"task_contract": {"expected_min_output_chars": 50000}},
+        ),
+    ])
+
+    assert expected_min_output_chars("改成 30000 字版本", conversation) == 30000

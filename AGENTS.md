@@ -26,6 +26,8 @@ foundation easier to understand, test, and extend.
 - `runtime/agent_strategy/`
   - Owns agent runtime strategy.
   - `classifiers.py`: intent, tool, progress, and stage classification helpers.
+  - `conversation_task_context.py`: follow-up task inheritance from conversation
+    history, including previous write/document context and output-length goals.
   - `context_hygiene.py`: model-context cleanup before execution; keeps noisy
     history from becoming examples for the model.
   - `tool_result_risks.py`: converts tool-result facts into non-blocking,
@@ -37,6 +39,9 @@ foundation easier to understand, test, and extend.
   - `plan_tracker.py`: execution plan lifecycle helpers.
 - `runtime/api/`
   - Tornado API handlers and streaming endpoints.
+- `runtime/tool_event_presentation.py`
+  - Owns tool progress snapshots, frontend output previews, and compact
+    tool payloads sent back into the model context.
 - `runtime/persistence.py`
   - Owns shared mechanics for the current document-file backend.
   - Store classes remain the runtime-facing repository boundary; do not add
@@ -46,6 +51,10 @@ foundation easier to understand, test, and extend.
   - Keep lifecycle and event-driven state transitions in `RunStore`, not SQL.
 - `runtime/skills/`
   - Local tools. Keep file, shell, Git, and export boundaries explicit.
+- `mcp-services/`
+  - External MCP service source/reference trees and service-specific notes.
+  - Do not treat files here as built-in `runtime.skills.*` modules or
+    auto-loaded plugins.
 - `runtime/panel/`
   - The current product UI. It is vanilla JavaScript by design for now.
 - `desktop-shell/`
@@ -78,6 +87,11 @@ foundation easier to understand, test, and extend.
 - Model-context cleanup belongs in `runtime/agent_strategy/context_hygiene.py`.
   Do not remove visible chat history to fix model pollution; sanitize only the
   model-facing context and keep audit records intact.
+- Follow-up task inheritance belongs in
+  `runtime/agent_strategy/conversation_task_context.py`; API handlers should
+  not reimplement previous-task scanning rules.
+- Tool result previews and model-facing tool payload compaction belong in
+  `runtime/tool_event_presentation.py`.
 - Prompt text belongs in `runtime/agent_strategy/prompts.py`.
 - Plan lifecycle changes belong in `runtime/agent_strategy/plan_tracker.py`.
 - Keep extracted strategy helpers pure when possible. Avoid filesystem,

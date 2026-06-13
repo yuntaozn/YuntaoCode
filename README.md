@@ -316,6 +316,16 @@ def register_my_tools(registry: ToolRegistry):
 
 AI 可以帮助创建插件草稿，但草稿必须写入隔离目录。完成后通过测试/依赖摘要和一次人工确认，再进入后续受控注册或启用流程。详见 [docs/capability-governance.md](docs/capability-governance.md)。
 
+### MCP 服务目录
+
+外部 MCP 服务源码副本、服务级参考资料和集成说明放在 `mcp-services/` 下。例如
+`mcp-services/blender-mcp/` 是 Blender MCP 服务的本地参考副本，不是内置
+`runtime.skills.*` 模块，也不会被 Runtime 自动导入。
+
+MCP 服务的启停、连接状态、权限、日志、工具发现和能力绑定仍由 MCP Service
+Manager 管理。默认 Blender 示例配置使用 `uvx blender-mcp` 包运行器，只有在用户
+显式启用并启动服务后才会连接。
+
 ---
 
 ## 开源协作
