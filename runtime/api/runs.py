@@ -8,7 +8,9 @@ import tornado.web
 
 from .base import ApiHandler
 from runtime.conversation_interactions import paused_runs as _paused_runs
+from runtime.diagnostic_export import build_diagnostic_export
 from runtime.runbook import build_replay_request, build_runbook
+from runtime.skill_sample_export import build_skill_sample_export
 
 
 class RunsHandler(ApiHandler):
@@ -55,10 +57,19 @@ class RunActionHandler(ApiHandler):
         if action == "runbook":
             self.finish_json({"success": True, "data": build_runbook(run)})
             return
+        if action == "export_diagnostic":
+            self.finish_json({"success": True, "data": build_diagnostic_export(self.runtime, run)})
+            return
+        if action == "export_fixture":
+            self.finish_json({"success": True, "data": build_skill_sample_export(run)})
+            return
         if action == "replay":
             self.finish_json({"success": True, "data": self._prepare_new_run(run, recovery=False)})
             return
-        raise tornado.web.HTTPError(400, reason="action must be pause, resume, runbook, or replay")
+        raise tornado.web.HTTPError(
+            400,
+            reason="action must be pause, resume, runbook, export_diagnostic, export_fixture, or replay",
+        )
 
     def _pause(self, run_id: str, reason: str) -> None:
         run = self.runtime.runs.get(run_id)

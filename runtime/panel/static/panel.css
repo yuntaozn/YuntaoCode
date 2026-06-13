@@ -405,9 +405,50 @@ button {
 }
 
 .task-history-panel {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
     width: 100%;
     max-height: min(760px, calc(100vh - 32px));
     overflow: hidden;
+}
+
+.task-history-panel .dialog-head {
+    align-items: flex-start;
+}
+
+.task-history-panel .dialog-head > div {
+    min-width: 0;
+}
+
+.task-history-panel .icon-close {
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+
+.task-history-controls {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+}
+
+.task-history-pager {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.task-history-pager button {
+    min-height: 30px;
+    padding: 0 9px;
+    font-size: 12px;
+}
+
+.task-history-pager button:disabled {
+    cursor: default;
+    opacity: 0.45;
 }
 
 .task-history-list,
@@ -499,6 +540,15 @@ button {
 }
 
 @media (max-width: 760px) {
+    .task-history-controls {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+    }
+
+    .task-history-pager {
+        justify-content: space-between;
+    }
+
     .task-history-head,
     .task-run-row {
         align-items: stretch;

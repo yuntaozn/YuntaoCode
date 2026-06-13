@@ -9,6 +9,7 @@ from .capability import CapabilityContract, PermissionSet
 from .context import ContextRecord, ContextSnapshot, EvidenceRecord
 from .events import TraceEvent, build_trace_event
 from .result import RUN_RESULT_SCHEMA_VERSION, RuntimeResult
+from .skill_evolution import ReplayFixture, SkillCandidate, SkillPromotion, SkillReplayResult
 from .task import ProductTask, TaskPlan, TaskStep
 
 __all__ = [
@@ -19,7 +20,11 @@ __all__ = [
     "PermissionSet",
     "ProductTask",
     "RUN_RESULT_SCHEMA_VERSION",
+    "ReplayFixture",
     "RuntimeResult",
+    "SkillCandidate",
+    "SkillPromotion",
+    "SkillReplayResult",
     "TaskPlan",
     "TaskStep",
     "TraceEvent",

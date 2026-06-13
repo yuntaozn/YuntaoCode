@@ -16,6 +16,13 @@ const state = {
     },
     activeRuns: [],
     recentTasks: [],
+    taskHistory: {
+        query: "",
+        page: 1,
+        pageSize: 8,
+        summaries: [],
+        total: 0,
+    },
     pendingRunLaunch: null,
     pinnedWorkspaceIds: loadPinnedWorkspaceIds(),
     openWorkspaceMenuId: "",
@@ -235,12 +242,48 @@ async function refreshActiveRuns() {
 async function refreshTaskHistory() {
     if (!state.currentWorkspaceId) {
         state.recentTasks = [];
+        state.taskHistory.summaries = [];
+        state.taskHistory.total = 0;
         renderTaskHistory();
         return;
     }
-    state.recentTasks = await api(`/tasks?workspace_id=${encodeURIComponent(state.currentWorkspaceId)}`) || [];
+    state.taskHistory.summaries = await api(`/tasks?workspace_id=${encodeURIComponent(state.currentWorkspaceId)}`) || [];
+    await loadTaskHistoryPage();
+}
+
+function filteredTaskHistorySummaries() {
+    const query = state.taskHistory.query.trim().toLowerCase();
+    const items = Array.isArray(state.taskHistory.summaries) ? state.taskHistory.summaries : [];
+    if (!query) return items;
+    return items.filter((task) => {
+        const haystack = [
+            task.goal,
+            task.state,
+            task.kind,
+            task.id,
+            task.current_run_id,
+        ].map((item) => String(item || "").toLowerCase()).join(" ");
+        return haystack.includes(query);
+    });
+}
+
+function taskHistoryPageCount() {
+    return Math.max(1, Math.ceil(state.taskHistory.total / state.taskHistory.pageSize));
+}
+
+function clampTaskHistoryPage() {
+    const pageCount = taskHistoryPageCount();
+    state.taskHistory.page = Math.min(Math.max(1, Number(state.taskHistory.page || 1)), pageCount);
+}
+
+async function loadTaskHistoryPage() {
+    const filtered = filteredTaskHistorySummaries();
+    state.taskHistory.total = filtered.length;
+    clampTaskHistoryPage();
+    const start = (state.taskHistory.page - 1) * state.taskHistory.pageSize;
+    const pageSummaries = filtered.slice(start, start + state.taskHistory.pageSize);
     const details = await Promise.all(
-        state.recentTasks.slice(0, 20).map((task) => api(`/tasks/${encodeURIComponent(task.id)}`)),
+        pageSummaries.map((task) => api(`/tasks/${encodeURIComponent(task.id)}`)),
     );
     state.recentTasks = details;
     renderTaskHistory();
@@ -249,8 +292,10 @@ async function refreshTaskHistory() {
 function renderTaskHistory() {
     const list = $("task-history-list");
     if (!list) return;
+    renderTaskHistoryControls();
+    const hasSummaries = Boolean(state.taskHistory.summaries.length);
     if (!state.recentTasks.length) {
-        list.innerHTML = `<div class="task-history-empty">${escapeHtml(t('tasks.empty'))}</div>`;
+        list.innerHTML = `<div class="task-history-empty">${escapeHtml(hasSummaries ? t('tasks.no_match') : t('tasks.empty'))}</div>`;
         return;
     }
     list.innerHTML = state.recentTasks.map((task) => {
@@ -271,6 +316,8 @@ function renderTaskHistory() {
                         ${canResume ? `<button type="button" data-run-action="resume" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.resume'))}</button>` : ""}
                         ${canStart ? `<button type="button" data-run-action="start" data-run-id="${escapeHtml(run.id)}" data-task-id="${escapeHtml(task.id)}" data-conversation-id="${escapeHtml(run.conversation_id || task.conversation_id || "")}" data-goal="${escapeHtml(task.goal || run.user_content || "")}">${escapeHtml(t('tasks.start'))}</button>` : ""}
                         <button type="button" data-run-action="runbook" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.runbook'))}</button>
+                        <button type="button" data-run-action="export_diagnostic" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.export_diagnostic'))}</button>
+                        <button type="button" data-run-action="export_fixture" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.export_fixture'))}</button>
                         <button type="button" data-run-action="replay" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.replay'))}</button>
                     </div>
                 </div>
@@ -286,6 +333,27 @@ function renderTaskHistory() {
             </section>
         `;
     }).join("");
+}
+
+function renderTaskHistoryControls() {
+    const input = $("task-history-search-input");
+    if (input && input.value !== state.taskHistory.query) {
+        input.value = state.taskHistory.query;
+    }
+    const pageCount = taskHistoryPageCount();
+    const total = state.taskHistory.total;
+    const info = $("task-history-page-info");
+    if (info) {
+        info.textContent = t('tasks.page_info', {
+            page: state.taskHistory.page,
+            pages: pageCount,
+            total,
+        });
+    }
+    const prev = $("task-history-prev-btn");
+    const next = $("task-history-next-btn");
+    if (prev) prev.disabled = state.taskHistory.page <= 1;
+    if (next) next.disabled = state.taskHistory.page >= pageCount;
 }
 
 async function runTaskHistoryAction(action, runId, button) {
@@ -306,10 +374,30 @@ async function runTaskHistoryAction(action, runId, button) {
         const output = $("task-runbook-output");
         output.textContent = JSON.stringify(data, null, 2);
         output.classList.remove("hidden");
+    } else if (action === "export_diagnostic") {
+        downloadJson(data.filename || `yuntaocode-diagnostic-${runId}.json`, data);
+        showToast(t('tasks.diagnostic_exported'));
+    } else if (action === "export_fixture") {
+        downloadJson(data.filename || `yuntaocode-skill-sample-${runId}.json`, data);
+        showToast(t('tasks.fixture_exported'));
     } else if (action === "replay" || (action === "resume" && data?.prepared_run)) {
         showToast(t('tasks.prepared'));
     }
-    await Promise.all([refreshActiveRuns(), refreshTaskHistory()]);
+    if (!["export_diagnostic", "export_fixture"].includes(action)) {
+        await Promise.all([refreshActiveRuns(), refreshTaskHistory()]);
+    }
+}
+
+function downloadJson(filename, data) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename || "yuntaocode-sample.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
 }
 
 async function startPreparedRun(prepared) {
@@ -2715,6 +2803,19 @@ on("open-task-history-btn", "click", () => {
         .catch((error) => showToast(error.message));
 });
 on("close-task-history-btn", "click", () => $("task-history-dialog")?.close());
+on("task-history-search-input", "input", (event) => {
+    state.taskHistory.query = event.target.value || "";
+    state.taskHistory.page = 1;
+    loadTaskHistoryPage().catch((error) => showToast(error.message));
+});
+on("task-history-prev-btn", "click", () => {
+    state.taskHistory.page = Math.max(1, state.taskHistory.page - 1);
+    loadTaskHistoryPage().catch((error) => showToast(error.message));
+});
+on("task-history-next-btn", "click", () => {
+    state.taskHistory.page += 1;
+    loadTaskHistoryPage().catch((error) => showToast(error.message));
+});
 on("task-history-list", "click", (event) => {
     const button = event.target.closest("[data-run-action]");
     if (!button) return;

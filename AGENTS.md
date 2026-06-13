@@ -37,6 +37,12 @@ foundation easier to understand, test, and extend.
   - `policy.py`: request routing and deterministic planning gates.
   - `prompts.py`: stage and intervention prompt construction.
   - `plan_tracker.py`: execution plan lifecycle helpers.
+- `runtime/core/`
+  - Owns product-level runtime schemas.
+  - `task.py`: Task, Plan, Step, and state transition contracts.
+  - `skill_evolution.py`: Skill Candidate, Replay Fixture, Replay Result, and
+    Promotion data contracts. This is not a plugin loader and must not register
+    AI-generated code.
 - `runtime/api/`
   - Tornado API handlers and streaming endpoints.
 - `runtime/tool_event_presentation.py`
@@ -64,12 +70,16 @@ foundation easier to understand, test, and extend.
   - `task-model.md`: task, plan, step, trace, recovery, and template direction.
   - `run-artifacts.md`: shared temporary artifacts across ToolTasks in one Run.
   - `persistence-model.md`: operational data boundaries and SQLite direction.
+  - `skill-evolution.md`: Runbook-to-Replay-to-Skill Candidate direction.
 
 ## Task Runtime Rules
 
 - Treat tools as capabilities used by tasks, not as the product architecture.
 - New work should clarify one of: Task Model, lifecycle, trace, recovery,
   verification, template, or tool capability boundaries.
+- Skill Evolution work should preserve the chain Runbook -> Replay Fixture ->
+  Skill Candidate -> Replay Result -> manual Promotion, and must not make
+  AI-generated code executable in the trusted runtime by default.
 - Do not add a new scenario by hard-coding another branch in the runner.
 - A task-oriented change should include tests for state transitions, plan/step
   behavior, tool result handling, or recovery behavior.

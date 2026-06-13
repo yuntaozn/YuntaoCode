@@ -120,6 +120,22 @@ At this stage, that confirmation must not be implemented by modifying `runtime/s
 
 See [capability-governance.md](capability-governance.md).
 
+## Skill Evolution Boundary
+
+Plugin drafts and Skill Evolution are related but separate.
+
+- A plugin draft describes a possible capability provider.
+- A Skill Candidate describes a reusable task pattern backed by Runbook
+  evidence.
+- Replay Fixtures and Skill Replay Results test whether the candidate works
+  against historical task samples.
+- Skill Promotion is a manual enablement decision after replay evidence exists.
+
+Therefore an AI-built plugin draft should not become a trusted runtime skill
+only because the user confirmed that the draft was created. It can become one
+candidate artifact in the Skill Evolution flow, but registration or enablement
+still requires a controlled boundary. See [skill-evolution.md](skill-evolution.md).
+
 ## Runtime Loading Flow
 
 This flow is a future implementation target, not current behavior:

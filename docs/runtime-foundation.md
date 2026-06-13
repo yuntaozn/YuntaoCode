@@ -146,6 +146,27 @@ Completed or partial Runs persist a recovery `ContextSnapshot` and
 unresolved risks from the checkpoint instead of replaying the full failed
 conversation as instructions.
 
+Runbook and Replay also provide the evidence base for future Skill Evolution.
+In that path, a Runbook can become a Replay Fixture, a Skill Candidate can be
+tested against fixtures, and only replay evidence plus manual promotion can
+make the candidate available as a user skill. See [skill-evolution.md](skill-evolution.md).
+
+## Diagnostic Export
+
+Diagnostic export is separate from Skill Evolution. It helps compare task
+behavior across machines and should be generated only when the user asks for a
+specific Run diagnostic package.
+
+The diagnostic package is a compact, sanitized JSON artifact. It may include
+runtime version, operating-system and executable availability, sanitized model
+and provider settings, tool and MCP capability status, Run summary, compact
+Runbook evidence, and recent event summaries. It must not include API keys,
+full file contents, full model transcripts, or the complete Runbook/event log
+by default.
+
+Diagnostic exports are manual local downloads in 0.1. They are not persisted by
+the Runtime and are not submitted to any service.
+
 ## Task Contract
 
 Before a run enters planning or tool execution, the runtime now builds a
