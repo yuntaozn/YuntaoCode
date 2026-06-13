@@ -9,6 +9,11 @@ const state = {
     plugins: [],
     modes: [],
     backups: [],
+    sourceUpdate: {
+        status: "idle",
+        data: null,
+        error: "",
+    },
     activeRuns: [],
     recentTasks: [],
     pendingRunLaunch: null,
@@ -429,6 +434,123 @@ async function api(path, options = {}) {
     return payload.data;
 }
 
+function displayReleaseVersion(value) {
+    const version = String(value || "").trim();
+    if (!version) return t('updates.unknown');
+    return version.toLowerCase().startsWith("v") ? version : `v${version}`;
+}
+
+function sourceUpdateSummary(data) {
+    if (state.sourceUpdate.status === "checking") return t('updates.checking');
+    if (!data) return state.sourceUpdate.error || t('updates.not_checked');
+    if (!data.is_git_repo) return t('updates.not_git_repo');
+    if (data.status === "check_failed") return t('updates.check_failed');
+    if (data.status === "no_release_tags") return t('updates.no_release_tags');
+    if (data.update_available && data.dirty) return t('updates.available_dirty');
+    if (data.update_available) return t('updates.available');
+    return t('updates.up_to_date');
+}
+
+function sourceUpdatePillText(data) {
+    if (state.sourceUpdate.status === "checking") {
+        return data?.current_version ? `${displayReleaseVersion(data.current_version)} · ${t('updates.checking_short')}` : t('updates.checking_short');
+    }
+    if (!data?.current_version) return t('updates.version');
+    if (data.update_available) {
+        return `${displayReleaseVersion(data.current_version)} · ${t('updates.available_short')}`;
+    }
+    return displayReleaseVersion(data.current_version);
+}
+
+function renderSourceUpdate() {
+    const button = $("source-update-btn");
+    if (!button) return;
+    const data = state.sourceUpdate.data;
+    button.classList.remove("hidden", "has-update", "checking", "failed");
+    button.classList.toggle("has-update", Boolean(data?.update_available));
+    button.classList.toggle("checking", state.sourceUpdate.status === "checking");
+    button.classList.toggle("failed", state.sourceUpdate.status === "failed" || data?.status === "check_failed");
+    button.textContent = sourceUpdatePillText(data);
+    button.title = sourceUpdateSummary(data);
+    renderSourceUpdateDialog();
+}
+
+async function loadSourceUpdate({ silent = true } = {}) {
+    state.sourceUpdate.status = "checking";
+    state.sourceUpdate.error = "";
+    renderSourceUpdate();
+    try {
+        const data = await api("/updates/source");
+        state.sourceUpdate = { status: "done", data, error: "" };
+        if (!silent && data?.update_available) showToast(t('updates.available'));
+        if (!silent && !data?.update_available) showToast(sourceUpdateSummary(data));
+    } catch (error) {
+        state.sourceUpdate.status = "failed";
+        state.sourceUpdate.error = error.message;
+        if (!silent) showToast(error.message);
+    } finally {
+        renderSourceUpdate();
+    }
+}
+
+function sourceUpdateRows(data) {
+    if (!data) return [];
+    const repoLabel = data.is_git_repo
+        ? `${data.branch || "HEAD"} ${data.commit ? `@ ${data.commit}` : ""}`.trim()
+        : t('updates.not_git_repo');
+    return [
+        [t('updates.current_version'), displayReleaseVersion(data.current_version)],
+        [t('updates.latest_version'), data.latest_version ? displayReleaseVersion(data.latest_version) : t('updates.unknown')],
+        [t('updates.latest_source'), data.latest_source || t('updates.unknown')],
+        [t('updates.repo_state'), repoLabel],
+        [t('updates.local_changes'), data.dirty ? t('updates.local_dirty') : t('updates.local_clean')],
+    ];
+}
+
+function renderSourceUpdateDialog() {
+    const body = $("source-update-body");
+    if (!body) return;
+    const data = state.sourceUpdate.data;
+    const statusClass = data?.update_available
+        ? "has-update"
+        : (state.sourceUpdate.status === "failed" || data?.status === "check_failed" ? "failed" : "");
+    const rows = sourceUpdateRows(data).map(([label, value]) => `
+        <dt>${escapeHtml(label)}</dt>
+        <dd title="${escapeHtml(value)}">${escapeHtml(value)}</dd>
+    `).join("");
+    const commands = Array.isArray(data?.update_commands) ? data.update_commands : [];
+    const commandText = commands.join("\n");
+    const releaseLink = data?.release_url
+        ? `<a href="${escapeHtml(data.release_url)}" target="_blank" rel="noopener">${escapeHtml(t('updates.open_release'))}</a>`
+        : "";
+    body.innerHTML = `
+        <div class="source-update-status ${statusClass}">${escapeHtml(sourceUpdateSummary(data))}</div>
+        ${rows ? `<dl class="source-update-grid">${rows}</dl>` : ""}
+        ${releaseLink ? `<div class="hint-line">${releaseLink}</div>` : ""}
+        ${commandText ? `<pre class="source-update-command">${escapeHtml(commandText)}</pre>` : `<div class="hint-line">${escapeHtml(t('updates.no_command'))}</div>`}
+    `;
+    const copyButton = $("copy-source-update-command-btn");
+    if (copyButton) copyButton.disabled = !commandText;
+}
+
+async function copySourceUpdateCommand() {
+    const commands = state.sourceUpdate.data?.update_commands || [];
+    if (!commands.length) {
+        showToast(t('updates.no_command'));
+        return;
+    }
+    await navigator.clipboard.writeText(commands.join("\n"));
+    showToast(t('updates.command_copied'));
+}
+
+function openSourceUpdateDialog() {
+    renderSourceUpdateDialog();
+    $("source-update-dialog")?.showModal();
+    if (state.sourceUpdate.status === "idle") {
+        loadSourceUpdate({ silent: true }).catch((error) => showToast(error.message));
+    }
+}
+
 function setStatus(id, text, ok = false) {
     const el = $(id);
     el.textContent = text;
@@ -533,6 +655,10 @@ async function loadAll() {
     await loadConversations();
     renderCurrentWorkspace();
     renderModelState();
+    loadSourceUpdate({ silent: true }).catch((error) => {
+        state.sourceUpdate = { status: "failed", data: state.sourceUpdate.data, error: error.message };
+        renderSourceUpdate();
+    });
 }
 
 function upsertWorkspace(workspace) {
@@ -2597,6 +2723,11 @@ on("task-history-list", "click", (event) => {
 });
 on("open-login-btn", "click", () => $("login-dialog").showModal());
 on("logout-btn", "click", () => logoutBackend());
+on("source-update-btn", "click", () => openSourceUpdateDialog());
+on("refresh-source-update-btn", "click", () => loadSourceUpdate({ silent: false }).catch((error) => showToast(error.message)));
+on("copy-source-update-command-btn", "click", () => copySourceUpdateCommand().catch((error) => showToast(error.message)));
+on("close-source-update-btn", "click", () => $("source-update-dialog")?.close());
+on("close-source-update-footer-btn", "click", () => $("source-update-dialog")?.close());
 on("conversation-search-input", "input", (event) => {
     state.search = event.target.value;
     renderConversations();

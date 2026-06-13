@@ -36,6 +36,7 @@ from .api.settings import SettingsHandler
 from .api.tasks import TaskDetailHandler, TasksHandler
 from .api.tool_tasks import ToolTaskDetailHandler, ToolTasksHandler
 from .api.tools import ToolsHandler
+from .api.updates import SourceUpdateHandler
 from .api.workspaces import WorkspaceDetailHandler, WorkspaceOpenHandler, WorkspacePickerHandler, WorkspacesHandler
 from .config import RuntimeConfig
 from .conversation_store import ConversationStore
@@ -128,6 +129,7 @@ def make_app(runtime: RuntimeState) -> tornado.web.Application:
         (r"/mcp-services-page", PanelHandler, {"template_name": "mcp-services.html", **handler_kwargs}),
         (r"/settings-page", PanelHandler, {"template_name": "settings.html", **handler_kwargs}),
         (r"/health", HealthHandler, handler_kwargs),
+        (r"/updates/source", SourceUpdateHandler, handler_kwargs),
         (r"/settings", SettingsHandler, handler_kwargs),
         (r"/memories/prompt", MemoryPromptHandler, handler_kwargs),
         (r"/memories/([^/]+)", MemoryDetailHandler, handler_kwargs),

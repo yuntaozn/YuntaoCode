@@ -400,9 +400,14 @@ button {
     font-size: 12px;
 }
 
+#task-history-dialog {
+    width: min(900px, calc(100vw - 32px));
+}
+
 .task-history-panel {
-    width: min(860px, calc(100vw - 32px));
+    width: 100%;
     max-height: min(760px, calc(100vh - 32px));
+    overflow: hidden;
 }
 
 .task-history-list,
@@ -413,13 +418,13 @@ button {
 
 .task-history-list {
     overflow: auto;
-    max-height: 520px;
+    max-height: min(520px, calc(100vh - 210px));
     padding-right: 4px;
 }
 
 .task-history-item {
     padding: 10px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
     border-radius: 8px;
     background: rgba(255, 255, 255, 0.54);
 }
@@ -444,18 +449,28 @@ button {
 }
 
 .task-run-row {
+    min-width: 0;
     padding-top: 7px;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
 }
 
 .task-run-main {
     display: grid;
+    flex: 1 1 320px;
     min-width: 0;
     gap: 2px;
 }
 
+.task-run-main strong,
+.task-run-main span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .task-run-actions {
     display: flex;
+    flex: 0 1 300px;
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: 5px;
@@ -463,7 +478,7 @@ button {
 
 .task-run-actions button {
     padding: 4px 7px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
     border-radius: 6px;
     color: var(--text);
     background: var(--panel);
@@ -476,11 +491,23 @@ button {
     max-height: 300px;
     margin: 10px 0 0;
     padding: 10px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
     border-radius: 8px;
     background: #f6f8fa;
     font-size: 11px;
     white-space: pre-wrap;
+}
+
+@media (max-width: 760px) {
+    .task-history-head,
+    .task-run-row {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .task-run-actions {
+        justify-content: flex-start;
+    }
 }
 
 .run-dot.paused {
@@ -586,8 +613,47 @@ button {
 
 .topbar-actions {
     display: flex;
+    align-items: center;
     gap: 14px;
     white-space: nowrap;
+}
+
+.source-update-pill {
+    min-height: 24px;
+    max-width: 170px;
+    padding: 0 8px;
+    overflow: hidden;
+    color: var(--muted);
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-size: 12px;
+    line-height: 22px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.source-update-pill:hover {
+    color: var(--text);
+    border-color: var(--line-strong);
+    background: #fff;
+}
+
+.source-update-pill.has-update {
+    color: var(--primary-strong);
+    border-color: rgba(47, 111, 98, 0.28);
+    background: rgba(47, 111, 98, 0.08);
+    font-weight: 650;
+}
+
+.source-update-pill.checking {
+    color: var(--muted);
+}
+
+.source-update-pill.failed {
+    color: #9a6700;
+    border-color: rgba(154, 103, 0, 0.24);
+    background: rgba(154, 103, 0, 0.08);
 }
 
 .chat-panel {
@@ -2089,6 +2155,65 @@ dialog::backdrop {
 
 .backup-restore-btn {
     flex: 0 0 auto;
+}
+
+.source-update-panel {
+    min-width: min(560px, calc(100vw - 40px));
+}
+
+.source-update-body {
+    display: grid;
+    gap: 10px;
+    color: #525861;
+    font-size: 13px;
+}
+
+.source-update-status {
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--soft);
+}
+
+.source-update-status.has-update {
+    color: var(--primary-strong);
+    border-color: rgba(47, 111, 98, 0.28);
+    background: rgba(47, 111, 98, 0.08);
+}
+
+.source-update-status.failed {
+    color: #9a6700;
+    border-color: rgba(154, 103, 0, 0.24);
+    background: rgba(154, 103, 0, 0.08);
+}
+
+.source-update-grid {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 8px 12px;
+}
+
+.source-update-grid dt {
+    color: var(--muted);
+}
+
+.source-update-grid dd {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.source-update-command {
+    margin: 0;
+    padding: 10px 12px;
+    overflow: auto;
+    color: var(--text);
+    background: #f8faf7;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font-size: 12px;
 }
 
 .dialog-head,

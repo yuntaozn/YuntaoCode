@@ -25,6 +25,23 @@ python scripts/sync_release_version.py --check
 
 CI runs this check on every pull request and push.
 
+## Source Update Detection
+
+Before packaged desktop releases are available, source installations can check
+for updates from Git remotes.
+
+- The Runtime exposes `/updates/source` for read-only update detection.
+- Detection compares `runtime/version.py` with the latest semantic Git tag
+  found from the configured Git remotes, preferring Gitee and then GitHub.
+- The web UI may show a lightweight update hint near the runtime status area.
+- The Runtime does not modify its own source tree. It only reports status,
+  release links, and suggested commands such as `git pull --ff-only`.
+- If the working tree has local changes, the UI must warn the user before they
+  run any update command.
+
+Packaged desktop updates should remain a separate release concern, likely based
+on signed Tauri updater artifacts.
+
 ## Independent Versions
 
 The synchronization command intentionally does not modify:
