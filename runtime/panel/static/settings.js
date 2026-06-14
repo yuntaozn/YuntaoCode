@@ -24,6 +24,13 @@ function showToast(message) {
     setTimeout(() => toast.remove(), 3000);
 }
 
+function setDynamicText(id, text) {
+    const element = $(id);
+    if (!element) return;
+    element.removeAttribute("data-i18n");
+    element.textContent = text;
+}
+
 async function api(path, options = {}) {
     const response = await fetch(path, {
         ...options,
@@ -56,9 +63,9 @@ async function loadAll() {
     backups = backupData.items || [];
     backupMeta = backupData || {};
     memories = memoryData.items || [];
+    applyI18n();
     renderSettings();
     renderBackups();
-    applyI18n();
 }
 
 function providerEntries() {
@@ -99,7 +106,7 @@ function renderSettings() {
     $("memory-enabled-input").checked = memorySettings.enabled !== false;
     $("memory-max-active-input").value = Number(memorySettings.max_active ?? 30);
     $("memory-auto-extract-input").checked = memorySettings.auto_extract !== false;
-    $("settings-path").textContent = settings?.settings_path || "";
+    setDynamicText("settings-path", settings?.settings_path || "");
     showSettingsPage(activeSettingsPage, false);
     renderSummary();
 }
@@ -247,9 +254,9 @@ function renderMemories() {
     const filtered = filter ? allMemories.filter((m) => m.source === filter) : allMemories;
     const enabledCount = allMemories.filter((item) => item.enabled !== false).length;
 
-    $("memory-storage-hint").textContent = allMemories.length
+    setDynamicText("memory-storage-hint", allMemories.length
         ? t('settings_js.memories_count', {enabled: enabledCount, total: allMemories.length})
-        : t('settings_js.no_memories');
+        : t('settings_js.no_memories'));
 
     const sourceLabels = { manual: t('settings_js.source_manual'), auto: t('settings_js.source_auto'), conversation: t('settings_js.source_conversation') };
 
@@ -311,22 +318,22 @@ function renderSummary() {
     const planning = planMap[$("planning-policy-input").value] || t('settings_js.plan_auto');
     const confirmation = confirmMap[$("confirmation-policy-input").value] || t('settings_js.confirm_auto');
     const memoryCount = memoryEntries().filter((item) => item.enabled !== false).length;
-    $("settings-summary").textContent = t('settings_js.summary_text', {
+    setDynamicText("settings-summary", t('settings_js.summary_text', {
         access: accessText,
         planning,
         confirmation,
         providers: providerEntries().length,
         models: modelEntries().length,
         memories: memoryCount,
-    });
+    }));
 }
 
 function renderBackups() {
     const items = backups || [];
     const total = Number(backupMeta.total_count || items.length || 0);
-    $("backup-storage-hint").textContent = items.length
+    setDynamicText("backup-storage-hint", items.length
         ? t('backup.recent_n_files', {n: items.length, total: total, files: Number(backupMeta.total_file_count || 0)})
-        : t('backup.none');
+        : t('backup.none'));
     $("backup-list").innerHTML = items.length ? items.slice(0, 50).map((item, index) => `
         <div class="backup-item">
             <div class="backup-item-main">
@@ -713,11 +720,9 @@ if ($("mcp-services-btn")) $("mcp-services-btn").addEventListener("click", () =>
     select.value = getLocale();
     select.addEventListener("change", () => {
         setLocale(select.value);
-        // Re-render dynamic content after locale change, then re-apply i18n
-        loadAll().then(() => applyI18n()).catch((error) => showToast(error.message));
     });
     window.addEventListener("locale-changed", () => {
         select.value = getLocale();
-        loadAll().then(() => applyI18n()).catch((error) => showToast(error.message));
+        loadAll().catch((error) => showToast(error.message));
     });
 })();

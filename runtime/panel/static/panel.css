@@ -2123,24 +2123,39 @@ dialog::backdrop {
     gap: 8px;
 }
 
+.settings-page[data-settings-page="backups"] {
+    max-width: 1160px;
+}
+
+#backup-card {
+    gap: 16px;
+}
+
 .danger-button {
     color: var(--danger);
 }
 
 .backup-list {
     display: grid;
-    gap: 8px;
-    max-height: 220px;
+    align-content: start;
+    gap: 10px;
+    min-height: min(420px, 48vh);
+    max-height: min(640px, 58vh);
+    padding: 10px;
     overflow: auto;
+    background: rgba(255, 255, 255, 0.42);
+    border: 1px solid var(--line);
+    border-radius: 8px;
 }
 
 .backup-item {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: flex-start;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 8px 10px;
-    background: var(--soft);
+    gap: 14px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(210, 214, 220, 0.72);
     border-radius: 8px;
 }
 
@@ -2171,16 +2186,16 @@ dialog::backdrop {
 
 .backup-file-list {
     display: grid;
-    gap: 4px;
+    gap: 6px;
     min-width: 0;
-    margin-top: 4px;
+    margin-top: 8px;
 }
 
 .backup-file-row {
     display: grid;
-    grid-template-columns: minmax(110px, max-content) minmax(0, 1fr);
-    align-items: baseline;
-    gap: 8px;
+    grid-template-columns: minmax(140px, 220px) minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
     min-width: 0;
 }
 
@@ -2195,16 +2210,37 @@ dialog::backdrop {
 
 .backup-file-path,
 .backup-file-more {
-    overflow: hidden;
     color: var(--muted);
     font-size: 12px;
     font-style: normal;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
 }
 
 .backup-restore-btn {
-    flex: 0 0 auto;
+    min-width: 92px;
+    white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+    .backup-list {
+        min-height: 320px;
+        max-height: 58vh;
+        padding: 8px;
+    }
+
+    .backup-item {
+        grid-template-columns: 1fr;
+    }
+
+    .backup-file-row {
+        grid-template-columns: 1fr;
+        gap: 2px;
+    }
+
+    .backup-restore-btn {
+        width: 100%;
+    }
 }
 
 .source-update-panel {
