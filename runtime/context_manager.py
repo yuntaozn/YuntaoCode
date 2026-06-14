@@ -140,6 +140,7 @@ async def compress_context(
     settings: Any,
     *,
     conversation: Any = None,
+    force: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Compress *messages* if total tokens exceed the model limit.
 
@@ -156,13 +157,16 @@ async def compress_context(
     usable = get_usable_limit(model, settings)
     total = count_messages_tokens(messages)
 
-    if total <= usable:
+    if not force and total <= usable:
         return messages, None  # no compression needed
 
-    logger.info(
-        "Context compression triggered: %d tokens > %d limit (model=%s)",
-        total, usable, model,
-    )
+    if force:
+        logger.info("Context compression forced: %d tokens (model=%s)", total, model)
+    else:
+        logger.info(
+            "Context compression triggered: %d tokens > %d limit (model=%s)",
+            total, usable, model,
+        )
 
     # Split: system_prompt | older… | recent
     system_msg = messages[0] if messages and messages[0].get("role") == "system" else None
@@ -179,11 +183,15 @@ async def compress_context(
     # --- Build summary of older messages ---------------------------------
     # Check if we already have a cached summary that covers part of the older
     # messages.  If so, we include it as context for the new summary.
-    cached_summary = ""
-    if conversation and hasattr(conversation, "metadata"):
-        cached_summary = (conversation.metadata or {}).get("context_summary", "")
+    cached_summary, cached_up_to = _cached_summary_state(conversation)
+    cached_up_to = min(cached_up_to, len(older))
+    messages_to_summarize = older[cached_up_to:] if cached_summary else older
 
-    summary_text = await _generate_summary(older, model, settings, cached_summary)
+    summary_reused = bool(cached_summary and not messages_to_summarize)
+    if summary_reused:
+        summary_text = cached_summary
+    else:
+        summary_text = await _generate_summary(messages_to_summarize, model, settings, cached_summary)
 
     summary_msg: dict[str, Any] = {
         "role": "system",
@@ -205,9 +213,24 @@ async def compress_context(
     summary_meta = {
         "context_summary": summary_text,
         "summary_up_to_index": len(older),
+        "summary_message_count": len(older),
+        "summary_new_message_count": len(messages_to_summarize),
+        "summary_reused": summary_reused,
         "summary_token_count": count_tokens(summary_text),
     }
     return compressed, summary_meta
+
+
+def _cached_summary_state(conversation: Any | None) -> tuple[str, int]:
+    if not conversation or not hasattr(conversation, "metadata"):
+        return "", 0
+    metadata = conversation.metadata if isinstance(conversation.metadata, dict) else {}
+    summary = str(metadata.get("context_summary") or "").strip()
+    try:
+        up_to = int(metadata.get("summary_up_to_index") or 0)
+    except (TypeError, ValueError):
+        up_to = 0
+    return summary, max(0, up_to)
 
 
 async def _generate_summary(
@@ -261,8 +284,11 @@ async def _generate_summary(
     if parts:
         return "".join(parts).strip()
 
-    # Fallback: mechanical truncation if model call failed
-    return _fallback_summary(older_messages)
+    # Fallback: mechanical truncation if model call failed.
+    fallback = _fallback_summary(older_messages)
+    if cached_summary and fallback:
+        return f"{cached_summary}\n{fallback}"
+    return cached_summary or fallback
 
 
 def _fallback_summary(messages: list[dict[str, Any]]) -> str:

@@ -77,6 +77,10 @@ foundation easier to understand, test, and extend.
 ## Task Runtime Rules
 
 - Treat tools as capabilities used by tasks, not as the product architecture.
+- Keep capability providers, MCP services, prompt-methodology Skill Packs, and
+  Runtime features separate. Do not register a new default `runtime/skills/`
+  module unless it satisfies the built-in capability standard in
+  `docs/capability-runtime.md`.
 - New work should clarify one of: Task Model, lifecycle, trace, recovery,
   verification, template, or tool capability boundaries.
 - Skill Evolution work should preserve the chain Runbook -> Replay Fixture ->
@@ -125,6 +129,21 @@ foundation easier to understand, test, and extend.
   packages, or `node_modules`.
 - Token enforcement and CORS hardening are known pre-1.0 work items. Changes in
   this area should include tests and update `SECURITY.md`.
+
+## Cross-platform Rules
+
+- Runtime core paths, settings, task state, run history, attachments, memory,
+  tool registration, HTTP APIs, and the vanilla frontend should work on
+  Windows, macOS, and Linux.
+- Built-in tools should prefer cross-platform Python and `pathlib` behavior.
+  Shell tools should prefer `command + args` and must not assume PowerShell,
+  bash, `cp`, `rm`, `Copy-Item`, or platform package managers are available.
+- Platform-specific adapters are acceptable for optional capabilities such as
+  opening folders, Office/LibreOffice conversion, browsers, desktop shell, and
+  MCP binaries, but missing dependencies must degrade only that capability and
+  return a clear diagnostic.
+- New default `runtime/skills/` capabilities should document cross-platform
+  behavior or explain why they are platform-specific optional capabilities.
 
 ## Frontend Rules
 

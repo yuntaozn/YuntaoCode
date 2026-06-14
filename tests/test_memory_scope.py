@@ -133,6 +133,18 @@ def test_memory_prompt_filters_other_workspace_memories(tmp_path) -> None:
     assert set(used_ids) == {"global", "current"}
 
 
+def test_memory_prompt_prefers_high_usage_memory_when_relevance_ties(tmp_path) -> None:
+    store = MemoryStore(tmp_path / "memories.json")
+    low_usage = store.add(MemoryItem(id="low", text="User likes concise answers", usage_count=6))
+    high_usage = store.add(MemoryItem(id="high", text="User likes structured summaries", usage_count=16))
+
+    prompt, used_ids = build_memory_prompt_from_store(store, max_active=1)
+
+    assert high_usage.id in used_ids
+    assert low_usage.id not in used_ids
+    assert "structured summaries" in prompt
+
+
 @pytest.mark.asyncio
 async def test_memory_save_uses_workspace_scope_for_project_tags(tmp_path) -> None:
     store = MemoryStore(tmp_path / "memories.json")

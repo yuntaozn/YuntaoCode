@@ -2539,7 +2539,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             self._client_stream_closed = True
 
 
-class ConversationCompressHandler(ApiHandler):
+class ConversationCompressHandler(ConversationMessagesHandler):
     """POST /conversations/{id}/compress — manually trigger context compression."""
 
     async def post(self, conversation_id: str) -> None:
@@ -2552,51 +2552,16 @@ class ConversationCompressHandler(ApiHandler):
             raise tornado.web.HTTPError(404, reason="workspace not found")
 
         model = self.runtime.settings.get_default_model()
-        mode_config = get_mode_config(getattr(conversation, "mode", None), self.get_lang())
-        system_prompt = build_system_prompt(
-            settings=self.runtime.settings,
-            mode_config=mode_config,
-            workspace_path=workspace.path,
-            workspace_id=workspace.id,
-        )
-
-        # Build the full message list
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system_prompt}
-        ]
-        for item in conversation.messages:
-            role = "assistant" if item.role == "assistant" else "user"
-            messages.append({"role": role, "content": item.content})
-
+        messages = self._build_model_messages(conversation, workspace.to_public_dict())
         before_tokens = count_messages_tokens(messages)
 
-        # Force compression by temporarily lowering the usable limit
-        from runtime.context_manager import (
-            compress_context as _compress,
-            RECENT_MESSAGES_KEEP,
+        compressed, summary_meta = await compress_context(
+            messages,
+            model,
+            self.runtime.settings,
+            conversation=conversation,
+            force=True,
         )
-        compressed, summary_meta = await _compress(
-            messages, model, self.runtime.settings, conversation=conversation,
-        )
-
-        # If no automatic compression happened (below limit), force it anyway
-        if not summary_meta:
-            # Force: treat current total as over-limit
-            from runtime.context_manager import _generate_summary
-            non_system = messages[1:]
-            keep = min(RECENT_MESSAGES_KEEP, len(non_system))
-            older = non_system[:-keep] if keep < len(non_system) else []
-            recent = non_system[-keep:] if keep else non_system
-            if older:
-                cached = (conversation.metadata or {}).get("context_summary", "")
-                summary_text = await _generate_summary(older, model, self.runtime.settings, cached)
-                summary_meta = {
-                    "context_summary": summary_text,
-                    "summary_up_to_index": len(older),
-                    "summary_token_count": count_messages_tokens(
-                        [{"role": "system", "content": summary_text}]
-                    ),
-                }
 
         if summary_meta:
             conv_meta = conversation.metadata or {}
@@ -2604,7 +2569,7 @@ class ConversationCompressHandler(ApiHandler):
             conversation.metadata = conv_meta
             self.runtime.conversations._save()
 
-        after_tokens = count_messages_tokens(compressed) if summary_meta else before_tokens
+        after_tokens = count_messages_tokens(compressed)
 
         self.finish_json({
             "success": True,

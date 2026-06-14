@@ -390,11 +390,38 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
     return preview
 
 
-def compact_tool_payload(payload: dict[str, Any], limit: int = 40000) -> str:
+TOOL_PAYLOAD_CHAR_LIMIT = 40_000
+TOOL_TEXT_BUDGETS: dict[str, int] = {
+    "filesystem.read_file.content": 20_000,
+    "filesystem.read_file.raw_content": 12_000,
+    "filesystem.read_text_preview.content": 20_000,
+    "filesystem.read_text_preview.raw_content": 12_000,
+    "shell.run_command.stdout": 12_000,
+    "shell.run_command.stderr": 6_000,
+    "document.extract_docx_outline.text": 24_000,
+    "web.text": 24_000,
+    "web.html_preview": 8_000,
+}
+
+
+def compact_tool_payload(payload: dict[str, Any], limit: int = TOOL_PAYLOAD_CHAR_LIMIT) -> str:
     text = json.dumps(summarize_tool_payload(payload), ensure_ascii=False)
     if len(text) <= limit:
         return text
     return text[:limit] + "\n... 工具结果过长，已截断 ..."
+
+
+def _budget(tool_id: str, field: str, default: int) -> int:
+    if tool_id.startswith("web."):
+        return TOOL_TEXT_BUDGETS.get(f"web.{field}", default)
+    return TOOL_TEXT_BUDGETS.get(f"{tool_id}.{field}", default)
+
+
+def _bounded_text(value: Any, limit: int, *, suffix: str) -> tuple[str, bool]:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text, False
+    return text[:limit] + suffix, True
 
 
 def summarize_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -433,55 +460,85 @@ def summarize_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:
     elif tool_id in {"filesystem.read_file", "filesystem.read_text_preview"}:
         key = "content" if "content" in output else "text"
         text = str(output.get(key) or "")
-        max_chars = 50000
+        max_chars = _budget(tool_id, "content", 20_000)
+        compact_text, text_truncated = _bounded_text(
+            text,
+            max_chars,
+            suffix="\n... 文件内容过长，已压缩；如需更多内容，请按行号范围读取 ...",
+        )
+        raw_text = str(output.get("raw_content") or "")
+        raw_budget = _budget(tool_id, "raw_content", 12_000)
+        compact_raw, raw_truncated = _bounded_text(
+            raw_text,
+            raw_budget,
+            suffix="\n... raw_content 已按上下文预算截断，请按行号范围读取更多原文 ...",
+        )
         compact_output = {
-            key: text[:max_chars],
+            key: compact_text,
             "path": output.get("path"),
             "size": output.get("size"),
             "total_lines": output.get("total_lines"),
             "start_line": output.get("start_line"),
             "end_line": output.get("end_line"),
             "encoding": output.get("encoding"),
-            "truncated": output.get("truncated") or len(text) > max_chars,
+            "truncated": output.get("truncated") or text_truncated,
             "remaining_lines": output.get("remaining_lines"),
             "next_start_line": output.get("next_start_line"),
             "next_end_line": output.get("next_end_line"),
             "suggested_next_call": output.get("suggested_next_call"),
-            "truncated_for_context": len(text) > max_chars,
-            "raw_content": str(output.get("raw_content") or "")[:max_chars],
+            "truncated_for_context": text_truncated or raw_truncated,
+            "raw_content": compact_raw,
+            "raw_content_truncated_for_context": raw_truncated,
             "usage_hint": output.get("usage_hint"),
             "integrity": output.get("integrity"),
         }
-        if len(text) > max_chars:
-            compact_output[key] += "\n... 文件内容过长，已压缩；如需更多内容，请按行号范围读取 ..."
-            raw_text = str(output.get("raw_content") or "")
-            if len(raw_text) > max_chars:
-                compact_output["raw_content"] = raw_text[:max_chars] + "\n... raw_content 同样已截断 ..."
         compacted["output"] = compact_output
     elif tool_id == "shell.run_command":
+        stdout, stdout_truncated = _bounded_text(
+            output.get("stdout"),
+            _budget(tool_id, "stdout", 12_000),
+            suffix="\n... stdout 已按上下文预算截断 ...",
+        )
+        stderr, stderr_truncated = _bounded_text(
+            output.get("stderr"),
+            _budget(tool_id, "stderr", 6_000),
+            suffix="\n... stderr 已按上下文预算截断 ...",
+        )
         compacted["output"] = {
             **output,
-            "stdout": str(output.get("stdout") or "")[:20000],
-            "stderr": str(output.get("stderr") or "")[:12000],
-            "truncated_for_context": True,
+            "stdout": stdout,
+            "stderr": stderr,
+            "truncated_for_context": stdout_truncated or stderr_truncated,
         }
     elif tool_id == "document.extract_docx_outline":
         text = str(output.get("text") or "")
-        max_chars = 50000
+        compact_text, text_truncated = _bounded_text(
+            text,
+            _budget(tool_id, "text", 24_000),
+            suffix="\n... 文档内容过长，已截断；如需全文处理，请使用专门的文档转换/翻译工具或分批读取 ... ",
+        )
         compacted["output"] = {
             **output,
-            "text": text[:max_chars],
+            "text": compact_text,
             "text_chars": output.get("text_chars") or len(text),
-            "truncated_for_context": len(text) > max_chars,
+            "truncated_for_context": text_truncated,
         }
-        if len(text) > max_chars:
-            compacted["output"]["text"] += "\n... 文档内容过长，已截断；如需全文处理，请使用专门的文档转换/翻译工具或分批读取 ... "
     elif tool_id.startswith("web."):
+        text, text_truncated = _bounded_text(
+            output.get("text"),
+            _budget(tool_id, "text", 24_000),
+            suffix="\n... 网页正文已按上下文预算截断 ...",
+        )
+        html_preview, html_truncated = _bounded_text(
+            output.get("html_preview"),
+            _budget(tool_id, "html_preview", 8_000),
+            suffix="\n... HTML 预览已按上下文预算截断 ...",
+        )
         compacted["output"] = {
             **output,
-            "text": str(output.get("text") or "")[:50000],
-            "html_preview": str(output.get("html_preview") or "")[:15000],
+            "text": text,
+            "html_preview": html_preview,
             "links": (output.get("links") or [])[:80],
-            "truncated_for_context": True,
+            "truncated_for_context": text_truncated or html_truncated or len(output.get("links") or []) > 80,
         }
     return compacted

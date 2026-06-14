@@ -159,10 +159,10 @@ def _score_memory(
             pass
 
     # 4. Usage frequency bonus
-    if item.usage_count > 5:
-        score += 1.0
-    elif item.usage_count > 15:
+    if item.usage_count > 15:
         score += 2.0
+    elif item.usage_count > 5:
+        score += 1.0
 
     # 5. Base score for enabled memories (ensures some always show)
     score += 0.5

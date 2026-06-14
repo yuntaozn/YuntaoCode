@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -161,6 +162,7 @@ VALID_ACCESS_SCOPES = {"project_only", "full_local"}
 VALID_EXECUTION_MODES = {"conservative", "auto", "aggressive"}
 VALID_PLANNING_POLICIES = {"off", "auto", "always"}
 VALID_CONFIRMATION_POLICIES = {"conservative", "auto", "aggressive"}
+RUNTIME_MANAGED_PLUGIN_IDS = {"attachment", "memory"}
 
 
 def planning_policy_from_legacy_execution_mode(value: Any) -> str:
@@ -548,6 +550,8 @@ class SettingsStore:
         )
     
     def is_plugin_enabled(self, plugin_id: str) -> bool:
+        if plugin_id in RUNTIME_MANAGED_PLUGIN_IDS:
+            return True
         config = self.get_plugin_settings().get(plugin_id)
         if not isinstance(config, dict):
             return True
@@ -581,9 +585,17 @@ class SettingsStore:
 
 
 def default_settings_path() -> Path:
-    if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
-        return Path(os.environ["LOCALAPPDATA"]) / "YuntaoCode" / "settings.json"
-    return Path.home() / ".yuntaocode" / "settings.json"
+    if sys.platform.startswith("win"):
+        root = os.environ.get("LOCALAPPDATA")
+        if root:
+            return Path(root) / "YuntaoCode" / "settings.json"
+        return Path.home() / "AppData" / "Local" / "YuntaoCode" / "settings.json"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "YuntaoCode" / "settings.json"
+    root = os.environ.get("XDG_CONFIG_HOME")
+    if root:
+        return Path(root) / "YuntaoCode" / "settings.json"
+    return Path.home() / ".config" / "YuntaoCode" / "settings.json"
 
 
 def normalize_id(value: Any) -> str:

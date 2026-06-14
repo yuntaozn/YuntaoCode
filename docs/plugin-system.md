@@ -2,7 +2,13 @@
 
 This document defines the early plugin direction for YuntaoCode as a Task Runtime extension contract.
 
-The current release only groups built-in tools by tool ID prefix, such as `filesystem`, `code`, `shell`, `git`, and `web`. These groups are local runtime capabilities, not third-party plugins yet. External plugin loading, remote indexes, auto-update, and marketplace distribution are intentionally out of scope until the Task Runtime contract is stable.
+The current release has a **Capabilities & Plugins** page. It groups built-in
+tools by tool ID prefix, such as `filesystem`, `code`, `shell`, `git`, and
+`web`, and may also show MCP-discovered capabilities and AI-built plugin
+drafts. These entries are capability provider views, not all third-party
+plugins. External plugin loading, remote indexes, auto-update, and marketplace
+distribution are intentionally out of scope until the Task Runtime contract is
+stable.
 
 Plugins are capability providers for the Task Runtime. They can expose tools, dependencies, and permission needs, but task state, plan execution, trace, recovery, and audit remain runtime-level concerns.
 
@@ -15,7 +21,10 @@ and [capability-router.md](capability-router.md).
 ## Current Boundary
 
 - Built-in capabilities are registered from `runtime/skills/`.
-- The current `/plugins` API displays built-in capability groups and their dependency status.
+- The current `/plugins` API displays capability provider groups and their dependency status.
+- Runtime-owned context capabilities such as `attachment` and `memory` are read-only in the capability page and are managed by their own runtime settings.
+- Built-in foundation capabilities such as `filesystem`, `code`, `shell`, and `git` may be enabled or disabled from the capability page, but hard guards still apply.
+- Built-in optional capabilities such as `document` and `web` may be enabled or disabled, and dependency or network boundaries should remain visible.
 - External plugin manifests are design-stage only.
 - Contract examples are documented in this file only; the repository does not ship external plugin sample directories at this stage.
 - AI-built plugin drafts belong under the local data directory `ai-plugins/` and are displayed as drafts only.
@@ -37,6 +46,30 @@ and [capability-router.md](capability-router.md).
 - Running untrusted plugin code without user review.
 - Enterprise policy distribution.
 - Default bundling of domain-heavy plugins.
+
+## Not Every Extension Is A Plugin
+
+YuntaoCode should keep these layers separate:
+
+```text
+Capability Provider
+  Supplies executable tools or external state access.
+
+Skill Pack
+  Supplies reusable task method, prompt guidance, or behavior rules.
+
+MCP Service
+  Supplies remote or local MCP tools with its own lifecycle.
+
+Runtime Feature
+  Supplies core task, context, memory, attachment, run, or recovery behavior.
+```
+
+A prompt-methodology package similar to a `SKILL.md` collection should not be
+registered as a local tool plugin only because it influences model behavior.
+It belongs closer to Skill Evolution, Replay, and evaluation evidence. A
+plugin should expose executable capabilities with explicit permissions,
+artifacts, and effects.
 
 ## Contract Shape
 

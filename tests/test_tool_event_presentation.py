@@ -83,3 +83,32 @@ def test_summarize_tool_payload_compacts_large_scan_results() -> None:
     assert compact["output"]["truncated_for_context"] is True
     assert len(compact["output"]["files"]) == 260
     assert "file_299.txt" not in text
+
+
+def test_summarize_read_file_payload_uses_bounded_text_budgets() -> None:
+    payload = {
+        "tool": "filesystem.read_file",
+        "output": {
+            "path": "large.py",
+            "content": "c" * 60000,
+            "raw_content": "r" * 60000,
+            "total_lines": 4000,
+            "next_start_line": 201,
+            "suggested_next_call": {
+                "tool": "filesystem.read_file",
+                "input": {"path": "large.py", "start_line": 201},
+            },
+            "integrity": {"checked": True, "valid": True, "issues": []},
+        },
+    }
+
+    compact = summarize_tool_payload(payload)
+    output = compact["output"]
+
+    assert output["path"] == "large.py"
+    assert output["integrity"]["valid"] is True
+    assert output["next_start_line"] == 201
+    assert output["truncated_for_context"] is True
+    assert output["raw_content_truncated_for_context"] is True
+    assert len(output["content"]) < 22000
+    assert len(output["raw_content"]) < 14000

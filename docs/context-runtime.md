@@ -168,9 +168,17 @@ Memory 是 Context Runtime 的一部分，但不能和任务事实混淆。
 当前已有基础：
 
 - `runtime/context_manager.py`
-  - 上下文 token 计算、压缩入口。
+  - 上下文 token 计算、自动/手动压缩入口。
+  - 保留最近消息，将旧消息压缩为摘要。
+  - `summary_up_to_index` 参与增量摘要，避免反复把已摘要历史重新压缩。
+- `runtime/agent_strategy/context_hygiene.py`
+  - 在不删除 UI 历史和审计记录的前提下，清洗模型侧上下文中的失败工具标记、半截执行过程和噪声记录。
+- `runtime/tool_event_presentation.py`
+  - 对工具结果做模型侧预算压缩，保留路径、错误、完整性、下一次读取提示和运行时风险。
 - `runtime/prompt_context.py`
   - 系统 prompt 中注入工作区、记忆和执行习惯。
+- `runtime/run_recovery.py`
+  - 从 RunResult 生成恢复用 ContextSnapshot，并格式化为恢复上下文。
 - `runtime/run_events.py`
   - 持久化运行事件，为上下文账本提供事实来源。
 - `runtime/run_result.py`

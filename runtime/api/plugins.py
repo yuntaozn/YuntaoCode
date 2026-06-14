@@ -9,6 +9,11 @@ from .base import ApiHandler
 from .. import i18n
 
 
+RUNTIME_CAPABILITY_GROUPS = {"attachment", "memory"}
+FOUNDATION_CAPABILITY_GROUPS = {"filesystem", "code", "shell", "git"}
+OPTIONAL_CAPABILITY_GROUPS = {"document", "web"}
+
+
 class PluginsHandler(ApiHandler):
     def get(self) -> None:
         lang = self.get_lang()
@@ -25,12 +30,17 @@ class PluginsHandler(ApiHandler):
             enabled = plugin_settings.get(plugin_id, {}).get("enabled", True)
             source_types = {str(tool.get("source_type") or "builtin") for tool in tools}
             source_ids = {str(tool.get("source_id") or plugin_id) for tool in tools}
+            source_type = next(iter(source_types)) if len(source_types) == 1 else "mixed"
+            provider_kind = plugin_provider_kind(plugin_id, source_type)
             plugins.append({
                 "id": plugin_id,
                 "name": i18n.t(f"plugin.name.{plugin_id}", lang) or plugin_id,
                 "description": i18n.t(f"plugin.desc.{plugin_id}", lang) or i18n.t("plugin.desc.default", lang),
-                "source_type": next(iter(source_types)) if len(source_types) == 1 else "mixed",
+                "source_type": source_type,
                 "source_id": next(iter(source_ids)) if len(source_ids) == 1 else None,
+                "provider_kind": provider_kind,
+                "provider_label": i18n.t(f"plugins.kind.{provider_kind}", lang) or provider_kind,
+                "toggle_locked": provider_kind in {"runtime_capability", "mcp_capability"},
                 "enabled": enabled,
                 "local_only": all(bool(tool.get("local_only", True)) for tool in tools),
                 "dependencies": dependency_status,
@@ -57,9 +67,20 @@ class PluginsHandler(ApiHandler):
             for tool in self.runtime.registry.list_specs()
             if tool.get("source_type") == "mcp"
         }
+        runtime_managed_ids = {
+            tool["id"].split(".", 1)[0]
+            for tool in self.runtime.registry.list_specs()
+            if tool["id"].split(".", 1)[0] in RUNTIME_CAPABILITY_GROUPS
+        }
         ai_plugin_root = self.runtime.settings.data_dir / "ai-plugins"
         draft_ids = {draft["id"] for draft in load_ai_plugin_drafts(ai_plugin_root, lang)}
-        policy_error = plugin_toggle_policy_error(plugin_id, registered_plugin_ids, draft_ids, managed_plugin_ids)
+        policy_error = plugin_toggle_policy_error(
+            plugin_id,
+            registered_plugin_ids,
+            draft_ids,
+            managed_plugin_ids,
+            runtime_managed_ids,
+        )
         if policy_error:
             status, reason = policy_error
             self.set_status(status)
@@ -74,11 +95,30 @@ def plugin_id_to_name(plugin_id: str, lang: str = "") -> str:
     return i18n.t(f"plugin.name.{plugin_id}", lang) or plugin_id
 
 
+def plugin_provider_kind(plugin_id: str, source_type: str = "builtin") -> str:
+    if source_type == "mcp":
+        return "mcp_capability"
+    if source_type == "ai_draft":
+        return "ai_draft"
+    if source_type not in {"builtin", "mixed"}:
+        return "external_plugin"
+    if plugin_id in RUNTIME_CAPABILITY_GROUPS:
+        return "runtime_capability"
+    if plugin_id in FOUNDATION_CAPABILITY_GROUPS:
+        return "builtin_foundation"
+    if plugin_id in OPTIONAL_CAPABILITY_GROUPS:
+        return "builtin_optional"
+    if source_type == "mixed":
+        return "mixed"
+    return "builtin_other"
+
+
 def plugin_toggle_policy_error(
     plugin_id: str,
     registered_plugin_ids: set[str],
     draft_plugin_ids: set[str],
     managed_plugin_ids: set[str] | None = None,
+    runtime_managed_ids: set[str] | None = None,
 ) -> tuple[int, str] | None:
     if not plugin_id:
         return 400, "plugin_id is required"
@@ -86,6 +126,8 @@ def plugin_toggle_policy_error(
         return 403, "AI plugin drafts are read-only and cannot be enabled from the plugin settings API"
     if plugin_id in (managed_plugin_ids or set()):
         return 403, "MCP capabilities are managed from the MCP services API"
+    if plugin_id in (runtime_managed_ids or set()):
+        return 403, "Runtime capabilities are managed by their own runtime settings"
     if plugin_id not in registered_plugin_ids:
         return 404, f"unknown plugin: {plugin_id}"
     return None
@@ -138,7 +180,10 @@ def ai_plugin_draft_to_public_dict(
         "name": manifest.get("name_zh" if zh else "name") or manifest.get("name") or plugin_id,
         "description": manifest.get("description_zh" if zh else "description") or manifest.get("description") or "",
         "source_type": "ai_draft",
+        "provider_kind": "ai_draft",
+        "provider_label": i18n.t("plugins.kind.ai_draft", lang) or "AI Draft",
         "enabled": False,
+        "toggle_locked": True,
         "loadable": bool(runtime.get("loadable", False)),
         "ai_draft": True,
         "stage": runtime.get("stage") or "draft",

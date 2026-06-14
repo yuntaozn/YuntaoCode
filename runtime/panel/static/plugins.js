@@ -36,6 +36,20 @@ let plugins = [];
 let pluginMeta = {};
 let activeGroup = null;
 
+const PROVIDER_KIND_ORDER = [
+    "runtime_capability",
+    "builtin_foundation",
+    "builtin_optional",
+    "mcp_capability",
+    "ai_draft",
+    "external_plugin",
+    "mixed",
+    "builtin_other",
+];
+const RUNTIME_CAPABILITY_IDS = new Set(["attachment", "memory"]);
+const FOUNDATION_CAPABILITY_IDS = new Set(["filesystem", "code", "shell", "git"]);
+const OPTIONAL_CAPABILITY_IDS = new Set(["document", "web"]);
+
 // --- API ---
 async function loadPlugins() {
     try {
@@ -71,14 +85,16 @@ async function togglePlugin(pluginId, enabled) {
 // --- Render ---
 function renderSummary() {
     const loadablePlugins = plugins.filter((p) => !isReadOnlyPlugin(p));
-    const draftCount = plugins.filter((p) => p.ai_draft).length;
     const total = loadablePlugins.length;
     const enabled = loadablePlugins.filter((p) => p.enabled).length;
+    const runtimeCount = plugins.filter((p) => providerKind(p) === "runtime_capability").length;
+    const mcpCount = plugins.filter((p) => providerKind(p) === "mcp_capability").length;
+    const draftCount = plugins.filter((p) => providerKind(p) === "ai_draft").length;
     const hasDepIssue = plugins.some((p) => {
         const deps = p.dependencies || {};
         return Object.values(deps).some((ok) => !ok);
     });
-    let text = t('plugins_js.enabled_count', {enabled, total});
+    let text = t('plugins_js.capability_summary', {enabled, total, runtime: runtimeCount, mcp: mcpCount});
     if (draftCount) text += t('plugins_js.ai_draft_count', {count: draftCount});
     if (hasDepIssue) text += t('plugins_js.dep_missing');
     $("plugin-summary").textContent = text;
@@ -94,14 +110,18 @@ function renderGuidance() {
 function renderSidebar() {
     const container = $("plugin-group-list");
     const allActive = !activeGroup ? "active" : "";
-    let html = `<button class="plugin-group-item ${allActive}" data-group="">${t('plugins_js.all_plugins')}</button>`;
-    for (const plugin of plugins) {
-        const active = activeGroup === plugin.id ? "active" : "";
-        const depOk = isDepsOk(plugin);
-        const badge = plugin.ai_draft
-            ? `<span class="sample-badge-mini">${t('plugins_js.ai_draft_short')}</span>`
-            : depOk ? "" : `<span class="dep-badge">⚠</span>`;
-        html += `<button class="plugin-group-item ${active}" data-group="${plugin.id}">${escapeHtml(plugin.name)}${badge}</button>`;
+    let html = `<button class="plugin-group-item ${allActive}" data-group="">${t('plugins_js.all_capabilities')}</button>`;
+    for (const kind of orderedProviderKinds(plugins)) {
+        const items = plugins.filter((plugin) => providerKind(plugin) === kind);
+        html += `<div class="plugin-group-heading">${escapeHtml(providerKindLabel(kind))}</div>`;
+        for (const plugin of items) {
+            const active = activeGroup === plugin.id ? "active" : "";
+            const depOk = isDepsOk(plugin);
+            const badge = plugin.ai_draft
+                ? `<span class="sample-badge-mini">${t('plugins_js.ai_draft_short')}</span>`
+                : depOk ? "" : `<span class="dep-badge">⚠</span>`;
+            html += `<button class="plugin-group-item ${active}" data-group="${plugin.id}">${escapeHtml(plugin.name)}${badge}</button>`;
+        }
     }
     container.innerHTML = html;
     // 绑定点击
@@ -118,10 +138,15 @@ function renderPluginList() {
     const container = $("plugin-list-full");
     const filtered = activeGroup ? plugins.filter((p) => p.id === activeGroup) : plugins;
     if (!filtered.length) {
-        container.innerHTML = `<div class="empty-state">${t('plugins_js.no_data')}</div>`;
+        container.innerHTML = `<div class="empty-state">${t('plugins_js.no_capability_data')}</div>`;
         return;
     }
-    container.innerHTML = filtered.map(renderPluginCard).join("");
+    container.innerHTML = activeGroup
+        ? filtered.map(renderPluginCard).join("")
+        : orderedProviderKinds(filtered).map((kind) => renderPluginSection(
+            kind,
+            filtered.filter((plugin) => providerKind(plugin) === kind),
+        )).join("");
     // 绑定开关
     container.querySelectorAll(".plugin-toggle").forEach((btn) => {
         btn.addEventListener("change", (e) => {
@@ -129,6 +154,15 @@ function renderPluginList() {
             togglePlugin(pluginId, e.target.checked);
         });
     });
+}
+
+function renderPluginSection(kind, items) {
+    return `
+        <section class="plugin-provider-section">
+            <div class="plugin-provider-heading">${escapeHtml(providerKindLabel(kind))}</div>
+            ${items.map(renderPluginCard).join("")}
+        </section>
+    `;
 }
 
 function renderPluginCard(plugin) {
@@ -150,9 +184,10 @@ function renderPluginCard(plugin) {
     const toolsHtml = (plugin.tools || [])
         .map((t) => `<span class="tool-chip">${escapeHtml(t.name || t.id)}</span>`)
         .join("");
-    const statusBadge = plugin.ai_draft
-        ? `<span class="plugin-status-badge">${t('plugins_js.ai_draft')}</span>`
-        : `<span class="plugin-status-badge">${escapeHtml(sourceTypeLabel(plugin.source_type))}</span>`;
+    const statusBadge = `<span class="plugin-status-badge">${escapeHtml(providerKindLabel(providerKind(plugin), plugin))}</span>`;
+    const lockHtml = plugin.toggle_locked
+        ? `<div class="plugin-meta"><span class="dep-item requirement">${escapeHtml(toggleLockLabel(plugin))}</span></div>`
+        : "";
     const toggleHtml = isReadOnlyPlugin(plugin)
         ? ""
         : `<label class="toggle-switch">
@@ -170,6 +205,7 @@ function renderPluginCard(plugin) {
             </div>
             ${depsHtml}
             ${requirementsHtml}
+            ${lockHtml}
             <div class="plugin-tools">${toolsHtml}</div>
         </div>
     `;
@@ -181,11 +217,44 @@ function isDepsOk(plugin) {
 }
 
 function isReadOnlyPlugin(plugin) {
-    return Boolean(plugin.ai_draft || plugin.contract_sample || plugin.source_type === "mcp");
+    return Boolean(
+        plugin.toggle_locked
+        || providerKind(plugin) === "runtime_capability"
+        || plugin.ai_draft
+        || plugin.contract_sample
+        || plugin.source_type === "mcp"
+    );
 }
 
-function sourceTypeLabel(sourceType) {
-    return t(`plugins_js.source_${sourceType || "builtin"}`);
+function providerKind(plugin) {
+    if (plugin.provider_kind) return plugin.provider_kind;
+    if (plugin.ai_draft) return "ai_draft";
+    if (plugin.source_type === "mcp") return "mcp_capability";
+    if (plugin.source_type && plugin.source_type !== "builtin") return "external_plugin";
+    if (RUNTIME_CAPABILITY_IDS.has(plugin.id)) return "runtime_capability";
+    if (FOUNDATION_CAPABILITY_IDS.has(plugin.id)) return "builtin_foundation";
+    if (OPTIONAL_CAPABILITY_IDS.has(plugin.id)) return "builtin_optional";
+    return "builtin_other";
+}
+
+function providerKindLabel(kind, plugin = null) {
+    return plugin?.provider_label || t(`plugins.kind.${kind || "builtin_other"}`);
+}
+
+function orderedProviderKinds(items) {
+    const present = new Set(items.map(providerKind));
+    return [
+        ...PROVIDER_KIND_ORDER.filter((kind) => present.has(kind)),
+        ...Array.from(present).filter((kind) => !PROVIDER_KIND_ORDER.includes(kind)).sort(),
+    ];
+}
+
+function toggleLockLabel(plugin) {
+    const kind = providerKind(plugin);
+    if (kind === "runtime_capability") return t("plugins_js.managed_by_runtime");
+    if (kind === "mcp_capability") return t("plugins_js.managed_by_mcp");
+    if (kind === "ai_draft") return t("plugins_js.draft_read_only");
+    return t("plugins_js.read_only");
 }
 
 function dependencyRequirementEntries(requirements) {
