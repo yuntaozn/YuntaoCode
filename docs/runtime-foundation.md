@@ -167,6 +167,34 @@ by default.
 Diagnostic exports are manual local downloads in 0.1. They are not persisted by
 the Runtime and are not submitted to any service.
 
+## Replay And Evaluation Direction
+
+Replay and evaluation are engineering capabilities of YuntaoCode, not a
+separate product line in 0.1. They exist to help contributors compare real task
+execution across models, providers, runtime versions, prompts, local
+environments, and capability availability.
+
+The foundation chain is:
+
+```text
+Run
+  -> Diagnostic Export
+  -> Skill Sample Export
+  -> Replay Fixture
+  -> Evaluation Report
+  -> Skill Evolution
+```
+
+Diagnostic Export is for debugging a specific Run on a specific machine. Skill
+Sample Export is for creating a small replayable fixture. Evaluation should
+later compare those fixtures under controlled runtime or model changes and
+produce evidence-based reports. Skill Evolution should only build on that
+evidence after replay proves a pattern is stable.
+
+For 0.1, evaluation remains a direction anchor. There is no automatic task
+collection, upload, public leaderboard, central sample service, or trusted
+execution of AI-generated code. Design notes live in [evaluation.md](evaluation.md).
+
 ## Task Contract
 
 Before a run enters planning or tool execution, the runtime now builds a

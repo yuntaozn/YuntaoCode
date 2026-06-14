@@ -205,3 +205,17 @@ Skill sample export is different from a diagnostic package.
 
 Do not use Skill Evolution fixtures as bug reports, and do not use diagnostic
 packages as automatic replay fixtures.
+
+## Relationship To Evaluation
+
+Evaluation is the engineering layer that can replay selected fixtures across
+models, providers, runtime versions, prompts, and local environments. It helps
+answer whether a task still works and why it failed or regressed.
+
+Skill Evolution starts after that evidence exists. A reusable skill should not
+be promoted because one model described a pattern as useful; it should be
+promoted only after replay and evaluation provide enough runtime-owned evidence.
+
+For 0.1, evaluation is documented as a direction anchor in
+[evaluation.md](evaluation.md). Skill Evolution should depend on Replay Fixture
+and RunResult facts, not on a separate benchmark system or a public leaderboard.

@@ -71,6 +71,8 @@ foundation easier to understand, test, and extend.
   - `run-artifacts.md`: shared temporary artifacts across ToolTasks in one Run.
   - `persistence-model.md`: operational data boundaries and SQLite direction.
   - `skill-evolution.md`: Runbook-to-Replay-to-Skill Candidate direction.
+  - `evaluation.md`: local replay and evaluation direction for selected task
+    fixtures; not a standalone benchmark product.
 
 ## Task Runtime Rules
 
@@ -80,6 +82,9 @@ foundation easier to understand, test, and extend.
 - Skill Evolution work should preserve the chain Runbook -> Replay Fixture ->
   Skill Candidate -> Replay Result -> manual Promotion, and must not make
   AI-generated code executable in the trusted runtime by default.
+- Evaluation work should start from selected task fixtures and RunResult
+  evidence. Do not add automatic task collection, remote upload, or public
+  leaderboard behavior without an explicit product and privacy design.
 - Do not add a new scenario by hard-coding another branch in the runner.
 - A task-oriented change should include tests for state transitions, plan/step
   behavior, tool result handling, or recovery behavior.
