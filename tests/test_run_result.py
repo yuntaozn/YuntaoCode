@@ -34,6 +34,162 @@ def test_build_run_result_records_writes_verification_and_risks() -> None:
     assert result["risks"] == []
 
 
+def test_build_run_result_succeeds_when_code_write_has_real_test_verification() -> None:
+    contract = {
+        "intent": "write_required",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "deliverables": [
+            {"kind": "code", "path_hint": "D:/workspace/src/app.js"}
+        ],
+    }
+
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="coding",
+        change_summary={"files": [{"path": "src/app.js"}]},
+        requires_code_write=True,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "code.edit_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/src/app.js"},
+                "output": {"path": "D:/workspace/src/app.js"},
+            },
+            {
+                "tool": "shell.run_command",
+                "status": "success",
+                "input": {"command": "node --check src/app.js"},
+                "output": {"exit_code": 0},
+            },
+        ],
+    )
+
+    assert result["status"] == "success"
+    assert result["counts"]["write_successes"] == 1
+    assert result["counts"]["verification_successes"] == 1
+    assert result["counts"]["test_successes"] == 1
+    assert "write_not_verified" not in result["risks"]
+    assert "test_not_observed" not in result["risks"]
+
+
+def test_build_run_result_marks_model_error_after_write_as_partial() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="paper",
+        change_summary={"files": [{"path": "draft.txt"}]},
+        tool_events=[
+            {
+                "tool": "code.replace_text",
+                "status": "success",
+                "input": {"path": "D:/workspace/draft.txt"},
+                "output": {"path": "D:/workspace/draft.txt"},
+            }
+        ],
+        model_error="HTTP 400: invalid enable_thinking",
+    )
+
+    assert result["status"] == "partial"
+    assert result["flags"]["model_provider_error"] is True
+    assert result["flags"]["observed_state_change"] is True
+    assert "model_provider_error" in result["risks"]
+    assert result["failure_details"] == [
+        {
+            "tool": "model.provider",
+            "path": "",
+            "role": "model",
+            "impact": "degraded",
+        }
+    ]
+
+
+def test_build_run_result_marks_model_error_without_tools_as_failure() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="paper",
+        change_summary=None,
+        tool_events=[],
+        model_error="HTTP 400: invalid request",
+    )
+
+    assert result["status"] == "failure"
+    assert result["counts"]["blocking_failures"] == 1
+    assert result["failure_details"][0]["tool"] == "model.provider"
+
+
+def test_build_run_result_ignores_document_min_chars_for_code_contract() -> None:
+    contract = {
+        "intent": "write_required",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "expected_min_output_chars": 30000,
+        "deliverables": [
+            {"kind": "code", "path_hint": "D:/workspace/src/app.js"}
+        ],
+    }
+
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="coding",
+        change_summary={"files": [{"path": "src/app.js"}]},
+        requires_code_write=True,
+        expected_min_output_chars=30000,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "code.edit_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/src/app.js"},
+                "output": {"path": "D:/workspace/src/app.js"},
+            },
+            {
+                "tool": "shell.run_command",
+                "status": "success",
+                "input": {"command": "node --check src/app.js"},
+                "output": {"exit_code": 0},
+            },
+        ],
+    )
+
+    assert result["status"] == "success"
+    assert "document_output_too_short" not in result["risks"]
+
+
+def test_build_run_result_applies_document_min_chars_to_document_contract() -> None:
+    contract = {
+        "intent": "document_export",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "expected_min_output_chars": 30000,
+        "deliverables": [
+            {"kind": "document", "path_hint": "D:/workspace/out.docx"}
+        ],
+    }
+
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="document",
+        change_summary={"files": [{"path": "out.docx"}]},
+        expected_min_output_chars=30000,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "document.export_docx",
+                "status": "success",
+                "input": {"output_path": "D:/workspace/out.docx"},
+                "output": {"path": "D:/workspace/out.docx", "content_chars": 1000},
+            }
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert "document_output_too_short" in result["risks"]
+
+
 def test_build_run_result_does_not_count_directory_listing_as_code_verification() -> None:
     result = build_run_result(
         workspace_path="D:/workspace",
@@ -480,6 +636,52 @@ def test_build_run_result_accepts_verified_external_state_deliverable() -> None:
     assert result["counts"]["external_state_changes"] == 1
     assert result["counts"]["verification_successes"] == 1
     assert "execution_contract_failed" not in result["risks"]
+
+
+def test_build_run_result_accepts_verified_file_delete_deliverable() -> None:
+    contract = {
+        "intent": "write_required",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "deliverables": [
+            {
+                "kind": "file",
+                "path_hint": "obsolete.md",
+                "path_policy": "exact",
+                "description": "Delete obsolete generated document",
+            }
+        ],
+    }
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="coding",
+        change_summary=None,
+        requires_code_write=True,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "filesystem.delete_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/obsolete.md"},
+                "output": {
+                    "path": "D:/workspace/obsolete.md",
+                    "deleted": True,
+                    "effects": ["file_delete", "local_state_change"],
+                    "roles": ["deliverable", "verification"],
+                    "verification_strength": "standard",
+                },
+            }
+        ],
+    )
+
+    assert result["status"] == "success"
+    assert result["counts"]["deliverable_successes"] == 1
+    assert result["counts"]["file_write_successes"] == 1
+    assert result["counts"]["verification_successes"] == 1
+    assert result["written_paths"] == ["obsolete.md"]
+    assert "target_deliverable_not_observed" not in result["risks"]
+    assert "required_verification_not_satisfied" not in result["risks"]
 
 
 def test_build_run_result_keeps_auxiliary_failure_auditable_without_failing_analysis() -> None:
@@ -963,7 +1165,7 @@ def test_build_run_result_records_capability_preflight_blocker() -> None:
     assert "capability_preflight_blocked" in result["risks"]
 
 
-def test_build_run_result_records_optional_write_without_treating_it_as_contract_failure() -> None:
+def test_build_run_result_marks_unverified_optional_write_partial() -> None:
     result = build_run_result(
         workspace_path="D:/workspace",
         tool_events=[
@@ -985,13 +1187,14 @@ def test_build_run_result_records_optional_write_without_treating_it_as_contract
         },
     )
 
-    assert result["status"] == "success"
+    assert result["status"] == "partial"
     assert result["counts"]["file_write_successes"] == 1
     assert result["counts"]["deliverable_successes"] == 0
     assert result["written_paths"] == ["src/editor.js"]
     assert result["observed_written_paths"] == ["src/editor.js"]
     assert result["target_written_paths"] == []
     assert result["flags"]["optional_state_change_observed"] is True
+    assert result["flags"]["unverified_optional_write"] is True
     assert "optional_write_not_verified" in result["risks"]
 
 
@@ -1019,5 +1222,6 @@ def test_build_run_result_does_not_warn_when_optional_write_is_verified() -> Non
 
     assert result["status"] == "success"
     assert result["flags"]["optional_state_change_observed"] is True
+    assert result["flags"]["unverified_optional_write"] is False
     assert result["counts"]["verification_successes"] == 1
     assert "optional_write_not_verified" not in result["risks"]

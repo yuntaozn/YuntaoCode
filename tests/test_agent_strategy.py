@@ -433,6 +433,9 @@ class TestIsWriteTool:
     def test_write_file(self):
         assert is_write_tool("filesystem.write_file")
 
+    def test_delete_file(self):
+        assert is_write_tool("filesystem.delete_file")
+
     def test_transform_text(self):
         assert is_write_tool("filesystem.transform_text")
 
@@ -1150,6 +1153,32 @@ class TestPlanHasPendingWriteStep:
 
     def test_no_write_step(self):
         plan = {"steps": [{"title": "读取文件", "description": "", "tool_hint": "filesystem.read_file", "status": "pending"}]}
+        assert not plan_has_pending_write_step(plan)
+
+    def test_analysis_expansion_space_is_not_write(self):
+        plan = {
+            "steps": [
+                {
+                    "title": "\u5206\u6790\u6269\u5199\u7a7a\u95f4\u4e0e\u5efa\u8bae",
+                    "description": "\u57fa\u4e8e\u8bba\u6587\u7ed3\u6784\u5206\u6790\u5404\u7ae0\u8282\u7684\u6269\u5199\u6f5c\u529b\uff0c\u7ed9\u51fa\u5177\u4f53\u5efa\u8bae",
+                    "tool_hint": "\uff08\u5206\u6790\u5de5\u5177\uff0c\u65e0\u9700\u8c03\u7528\uff09",
+                    "status": "pending",
+                }
+            ]
+        }
+        assert not plan_has_pending_write_step(plan)
+
+    def test_document_read_plan_is_not_write(self):
+        plan = {
+            "steps": [
+                {
+                    "title": "\u8bfb\u53d6\u8bba\u6587\u5185\u5bb9\u5e76\u7edf\u8ba1\u5b57\u6570",
+                    "description": "\u8bfb\u53d6\u8bba\u6587\u6587\u4ef6\u5185\u5bb9\uff0c\u7edf\u8ba1\u603b\u5b57\u6570\u3001\u7ae0\u8282\u5206\u5e03\u7b49\u4fe1\u606f",
+                    "tool_hint": "document.extract_docx_outline, filesystem.read_text_preview",
+                    "status": "pending",
+                }
+            ]
+        }
         assert not plan_has_pending_write_step(plan)
 
     def test_not_a_dict(self):

@@ -252,6 +252,13 @@ Conversation-history inheritance is implemented in
 previous write context, document export context, and inherited output-length
 goals can be tested without Tornado handlers.
 
+Contract evolution after the initial judgment belongs in
+`runtime/agent_strategy/contract_evolution.py`. That layer handles follow-up
+continuity, explicit execute-follow-up inheritance, and runtime promotion when
+plan or tool facts reveal a stricter write target. The base `task_contract`
+module should keep owning schema normalization and hard constraints, not every
+runtime fact that can strengthen a contract.
+
 Deliverable paths are soft hints by default. A successful artifact of the same
 declared kind may use another path and still satisfy the contract; the path
 deviation is recorded in `RunResult`. Use `path_policy="exact"` only when the

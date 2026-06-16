@@ -209,7 +209,11 @@ def build_request_body(
         else:
             body["thinking"] = {"type": "disabled"}
     elif thinking_mode == "qwen":
-        body["enable_thinking"] = bool(enable_thinking)
+        body["enable_thinking"] = qwen_enable_thinking(
+            model_config=model_config,
+            provider=provider,
+            requested=enable_thinking,
+        )
 
     output_token_param = str(model_config.get("output_token_param") or "").strip()
     try:
@@ -229,6 +233,19 @@ def build_request_body(
         request_options.update(model_config["request_options"])
     body.update(request_options)
     return body
+
+
+def qwen_enable_thinking(
+    *,
+    model_config: dict[str, Any],
+    provider: dict[str, Any],
+    requested: bool,
+) -> bool:
+    if requested:
+        return True
+    if bool(model_config.get("allow_disable_thinking") or provider.get("allow_disable_thinking")):
+        return False
+    return True
 
 
 def chat_completion_url(provider: dict[str, Any]) -> str:

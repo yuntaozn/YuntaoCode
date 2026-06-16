@@ -53,6 +53,17 @@ from runtime import tool_event_presentation as _tool_present
 
 _active_stream_conversation_runs: dict[str, str] = {}
 
+_TOOL_TASK_FAST_POLL_SECONDS = 0.25
+_TOOL_TASK_STEADY_POLL_SECONDS = 1.0
+_TOOL_TASK_FAST_POLL_WINDOW_SECONDS = 3.0
+_TOOL_TASK_HEARTBEAT_SECONDS = 10.0
+
+
+def _tool_task_poll_interval(elapsed_seconds: float) -> float:
+    if elapsed_seconds < _TOOL_TASK_FAST_POLL_WINDOW_SECONDS:
+        return _TOOL_TASK_FAST_POLL_SECONDS
+    return _TOOL_TASK_STEADY_POLL_SECONDS
+
 
 def _message_content_with_attachment_catalog(content: str, metadata: dict[str, Any]) -> str:
     attachments = metadata.get("attachments") if isinstance(metadata.get("attachments"), list) else []
@@ -211,6 +222,8 @@ class ConversationMessagesHandler(ApiHandler):
         content = (payload.get("content") or "").strip()
         if not content:
             raise tornado.web.HTTPError(400, reason="content is required")
+        if payload.get("access_scope"):
+            self.runtime.settings.update({"access_scope": payload.get("access_scope")})
 
         workspace = self.runtime.workspaces.get(conversation.workspace_id)
         if not workspace:
@@ -425,6 +438,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             raise tornado.web.HTTPError(400, reason="a message supports at most 8 attachments")
         if not content and not image_data and not attachment_ids:
             raise tornado.web.HTTPError(400, reason="content is required")
+        if payload.get("access_scope"):
+            self.runtime.settings.update({"access_scope": payload.get("access_scope")})
 
         workspace = self.runtime.workspaces.get(conversation.workspace_id)
         if not workspace:
@@ -583,7 +598,12 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 payload_for_client.pop("time", None)
                 self.write_json_line(payload_for_client)
                 await self.flush()
-                if payload_for_client.get("event") in {"done", "error"}:
+                if payload_for_client.get("event") == "done":
+                    break
+                if (
+                    payload_for_client.get("event") == "error"
+                    and payload_for_client.get("terminal", True) is not False
+                ):
                     break
         finally:
             self.runtime.run_events.unsubscribe(run.id, event_queue)
@@ -1690,6 +1710,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     ) -> str:
         if tool_id == "code.apply_patch":
             return "应用代码补丁"
+        if tool_id == "filesystem.delete_file":
+            return "Delete file"
         if target:
             exists = False
             is_dir = False
@@ -1822,10 +1844,13 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         started_at = asyncio.get_running_loop().time()
         last_log_count = len(task.logs)
         last_progress_at = started_at
+        last_heartbeat_at = started_at
         while task.status in {"queued", "running"}:
-            await asyncio.sleep(10)
+            elapsed_before_poll = asyncio.get_running_loop().time() - started_at
+            await asyncio.sleep(_tool_task_poll_interval(elapsed_before_poll))
             current = self.runtime.tool_tasks.get(task.id) or task
             new_logs = current.logs[last_log_count:]
+            emitted_progress = False
             if new_logs:
                 last_log_count = len(current.logs)
                 last_progress_at = asyncio.get_running_loop().time()
@@ -1839,24 +1864,32 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                         "message": log_event.get("message"),
                         "data": log_event.get("data") or {},
                     })
+                emitted_progress = True
             task = current
             if task.status not in {"queued", "running"}:
+                if emitted_progress:
+                    await self.flush()
                 break
-            elapsed = int(asyncio.get_running_loop().time() - started_at)
-            stale_seconds = int(asyncio.get_running_loop().time() - last_progress_at)
-            progress = self._tool_progress_snapshot(tool_id, task)
-            self.write_event({
-                "event": "heartbeat",
-                "message": self._tool_progress_message(tool_id, task, elapsed, stale_seconds, progress),
-                "idle_seconds": elapsed,
-                "tool": tool_id,
-                "name": self._tool_display_name(tool_id),
-                "task_id": task.id,
-                "task_status": task.status,
-                "stale_seconds": stale_seconds,
-                "progress": progress,
-            })
-            await self.flush()
+            now = asyncio.get_running_loop().time()
+            if now - last_heartbeat_at >= _TOOL_TASK_HEARTBEAT_SECONDS:
+                last_heartbeat_at = now
+                elapsed = int(now - started_at)
+                stale_seconds = int(now - last_progress_at)
+                progress = self._tool_progress_snapshot(tool_id, task)
+                self.write_event({
+                    "event": "heartbeat",
+                    "message": self._tool_progress_message(tool_id, task, elapsed, stale_seconds, progress),
+                    "idle_seconds": elapsed,
+                    "tool": tool_id,
+                    "name": self._tool_display_name(tool_id),
+                    "task_id": task.id,
+                    "task_status": task.status,
+                    "stale_seconds": stale_seconds,
+                    "progress": progress,
+                })
+                emitted_progress = True
+            if emitted_progress:
+                await self.flush()
         task = self.runtime.tool_tasks.get(task.id) or task
         output_preview = self._tool_output_preview(tool_id, task.output)
         task_error = task.error

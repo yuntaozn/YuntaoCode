@@ -218,6 +218,11 @@ def expected_min_output_chars(content: str, conversation: Any | None = None) -> 
     if conversation is None:
         return 0
     text = content.strip().lower()
+    if not (
+        _clf.looks_like_follow_up_execution(content)
+        or previous_document_export_context(conversation, content)
+    ):
+        return 0
     if len(text) >= 80 and not _clf.looks_like_follow_up_execution(content):
         return 0
     for message in reversed(getattr(conversation, "messages", [])[-16:]):

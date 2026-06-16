@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -65,6 +66,11 @@ TOOL_ID_ALIASES: dict[str, str] = {
     "filesystem.read_preview": "filesystem.read_text_preview",
     "filesystem.write": "filesystem.write_file",
     "filesystem.write_text": "filesystem.write_file",
+    "filesystem.delete": "filesystem.delete_file",
+    "filesystem.delete_text": "filesystem.delete_file",
+    "filesystem.remove": "filesystem.delete_file",
+    "filesystem.remove_file": "filesystem.delete_file",
+    "filesystem.unlink": "filesystem.delete_file",
     "filesystem.write_temp": "filesystem.write_temp_file",
     "filesystem.write_temporary_file": "filesystem.write_temp_file",
     "filesystem.create_temp_file": "filesystem.write_temp_file",
@@ -91,10 +97,33 @@ TOOL_ID_ALIASES: dict[str, str] = {
 }
 
 
+_TOOL_ID_PREFIX_PATTERN = re.compile(r"^[A-Za-z][\w]*(?:[._][\w]+)+")
+
+
 def normalize_tool_syntax(value: Any) -> str:
-    return str(value or "").strip().replace("__", ".")
+    tool_id = str(value or "").strip().replace("__", ".")
+    return _strip_markup_suffix(tool_id)
 
 
 def normalize_tool_id(value: Any) -> str:
     tool_id = normalize_tool_syntax(value)
     return TOOL_ID_ALIASES.get(tool_id, tool_id)
+
+
+def _strip_markup_suffix(value: str) -> str:
+    """Recover a tool id when model-side XML fragments leak into the name.
+
+    Some local/OpenAI-compatible providers can stream malformed tool calls where
+    XML-ish parameter text is appended to the function name, for example
+    ``filesystem.read_file</parameter><parameter ...``.  Keep only a syntactic
+    tool-id prefix and let ToolRegistry decide whether it is actually known.
+    """
+    if "<" not in value:
+        return value
+    match = _TOOL_ID_PREFIX_PATTERN.match(value)
+    if not match:
+        return value
+    prefix = match.group(0)
+    if value[len(prefix):].lstrip().startswith("<"):
+        return prefix
+    return value

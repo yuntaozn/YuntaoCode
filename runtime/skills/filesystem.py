@@ -207,6 +207,15 @@ async def write_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]
     return await asyncio.to_thread(write_file_sync, path, str(content), bool(create_dirs), context)
 
 
+async def delete_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    path_value = input_data.get("path")
+    if not isinstance(path_value, str) or not path_value.strip():
+        raise ValueError("path is required")
+    path = context.path_guard.resolve(path_value)
+    missing_ok = bool(input_data.get("missing_ok", False))
+    return await asyncio.to_thread(delete_file_sync, path, missing_ok, context)
+
+
 async def write_temp_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
     temp_dir = getattr(context, "temp_dir", None)
     if temp_dir is None:
@@ -382,6 +391,42 @@ def write_file_sync(path: Path, content: str, create_dirs: bool, context: Any) -
         "size": path.stat().st_size,
         "created": created,
         "integrity": integrity,
+    }
+
+
+def delete_file_sync(path: Path, missing_ok: bool, context: Any) -> dict[str, Any]:
+    if not path.exists():
+        if missing_ok:
+            context.log("info", f"file already absent: {path}")
+            return {
+                "path": str(path),
+                "deleted": False,
+                "existed": False,
+                "missing_ok": True,
+                "effects": [],
+                "roles": ["verification"],
+                "verification_strength": "standard",
+                "artifact_kind": "file_delete",
+            }
+        raise ValueError(f"file not found: {path}")
+    if not path.is_file():
+        raise ValueError(f"path is not a file: {path}")
+
+    size = path.stat().st_size
+    if callable(getattr(context, "backup_file", None)):
+        context.backup_file(path)
+    path.unlink()
+    deleted = not path.exists()
+    context.log("info", f"deleted file: {path}")
+    return {
+        "path": str(path),
+        "deleted": deleted,
+        "existed": True,
+        "size": size,
+        "effects": ["file_delete", "local_state_change"],
+        "roles": ["deliverable", "verification"],
+        "verification_strength": "standard",
+        "artifact_kind": "file_delete",
     }
 
 
@@ -578,6 +623,37 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
             capability="code.text_write",
         ),
         write_file,
+    )
+    registry.register(
+        ToolSpec(
+            id="filesystem.delete_file",
+            name="Delete file",
+            description=(
+                "Delete one file inside the configured workspace boundary. "
+                "Use this for local file removal instead of shell commands so the runtime can "
+                "record a structured state-change result and verification evidence."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path to delete"},
+                    "missing_ok": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Treat an already-missing file as verified absence",
+                    },
+                },
+                "required": ["path"],
+            },
+            requires_confirmation=True,
+            capability="filesystem.local_state",
+            artifacts=["file"],
+            effects=["file_delete", "local_state_change"],
+            roles=["deliverable", "verification"],
+            verification_strength="standard",
+            idempotent=False,
+        ),
+        delete_file,
     )
     registry.register(
         ToolSpec(

@@ -235,6 +235,19 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
             "integrity": output.get("integrity"),
             "backup": output.get("_backup"),
         }
+    elif tool_id == "filesystem.delete_file":
+        preview = {
+            "type": "file_delete",
+            "path": output.get("path"),
+            "deleted": bool(output.get("deleted")),
+            "existed": bool(output.get("existed")),
+            "missing_ok": bool(output.get("missing_ok")),
+            "size": output.get("size"),
+            "effects": list(output.get("effects") or [])[:12],
+            "roles": list(output.get("roles") or [])[:12],
+            "verification_strength": output.get("verification_strength"),
+            "backup": output.get("_backup"),
+        }
     elif tool_id == "filesystem.finalize_text_file":
         preview = {
             "type": "file_write",

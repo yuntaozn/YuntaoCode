@@ -48,6 +48,46 @@ def test_run_store_records_result_events_as_result_stage(tmp_path) -> None:
     assert updated.events[-1]["event_name"] == "run.result"
 
 
+def test_run_store_keeps_recoverable_model_error_running_until_result(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.json")
+    run = store.create(
+        conversation_id="conv_1",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="write then model fails",
+    )
+
+    errored = store.record_event(
+        run.id,
+        {
+            "schema_version": "0.1",
+            "event": "error",
+            "event_name": "run.failed",
+            "error": "HTTP 400",
+            "terminal": False,
+            "recoverable": True,
+        },
+    )
+
+    assert errored is not None
+    assert errored.status == "running"
+    assert errored.stage == "model_error"
+
+    resulted = store.record_event(
+        run.id,
+        {
+            "schema_version": "0.1",
+            "event": "result",
+            "event_name": "run.result",
+            "result": {"kind": "run_result", "status": "partial"},
+        },
+    )
+
+    assert resulted is not None
+    assert resulted.status == "partial"
+    assert resulted.stage == "result"
+
+
 def test_run_store_keeps_waiting_confirmation_until_user_resumes(tmp_path) -> None:
     store = RunStore(tmp_path / "runs.json")
     run = store.create(

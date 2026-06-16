@@ -162,6 +162,8 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
             "event": "error",
             "event_name": event_name,
             "error": payload.get("error"),
+            "terminal": payload.get("terminal", True),
+            "recoverable": payload.get("recoverable", False),
         }
     if event_type == "changes":
         return {

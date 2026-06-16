@@ -35,6 +35,7 @@ def test_common_model_tool_name_variants_resolve_to_registered_tools() -> None:
         "filesystem.list_project_files": "code.list_project_files",
         "filesystem.preview_text": "filesystem.read_text_preview",
         "filesystem.write_temp": "filesystem.write_temp_file",
+        "filesystem.remove_file": "filesystem.delete_file",
         "document.pdf_extract_text": "document.extract_pdf_text_preview",
         "document.extract_docx": "document.extract_docx_outline",
         "document.pdf_to_word": "document.extract_pdf_to_docx",
@@ -57,3 +58,31 @@ def test_common_model_tool_name_variants_resolve_to_registered_tools() -> None:
 def test_double_underscore_tool_names_are_normalized() -> None:
     assert normalize_tool_id("filesystem__read_file") == "filesystem.read_file"
     assert normalize_tool_id("document__pdf_extract_text") == "document.extract_pdf_text_preview"
+
+
+def test_xml_parameter_suffix_is_stripped_from_tool_names() -> None:
+    assert (
+        normalize_tool_id('filesystem.read_file</parameter><parameter name="path" string="true')
+        == "filesystem.read_file"
+    )
+    assert (
+        normalize_tool_id('filesystem.scan_folder</parameter><parameter name="path" string="true')
+        == "filesystem.scan_folder"
+    )
+
+
+def test_xml_parameter_suffix_keeps_alias_resolution() -> None:
+    assert (
+        normalize_tool_id('filesystem.list_dir</parameter><parameter name="path" string="true')
+        == "filesystem.scan_folder"
+    )
+
+
+def test_registry_resolves_tool_name_with_xml_parameter_suffix() -> None:
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+
+    assert (
+        registry.resolve_id('filesystem.read_file</parameter><parameter name="path" string="true')
+        == "filesystem.read_file"
+    )

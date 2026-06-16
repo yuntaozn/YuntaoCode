@@ -43,6 +43,7 @@ def build_diagnostic_export(runtime: Any, run: Any) -> dict[str, Any]:
         "mcp_services": _mcp_summary(runtime),
         "run": _run_summary(run),
         "runbook_summary": _runbook_summary(runbook),
+        "model_errors": _model_error_summary(getattr(run, "events", []) or []),
         "recent_events": _recent_events(getattr(run, "events", []) or []),
         "export_policy": {
             "manual_export": True,
@@ -251,12 +252,35 @@ def _recent_events(events: list[dict[str, Any]], limit: int = 30) -> list[dict[s
             "task_id": str(event.get("task_id") or ""),
             "message": _truncate(event.get("message"), 500),
             "error": _truncate(event.get("error"), 1000),
+            "terminal": event.get("terminal") if "terminal" in event else None,
+            "recoverable": event.get("recoverable") if "recoverable" in event else None,
             "input_keys": sorted(str(key) for key in event.get("input", {}).keys())
             if isinstance(event.get("input"), dict) else [],
             "output_keys": sorted(str(key) for key in event.get("output", {}).keys())
             if isinstance(event.get("output"), dict) else [],
         })
     return compact
+
+
+def _model_error_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
+    errors = [
+        event for event in events
+        if isinstance(event, dict)
+        and event.get("event") == "error"
+        and str(event.get("error") or "").strip()
+    ]
+    if not errors:
+        return {"count": 0, "latest": {}}
+    latest = errors[-1]
+    return {
+        "count": len(errors),
+        "latest": {
+            "time": str(latest.get("time") or ""),
+            "error": _truncate(latest.get("error"), 1000),
+            "terminal": bool(latest.get("terminal", True)),
+            "recoverable": bool(latest.get("recoverable", False)),
+        },
+    }
 
 
 def _tool_step_summary(step: dict[str, Any]) -> dict[str, Any]:

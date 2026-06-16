@@ -227,9 +227,14 @@ class RunStore:
             run.stage = "waiting_confirmation"
             run.message = str(event.get("message") or "waiting for confirmation")
         elif event_type == "error":
-            run.status = "failure"
-            run.stage = "error"
             run.message = str(event.get("error") or "run failed")
+            if event.get("terminal") is False or event.get("recoverable") is True:
+                run.stage = "model_error"
+                if run.status not in {"waiting_confirmation", "paused"}:
+                    run.status = "running"
+            else:
+                run.status = "failure"
+                run.stage = "error"
         elif event_type == "done":
             run.status = str(event.get("run_status") or "success")
             run.stage = "done"
@@ -239,6 +244,8 @@ class RunStore:
             result = event.get("result") if isinstance(event.get("result"), dict) else {}
             status = str(result.get("status") or "").strip()
             run.message = f"result {status}".strip()
+            if status in {"success", "failure", "partial", "stopped"}:
+                run.status = status
         elif event_type == "checkpoint":
             run.stage = "checkpoint"
             run.message = "checkpoint created"

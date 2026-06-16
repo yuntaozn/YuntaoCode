@@ -58,6 +58,31 @@ class ConversationRunExecutor:
         self._active_task_contract = task_contract
         return True
 
+    def _tool_event_primary_path(self, arguments: dict[str, Any], tool_event: dict[str, Any]) -> str:
+        output = tool_event.get("output") if isinstance(tool_event.get("output"), dict) else {}
+        for key in ("path", "output_path", "file_path", "index_path"):
+            value = output.get(key) or arguments.get(key)
+            if value:
+                return str(value)
+        paths = output.get("paths") if isinstance(output.get("paths"), list) else []
+        if paths:
+            return str(paths[0])
+        return ""
+
+    def _tool_event_deliverable_kind(self, tool_id: str, path_hint: str) -> str:
+        normalized_tool = self._normalize_tool_id(tool_id)
+        if normalized_tool.startswith("document."):
+            return "document"
+        if normalized_tool.startswith("code."):
+            return "code"
+        suffix_parts = str(path_hint or "").strip().lower().rsplit(".", 1)
+        suffix = suffix_parts[-1] if len(suffix_parts) == 2 else ""
+        if suffix in {"py", "js", "jsx", "ts", "tsx", "html", "css", "json", "vue"}:
+            return "code"
+        if suffix in {"doc", "docx", "pdf", "ppt", "pptx", "xls", "xlsx", "md"}:
+            return "document"
+        return "file"
+
     def write_event(self, payload: dict[str, Any]) -> None:
         self.runtime.run_events.emit(self._active_run_id, payload)
 
@@ -390,6 +415,7 @@ class ConversationRunExecutor:
         stage_round_counts: dict[str, int] = {}
         stage_prompted: set[str] = set()
         stage_transitions: list[dict[str, Any]] = []
+        model_provider_error = ""
 
         try:
             def advance_stage(reason: str) -> bool:
@@ -445,6 +471,24 @@ class ConversationRunExecutor:
                 metadata["execution_plan"] = execution_plan
                 self.write_event({"event": "plan", "plan": execution_plan})
                 await self.flush()
+                if self._plan_has_pending_write_step(execution_plan):
+                    if _tc.promote_task_contract_for_write_intent(
+                        task_contract,
+                        reason="planned_write_step",
+                        deliverable_kind="code",
+                        description="Execution plan includes a local write step",
+                    ):
+                        task_intent = str(task_contract.get("intent") or task_intent)
+                        code_change_intent = bool(task_contract.get("requires_write"))
+                        state_change_intent = bool(task_contract.get("requires_state_change"))
+                        metadata["task_contract"] = task_contract
+                        self._active_task_contract = task_contract
+                        self.write_event({"event": "task_contract", "contract": task_contract})
+                        messages.append({
+                            "role": "system",
+                            "content": self._task_contract_prompt(task_contract),
+                        })
+                        await self.flush()
                 messages.append({
                     "role": "assistant",
                     "content": self._format_execution_plan_for_context(execution_plan),
@@ -1181,6 +1225,30 @@ class ConversationRunExecutor:
                             workspace.path,
                         )
                     tool_events.append(tool_event)
+                    if (
+                        self._is_write_tool(tool_id)
+                        and str(tool_event.get("status") or "") in {"success", "partial"}
+                    ):
+                        write_path_hint = self._tool_event_primary_path(arguments, tool_event)
+                        write_kind = self._tool_event_deliverable_kind(tool_id, write_path_hint)
+                        if _tc.promote_task_contract_for_write_intent(
+                            task_contract,
+                            reason="observed_write_tool",
+                            path_hint=write_path_hint,
+                            deliverable_kind=write_kind,
+                            description=f"Successful local write via {tool_id}",
+                        ):
+                            task_intent = str(task_contract.get("intent") or task_intent)
+                            code_change_intent = bool(task_contract.get("requires_write"))
+                            state_change_intent = bool(task_contract.get("requires_state_change"))
+                            metadata["task_contract"] = task_contract
+                            self._active_task_contract = task_contract
+                            self.write_event({"event": "task_contract", "contract": task_contract})
+                            messages.append({
+                                "role": "system",
+                                "content": self._task_contract_prompt(task_contract),
+                            })
+                            await self.flush()
                     if self._is_recoverable_write_failure(tool_id, tool_event):
                         write_failure_count += 1
                         write_repair_mode = True
@@ -1540,9 +1608,18 @@ class ConversationRunExecutor:
                 })
                 await self.flush()
         except tornado.web.HTTPError as exc:
-            self.write_event({"event": "error", "error": exc.reason})
+            model_provider_error = str(exc.reason or exc)
+            metadata["model_provider_error"] = model_provider_error
+            can_continue_with_runtime_facts = bool(tool_events)
+            self.write_event({
+                "event": "error",
+                "error": model_provider_error,
+                "terminal": not can_continue_with_runtime_facts,
+                "recoverable": can_continue_with_runtime_facts,
+            })
             await self.flush()
-            return
+            if not tool_events:
+                return
 
         contract_failures = self._task_contract_failures(
             task_contract,
@@ -1553,7 +1630,16 @@ class ConversationRunExecutor:
             metadata["contract_failures"] = contract_failures
             tool_contract_failed = True
 
-        if convergence_stopped and self._has_successful_write(tool_events):
+        if model_provider_error:
+            model_content = "".join(content_parts).strip()
+            assistant_content = (
+                f"{model_content}\n\n" if model_content else ""
+            ) + (
+                "模型服务在工具执行后返回错误，本轮已停止继续调用模型。"
+                "系统会按已观察到的工具结果保存运行事实；如果已经发生写入或外部状态变化，"
+                "本轮会标记为部分完成，便于继续恢复或人工检查。"
+            )
+        elif convergence_stopped and self._has_successful_write(tool_events):
             assistant_content = (
                 "执行已停止重复重试：本轮已有文件写入成功，但后续工具连续返回相同错误，"
                 "系统没有继续空转。请检查下方失败记录和已写入文件后再决定是否继续。"
@@ -1636,6 +1722,7 @@ class ConversationRunExecutor:
                     convergence_stopped
                     or max_rounds_exceeded
                     or tool_contract_failed
+                    or bool(model_provider_error)
                     or (
                         any(event.get("status") == "failure" for event in tool_events)
                         and not any(event.get("status") in {"success", "partial"} for event in tool_events)
@@ -1666,6 +1753,7 @@ class ConversationRunExecutor:
             contract_failed=tool_contract_failed,
             max_rounds_exceeded=max_rounds_exceeded,
             convergence_stopped=convergence_stopped,
+            model_error=model_provider_error,
         )
         metadata["run_result"] = run_result
         self.write_event({"event": "result", "result": run_result})

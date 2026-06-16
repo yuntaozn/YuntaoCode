@@ -240,6 +240,11 @@ function renderModels() {
                 </select>
                 <span class="hint-line">${t('settings_js.thinking_mode_hint')}</span>
             </div>
+            <label class="checkbox-line compact">
+                <input data-model-field="allow_disable_thinking" type="checkbox" ${model.allow_disable_thinking ? "checked" : ""}>
+                <span>${t('settings_js.allow_disable_thinking')}</span>
+            </label>
+            <span class="hint-line">${t('settings_js.allow_disable_thinking_hint')}</span>
             <div class="settings-form-row">
                 <label>${t('settings_js.model_params')}</label>
                 <textarea data-model-field="request_options" placeholder='{"temperature":0.2,"max_tokens":4096}'>${escapeHtml(JSON.stringify(model.request_options || {}, null, 2))}</textarea>
@@ -432,6 +437,7 @@ function collectModels() {
             supports_tools: item.querySelector('[data-model-field="supports_tools"]').checked,
             supports_reasoning_effort: item.querySelector('[data-model-field="supports_reasoning_effort"]').checked,
             thinking_mode: item.querySelector('[data-model-field="thinking_mode"]').value,
+            allow_disable_thinking: item.querySelector('[data-model-field="allow_disable_thinking"]')?.checked || false,
             request_options: readJson(item.querySelector('[data-model-field="request_options"]').value, {}),
             enabled: true,
         });
@@ -564,30 +570,59 @@ function addProvider() {
     renderSettings();
 }
 
-function addModel() {
-    const id = window.prompt(t('settings_js.model_id_prompt'));
-    const modelId = String(id || "").trim();
+function defaultThinkingModeForProvider(providerId) {
+    if (providerId === "volcengine") return "volcengine";
+    if (providerId === "qwen") return "qwen";
+    return "";
+}
+
+function openAddModelDialog() {
+    const providers = providerEntries();
+    if (!providers.length) {
+        showToast(t('settings_js.no_providers'));
+        activeSettingsPage = "providers";
+        renderSettings();
+        return;
+    }
+    const dialog = $("add-model-dialog");
+    const providerInput = $("add-model-provider-input");
+    providerInput.innerHTML = renderProviderOptions(providers[0]?.id);
+    providerInput.value = providers[0]?.id || "";
+    $("add-model-id-input").value = "";
+    $("add-model-name-input").value = "";
+    $("add-model-api-model-input").value = "";
+    $("add-model-thinking-mode-input").value = defaultThinkingModeForProvider(providerInput.value);
+    $("add-model-allow-disable-thinking-input").checked = false;
+    dialog.showModal();
+}
+
+function addModelFromDialog() {
+    const provider = $("add-model-provider-input").value;
+    const modelId = $("add-model-id-input").value.trim();
     if (!modelId) return;
     if (modelEntries().some((model) => model.id === modelId)) {
         showToast(t('settings_js.model_exists'));
         return;
     }
-    const provider = providerEntries()[0]?.id || "";
+    const apiModel = $("add-model-api-model-input").value.trim() || modelId;
+    const displayName = $("add-model-name-input").value.trim() || modelId;
     settings.models.push({
         id: modelId,
-        name: modelId,
+        name: displayName,
         provider,
-        api_model: modelId,
+        api_model: apiModel,
         context_limit: 128000,
         max_output_tokens: 0,
         output_token_param: "",
         supports_tools: true,
         supports_reasoning_effort: false,
-        thinking_mode: "",
+        thinking_mode: $("add-model-thinking-mode-input").value,
+        allow_disable_thinking: $("add-model-allow-disable-thinking-input").checked,
         request_options: {},
     });
     deletedModelIds.delete(modelId);
     activeSettingsPage = "models";
+    $("add-model-dialog").close();
     renderSettings();
 }
 
@@ -654,7 +689,19 @@ function bindEvents() {
     $("refresh-settings-btn").addEventListener("click", () => loadAll().then(() => showToast(t('settings_page.refreshed'))).catch((error) => showToast(error.message)));
     $("save-settings-btn").addEventListener("click", () => saveSettings().catch((error) => showToast(error.message)));
     $("add-provider-btn").addEventListener("click", addProvider);
-    $("add-model-btn").addEventListener("click", addModel);
+    $("add-model-btn").addEventListener("click", openAddModelDialog);
+    $("confirm-add-model-btn").addEventListener("click", addModelFromDialog);
+    $("cancel-add-model-btn").addEventListener("click", () => $("add-model-dialog").close());
+    $("close-add-model-dialog-btn").addEventListener("click", () => $("add-model-dialog").close());
+    $("add-model-provider-input").addEventListener("change", (event) => {
+        $("add-model-thinking-mode-input").value = defaultThinkingModeForProvider(event.target.value);
+    });
+    $("add-model-id-input").addEventListener("input", (event) => {
+        const apiInput = $("add-model-api-model-input");
+        if (!apiInput.value.trim()) {
+            apiInput.placeholder = event.target.value.trim() || t('settings_js.api_model_name');
+        }
+    });
     $("add-memory-btn").addEventListener("click", addMemory);
     $("refresh-backups-btn").addEventListener("click", () => refreshBackups().catch((error) => showToast(error.message)));
     $("restore-latest-backup-btn").addEventListener("click", () => restoreLatestBackup().catch((error) => showToast(error.message)));

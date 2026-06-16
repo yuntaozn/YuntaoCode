@@ -9,6 +9,7 @@ from runtime.security import PathGuard
 from runtime.skills.filesystem import (
     append_text_chunk,
     create_text_draft,
+    delete_file,
     finalize_text_file,
     inspect_text_draft,
     read_file,
@@ -59,6 +60,24 @@ async def test_write_and_read_file_report_valid_full_html_integrity(tmp_path: Pa
 
     assert write_result["integrity"]["valid"] is True
     assert read_result["integrity"]["valid"] is True
+
+
+@pytest.mark.asyncio
+async def test_delete_file_removes_file_with_structured_evidence(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    path = workspace / "notes.md"
+    path.write_text("temporary", encoding="utf-8")
+    context = FakeContext(PathGuard([workspace]), tmp_path / "task")
+
+    result = await delete_file({"path": str(path)}, context)
+
+    assert not path.exists()
+    assert result["deleted"] is True
+    assert result["existed"] is True
+    assert result["effects"] == ["file_delete", "local_state_change"]
+    assert result["roles"] == ["deliverable", "verification"]
+    assert result["verification_strength"] == "standard"
 
 
 @pytest.mark.asyncio

@@ -1864,6 +1864,7 @@ button {
     background: var(--soft);
 }
 
+.access-scope-btn,
 .plan-mode-btn,
 .confirmation-mode-btn {
     display: inline-flex;
@@ -1881,10 +1882,16 @@ button {
     transition: all 0.15s;
 }
 
+.access-scope-btn:hover,
 .plan-mode-btn:hover,
 .confirmation-mode-btn:hover {
     color: var(--text);
     background: var(--soft);
+}
+
+.access-scope-btn[data-access-scope="full_local"] {
+    color: #9a5b12;
+    background: rgba(184, 111, 25, 0.1);
 }
 
 .plan-mode-btn[data-plan-mode="always"] {

@@ -119,6 +119,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "context_limit": 983000,
             "supports_tools": True,
             "thinking_mode": "qwen",
+            "allow_disable_thinking": False,
         },
         {
             "id": "qwen3.6-max-preview",
@@ -127,6 +128,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "context_limit": 1000000,
             "supports_tools": True,
             "thinking_mode": "qwen",
+            "allow_disable_thinking": False,
         },
         {
             "id": "qwen3.7-max",
@@ -135,6 +137,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "context_limit": 1000000,
             "supports_tools": True,
             "thinking_mode": "qwen",
+            "allow_disable_thinking": False,
         },
         {
             "id": "qwen3.7-max-preview",
@@ -143,6 +146,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "context_limit": 1000000,
             "supports_tools": True,
             "thinking_mode": "qwen",
+            "allow_disable_thinking": False,
         },
     ],
     "plugins": {
@@ -651,6 +655,7 @@ def normalize_model_config(value: dict[str, Any]) -> dict[str, Any]:
         "supports_tools": bool(value.get("supports_tools", True)),
         "supports_stream": bool(value.get("supports_stream", True)),
         "thinking_mode": str(value.get("thinking_mode") or "").strip(),
+        "allow_disable_thinking": bool(value.get("allow_disable_thinking", False)),
         "supports_reasoning_effort": bool(value.get("supports_reasoning_effort", False)),
         "request_options": value.get("request_options") if isinstance(value.get("request_options"), dict) else {},
         "enabled": bool(value.get("enabled", True)),

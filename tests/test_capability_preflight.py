@@ -64,6 +64,46 @@ def test_preflight_blocks_external_state_when_no_external_capability_available()
     assert result["blockers"][0]["code"] == "missing_external_state_capability"
 
 
+def test_preflight_allows_normalized_local_file_delete_contract() -> None:
+    snapshot = build_capability_snapshot([
+        {
+            "id": "filesystem.delete_file",
+            "capability": "filesystem.local_state",
+            "artifacts": ["file"],
+            "effects": ["file_delete", "local_state_change"],
+            "roles": ["deliverable", "verification"],
+            "verification_strength": "standard",
+            "available": True,
+        },
+    ], state_changing_tool_ids={"filesystem.delete_file"})
+    fallback = default_task_contract(
+        task_intent="answer_only",
+        mode="coding",
+        planning_policy="auto",
+        confirmation_policy="auto",
+        workspace_path=r"D:\code",
+        access_scope="project_only",
+    )
+    contract = merge_model_task_contract({
+        "goal": "\u5220\u6389\u8fd9\u4e2a\u65b0\u52a0\u7684\u6587\u6863",
+        "intent": "write_required",
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "capability_ids": ["filesystem.local_files"],
+        "deliverables": [
+            {"kind": "external_state", "description": "\u5220\u9664\u9879\u76ee\u4e2d\u7684\u6587\u6863\u6587\u4ef6"}
+        ],
+    }, fallback)
+
+    result = preflight_task_capabilities(contract, snapshot)
+
+    assert contract["capability_ids"] == ["filesystem.local_state"]
+    assert contract["deliverables"][0]["kind"] == "file"
+    assert result["ok"] is True
+    assert result["blockers"] == []
+
+
 def test_preflight_restricts_fallback_for_external_state_capability() -> None:
     snapshot = build_capability_snapshot([
         {

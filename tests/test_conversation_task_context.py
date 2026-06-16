@@ -74,3 +74,19 @@ def test_expected_min_output_chars_uses_current_request_before_history() -> None
     ])
 
     assert expected_min_output_chars("改成 30000 字版本", conversation) == 30000
+
+
+def test_expected_min_output_chars_does_not_inherit_for_read_only_question() -> None:
+    conversation = SimpleNamespace(messages=[
+        _message("user", "\u6269\u5199\u6210 30000 \u5b57\u8bba\u6587"),
+        _message(
+            "assistant",
+            "\u5df2\u5904\u7406",
+            {"task_contract": {"expected_min_output_chars": 30000}},
+        ),
+    ])
+
+    assert expected_min_output_chars(
+        "\u770b\u5f53\u524d\u8bba\u6587\u6709\u591a\u5c11\u5b57\uff0c\u6269\u5199\u7a7a\u95f4\u6709\u591a\u5c11",
+        conversation,
+    ) == 0

@@ -39,6 +39,7 @@ def build_run_result(
     max_rounds_exceeded: bool = False,
     convergence_stopped: bool = False,
     preflight_blockers: list[dict[str, Any]] | None = None,
+    model_error: str = "",
 ) -> dict[str, Any]:
     """Build deterministic run facts from tool events.
 
@@ -211,6 +212,14 @@ def build_run_result(
         risks.append("repeated_tool_failure")
     if preflight_blockers:
         risks.append("capability_preflight_blocked")
+    model_error_text = str(model_error or "").strip()
+    if model_error_text:
+        failures.append({
+            "tool": "model.provider",
+            "path": "",
+            "error": model_error_text[:500],
+        })
+        risks.append("model_provider_error")
     if failures and _failures_recovered(
             tool_events,
             effective_statuses,
@@ -252,7 +261,10 @@ def build_run_result(
         )
     )
     optional_state_change_observed = bool(observed_state_change and not contract_required_state_change)
-    if optional_state_change_observed and state_write_successes and not verification_successes:
+    unverified_optional_write = bool(
+        optional_state_change_observed and state_write_successes and not verification_successes
+    )
+    if unverified_optional_write:
         risks.append("optional_write_not_verified")
 
     failure_details = _failure_details(
@@ -270,6 +282,13 @@ def build_run_result(
             "path": "",
             "role": "capability",
             "impact": "blocking",
+        })
+    if model_error_text:
+        failure_details.append({
+            "tool": "model.provider",
+            "path": "",
+            "role": "model",
+            "impact": "degraded" if observed_state_change or tool_events else "blocking",
         })
     blocking_failures = [item for item in failure_details if item["impact"] == "blocking"]
     degraded_failures = [item for item in failure_details if item["impact"] == "degraded"]
@@ -299,6 +318,9 @@ def build_run_result(
         ),
         has_missing_target_deliverable=missing_target_deliverable,
         has_missing_required_verification=missing_required_verification,
+        has_unverified_optional_write=unverified_optional_write,
+        has_model_error=bool(model_error_text),
+        has_observed_state_change=observed_state_change,
         contract_failed=contract_failed,
         max_rounds_exceeded=max_rounds_exceeded,
         convergence_stopped=convergence_stopped,
@@ -343,6 +365,8 @@ def build_run_result(
             "expected_min_output_chars": max(0, int(expected_min_output_chars or 0)),
             "observed_state_change": observed_state_change,
             "optional_state_change_observed": optional_state_change_observed,
+            "unverified_optional_write": unverified_optional_write,
+            "model_provider_error": bool(model_error_text),
         },
     }
 
@@ -360,6 +384,9 @@ def _result_status(
     has_missing_code_test: bool,
     has_missing_target_deliverable: bool,
     has_missing_required_verification: bool,
+    has_unverified_optional_write: bool,
+    has_model_error: bool,
+    has_observed_state_change: bool,
     contract_failed: bool,
     max_rounds_exceeded: bool,
     convergence_stopped: bool,
@@ -370,6 +397,10 @@ def _result_status(
         return "failure"
     if max_rounds_exceeded or convergence_stopped:
         return "stopped"
+    if has_model_error:
+        if has_observed_state_change or has_write_success or has_tool_events:
+            return "partial"
+        return "failure"
     if has_document_coverage_failure or has_document_min_output_failure:
         return "partial"
     if has_partial_resumable:
@@ -383,6 +414,8 @@ def _result_status(
     if has_missing_target_deliverable:
         return "failure"
     if has_missing_required_verification:
+        return "partial"
+    if has_unverified_optional_write:
         return "partial"
     if has_failure:
         return "failure"
@@ -660,6 +693,8 @@ def _document_min_output_failure(
     expected = _safe_int(expected_min_output_chars)
     if expected <= 0:
         return None
+    if isinstance(task_contract, dict) and not _contract_expects_document_output(task_contract):
+        return None
     export_tools = {
         "document.export_docx",
         "document.export_draft_docx",
@@ -681,6 +716,8 @@ def _document_min_output_failure(
     best_chars = 0
     for event in candidates:
         tool_id = str(event.get("tool") or "")
+        if tool_id not in export_tools:
+            continue
         if not isinstance(task_contract, dict) and tool_id not in export_tools:
             continue
         if _effective_event_status(tool_id, event) != "success":
@@ -708,6 +745,20 @@ def _document_min_output_failure(
             f"expected_min_chars={expected}, output_chars={best_chars}"
         ),
     }
+
+
+def _contract_expects_document_output(task_contract: dict[str, Any]) -> bool:
+    if str(task_contract.get("intent") or "") in {"document_export", "paper_workflow"}:
+        return True
+    if task_contract.get("expected_document_coverage"):
+        return True
+    deliverables = task_contract.get("deliverables") if isinstance(task_contract.get("deliverables"), list) else []
+    for item in deliverables:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("kind") or "").strip().lower() in {"document", "markdown", "docx"}:
+            return True
+    return False
 
 
 def _safe_int(value: Any) -> int:

@@ -130,11 +130,18 @@ TEMP_ARTIFACT_CAPABILITY = (
     "Create temporary scripts, probe outputs, and intermediate files in the task temp directory instead of the user project.",
 )
 
+LOCAL_STATE_CAPABILITY = (
+    "filesystem.local_state",
+    "Local File State",
+    "Create, update, delete, or otherwise change files inside the configured workspace boundary with confirmation and audit evidence.",
+)
+
 EXPLICIT_CAPABILITIES: dict[str, tuple[str, str, str]] = {
     "code.apply_patch": TEXT_WRITE_CAPABILITY,
     "code.edit_file": TEXT_WRITE_CAPABILITY,
     "code.replace_text": TEXT_WRITE_CAPABILITY,
     "filesystem.write_file": TEXT_WRITE_CAPABILITY,
+    "filesystem.delete_file": LOCAL_STATE_CAPABILITY,
     "filesystem.create_text_draft": TEXT_WRITE_CAPABILITY,
     "filesystem.append_text_chunk": TEXT_WRITE_CAPABILITY,
     "filesystem.inspect_text_draft": TEXT_WRITE_CAPABILITY,

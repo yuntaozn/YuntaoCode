@@ -49,6 +49,7 @@ class TaskRunner:
         "code.replace_text",
         "filesystem.transform_text",
         "filesystem.write_file",
+        "filesystem.delete_file",
         "filesystem.finalize_text_file",
         *DOCUMENT_WRITE_TOOLS,
         *WEB_WRITE_TOOLS,

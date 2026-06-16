@@ -74,6 +74,27 @@ def test_capability_catalog_groups_all_text_code_write_routes() -> None:
     assert capability.artifacts == ("file", "text_draft")
 
 
+def test_capability_catalog_keeps_local_file_state_separate_from_text_write() -> None:
+    catalog = build_capability_catalog([
+        {
+            "id": "filesystem.delete_file",
+            "requires_confirmation": True,
+            "artifacts": ["file"],
+            "effects": ["file_delete", "local_state_change"],
+            "roles": ["deliverable", "verification"],
+            "verification_strength": "standard",
+        },
+        {"id": "filesystem.write_file", "requires_confirmation": True, "artifacts": ["file"]},
+    ])
+    by_id = {item.id: item for item in catalog}
+
+    assert by_id["filesystem.local_state"].tool_ids == ("filesystem.delete_file",)
+    assert by_id["filesystem.local_state"].effects == ("file_delete", "local_state_change")
+    assert by_id["filesystem.local_state"].roles == ("deliverable", "verification")
+    assert by_id["filesystem.local_state"].verification_strengths == ("standard",)
+    assert by_id["code.text_write"].tool_ids == ("filesystem.write_file",)
+
+
 def test_capability_prompt_tells_model_not_to_invent_tools() -> None:
     catalog = build_capability_catalog([
         {"id": "document.extract_pdf_to_docx", "capability": "document.pdf_to_docx", "artifacts": ["docx"]},

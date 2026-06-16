@@ -50,6 +50,7 @@ WRITE_TOOL_IDS: frozenset[str] = frozenset({
     "code.replace_text",
     "filesystem.transform_text",
     "filesystem.write_file",
+    "filesystem.delete_file",
     "filesystem.finalize_text_file",
     *DOCUMENT_WRITE_TOOL_IDS,
     *WEB_WRITE_TOOL_IDS,
@@ -494,6 +495,69 @@ def looks_like_dangling_action(content: str) -> bool:
         if any(tail.endswith(ending.lower()) for ending in dangling_endings):
             return True
         return True
+    return False
+
+
+def plan_has_pending_write_step(execution_plan: Any) -> bool:
+    """Check whether a plan explicitly contains a pending local write step.
+
+    Contract promotion should follow concrete execution evidence: either a
+    known write tool or an explicit file-writing phrase. Broad task words such
+    as "generate" are not enough because analysis tasks may also generate an
+    answer without changing local state.
+    """
+    if not isinstance(execution_plan, dict):
+        return False
+    steps = execution_plan.get("steps")
+    if not isinstance(steps, list):
+        return False
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        status = step.get("status")
+        if status not in {None, "pending", "running", "skipped"}:
+            continue
+        tool_hint = str(step.get("tool_hint") or "").lower().replace("__", ".")
+        for candidate in BARE_TOOL_NAME_PATTERN.findall(tool_hint):
+            if is_write_tool(candidate):
+                return True
+        text = " ".join(
+            str(step.get(key) or "").lower()
+            for key in ("title", "description", "tool_hint")
+        )
+        if any(
+            term in text
+            for term in (
+                "write file",
+                "write to",
+                "edit file",
+                "replace text",
+                "create file",
+                "generate file",
+                "export file",
+                "save file",
+                "overwrite",
+                "modify file",
+            )
+        ):
+            return True
+        if any(
+            term in text
+            for term in (
+                "\u5199\u5165",
+                "\u5199\u51fa",
+                "\u8986\u76d6",
+                "\u66ff\u6362",
+                "\u7f16\u8f91\u6587\u4ef6",
+                "\u4fee\u6539\u6587\u4ef6",
+                "\u65b0\u5efa\u6587\u4ef6",
+                "\u521b\u5efa\u6587\u4ef6",
+                "\u751f\u6210\u6587\u4ef6",
+                "\u5bfc\u51fa\u6587\u4ef6",
+                "\u4fdd\u5b58\u4e3a",
+            )
+        ):
+            return True
     return False
 
 
@@ -1359,27 +1423,3 @@ def stage_round_limit(stage: str, mode: str | None, code_change_intent: bool) ->
         stage,
         code_change_intent=code_change_intent,
     )
-
-
-def plan_has_pending_write_step(execution_plan: Any) -> bool:
-    """Check if an execution plan still has a pending write-related step."""
-    if not isinstance(execution_plan, dict):
-        return False
-    steps = execution_plan.get("steps")
-    if not isinstance(steps, list):
-        return False
-    for step in steps:
-        if not isinstance(step, dict):
-            continue
-        status = step.get("status")
-        if status not in {None, "pending", "running", "skipped"}:
-            continue
-        text = " ".join(
-            str(step.get(key) or "").lower()
-            for key in ("title", "description", "tool_hint")
-        )
-        if any(term in text for term in ("write", "edit", "replace", "create", "generate", "export")):
-            return True
-        if any(term in text for term in ("写", "修改", "编辑", "替换", "创建", "新增", "生成", "导出", "优化")):
-            return True
-    return False

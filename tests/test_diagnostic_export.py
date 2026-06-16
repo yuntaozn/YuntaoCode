@@ -119,6 +119,12 @@ def test_diagnostic_export_is_sanitized_and_not_a_fixture(monkeypatch) -> None:
                 "error": "timeout",
             },
             {
+                "event": "error",
+                "error": "HTTP 400: invalid provider request",
+                "terminal": False,
+                "recoverable": True,
+            },
+            {
                 "event": "result",
                 "result": {
                     "status": "failure",
@@ -165,3 +171,6 @@ def test_diagnostic_export_is_sanitized_and_not_a_fixture(monkeypatch) -> None:
     assert exported["settings"]["providers"]["demo"]["base_url_origin"] == "https://example.com"
     assert exported["tools"]["count"] == 1
     assert exported["mcp_services"]["services"][0]["session"]["state"] == "connected"
+    assert exported["model_errors"]["count"] == 1
+    assert exported["model_errors"]["latest"]["recoverable"] is True
+    assert exported["recent_events"][1]["terminal"] is False

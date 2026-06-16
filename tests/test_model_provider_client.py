@@ -167,11 +167,27 @@ def test_build_request_body_uses_qwen_thinking_adapter() -> None:
     assert body["enable_thinking"] is True
 
 
-def test_build_request_body_disables_qwen_thinking_explicitly() -> None:
+def test_build_request_body_keeps_qwen_thinking_enabled_by_default() -> None:
     body = build_request_body(
         provider_id="qwen",
         provider={},
         model_config={"thinking_mode": "qwen"},
+        model="qwen",
+        messages=[{"role": "user", "content": "summarize"}],
+        stream=True,
+        enable_thinking=False,
+        reasoning_effort="low",
+        tools=None,
+    )
+
+    assert body["enable_thinking"] is True
+
+
+def test_build_request_body_disables_qwen_thinking_when_allowed() -> None:
+    body = build_request_body(
+        provider_id="qwen",
+        provider={},
+        model_config={"thinking_mode": "qwen", "allow_disable_thinking": True},
         model="qwen",
         messages=[{"role": "user", "content": "summarize"}],
         stream=True,

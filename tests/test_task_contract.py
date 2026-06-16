@@ -6,6 +6,7 @@ from runtime.agent_strategy.task_contract import (
     looks_like_execute_contract_followup,
     looks_like_task_revision_followup,
     merge_model_task_contract,
+    promote_task_contract_for_write_intent,
     should_use_model_task_contract,
     task_contract_context_messages,
     task_contract_prompt,
@@ -254,6 +255,208 @@ def test_revision_followup_preserves_previous_external_state_target() -> None:
     assert contract["requires_state_change"] is True
     assert contract["deliverables"][0]["kind"] == "external_state"
     assert contract["revision_request"] == "not good enough, try again"
+
+
+def test_local_file_delete_contract_is_not_external_state() -> None:
+    contract = merge_model_task_contract(
+        {
+            "intent": "write_required",
+            "goal": "\u5220\u6389\u8fd9\u4e2a\u65b0\u52a0\u7684\u6587\u6863",
+            "requires_write": False,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "capability_ids": ["filesystem.local_files"],
+            "deliverables": [
+                {
+                    "kind": "external_state",
+                    "description": "\u5220\u9664\u9879\u76ee\u4e2d\u7684\u6587\u6863\u6587\u4ef6",
+                }
+            ],
+            "expected_min_output_chars": 500,
+        },
+        _fallback("answer_only"),
+        expected_min_output_chars=500,
+    )
+
+    assert contract["intent"] == "write_required"
+    assert contract["requires_write"] is True
+    assert contract["requires_state_change"] is True
+    assert contract["deliverables"][0]["kind"] == "file"
+    assert contract["capability_ids"][0] == "filesystem.local_state"
+    assert contract["expected_min_output_chars"] == 0
+    assert "document_min_output_chars" not in contract["success_conditions"]
+
+
+def test_revision_followup_can_retarget_from_document_to_local_file_delete() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "\u5206\u6790\u5f53\u524d\u9879\u76ee\u7684\u5f00\u53d1\u60c5\u51b5",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "capability_ids": ["code.local_project", "filesystem.local_files"],
+        "deliverables": [
+            {
+                "kind": "document",
+                "path_hint": "YuntaoCode_\u9879\u76ee\u5f00\u53d1\u60c5\u51b5\u5206\u6790.md",
+                "description": "Project analysis report",
+            }
+        ],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "revise",
+            "intent": "write_required",
+            "goal": "\u5220\u9664\u9879\u76ee\u4e2d\u7684\u6587\u6863\u6587\u4ef6\u4ee5\u907f\u514d\u5f71\u54cdGitHub\u66f4\u65b0",
+            "requires_write": True,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "capability_ids": ["filesystem.local_files"],
+            "deliverables": [
+                {
+                    "kind": "file",
+                    "path_hint": "YuntaoCode_\u9879\u76ee\u5f00\u53d1\u60c5\u51b5\u5206\u6790.md",
+                    "path_policy": "exact",
+                    "description": "\u5220\u9664\u6307\u5b9a\u7684\u6587\u6863\u6587\u4ef6",
+                }
+            ],
+        },
+        _fallback("answer_only"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content="\u80fd\u5220\u9664\u5417",
+    )
+
+    assert contract["scope_relation"] == "revise"
+    assert contract["goal"].startswith("\u5220\u9664")
+    assert contract["deliverables"][0]["kind"] == "file"
+    assert contract["deliverables"][0]["path_policy"] == "exact"
+    assert contract["capability_ids"][0] == "filesystem.local_state"
+    assert contract["continuity_anchor"]["goal"].startswith("\u5220\u9664")
+
+
+def test_read_only_followup_keeps_current_goal_instead_of_old_anchor() -> None:
+    previous = {
+        "intent": "read_only_analysis",
+        "goal": "\u68c0\u67e5\u8bba\u6587\u4e2d\u53c2\u8003\u6587\u732e\u90e8\u5206\u7684\u89c4\u8303\u6027\u4e0e\u5408\u7406\u6027",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": True,
+        "capability_ids": ["filesystem.local_files"],
+        "deliverables": [
+            {"kind": "answer", "description": "\u53c2\u8003\u6587\u732e\u68c0\u67e5\u7ed3\u679c\u62a5\u544a"}
+        ],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "continue",
+            "intent": "read_only_analysis",
+            "goal": "\u68c0\u67e5\u5f53\u524d\u8bba\u6587\u5b57\u6570\u5e76\u8bc4\u4f30\u6269\u5199\u7a7a\u95f4",
+            "requires_write": False,
+            "requires_state_change": False,
+            "requires_verification": True,
+            "capability_ids": ["filesystem.local_files"],
+            "deliverables": [
+                {"kind": "answer", "description": "\u8bba\u6587\u5b57\u6570\u7edf\u8ba1\u7ed3\u679c\u4e0e\u6269\u5199\u7a7a\u95f4\u8bc4\u4f30\u62a5\u544a"}
+            ],
+        },
+        _fallback("answer_only"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content="\u770b\u5f53\u524d\u8bba\u6587\u6709\u591a\u5c11\u5b57\uff0c\u6269\u5199\u7a7a\u95f4\u6709\u591a\u5c11",
+    )
+
+    assert contract["intent"] == "read_only_analysis"
+    assert contract["requires_write"] is False
+    assert contract["requires_state_change"] is False
+    assert contract["goal"].startswith("\u68c0\u67e5\u5f53\u524d\u8bba\u6587\u5b57\u6570")
+    assert contract["deliverables"][0]["description"].startswith("\u8bba\u6587\u5b57\u6570")
+    assert contract["continuity_anchor"]["goal"].startswith("\u68c0\u67e5\u5f53\u524d\u8bba\u6587\u5b57\u6570")
+
+
+def test_revision_followup_promotes_current_write_requirement_over_read_only_anchor() -> None:
+    previous = {
+        "intent": "read_only_analysis",
+        "goal": "Inspect and fix the stray CSS2D label",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": False,
+        "capability_ids": ["filesystem.local_files"],
+        "deliverables": [{"kind": "answer", "description": "Analysis"}],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "revise",
+            "intent": "write_required",
+            "goal": "Compare sibling projects and fix the CSS2D label",
+            "requires_write": True,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "capability_ids": ["filesystem.local_files", "code.local_project"],
+            "deliverables": [
+                {"kind": "code", "path_hint": "src/app.js", "description": "CSS2D label fix"}
+            ],
+        },
+        _fallback("answer_only"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content="that fix did not work; compare the other subprojects",
+    )
+
+    assert contract["scope_relation"] == "revise"
+    assert contract["goal"] == previous["goal"]
+    assert contract["requires_write"] is True
+    assert contract["requires_state_change"] is True
+    assert contract["requires_verification"] is True
+    assert contract["intent"] == "write_required"
+    assert contract["deliverables"][0]["kind"] == "code"
+    assert contract["capability_ids"] == ["filesystem.local_files", "code.local_project"]
+    assert "target_deliverable_success" in contract["success_conditions"]
+    assert "target_deliverable_verification" in contract["success_conditions"]
+
+
+def test_runtime_write_promotion_turns_answer_contract_into_verifiable_code_target() -> None:
+    contract = {
+        "intent": "read_only_analysis",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": False,
+        "deliverables": [
+            {
+                "kind": "answer",
+                "path_hint": "D:/workspace/app",
+                "description": "Analysis only",
+            }
+        ],
+        "system_overrides": [],
+    }
+
+    changed = promote_task_contract_for_write_intent(
+        contract,
+        reason="planned_write_step",
+        deliverable_kind="code",
+        description="Plan includes a code edit",
+    )
+
+    assert changed is True
+    assert contract["intent"] == "write_required"
+    assert contract["requires_write"] is True
+    assert contract["requires_state_change"] is True
+    assert contract["requires_verification"] is True
+    assert contract["deliverables"][0]["kind"] == "code"
+    assert contract["deliverables"][0]["path_hint"] == "D:/workspace/app"
+    assert "planned_write_step" in contract["system_overrides"]
+    assert "target_deliverable_success" in contract["success_conditions"]
+    assert "target_deliverable_verification" in contract["success_conditions"]
 
 
 def test_model_can_explicitly_replace_previous_task_target() -> None:

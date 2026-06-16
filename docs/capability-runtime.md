@@ -220,6 +220,15 @@ Additional runtime guards now exist in `runtime/agent_strategy/capability_prefli
 - Preflight blockers are recorded in `RunResult` as deterministic failure
   evidence.
 
+Current built-in local file capability split:
+
+- `filesystem.local_files`: read and scan files inside the workspace boundary.
+- `code.text_write`: create or modify text/code files through structured write
+  tools.
+- `filesystem.local_state`: change local file state, such as
+  `filesystem.delete_file`, with PathGuard, confirmation, backup, trace, and
+  RunResult evidence.
+
 ## Next Steps
 
 短期建议：

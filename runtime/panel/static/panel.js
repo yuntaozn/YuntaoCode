@@ -26,6 +26,7 @@ const state = {
     pendingRunLaunch: null,
     pinnedWorkspaceIds: loadPinnedWorkspaceIds(),
     openWorkspaceMenuId: "",
+    accessScope: loadAccessScope(),
     planningPolicy: loadPlanningPolicy(),
     confirmationPolicy: loadConfirmationPolicy(),
     currentMode: "terminal",
@@ -78,6 +79,14 @@ function planningPolicyFromLegacyExecutionMode(value) {
 
 function normalizeConfirmationPolicy(value) {
     return ["conservative", "auto", "aggressive"].includes(value) ? value : "auto";
+}
+
+function normalizeAccessScope(value) {
+    return ["project_only", "full_local"].includes(value) ? value : "project_only";
+}
+
+function loadAccessScope() {
+    return normalizeAccessScope(localStorage.getItem("lit_access_scope") || "project_only");
 }
 
 function loadPlanningPolicy() {
@@ -706,10 +715,12 @@ async function loadAll() {
     }
     if ($("model-select")) $("model-select").value = state.model;
     setCurrentMode(settings.assistant_mode || localStorage.getItem("lit_mode") || state.currentMode);
+    state.accessScope = normalizeAccessScope(settings.access_scope || state.accessScope);
     state.planningPolicy = normalizePlanningPolicy(
         settings.planning_policy || planningPolicyFromLegacyExecutionMode(settings.execution_mode),
     );
     state.confirmationPolicy = normalizeConfirmationPolicy(settings.confirmation_policy || state.confirmationPolicy);
+    localStorage.setItem("lit_access_scope", state.accessScope);
     localStorage.setItem("lit_planning_policy", state.planningPolicy);
     localStorage.setItem("lit_confirmation_policy", state.confirmationPolicy);
     state.pinnedWorkspaceIds = state.pinnedWorkspaceIds.filter((id) =>
@@ -897,7 +908,7 @@ function renderSettings() {
         : t('settings_js.no_key');
     if ($("backup-enabled-input")) $("backup-enabled-input").checked = backups.enabled !== false;
     if ($("backup-keep-input")) $("backup-keep-input").value = backups.keep_rounds || 50;
-    if ($("access-scope-input")) $("access-scope-input").value = state.settings?.access_scope || "project_only";
+    if ($("access-scope-input")) $("access-scope-input").value = state.accessScope;
     if ($("planning-policy-input")) $("planning-policy-input").value = state.planningPolicy;
     if ($("confirmation-policy-input")) $("confirmation-policy-input").value = state.confirmationPolicy;
     renderBackups();
@@ -1006,8 +1017,38 @@ function renderCurrentWorkspace() {
     if (modeConfig && modeConfig.placeholder) {
         $("message-input").setAttribute("placeholder", modeConfig.placeholder);
     }
+    renderAccessScopeControl();
     renderPlanExecutionControl();
     renderConfirmationExecutionControl();
+}
+
+function renderAccessScopeControl() {
+    const btn = $("access-scope-btn");
+    if (!btn) return;
+    const labels = {
+        project_only: t('plan.access_project'),
+        full_local: t('plan.access_full'),
+    };
+    btn.textContent = labels[state.accessScope] || labels.project_only;
+    btn.setAttribute("data-access-scope", state.accessScope);
+}
+
+function cycleAccessScope() {
+    const modes = ["project_only", "full_local"];
+    const currentIndex = modes.indexOf(state.accessScope);
+    state.accessScope = modes[(currentIndex + 1) % modes.length];
+    localStorage.setItem("lit_access_scope", state.accessScope);
+    renderAccessScopeControl();
+    api("/settings", {
+        method: "POST",
+        body: JSON.stringify({ access_scope: state.accessScope }),
+    }).then((settings) => {
+        state.settings = settings;
+        state.accessScope = normalizeAccessScope(settings.access_scope || state.accessScope);
+        localStorage.setItem("lit_access_scope", state.accessScope);
+        renderAccessScopeControl();
+        renderSettings();
+    }).catch((error) => showToast(error.message));
 }
 
 function renderPlanExecutionControl() {
@@ -1736,6 +1777,7 @@ async function sendMessage(event) {
             content,
             model: state.model,
             mode: requestMode,
+            access_scope: state.accessScope,
             planning_policy: state.planningPolicy,
             confirmation_policy: state.confirmationPolicy,
             plan_mode: state.planningPolicy,
@@ -1754,6 +1796,19 @@ async function sendMessage(event) {
             body,
             (eventData) => {
                 if (eventData.event === "error") {
+                    if (eventData.terminal === false || eventData.recoverable === true) {
+                        const metadata = streamingMessages[assistantIndex].metadata || {};
+                        const message = formatErrorMessage(eventData.error, t('error.model_failed'));
+                        metadata.pending = true;
+                        metadata.modelProviderError = message;
+                        metadata.statusText = message;
+                        touchProgress(message);
+                        updateActiveStreamState("running", "model_error", message);
+                        showStatusBar(message);
+                        streamingMessages[assistantIndex].metadata = metadata;
+                        renderStreamMessages();
+                        return;
+                    }
                     throw new Error(formatErrorMessage(eventData.error, t('error.model_failed')));
                 }
                 if (eventData.event === "status") {
@@ -2904,6 +2959,7 @@ on("message-input", "keydown", (event) => {
     }
 });
 on("upload-attachment-btn", "click", () => $("attachment-file-input")?.click());
+on("access-scope-btn", "click", () => cycleAccessScope());
 on("plan-mode-btn", "click", () => cyclePlanExecutionMode());
 on("confirmation-mode-btn", "click", () => cycleConfirmationPolicy());
 on("token-battery", "click", () => compressContext().catch((error) => showToast(error.message)));
@@ -3053,7 +3109,7 @@ async function saveSettings() {
         body: JSON.stringify({
             default_model: state.model,
             assistant_mode: state.currentMode,
-            access_scope: $("access-scope-input") ? $("access-scope-input").value : "project_only",
+            access_scope: $("access-scope-input") ? $("access-scope-input").value : state.accessScope,
             planning_policy: $("planning-policy-input") ? $("planning-policy-input").value : state.planningPolicy,
             confirmation_policy: $("confirmation-policy-input") ? $("confirmation-policy-input").value : state.confirmationPolicy,
             backups: {
@@ -3065,12 +3121,15 @@ async function saveSettings() {
     });
     $("volcengine-key-input").value = "";
     $("qwen-key-input").value = "";
+    state.accessScope = normalizeAccessScope(state.settings.access_scope || state.accessScope);
     state.planningPolicy = normalizePlanningPolicy(state.settings.planning_policy || state.planningPolicy);
     state.confirmationPolicy = normalizeConfirmationPolicy(state.settings.confirmation_policy || state.confirmationPolicy);
+    localStorage.setItem("lit_access_scope", state.accessScope);
     localStorage.setItem("lit_planning_policy", state.planningPolicy);
     localStorage.setItem("lit_confirmation_policy", state.confirmationPolicy);
     localStorage.setItem("lit_plan_execution_mode", state.planningPolicy);
     renderSettings();
+    renderAccessScopeControl();
     renderPlanExecutionControl();
     renderConfirmationExecutionControl();
     $("settings-dialog").close();

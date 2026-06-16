@@ -5,6 +5,7 @@
 
 const LOCALES = {
     "zh-CN": {
+        "common.cancel": "取消",
         // === Navigation (HTML) ===
         "nav.new_conversation": "新对话",
         "nav.search": "搜索",
@@ -347,6 +348,8 @@ const LOCALES = {
         "plan.exec_conservative": "执行: 保守",
         "plan.exec_auto": "执行: 自动",
         "plan.exec_aggressive": "执行: 激进",
+        "plan.access_project": "权限: 项目",
+        "plan.access_full": "权限: 本机",
         "plan.policy_off": "计划: 直接",
         "plan.policy_auto": "计划: 自动",
         "plan.policy_always": "计划: 始终",
@@ -449,6 +452,7 @@ const LOCALES = {
         "settings_js.no_provider_selected": "未选择接口",
         "settings_js.display_name": "显示名称",
         "settings_js.provider_label": "接口",
+        "settings_js.model_id": "模型 ID",
         "settings_js.api_model_name": "API 模型名",
         "settings_js.context_window": "上下文窗口 tokens",
         "settings_js.max_output_tokens": "单轮输出预算 tokens（0 为默认）",
@@ -461,6 +465,10 @@ const LOCALES = {
         "settings_js.thinking_volcengine": "火山方舟：thinking.type",
         "settings_js.thinking_qwen": "通义千问：enable_thinking",
         "settings_js.thinking_mode_hint": "这是接口请求字段适配，不是模型能力强弱分档；选错可能导致接口报错或思考开关无效。",
+        "settings_js.allow_disable_thinking": "允许关闭 thinking 参数",
+        "settings_js.allow_disable_thinking_hint": "部分 Qwen / DashScope 模型要求 enable_thinking=true；不确定时请保持关闭。",
+        "settings_js.add_model_dialog_title": "新增模型",
+        "settings_js.add_model_dialog_desc": "先选择接口，再填写模型 ID 和 API 模型名。连接地址与 Key 仍在“接口”里维护。",
         "settings_js.model_params": "模型参数 JSON",
         "settings_js.no_models": "暂无模型，请新增模型。",
         "settings_js.json_error": "JSON 参数格式错误：{error}",
@@ -593,6 +601,7 @@ const LOCALES = {
     },
 
     "en": {
+        "common.cancel": "Cancel",
         // === Navigation ===
         "nav.new_conversation": "New Chat",
         "nav.search": "Search",
@@ -935,6 +944,8 @@ const LOCALES = {
         "plan.exec_conservative": "Exec: Conservative",
         "plan.exec_auto": "Exec: Auto",
         "plan.exec_aggressive": "Exec: Aggressive",
+        "plan.access_project": "Access: Project",
+        "plan.access_full": "Access: Local",
         "plan.policy_off": "Plan: Direct",
         "plan.policy_auto": "Plan: Auto",
         "plan.policy_always": "Plan: Always",
@@ -1037,6 +1048,7 @@ const LOCALES = {
         "settings_js.no_provider_selected": "No provider selected",
         "settings_js.display_name": "Display Name",
         "settings_js.provider_label": "Provider",
+        "settings_js.model_id": "Model ID",
         "settings_js.api_model_name": "API Model Name",
         "settings_js.context_window": "Context Window Tokens",
         "settings_js.max_output_tokens": "Max Output Tokens (0 = provider default)",
@@ -1049,6 +1061,10 @@ const LOCALES = {
         "settings_js.thinking_volcengine": "Volcengine: thinking.type",
         "settings_js.thinking_qwen": "Qwen: enable_thinking",
         "settings_js.thinking_mode_hint": "This adapts provider request fields; it is not a model strength tier. A wrong value may cause API errors or make thinking toggles ineffective.",
+        "settings_js.allow_disable_thinking": "Allow disabling thinking",
+        "settings_js.allow_disable_thinking_hint": "Some Qwen / DashScope models require enable_thinking=true. Leave this off unless the provider explicitly supports disabling it.",
+        "settings_js.add_model_dialog_title": "Add Model",
+        "settings_js.add_model_dialog_desc": "Choose a provider first, then enter the model ID and API model name. URLs and keys stay under Providers.",
         "settings_js.model_params": "Model Params JSON",
         "settings_js.no_models": "No models yet. Please add a model.",
         "settings_js.json_error": "JSON param format error: {error}",

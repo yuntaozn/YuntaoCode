@@ -8,8 +8,9 @@ pure and testable.
 from __future__ import annotations
 
 import json
-from copy import deepcopy
 from typing import Any
+
+from runtime.agent_strategy import contract_evolution as _contract_evolution
 
 
 VALID_INTENTS: frozenset[str] = frozenset({
@@ -220,6 +221,7 @@ def merge_model_task_contract(
         overrides.append("expected_min_output_chars")
 
     contract["system_overrides"] = list(dict.fromkeys(str(item) for item in overrides if item))
+    _normalize_local_file_state_contract(contract)
     contract["success_conditions"] = success_conditions_for_contract(contract)
     return contract
 
@@ -230,74 +232,16 @@ def apply_task_continuity(
     previous_contract: dict[str, Any] | None,
     current_user_content: str,
 ) -> dict[str, Any]:
-    """Apply a model-declared continuation relationship to a task contract.
-
-    The model decides whether the new request continues, revises, replaces, or
-    starts a task. The runtime preserves the previous semantic target for
-    continue/revise relationships so an implementation fallback cannot silently
-    become the product goal.
-    """
-    result = dict(contract)
-    if "hard_no_write_lock" in set(result.get("system_overrides") or []):
-        result["scope_relation"] = _normalize_scope_relation(result.get("scope_relation"))
-        result.setdefault("revision_request", "")
-        return result
-    if not isinstance(previous_contract, dict):
-        result["scope_relation"] = _normalize_scope_relation(result.get("scope_relation"))
-        result.setdefault("revision_request", "")
-        return result
-
-    relation = _normalize_scope_relation(result.get("scope_relation"))
-    if (
-        relation == "new"
-        and result.get("scope_relation_source") != "model"
-        and looks_like_task_revision_followup(current_user_content)
-    ):
-        relation = "revise"
-        result["scope_relation_source"] = "runtime_continuity_fallback"
-    result["scope_relation"] = relation
-    if relation not in {"continue", "revise"}:
-        result.setdefault("revision_request", "")
-        return result
-
-    anchor = task_continuity_anchor(previous_contract)
-    for key in (
-        "intent",
-        "goal",
-        "requires_write",
-        "requires_state_change",
-        "requires_verification",
-        "capability_ids",
-        "deliverables",
-    ):
-        if key in anchor:
-            result[key] = deepcopy(anchor[key])
-    result["continuity_anchor"] = anchor
-    result["revision_request"] = _clean_text(current_user_content, 500)
-    result["source"] = "model_with_task_anchor"
-    if result.get("requires_write"):
-        result["requires_state_change"] = True
-    result["success_conditions"] = success_conditions_for_contract(result)
-    return result
+    return _contract_evolution.apply_task_continuity(
+        contract,
+        previous_contract=previous_contract,
+        current_user_content=current_user_content,
+    )
 
 
 def task_continuity_anchor(contract: dict[str, Any]) -> dict[str, Any]:
     """Return the stable semantic target carried across continuation turns."""
-    inherited = contract.get("continuity_anchor")
-    source = inherited if isinstance(inherited, dict) else contract
-    return {
-        key: deepcopy(source[key])
-        for key in (
-            "intent",
-            "goal",
-            "requires_write",
-            "requires_state_change",
-            "requires_verification",
-            "capability_ids",
-            "deliverables",
-        )
-        if key in source
-    }
+    return _contract_evolution.task_continuity_anchor(contract)
 
 
 def task_contract_prompt(
@@ -490,52 +434,35 @@ def inherit_task_contract_for_followup(
     fallback_contract: dict[str, Any],
 ) -> dict[str, Any]:
     """Carry a previous task contract into an explicit execute-follow-up turn."""
-    inherited = deepcopy(previous_contract) if isinstance(previous_contract, dict) else {}
-    contract = dict(fallback_contract)
-    for key in (
-        "intent",
-        "goal",
-        "requires_write",
-        "requires_state_change",
-        "requires_verification",
-        "expected_document_coverage",
-        "capability_ids",
-        "deliverables",
-        "blockers",
-        "confidence",
-    ):
-        if key in inherited:
-            contract[key] = deepcopy(inherited[key])
-    contract.update({
-        "source": "conversation_context",
-        "raw_model_contract": None,
-        "scope_relation": "continue",
-        "scope_relation_source": "runtime_explicit_followup",
-        "continuity_anchor": task_continuity_anchor(inherited),
-        "revision_request": "",
-        "requires_plan": False,
-        "first_action": _followup_first_action(contract),
-    })
-    if contract.get("requires_write"):
-        contract["requires_state_change"] = True
-    overrides = list(contract.get("system_overrides") or [])
-    overrides.append("inherited_task_contract")
-    contract["system_overrides"] = list(dict.fromkeys(str(item) for item in overrides if item))
-    contract["success_conditions"] = success_conditions_for_contract(contract)
-    return contract
+    return _contract_evolution.inherit_task_contract_for_followup(previous_contract, fallback_contract)
+
+
+def promote_task_contract_for_write_intent(
+    contract: dict[str, Any],
+    *,
+    reason: str,
+    path_hint: str = "",
+    deliverable_kind: str = "code",
+    description: str = "",
+) -> bool:
+    """Promote a contract when runtime facts show a write is now intended.
+
+    The model owns the initial task judgment, but plan/tool facts may reveal a
+    stronger requirement than the initial contract.  This helper only promotes
+    toward stricter write+verification semantics; it never weakens a contract
+    and respects hard no-write locks.
+    """
+    return _contract_evolution.promote_task_contract_for_write_intent(
+        contract,
+        reason=reason,
+        path_hint=path_hint,
+        deliverable_kind=deliverable_kind,
+        description=description,
+    )
 
 
 def success_conditions_for_contract(contract: dict[str, Any]) -> list[str]:
-    conditions = [
-        "target_deliverable_success"
-        if contract.get("requires_write") or contract.get("requires_state_change")
-        else "",
-        "target_deliverable_verification" if contract.get("requires_verification") else "",
-        "document_output_coverage" if contract.get("expected_document_coverage") else "",
-        "document_min_output_chars" if _safe_int(contract.get("expected_min_output_chars")) > 0 else "",
-        "final_answer_with_evidence",
-    ]
-    return [condition for condition in conditions if condition]
+    return _contract_evolution.success_conditions_for_contract(contract)
 
 
 def _intent_or_default(value: Any, default: Any = "answer_only") -> str:
@@ -614,6 +541,152 @@ def _normalize_scope_relation(value: Any) -> str:
 def _normalize_path_policy(value: Any) -> str:
     policy = str(value or "").strip().lower()
     return policy if policy in VALID_PATH_POLICIES else "hint"
+
+
+def _normalize_local_file_state_contract(contract: dict[str, Any]) -> None:
+    """Normalize local file deletion into the local file-state capability.
+
+    External state is reserved for applications such as browsers, Blender, CAD,
+    databases, or MCP services. Deleting a workspace file is a local file state
+    change and should route to filesystem.local_state / filesystem.delete_file.
+    """
+    if not _looks_like_local_file_delete_contract(contract):
+        return
+
+    contract["intent"] = "write_required"
+    contract["requires_write"] = True
+    contract["requires_state_change"] = True
+    contract["requires_verification"] = True
+    contract["first_action"] = "write"
+    contract["expected_min_output_chars"] = 0
+
+    capabilities = _normalize_string_list(contract.get("capability_ids"), limit=6, item_limit=120)
+    capabilities = [item for item in capabilities if item != "filesystem.local_files"]
+    capabilities.insert(0, "filesystem.local_state")
+    contract["capability_ids"] = list(dict.fromkeys(capabilities))[:6]
+
+    deliverables = contract.get("deliverables") if isinstance(contract.get("deliverables"), list) else []
+    normalized: list[dict[str, str]] = []
+    for item in deliverables:
+        if not isinstance(item, dict):
+            continue
+        copy = dict(item)
+        kind = str(copy.get("kind") or "").strip().lower()
+        if kind in {"external_state", "answer", ""}:
+            copy["kind"] = "file"
+        copy.setdefault("path_policy", "hint")
+        normalized.append({
+            "kind": _clean_text(copy.get("kind") or "file", 40) or "file",
+            "path_hint": _clean_text(copy.get("path_hint") or copy.get("path"), 180),
+            "path_policy": _normalize_path_policy(copy.get("path_policy")),
+            "capability_id": _clean_text(copy.get("capability_id") or "filesystem.local_state", 120),
+            "description": _clean_text(copy.get("description") or contract.get("goal"), 240),
+        })
+    if not normalized:
+        normalized.append({
+            "kind": "file",
+            "path_hint": "",
+            "path_policy": "hint",
+            "capability_id": "filesystem.local_state",
+            "description": _clean_text(contract.get("goal") or "Local file deletion", 240),
+        })
+    contract["deliverables"] = normalized[:6]
+
+    overrides = [
+        str(item)
+        for item in contract.get("system_overrides") or []
+        if str(item or "").strip() != "expected_min_output_chars"
+    ]
+    overrides.append("normalized_local_file_state")
+    contract["system_overrides"] = list(dict.fromkeys(item for item in overrides if item))
+
+
+def _looks_like_local_file_delete_contract(contract: dict[str, Any]) -> bool:
+    text = _contract_text(contract)
+    if not _has_delete_term(text):
+        return False
+    capability_ids = set(_normalize_string_list(contract.get("capability_ids"), limit=12, item_limit=160))
+    if any(item.startswith("mcp.") or item.startswith("mcp_") for item in capability_ids):
+        return False
+    deliverables = contract.get("deliverables") if isinstance(contract.get("deliverables"), list) else []
+    kinds = {
+        str(item.get("kind") or "").strip().lower()
+        for item in deliverables
+        if isinstance(item, dict)
+    }
+    has_path_hint = any(
+        isinstance(item, dict)
+        and bool(str(item.get("path_hint") or item.get("path") or "").strip())
+        for item in deliverables
+    )
+    has_local_capability = bool(
+        capability_ids
+        & {
+            "filesystem.local_files",
+            "filesystem.local_state",
+            "code.local_project",
+            "code.text_write",
+            "document.local_documents",
+        }
+    )
+    return bool(
+        has_path_hint
+        or has_local_capability
+        or kinds & {"file", "code", "document"}
+        or _has_local_file_term(text)
+    )
+
+
+def _contract_text(contract: dict[str, Any]) -> str:
+    parts = [
+        str(contract.get("goal") or ""),
+        str(contract.get("first_action") or ""),
+    ]
+    raw = contract.get("raw_model_contract")
+    if isinstance(raw, dict):
+        parts.append(str(raw.get("goal") or ""))
+    for source in (contract, raw if isinstance(raw, dict) else {}):
+        deliverables = source.get("deliverables") if isinstance(source.get("deliverables"), list) else []
+        for item in deliverables:
+            if not isinstance(item, dict):
+                continue
+            parts.extend(
+                str(item.get(key) or "")
+                for key in ("kind", "path_hint", "path", "description")
+            )
+    return " ".join(parts).lower()
+
+
+def _has_delete_term(text: str) -> bool:
+    terms = (
+        "delete",
+        "remove",
+        "unlink",
+        "\u5220\u9664",
+        "\u5220\u6389",
+        "\u79fb\u9664",
+        "\u53bb\u6389",
+    )
+    return any(term in text for term in terms)
+
+
+def _has_local_file_term(text: str) -> bool:
+    terms = (
+        "file",
+        "document",
+        "workspace",
+        "project",
+        "repo",
+        "repository",
+        "github",
+        "\u6587\u4ef6",
+        "\u6587\u6863",
+        "\u5de5\u4f5c\u533a",
+        "\u9879\u76ee",
+        "\u4ed3\u5e93",
+        "\u76ee\u5f55",
+    )
+    return any(term in text for term in terms)
 
 
 def _safe_int(value: Any) -> int:

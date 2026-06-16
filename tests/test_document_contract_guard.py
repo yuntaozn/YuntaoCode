@@ -748,3 +748,9 @@ def test_pdf_to_docx_progress_message_includes_page_counts() -> None:
     assert "图片 4" in message
     assert "跳过图片 1" in message
     assert "最近 90s 没有新页面进度" in message
+
+
+def test_tool_task_poll_interval_is_fast_for_short_local_tools() -> None:
+    assert conversations_api._tool_task_poll_interval(0) < 1
+    assert conversations_api._tool_task_poll_interval(2.9) < 1
+    assert conversations_api._tool_task_poll_interval(3.0) == 1.0
