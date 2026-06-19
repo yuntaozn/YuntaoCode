@@ -333,7 +333,7 @@ class ConversationRunExecutor:
             "preflight": capability_preflight,
         })
         await self.flush()
-        if not bool(capability_preflight.get("ok", True)):
+        if _cap_preflight.preflight_should_stop(capability_preflight):
             blocker_messages = _cap_preflight.preflight_blocker_messages(capability_preflight)
             self.write_event({
                 "event": "status",

@@ -63,6 +63,7 @@ DELIVERABLE_VERIFICATION_TOOL_IDS: frozenset[str] = frozenset({
     "code.search_text",
     "code.list_project_files",
     "git.log",
+    "web.capture_page",
 })
 
 NATIVE_TOOL_CALL_BEGIN = "<|FunctionCallBegin|>"

@@ -49,6 +49,29 @@ def test_valid_integrity_does_not_add_risk() -> None:
     assert "runtime_risks" not in payload
 
 
+def test_failed_external_capability_tool_becomes_model_facing_risk() -> None:
+    risks = assess_tool_result_risks(
+        "mcp_blender.get_viewport_screenshot",
+        "failure",
+        {"message": "MCP tool call failed: Unknown command type: get_viewport_screenshot"},
+    )
+
+    assert risks[0]["code"] == "external_capability_tool_unsupported"
+    assert risks[0]["source"] == "mcp_blender.get_viewport_screenshot"
+    assert risks[0]["blocking"] is False
+    assert "Unknown command type" in risks[0]["detail"]
+
+
+def test_failed_builtin_tool_does_not_gain_external_capability_risk() -> None:
+    risks = assess_tool_result_risks(
+        "filesystem.read_file",
+        "failure",
+        {"message": "file not found"},
+    )
+
+    assert risks == []
+
+
 def test_compact_read_payload_keeps_integrity_and_runtime_risks() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
     payload = attach_tool_result_risks({

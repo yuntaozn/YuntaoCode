@@ -34,7 +34,8 @@ The current 0.1 work already provides the first pieces:
 - **Runbook** records what happened in one Run.
 - **Diagnostic Export** explains why a Run behaved differently on a specific
   machine.
-- **Skill Sample Export** turns a selected Run into a small Replay Fixture.
+- **Experience Sample Export** turns a selected Run into a reviewed sample and
+  a small Replay Fixture.
 - **Replay Fixture** can later become a stable sample for regression testing.
 - **RunResult** provides runtime-owned facts instead of relying on assistant
   prose.
@@ -44,16 +45,16 @@ The direction is:
 ```text
 Run
   -> Diagnostic Export
-  -> Skill Sample Export
+  -> Experience Sample Export
   -> Replay Fixture
   -> Evaluation Report
   -> Skill Evolution
 ```
 
 This chain should stay explicit. Diagnostic packages are for debugging.
-Skill samples are for replay. Evaluation reports compare behavior. Skill
-Evolution decides whether a reusable capability has enough evidence to be
-promoted.
+Experience samples are for reviewed learning and replay. Evaluation reports
+compare behavior. Skill Evolution decides whether a reusable capability has
+enough evidence to be promoted.
 
 ## Evaluation Scope
 
@@ -105,7 +106,7 @@ For 0.1, evaluation remains a direction anchor:
 - no automatic skill promotion;
 - no trusted execution of AI-generated code.
 
-The current priority is to keep diagnostic export, skill sample export,
+The current priority is to keep diagnostic export, Experience Sample export,
 Runbook, Replay Fixture, and RunResult coherent enough that evaluation can be
 added later without changing the foundation again.
 

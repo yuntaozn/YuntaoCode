@@ -49,6 +49,13 @@ VALID_PATH_POLICIES: frozenset[str] = frozenset({
     "exact",
 })
 
+VALID_VERIFICATION_MODALITIES: frozenset[str] = frozenset({
+    "structural",
+    "visual",
+    "behavioral",
+    "content",
+})
+
 
 def extract_task_contract_json(raw: str) -> dict[str, Any] | None:
     """Extract a JSON object from a model response."""
@@ -103,6 +110,7 @@ def default_task_contract(
         "requires_write": requires_write,
         "requires_state_change": requires_state_change,
         "requires_verification": requires_verification,
+        "required_verification_modalities": [],
         "requires_plan": requires_plan,
         "expected_document_coverage": bool(expected_document_coverage),
         "expected_min_output_chars": _safe_int(expected_min_output_chars),
@@ -166,6 +174,11 @@ def merge_model_task_contract(
             "requires_write": requires_write,
             "requires_state_change": requires_state_change,
             "requires_verification": requires_verification,
+            "required_verification_modalities": _normalize_verification_modalities(
+                raw_contract.get("required_verification_modalities")
+                or raw_contract.get("verification_modalities")
+                or raw_contract.get("verification_requirements")
+            ),
             "requires_plan": _bool_or_default(
                 raw_contract.get("requires_plan"),
                 bool(fallback_contract.get("requires_plan")),
@@ -209,6 +222,7 @@ def merge_model_task_contract(
             "requires_write": False,
             "requires_state_change": False,
             "requires_verification": False,
+            "required_verification_modalities": [],
             "capability_ids": [],
             "deliverables": [],
             "first_action": "read",
@@ -219,6 +233,13 @@ def merge_model_task_contract(
         overrides.append("expected_document_coverage")
     if _safe_int(contract.get("expected_min_output_chars")) > 0:
         overrides.append("expected_min_output_chars")
+
+    if contract.get("requires_verification"):
+        contract["required_verification_modalities"] = _normalize_verification_modalities(
+            contract.get("required_verification_modalities")
+        )
+    else:
+        contract["required_verification_modalities"] = []
 
     contract["system_overrides"] = list(dict.fromkeys(str(item) for item in overrides if item))
     _normalize_local_file_state_contract(contract)
@@ -270,7 +291,10 @@ def task_contract_prompt(
             "Decide scope_relation for the current request: continue/revise keeps "
             "the previous target and changes how it should be completed; replace/new "
             "changes the target. Do not turn an external-state goal into a script or "
-            "other intermediate artifact merely because execution previously fell back.\n"
+            "other intermediate artifact merely because execution previously fell back. "
+            "If the current request asks to look at, inspect, evaluate, or judge the "
+            "current result, consider read/verify/answer first unless the user clearly "
+            "asks to change state again.\n"
         )
     return capability_block + continuity_block + (
         "请先判断本轮用户请求的任务契约，只输出 JSON，不要调用工具，不要解释。\n"
@@ -284,6 +308,10 @@ def task_contract_prompt(
         "只有确实不需要任何本地动作的问答才使用 answer_only。\n"
         "请不要因为不确定就默认只聊天。如果用户要求产物、修改、导出、转换、生成文件或执行本地任务，"
         "应正确区分文件写入与外部状态修改；如果只是解释、建议或分析，两者都应为 false。\n"
+        "Verification modality rule: use required_verification_modalities=[] for ordinary structural checks. "
+        "Include visual when the user cares about appearance, layout, UI rendering, screenshots, rendered images, "
+        "model quality, whether something looks right, or any visual artifact. Use behavioral for tests/build/runtime "
+        "behavior and content for text/document content checks.\n"
         "JSON 字段：\n"
         "{\n"
         '  "goal": "用户真实目标的简短描述",\n'
@@ -291,6 +319,7 @@ def task_contract_prompt(
         '  "requires_write": true,\n'
         '  "requires_state_change": true,\n'
         '  "requires_verification": true,\n'
+        '  "required_verification_modalities": [],\n'
         '  "requires_plan": false,\n'
         '  "capability_ids": ["optional runtime capability id from <available_capabilities>, e.g. mcp.blender"],\n'
         '  "deliverables": [{"kind": "file|answer|document|code|external_state", "path_hint": "", "path_policy": "hint|exact", "description": ""}],\n'
@@ -521,6 +550,17 @@ def _normalize_string_list(value: Any, *, limit: int, item_limit: int) -> list[s
     for item in value[:limit]:
         text = _clean_text(item, item_limit)
         if text:
+            result.append(text)
+    return result
+
+
+def _normalize_verification_modalities(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value[:6]:
+        text = str(item or "").strip().lower()
+        if text in VALID_VERIFICATION_MODALITIES and text not in result:
             result.append(text)
     return result
 
@@ -758,6 +798,9 @@ def _contract_prompt_fallback(contract: dict[str, Any]) -> dict[str, Any]:
         "requires_write": bool(contract.get("requires_write")),
         "requires_state_change": bool(contract.get("requires_state_change")),
         "requires_verification": bool(contract.get("requires_verification")),
+        "required_verification_modalities": _normalize_verification_modalities(
+            contract.get("required_verification_modalities")
+        ),
         "requires_plan": bool(contract.get("requires_plan")),
     }
 

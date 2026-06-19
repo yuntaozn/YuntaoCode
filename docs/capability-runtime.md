@@ -115,6 +115,24 @@ Plugin
 
 也就是说，插件不是产品边界，能力才是任务运行时的边界。未来 MCP 工具、外部插件、本地内置工具都应映射成 Capability Contract 后再被模型使用。
 
+## Relation To Tool Protocol
+
+Capability Runtime describes what a tool can do, what it may affect, and how it
+is governed. The lower-level transport and call-shape rules live in
+[tool-protocol.md](tool-protocol.md):
+
+- malformed textual tool markers are not successful tool calls;
+- required input fields are validated before confirmation;
+- truncated model output must not execute state-changing tools;
+- temporary scripts and probe outputs should use the task temp directory;
+- code writes should prefer structured patch/edit tools over large full-file
+  retransmission.
+
+Tool-result risks are separate advisory evidence. They are derived from
+observable tool output, carried through tool events, and surfaced in RunResult
+without forcing a fixed model strategy. See
+[tool-result-risks.md](tool-result-risks.md).
+
 ## Built-in Capability Standard
 
 默认内置能力要少而稳。一个能力适合进入 `runtime/skills/`，通常需要同时满足：

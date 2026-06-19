@@ -228,6 +228,146 @@ async def test_mcp_stdio_lifecycle_connects_discovers_and_unbinds_tools(tmp_path
         registry.get("mcp_demo_mcp.echo")
 
 
+@pytest.mark.asyncio
+async def test_mcp_tool_diagnostics_persist_across_reconnect_and_clear_on_success(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "mcp-services.json"
+    registry = ToolRegistry()
+    manager = McpServiceManager(path, registry=registry)
+    manager.upsert(_stdio_service())
+
+    await manager.start("demo-mcp")
+    runtime = manager._runtime_for("demo-mcp")
+    manager._update_binding_health(
+        runtime,
+        "echo",
+        error="Unknown command type: echo",
+        service_id="demo-mcp",
+    )
+    await manager.stop("demo-mcp")
+
+    reloaded_registry = ToolRegistry()
+    reloaded = McpServiceManager(path, registry=reloaded_registry)
+    await reloaded.start("demo-mcp")
+
+    public = reloaded.get_public("demo-mcp")
+    [echo_binding] = [
+        item for item in public["capability_bindings"]
+        if item["remote_name"] == "echo"
+    ]
+    assert echo_binding["health"] == "degraded"
+    assert echo_binding["last_error"] == "Unknown command type: echo"
+    assert reloaded.tool_runtime_metadata(
+        "mcp_demo_mcp.echo",
+        source_id="demo-mcp",
+    )["tool_health"] == "degraded"
+
+    echo = reloaded_registry.get("mcp_demo_mcp.echo")
+    output = await echo.handler({"text": "hello"}, None)
+
+    assert output["content"] == "hello"
+    assert reloaded.tool_runtime_metadata(
+        "mcp_demo_mcp.echo",
+        source_id="demo-mcp",
+    )["tool_health"] == "available"
+    assert "Unknown command type" not in path.read_text(encoding="utf-8")
+
+    await reloaded.stop("demo-mcp")
+
+
+@pytest.mark.asyncio
+async def test_mcp_probe_targets_safe_no_argument_observation_tools(
+    tmp_path: Path,
+) -> None:
+    manager = McpServiceManager(tmp_path / "mcp-services.json")
+    manager.upsert(_stdio_service())
+    runtime = manager._runtime_for("demo-mcp")
+    runtime.protocol_connected = True
+    runtime.state = "connected"
+    runtime.capability_bindings = [
+        {
+            "tool_id": "mcp_demo_mcp.inspect",
+            "remote_name": "inspect",
+            "risk": "read_only",
+            "roles": ["verification"],
+            "required_input_fields": [],
+            "health": "available",
+        },
+        {
+            "tool_id": "mcp_demo_mcp.visual_probe",
+            "remote_name": "visual_probe",
+            "risk": "read_only",
+            "roles": ["verification"],
+            "artifacts": ["screenshot"],
+            "required_input_fields": [],
+            "health": "available",
+        },
+        {
+            "tool_id": "mcp_demo_mcp.echo",
+            "remote_name": "echo",
+            "risk": "read_only",
+            "roles": ["evidence"],
+            "required_input_fields": ["text"],
+            "health": "available",
+        },
+        {
+            "tool_id": "mcp_demo_mcp.change_state",
+            "remote_name": "change_state",
+            "risk": "state_change",
+            "roles": ["deliverable"],
+            "required_input_fields": [],
+            "health": "available",
+        },
+    ]
+
+    class ProbeSession:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self.fail_visual = True
+
+        async def call_tool(
+            self,
+            name: str,
+            arguments: dict[str, object],
+            *,
+            timeout: float = 30.0,
+        ) -> dict[str, object]:
+            self.calls.append(name)
+            if name == "visual_probe" and self.fail_visual:
+                raise RuntimeError("Unknown command type: visual_probe")
+            return {"content": [{"type": "text", "text": f"{name} ok"}]}
+
+    session = ProbeSession()
+    runtime.session = session
+
+    results = await manager.probe("demo-mcp")
+
+    assert session.calls == ["inspect", "visual_probe"]
+    assert [item["status"] for item in results] == ["success", "failure"]
+    visual = manager.tool_runtime_metadata(
+        "mcp_demo_mcp.visual_probe",
+        source_id="demo-mcp",
+    )
+    assert visual["tool_health"] == "degraded"
+    assert "Unknown command type" in (tmp_path / "mcp-services.json").read_text(encoding="utf-8")
+    assert runtime.probe_results == results
+    assert runtime.last_probe_at
+
+    session.calls.clear()
+    session.fail_visual = False
+    results = await manager.probe("demo-mcp")
+
+    assert session.calls == ["inspect", "visual_probe"]
+    assert [item["status"] for item in results] == ["success", "success"]
+    visual = manager.tool_runtime_metadata(
+        "mcp_demo_mcp.visual_probe",
+        source_id="demo-mcp",
+    )
+    assert visual["tool_health"] == "available"
+    assert "Unknown command type" not in (tmp_path / "mcp-services.json").read_text(encoding="utf-8")
+
+
 def test_mcp_capability_issues_report_degraded_bindings(tmp_path: Path) -> None:
     manager = McpServiceManager(tmp_path / "mcp-services.json")
     manager.upsert(_stdio_service())
@@ -350,6 +490,7 @@ def test_mcp_manager_seeds_disabled_blender_example_once(tmp_path: Path) -> None
     assert blender["tool_policies"]["get_scene_info"]["verification_strength"] == "weak"
     assert blender["tool_policies"]["get_scene_info"]["call_timeout"] == 25
     assert blender["tool_policies"]["get_viewport_screenshot"]["verification_strength"] == "standard"
+    assert blender["tool_policies"]["get_viewport_screenshot"]["artifacts"] == ["screenshot"]
     assert blender["tool_policies"]["get_viewport_screenshot"]["call_timeout"] == 60
     assert blender["tool_policies"]["execute_blender_code"]["effects"] == [
         "external_state_change"

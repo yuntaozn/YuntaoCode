@@ -138,6 +138,22 @@ If an optional write is not followed by observed verification, Runtime records
 `optional_write_not_verified` as audit evidence instead of turning the task
 contract into a hard execution lock.
 
+Task Contract can also declare `required_verification_modalities`. This field
+describes the evidence shape needed to consider the task complete, not a tool
+mandate. The current modalities are:
+
+- `structural`: state, object, file, or metadata facts prove the target exists.
+- `visual`: screenshots, renders, page captures, or image artifacts prove what
+  the user can see.
+- `behavioral`: tests, builds, commands, or runtime checks prove behavior.
+- `content`: text/document inspection proves output content.
+
+For visual goals such as UI layout, webpage appearance, rendered images, or
+Blender/CAD model quality, structural facts like object counts are useful but
+do not replace visual evidence. Runtime records missing visual evidence in
+RunResult instead of silently treating a structural inspection as full
+completion.
+
 ### Task Continuity And Deliverable Paths
 
 The model declares whether the current request is `new`, `continue`, `revise`,

@@ -8,6 +8,7 @@ plus runtime facts such as paths and outputs.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .classifiers import (
@@ -27,6 +28,16 @@ STATE_CHANGE = "state_change"
 UNKNOWN = "unknown"
 EXTERNAL_STATE_CHANGE = "external_state_change"
 VERIFICATION_STRENGTHS: tuple[str, ...] = ("none", "weak", "standard", "strong")
+VERIFICATION_MODALITIES: tuple[str, ...] = ("structural", "visual", "behavioral", "content")
+VISUAL_ARTIFACT_KINDS: frozenset[str] = frozenset({
+    "screenshot",
+    "image",
+    "render",
+    "rendered_image",
+    "viewport_screenshot",
+    "visual_capture",
+    "pdf",
+})
 
 
 DRAFT_TOOL_IDS: frozenset[str] = frozenset({
@@ -196,7 +207,7 @@ def sufficient_deliverable_verification_events(
     mode: str | None = None,
 ) -> list[dict[str, Any]]:
     required = required_verification_strength(task_contract)
-    return [
+    candidates = [
         event
         for event in deliverable_verification_events(
             tool_events,
@@ -205,10 +216,29 @@ def sufficient_deliverable_verification_events(
             mode=mode,
         )
         if verification_strength_meets(
-            verification_evidence_strength(event, mode=mode),
+            verification_evidence_strength(
+                event,
+                mode=mode,
+                task_contract=task_contract,
+            ),
             required,
         )
     ]
+    required_modalities = required_verification_modalities(task_contract)
+    if not required_modalities:
+        return candidates
+    observed_modalities: set[str] = set()
+    for event in candidates:
+        observed_modalities.update(
+            verification_evidence_modalities(
+                event,
+                mode=mode,
+                task_contract=task_contract,
+            )
+        )
+    if set(required_modalities).issubset(observed_modalities):
+        return candidates
+    return []
 
 
 def required_verification_strength(task_contract: dict[str, Any] | None) -> str:
@@ -218,10 +248,25 @@ def required_verification_strength(task_contract: dict[str, Any] | None) -> str:
     return value if value in VERIFICATION_STRENGTHS else "standard"
 
 
+def required_verification_modalities(task_contract: dict[str, Any] | None) -> tuple[str, ...]:
+    if not isinstance(task_contract, dict) or not task_contract.get("requires_verification"):
+        return ()
+    values = task_contract.get("required_verification_modalities")
+    if not isinstance(values, list):
+        return ()
+    result: list[str] = []
+    for item in values:
+        text = str(item or "").strip().lower()
+        if text in VERIFICATION_MODALITIES and text not in result:
+            result.append(text)
+    return tuple(result)
+
+
 def verification_evidence_strength(
     event: dict[str, Any],
     *,
     mode: str | None = None,
+    task_contract: dict[str, Any] | None = None,
 ) -> str:
     """Return how strongly a successful event verifies the task target.
 
@@ -240,14 +285,219 @@ def verification_evidence_strength(
         or ""
     ).strip().lower()
     if explicit in VERIFICATION_STRENGTHS:
+        if (
+            explicit == "weak"
+            and _is_structured_external_state_verification(
+                event,
+                task_contract=task_contract,
+            )
+        ):
+            return "standard"
         return explicit
     if is_test_verification_event(event):
         return "strong"
+    if _event_has_visual_artifact(event):
+        return "standard"
     if VERIFICATION in event_declared_roles(event):
         return "standard"
     if is_meaningful_verification_event(event, mode, written_paths=event_path_hints(event)):
         return "standard"
     return "none"
+
+
+def verification_evidence_modalities(
+    event: dict[str, Any],
+    *,
+    mode: str | None = None,
+    task_contract: dict[str, Any] | None = None,
+) -> tuple[str, ...]:
+    if verification_evidence_strength(event, mode=mode, task_contract=task_contract) == "none":
+        return ()
+    modalities: list[str] = []
+    if _event_has_visual_artifact(event):
+        modalities.append("visual")
+    if is_test_verification_event(event):
+        modalities.append("behavioral")
+    if _is_structured_external_state_verification(event, task_contract=task_contract):
+        modalities.append("structural")
+    if _event_has_content_artifact(event):
+        modalities.append("content")
+    if not modalities:
+        modalities.append("structural")
+    return tuple(dict.fromkeys(modalities))
+
+
+def missing_required_verification_modalities(
+    events: list[dict[str, Any]],
+    task_contract: dict[str, Any] | None,
+    *,
+    mode: str | None = None,
+) -> tuple[str, ...]:
+    required = required_verification_modalities(task_contract)
+    if not required:
+        return ()
+    observed: set[str] = set()
+    for event in events:
+        observed.update(
+            verification_evidence_modalities(
+                event,
+                mode=mode,
+                task_contract=task_contract,
+            )
+        )
+    return tuple(item for item in required if item not in observed)
+
+
+def _is_structured_external_state_verification(
+    event: dict[str, Any],
+    *,
+    task_contract: dict[str, Any] | None,
+) -> bool:
+    if "external_state" not in contract_deliverable_kinds(task_contract):
+        return False
+    if VERIFICATION not in event_declared_roles(event):
+        return False
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    if not output:
+        return False
+    for key in ("structured_content", "structuredContent", "data", "state", "scene", "objects"):
+        if _value_contains_state_fact(output.get(key)):
+            return True
+    content = output.get("content")
+    if _value_contains_state_fact(content):
+        return True
+    mcp_content = output.get("mcp_content")
+    if _value_contains_state_fact(mcp_content):
+        return True
+    return _mapping_has_state_fact(output)
+
+
+def _event_has_visual_artifact(event: dict[str, Any]) -> bool:
+    tool_id = canonical_tool_id(str(event.get("tool") or ""))
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    artifact_values = [
+        event.get("artifact_kind"),
+        output.get("artifact_kind"),
+        output.get("format"),
+    ]
+    for values in (event.get("artifacts"), output.get("artifacts")):
+        if isinstance(values, list):
+            artifact_values.extend(values)
+    normalized = {str(item or "").strip().lower() for item in artifact_values if str(item or "").strip()}
+    if normalized & VISUAL_ARTIFACT_KINDS:
+        return True
+    if any(_path_looks_visual_artifact(path) for path in event_path_hints(event)):
+        return True
+    visual_tool_terms = (
+        "screenshot",
+        "capture_page",
+        "capture_screenshot",
+        "viewport_screenshot",
+        "render_image",
+        "render_view",
+    )
+    return any(term in tool_id for term in visual_tool_terms)
+
+
+def _path_looks_visual_artifact(path: str) -> bool:
+    lower = str(path or "").strip().lower()
+    return lower.endswith((
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".gif",
+        ".bmp",
+        ".tif",
+        ".tiff",
+        ".pdf",
+    ))
+
+
+def _event_has_content_artifact(event: dict[str, Any]) -> bool:
+    tool_id = canonical_tool_id(str(event.get("tool") or ""))
+    if tool_id in {"filesystem.read_file", "filesystem.read_text_preview"}:
+        return True
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    artifact_values = [output.get("artifact_kind")]
+    if isinstance(output.get("artifacts"), list):
+        artifact_values.extend(output.get("artifacts") or [])
+    normalized = {str(item or "").strip().lower() for item in artifact_values if str(item or "").strip()}
+    return bool(normalized & {"text", "document_text", "html", "markdown"})
+
+
+_STATE_FACT_META_KEYS: frozenset[str] = frozenset({
+    "call_timeout",
+    "content",
+    "artifact_kind",
+    "artifacts",
+    "effects",
+    "error",
+    "format",
+    "message",
+    "mcp_content",
+    "path",
+    "paths",
+    "roles",
+    "status",
+    "structured_content",
+    "structuredContent",
+    "verification_strength",
+})
+
+
+def _mapping_has_state_fact(value: dict[str, Any]) -> bool:
+    for key, item in value.items():
+        normalized_key = str(key or "").strip()
+        if not normalized_key or normalized_key in _STATE_FACT_META_KEYS:
+            continue
+        if _value_contains_state_fact(item):
+            return True
+        if item not in (None, "", [], {}):
+            return True
+    return False
+
+
+def _value_contains_state_fact(value: Any) -> bool:
+    if isinstance(value, dict):
+        return _mapping_has_state_fact(value)
+    if isinstance(value, list):
+        return any(_value_contains_state_fact(item) for item in value)
+    if not isinstance(value, str):
+        return value not in (None, "")
+    text = value.strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    if lowered in {"ok", "done", "success", "successful", "completed"}:
+        return False
+    if text.startswith("{") or text.startswith("["):
+        try:
+            return _value_contains_state_fact(json.loads(text))
+        except json.JSONDecodeError:
+            return False
+    state_terms = (
+        "object",
+        "scene",
+        "mesh",
+        "material",
+        "camera",
+        "light",
+        "count",
+        "state",
+        "status",
+        "location",
+        "rotation",
+        "dimension",
+        "collection",
+    )
+    return (
+        any(term in lowered for term in state_terms)
+        and (
+            any(separator in text for separator in (":", "=", "\n"))
+            or any(char.isdigit() for char in text)
+        )
+    )
 
 
 def verification_strength_meets(actual: str, required: str) -> bool:
@@ -454,6 +704,8 @@ def _is_verification_event(
         VERIFICATION in event_declared_roles(event)
         and _status_is_success_or_partial(event)
     ):
+        return True
+    if _status_is_success_or_partial(event) and _event_has_visual_artifact(event):
         return True
     return is_meaningful_verification_event(event, mode, written_paths=written_paths)
 

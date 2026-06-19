@@ -17,9 +17,12 @@ from runtime.agent_strategy.tool_event_roles import (
     event_declared_roles,
     failed_tool_event_role,
     failed_deliverable_events,
+    missing_required_verification_modalities,
+    required_verification_modalities,
     required_verification_strength,
     sufficient_deliverable_verification_events,
     successful_deliverable_events,
+    verification_evidence_modalities,
     verification_evidence_strength,
     verification_strength_meets,
 )
@@ -116,6 +119,12 @@ def build_run_result(
         event for event in write_successes
         if _effective_event_status(str(event.get("tool") or ""), event) == "partial"
     ]
+    unrecovered_write_failures = _unrecovered_failed_deliverable_events(
+        tool_events=tool_events,
+        failed_deliverables=write_failures,
+        successful_deliverables=write_successes,
+        sufficient_verifications=sufficient_verification_successes,
+    )
     path_deviations = deliverable_path_deviations(write_successes, task_contract)
     target_written_paths = _unique(
         path
@@ -136,20 +145,46 @@ def build_run_result(
     verified = [_verification_record(workspace_path, event) for event in verification_successes]
     verified = [item for item in verified if item]
     required_strength = required_verification_strength(task_contract)
+    required_modalities = required_verification_modalities(task_contract)
     verification_evidence = [
         {
             **(_verification_record(workspace_path, event) or {
                 "tool": str(event.get("tool") or ""),
                 "path": "",
             }),
-            "strength": verification_evidence_strength(event, mode=mode),
+            "strength": verification_evidence_strength(
+                event,
+                mode=mode,
+                task_contract=task_contract,
+            ),
             "sufficient": verification_strength_meets(
-                verification_evidence_strength(event, mode=mode),
+                verification_evidence_strength(
+                    event,
+                    mode=mode,
+                    task_contract=task_contract,
+                ),
                 required_strength,
             ),
+            "modalities": list(verification_evidence_modalities(
+                event,
+                mode=mode,
+                task_contract=task_contract,
+            )),
         }
         for event in verification_successes
     ]
+    observed_verification_modalities = _unique(
+        modality
+        for item in verification_evidence
+        for modality in item.get("modalities", [])
+    )
+    missing_verification_modalities = list(
+        missing_required_verification_modalities(
+            sufficient_verification_successes or verification_successes,
+            task_contract,
+            mode=mode,
+        )
+    )
 
     risks: list[str] = []
     failure_reasons = {
@@ -191,7 +226,11 @@ def build_run_result(
     )
     if missing_required_verification:
         risks.append("required_verification_not_satisfied")
-        if verification_successes:
+        if "visual" in missing_verification_modalities:
+            risks.append("visual_verification_not_observed")
+        if missing_verification_modalities:
+            risks.append("verification_modality_missing")
+        elif verification_successes:
             risks.append("verification_evidence_weak")
     code_artifact_written = _has_code_artifact(target_written_paths or observed_written_paths)
     if requires_code_write and code_artifact_written and write_successes and not test_successes:
@@ -200,14 +239,12 @@ def build_run_result(
         risks.append("invalid_verification_method")
         if write_successes:
             risks.append("runtime_verification_not_observed")
-    if write_successes and write_failures:
+    if write_successes and unrecovered_write_failures:
         risks.append("partial_write_failure")
     if write_partials:
         risks.append("partial_write_resumable")
     if path_deviations:
         risks.append("deliverable_path_hint_changed")
-    if contract_failed:
-        risks.append("execution_contract_failed")
     if max_rounds_exceeded:
         risks.append("max_rounds_exceeded")
     if convergence_stopped:
@@ -259,6 +296,17 @@ def build_run_result(
     if min_output_failure:
         failures.append(min_output_failure)
         risks.append(str(min_output_check.get("reason") or "document_output_too_short"))
+    unresolved_contract_failed = bool(
+        contract_failed
+        and (
+            missing_target_deliverable
+            or missing_required_verification
+            or bool(coverage_failure)
+            or bool(min_output_failure)
+        )
+    )
+    if unresolved_contract_failed:
+        risks.append("execution_contract_failed")
 
     external_state_change_count = sum(
         1
@@ -327,7 +375,7 @@ def build_run_result(
         has_write_success=bool(write_successes),
         has_failure=bool(blocking_failures),
         has_invalid_verification_failure=bool(invalid_verification_failures),
-        has_partial_write=bool(write_successes and write_failures),
+        has_partial_write=bool(write_successes and unrecovered_write_failures),
         has_partial_resumable=bool(write_partials),
         has_document_coverage_failure=bool(coverage_failure),
         has_document_min_output_failure=bool(min_output_failure),
@@ -343,7 +391,7 @@ def build_run_result(
         has_model_error=bool(model_error_text),
         has_invalid_final_answer=bool(final_answer_error_text),
         has_observed_state_change=observed_state_change,
-        contract_failed=contract_failed,
+        contract_failed=unresolved_contract_failed,
         max_rounds_exceeded=max_rounds_exceeded,
         convergence_stopped=convergence_stopped,
     )
@@ -359,6 +407,7 @@ def build_run_result(
             "write_successes": len(write_successes),
             "write_partials": len(write_partials),
             "write_failures": len(write_failures),
+            "unrecovered_write_failures": len(unrecovered_write_failures),
             "verification_successes": len(verification_successes),
             "test_successes": len(test_successes),
             "failures": len(failures),
@@ -374,6 +423,9 @@ def build_run_result(
         "verified": verified[:12],
         "verification_evidence": verification_evidence[:12],
         "required_verification_strength": required_strength,
+        "required_verification_modalities": list(required_modalities),
+        "observed_verification_modalities": observed_verification_modalities,
+        "missing_verification_modalities": missing_verification_modalities,
         "deliverable_path_deviations": path_deviations[:12],
         "failures": failures[:12],
         "failure_details": failure_details[:12],
@@ -381,6 +433,7 @@ def build_run_result(
         "flags": {
             "requires_code_write": bool(requires_code_write),
             "contract_failed": bool(contract_failed),
+            "unresolved_contract_failed": bool(unresolved_contract_failed),
             "max_rounds_exceeded": bool(max_rounds_exceeded),
             "convergence_stopped": bool(convergence_stopped),
             "expected_document_coverage": bool(expected_document_coverage),
@@ -452,6 +505,37 @@ def _result_status(
     if has_write_success or has_tool_events:
         return "success"
     return "no_tool_activity"
+
+
+def _unrecovered_failed_deliverable_events(
+    *,
+    tool_events: list[dict[str, Any]],
+    failed_deliverables: list[dict[str, Any]],
+    successful_deliverables: list[dict[str, Any]],
+    sufficient_verifications: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return failed deliverable attempts that were not superseded later.
+
+    A failed write or external-state attempt is an audit fact.  It should only
+    lower the final result when no later deliverable or sufficient verification
+    closed the same task loop.
+    """
+    if not failed_deliverables:
+        return []
+    failed_ids = {id(event) for event in failed_deliverables}
+    deliverable_ids = {id(event) for event in successful_deliverables}
+    verification_ids = {id(event) for event in sufficient_verifications}
+    unrecovered: list[dict[str, Any]] = []
+    for index, event in enumerate(tool_events):
+        if id(event) not in failed_ids:
+            continue
+        recovered = any(
+            id(candidate) in deliverable_ids or id(candidate) in verification_ids
+            for candidate in tool_events[index + 1:]
+        )
+        if not recovered:
+            unrecovered.append(event)
+    return unrecovered
 
 
 def _failure_details(

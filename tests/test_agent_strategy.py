@@ -511,6 +511,9 @@ class TestIsVerificationTool:
     def test_read_file_in_coding_mode(self):
         assert not is_verification_tool("filesystem.read_file", "coding")
 
+    def test_web_capture_page(self):
+        assert is_verification_tool("web.capture_page", None)
+
 
 class TestExplorerToolIds:
     def test_base_tools(self):
@@ -532,6 +535,7 @@ class TestVerificationToolIds:
     def test_base(self):
         ids = verification_tool_ids(None)
         assert "shell.run_command" in ids
+        assert "web.capture_page" in ids
 
     def test_paper_adds_read(self):
         ids = verification_tool_ids("paper")

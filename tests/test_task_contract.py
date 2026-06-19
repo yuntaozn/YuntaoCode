@@ -141,6 +141,32 @@ def test_model_contract_can_require_external_state_without_local_file_write() ->
     assert "target_deliverable_success" in contract["success_conditions"]
 
 
+def test_model_contract_can_require_visual_verification() -> None:
+    contract = merge_model_task_contract(
+        {
+            "goal": "Build a good-looking two-floor house in Blender",
+            "intent": "write_required",
+            "requires_write": False,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "required_verification_modalities": ["visual", "structural", "unknown"],
+            "deliverables": [
+                {
+                    "kind": "external_state",
+                    "description": "Rendered Blender scene with a two-floor house",
+                }
+            ],
+            "first_action": "use_tool",
+        },
+        _fallback("write_required"),
+    )
+
+    assert contract["requires_write"] is False
+    assert contract["requires_state_change"] is True
+    assert contract["required_verification_modalities"] == ["visual", "structural"]
+    assert "target_visual_verification" in contract["success_conditions"]
+
+
 def test_task_contract_prompt_includes_runtime_capabilities_when_provided() -> None:
     prompt = task_contract_prompt(
         "D:\\code\\demo",
@@ -151,6 +177,7 @@ def test_task_contract_prompt_includes_runtime_capabilities_when_provided() -> N
     assert "Runtime capability context" in prompt
     assert "web.extract_text" in prompt
     assert "classify it as read_only_analysis" in prompt
+    assert "required_verification_modalities" in prompt
 
 
 def test_task_contract_context_keeps_recent_task_and_current_follow_up() -> None:
@@ -213,9 +240,31 @@ def test_execute_followup_inherits_external_state_contract_without_file_write() 
     assert contract["requires_write"] is False
     assert contract["requires_state_change"] is True
     assert contract["requires_plan"] is False
-    assert contract["first_action"] == "use_tool"
+    assert contract["first_action"] != "verify"
     assert contract["deliverables"][0]["kind"] == "external_state"
     assert "target_deliverable_success" in contract["success_conditions"]
+
+
+def test_execute_followup_inherits_visual_verification_requirement() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "Create a good-looking house in the current Blender scene",
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "deliverables": [
+            {"kind": "external_state", "description": "Current Blender scene"}
+        ],
+        "first_action": "use_tool",
+    }
+
+    contract = inherit_task_contract_for_followup(previous, _fallback("answer_only"))
+
+    assert contract["requires_write"] is False
+    assert contract["requires_state_change"] is True
+    assert contract["required_verification_modalities"] == ["visual"]
+    assert "target_visual_verification" in contract["success_conditions"]
 
 
 def test_revision_followup_preserves_previous_external_state_target() -> None:
@@ -255,6 +304,104 @@ def test_revision_followup_preserves_previous_external_state_target() -> None:
     assert contract["requires_state_change"] is True
     assert contract["deliverables"][0]["kind"] == "external_state"
     assert contract["revision_request"] == "not good enough, try again"
+
+
+def test_observation_followup_over_previous_state_task_adds_soft_advisory() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "Create a two-story house in the current Blender scene",
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "capability_ids": ["mcp.blender"],
+        "deliverables": [
+            {"kind": "external_state", "description": "Current Blender scene"}
+        ],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "continue",
+            "intent": "write_required",
+            "goal": "Create a two-story house in the current Blender scene",
+            "requires_write": False,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "required_verification_modalities": ["visual"],
+            "capability_ids": ["mcp.blender"],
+            "deliverables": [
+                {"kind": "external_state", "description": "Current Blender scene"}
+            ],
+        },
+        _fallback("answer_only"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content=(
+            "\u6a21\u578b\u662f\u5efa\u4e86\uff0c\u4f46\u5e76\u4e0d\u50cf\uff0c"
+            "\u90fd\u662f\u6563\u5f00\u7684\uff0c\u4f60\u53ef\u4ee5\u770b\u5230"
+            "\u6548\u679c\u5427"
+        ),
+    )
+
+    assert contract["intent"] == "write_required"
+    assert contract["requires_write"] is False
+    assert contract["requires_state_change"] is True
+    assert contract["requires_verification"] is True
+    assert contract["required_verification_modalities"] == ["visual"]
+    assert contract["first_action"] != "verify"
+    assert contract["capability_ids"] == ["mcp.blender"]
+    assert contract["deliverables"][0]["kind"] == "external_state"
+    assert contract["continuity_advisories"][0]["code"] == "possible_observation_followup"
+    assert contract["continuity_advisories"][0]["suggested_first_action"] == "verify"
+    assert "observation_followup_read_only" not in contract.get("system_overrides", [])
+
+
+def test_retry_followup_still_preserves_previous_state_change_target() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "Create a two-story house in the current Blender scene",
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "capability_ids": ["mcp.blender"],
+        "deliverables": [
+            {"kind": "external_state", "description": "Current Blender scene"}
+        ],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "revise",
+            "intent": "write_required",
+            "goal": "Create a two-story house in the current Blender scene",
+            "requires_write": False,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "required_verification_modalities": ["visual"],
+            "capability_ids": ["mcp.blender"],
+            "deliverables": [
+                {"kind": "external_state", "description": "Current Blender scene"}
+            ],
+        },
+        _fallback("answer_only"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content=(
+            "\u6a21\u578b\u751f\u6210\u6548\u679c\u4e0d\u7406\u60f3\uff0c"
+            "\u5e2e\u6211\u518d\u91cd\u65b0\u505a\u4e00\u4e0b"
+        ),
+    )
+
+    assert contract["intent"] == "write_required"
+    assert contract["requires_state_change"] is True
+    assert contract["deliverables"][0]["kind"] == "external_state"
+    assert "observation_followup_read_only" not in contract.get("system_overrides", [])
 
 
 def test_local_file_delete_contract_is_not_external_state() -> None:

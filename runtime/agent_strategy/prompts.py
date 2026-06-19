@@ -59,9 +59,9 @@ def stage_prompt(
             f"当前项目目录：{workspace_path}\n"
             "所有工具仍然可用；请选择完成修改所需的最合适工具。\n"
             "规则：\n"
-            "1. 【强制】每次编辑文件前，必须先调用 filesystem.read_file 读取目标文件的相关片段，确认实际内容和缩进。绝对不要凭记忆构造 old_text。\n"
+            "1. 编辑前应基于本轮已读取的真实文件内容确认目标片段、缩进和 old_text；如果尚未读取目标片段，优先调用 filesystem.read_file。\n"
             "2. 构造 old_text 时，直接复制从 read_file 结果中看到的原文，不要调整空格或缩进。\n"
-            "3. 如果写入失败（如 old_text not found），必须重新读取文件对应位置，基于真实内容重试，不要凭记忆猜测。\n"
+            "3. 如果写入失败（如 old_text not found），应重新读取文件对应位置，基于真实内容换一种可靠写入策略，不要凭记忆猜测。\n"
             "4. 不要伪造修改结果，不要声称已完成但未实际调用写入工具。"
         )
     if stage == "writer":
@@ -149,8 +149,8 @@ def progress_observer_prompt(
     action_rule = ""
     if code_change_intent and not has_successful_write(tool_events):
         action_rule = (
-            "需要真实修改文件但尚未写入。请直接调用 code.edit_file / code.replace_text，"
-            "若需要完整生成较大文本/代码文件，请使用 filesystem.create_text_draft / append_text_chunk / finalize_text_file，"
+            "需要真实修改文件但尚未写入。可优先调用 code.edit_file / code.replace_text，"
+            "若需要完整生成较大文本/代码文件，可使用 filesystem.create_text_draft / append_text_chunk / finalize_text_file，"
             "或只读取一个最小必要文件后写入。"
         )
     return (
@@ -175,13 +175,13 @@ def repeated_failure_strategy_prompt(
         else "本轮尚未观察到成功写入；如任务要求产物，请先获得真实目标路径和内容后再写入。"
     )
     return (
-        "策略切换要求：完全相同的工具失败已经连续发生两次，原策略没有产生新进展。\n"
+        "策略切换建议：完全相同的工具失败已经连续发生两次，原策略没有产生新进展。\n"
         f"当前项目：{workspace_path}\n"
         f"当前阶段：{current_stage or '无'}\n"
         f"重复失败工具：{tool_id}\n"
         f"最近失败原因：{error}\n"
         f"{write_status}\n"
-        "请重新判断任务目标与已有证据，下一步必须采用实质不同的策略，不要再次发送相同工具和相同参数。"
+        "请重新判断任务目标与已有证据，下一步应采用实质不同的策略，避免再次发送相同工具和相同参数。"
         "可选方向包括：补全真实参数、读取最小必要上下文、改用更合适的工具、转入验证，"
         "或在确实无法继续时如实说明阻碍并结束。由你根据当前任务选择最合适的一项。"
     )
@@ -190,8 +190,8 @@ def repeated_failure_strategy_prompt(
 def recon_budget_prompt(budget: int, workspace_path: str) -> str:
     return (
         f"侦察预算已用完（{budget} 次读取/搜索）。项目={workspace_path}。"
-        "下一轮必须推进：读取最小必要片段后调用 code.edit_file / code.replace_text；"
-        "若是较大完整文件生成，改用 filesystem.create_text_draft / append_text_chunk / finalize_text_file，"
+        "当前证据提示应停止泛泛侦察并推进任务：可读取最小必要片段后调用 code.edit_file / code.replace_text；"
+        "若是较大完整文件生成，可改用 filesystem.create_text_draft / append_text_chunk / finalize_text_file，"
         "或明确说明缺少什么信息导致无法修改。不要用文字声称已修改。"
     )
 
@@ -199,8 +199,8 @@ def recon_budget_prompt(budget: int, workspace_path: str) -> str:
 def write_only_stage_prompt(workspace_path: str) -> str:
     return (
         f"执行压力阶段：项目={workspace_path}。"
-        "每次读取必须服务于写入（说明要确认哪个文件/位置/old_text）。"
-        "上下文足够时立即调用写入工具；不够时只读取最小必要片段。"
+        "读取应服务于写入目标（说明要确认哪个文件/位置/old_text）。"
+        "上下文足够时优先调用写入工具；不够时只读取最小必要片段。"
     )
 
 
@@ -250,7 +250,7 @@ def write_repair_prompt(
     missing_path_rule = ""
     if "path is required" in error.lower():
         missing_path_rule = (
-            "\n本次失败是因为写入工具缺少 path 参数。下一轮必须先确定要写入的文件路径，"
+            "\n本次失败是因为写入工具缺少 path 参数。下一轮应先确定要写入的文件路径，"
             "然后调用 filesystem.write_file 时同时提供 path 和 content。"
             "如果内容较长，请改用 filesystem.create_text_draft / append_text_chunk / finalize_text_file。"
             "如果是修改已有文件，优先读取目标文件后用 code.edit_file 或 code.replace_text；"
@@ -259,9 +259,9 @@ def write_repair_prompt(
     full_rewrite_rule = ""
     if force_full_file_rewrite:
         full_rewrite_rule = (
-            "\n系统已检测到精确编辑连续失败。下一轮不要再调用 code.edit_file。"
+            "\n系统已检测到精确编辑连续失败。建议优先暂避 code.edit_file，避免重复同一路径。"
             "请先用 filesystem.read_file 读取目标文件当前内容；小文件可调用 filesystem.write_file 写回完整内容，"
-            "较大文件请改用 filesystem.create_text_draft / append_text_chunk / finalize_text_file。"
+            "较大文件可改用 filesystem.create_text_draft / append_text_chunk / finalize_text_file。"
             "写回内容必须基于刚读取到的真实文件，只修改用户要求的部分。"
         )
     return (
@@ -273,7 +273,7 @@ def write_repair_prompt(
         "下一步请只做必要的修复：\n"
         "1. 如果是 old_text 未匹配或不唯一，先用 filesystem.read_file 读取目标文件相关片段；\n"
         "2. 基于实际文件内容重新调用 code.edit_file 或 code.replace_text；\n"
-        "3. 如果目标文件结构变化太大，小文件可使用 filesystem.write_file；较大文件必须使用 filesystem.create_text_draft / append_text_chunk / finalize_text_file；\n"
+        "3. 如果目标文件结构变化太大，小文件可使用 filesystem.write_file；较大文件建议使用 filesystem.create_text_draft / append_text_chunk / finalize_text_file；\n"
         "4. 写入成功后再进入验证，不要继续泛泛搜索。"
         f"{missing_path_rule}"
         f"{full_rewrite_rule}"
@@ -298,7 +298,7 @@ def execute_plan_prompt(plan: dict[str, Any], mode: str | None) -> str:
     code_rule = ""
     if mode == "coding":
         code_rule = (
-            "如果任务涉及代码变更，必须成功生成或更新任务契约中的目标产物后，才能声称已经修改完成；"
+            "如果任务涉及代码变更，只有观察到成功生成或更新任务契约中的目标产物后，才能声称已经修改完成；"
             "可按产物形态选择 code.edit_file、code.replace_text、filesystem.write_file 或 filesystem.finalize_text_file。"
         )
     return (
@@ -306,7 +306,7 @@ def execute_plan_prompt(plan: dict[str, Any], mode: str | None) -> str:
         "如工具结果、插话或文件结构显示原计划不合适，可以跳过、合并、拆分或追加步骤。"
         "计划只是运行审计和协作上下文，不是新的人工确认门。不要输出“确认/是否执行/Y/n”等文本询问；"
         "如果任务信息足够，请直接调用最合适的工具推进。运行时会负责权限、安全和确认策略。"
-        "需要读取本地资料或代码时必须调用本地工具；每次工具返回后继续推进下一步。"
+        "需要读取本地资料或代码时应调用本地工具；每次工具返回后继续推进下一步。"
         f"{code_rule}"
         "最终回答要说明：完成了哪些步骤、使用了哪些文件或工具、结果和未完成/不确定项。"
     )
@@ -351,21 +351,32 @@ def final_answer_prompt(workspace_path: str) -> str:
 def verifier_retry_prompt(mode: str | None, workspace_path: str) -> str:
     if mode in {"document", "paper"}:
         return (
-            "验证阶段必须执行一次真实验证工具调用，不能只用文字说明已经验证。\n"
-            f"当前项目目录：{workspace_path}\n"
-            "请优先验证刚生成/修改的文件：可使用 filesystem.scan_folder 确认文件存在，"
-            "对 .md/.txt 使用 filesystem.read_file，对 .docx 使用 document.extract_docx_outline，"
-            "对 .pdf 使用 document.extract_pdf_text_preview。验证后再进入总结。"
+            "Verification evidence advisory, not a hard tool constraint.\n"
+            f"Workspace: {workspace_path}\n"
+            "If you plan to claim the document or paper task is complete, gather "
+            "real evidence first. Prefer a read/check tool that fits the artifact: "
+            "filesystem.read_file for .md/.txt, document.extract_docx_outline for "
+            ".docx, document.extract_pdf_text_preview for .pdf, or another available "
+            "tool that returns content or artifact facts. If no suitable evidence "
+            "path is available, do not keep retrying blindly; summarize what is "
+            "done and explicitly say what could not be verified."
         )
     return (
-        "验证阶段必须执行一次真实验证工具调用，不能只用文字说明已经验证。\n"
-        f"当前项目目录：{workspace_path}\n"
-        "如果本轮目标是外部应用、MCP 服务、浏览器、数据库或其他非文件状态，请优先调用只读查询、状态读取、截图、检查或声明为 evidence/verification 的能力取得证据。"
-        "不要把再次执行状态变更当作验证。\n"
-        "代码/HTML/脚本任务优先调用 shell.run_command 运行可行的语法检查、构建、测试或 lint，例如 pytest、python -m py_compile、node --check、npm test/build 等。"
-        "不要使用 dir/ls/os.listdir/Get-Item 作为测试通过依据。"
-        "不要启动 python -m http.server、npm run dev 等长驻服务作为普通验证命令；这类命令通常会超时。"
-        "如果确实没有可运行测试，请读取刚生成/修改的文件完成内容级验证，并在最终总结中明确说明未运行测试。"
+        "Verification evidence advisory, not a hard tool constraint.\n"
+        f"Workspace: {workspace_path}\n"
+        "If you plan to claim the target is complete, gather real evidence first. "
+        "For external applications, MCP services, browsers, databases, or other "
+        "non-file state, prefer a read-only state query, inspection, screenshot, "
+        "render, capture, or any available tool that returns evidence/artifact "
+        "facts. A state-changing call by itself is not verification unless it "
+        "also returns meaningful evidence.\n"
+        "For code, HTML, or script tasks, prefer an available shell.run_command "
+        "syntax/build/test/lint check such as pytest, python -m py_compile, "
+        "node --check, or npm test/build when appropriate. Avoid treating "
+        "directory listings or long running dev servers as proof of correctness.\n"
+        "If the available tools cannot provide suitable evidence, choose another "
+        "safe strategy, ask the user, or finalize with an honest verification "
+        "limitation instead of repeating the same failing call."
     )
 
 
@@ -412,7 +423,7 @@ def runtime_intervention_prompt(
         "2. 先重新判断用户真实意图：这是补充信息、纠正方向、要求停止某动作，还是新增约束；\n"
         "3. 如果插话与旧方案冲突，放弃旧方案中冲突部分，不要继续沿旧思路执行；\n"
         "4. 如果已有工具结果仍有用，可以复用；如果不足，请只读取最小必要上下文；\n"
-        "5. 下一步必须基于插话重新选择：继续、调整计划、补读证据、写入、验证或停止说明原因。\n"
+          "5. 下一步应优先基于插话重新选择：继续、调整计划、补读证据、写入、验证或停止说明原因。\n"
         "不要把插话当作普通聊天补充，也不要忽略它继续执行旧路径。"
     )
 

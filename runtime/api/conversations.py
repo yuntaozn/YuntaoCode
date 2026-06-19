@@ -467,6 +467,8 @@ class ConversationMessagesHandler(ApiHandler):
         if not isinstance(preflight, dict):
             return ""
         advisory_messages = _cap_preflight.preflight_advisory_messages(preflight)
+        if not bool(preflight.get("enforce_stop")):
+            advisory_messages.extend(_cap_preflight.preflight_blocker_messages(preflight))
         preferred = preflight.get("preferred_tool_ids")
         allowed = preflight.get("allowed_tool_ids")
         enforce_allowed = isinstance(allowed, list) and bool(preflight.get("enforce_allowed_tools"))
@@ -895,6 +897,40 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "After exporting, compare the tool-reported content_chars/text_chars with this target. "
                 "If the output is shorter, say it is not fully complete.\n"
             )
+        modalities = [
+            str(item or "").strip().lower()
+            for item in contract.get("required_verification_modalities") or []
+            if str(item or "").strip()
+        ]
+        if "visual" in modalities:
+            prompt += (
+                "\nVisual verification required: the target depends on appearance, layout, render quality, "
+                "or what the user can see. After changing the target, use any safe available strategy that "
+                "returns a visual artifact or visual facts, such as a screenshot, render, capture, exported "
+                "image, or PDF. Do not assume one fixed tool name is required. Structural state facts alone "
+                "are useful but do not prove visual quality. If no visual evidence is available, say the "
+                "result is not visually verified instead of repeating the same failing call.\n"
+            )
+        continuity_advisories = (
+            contract.get("continuity_advisories")
+            if isinstance(contract.get("continuity_advisories"), list)
+            else []
+        )
+        if continuity_advisories:
+            prompt += "\nRuntime continuity advisories (not hard constraints):\n"
+            for advisory in continuity_advisories[:4]:
+                if not isinstance(advisory, dict):
+                    continue
+                message = str(advisory.get("message") or advisory.get("code") or "").strip()
+                if not message:
+                    continue
+                prompt += f"- {message}\n"
+                suggested = str(advisory.get("suggested_first_action") or "").strip()
+                if suggested:
+                    prompt += (
+                        f"  Suggested first action: {suggested}. You may choose a different "
+                        "safe action if the current user intent requires it.\n"
+                    )
         return prompt
 
     def _task_contract_failures(

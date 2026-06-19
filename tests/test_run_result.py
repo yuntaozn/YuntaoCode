@@ -806,6 +806,160 @@ def test_build_run_result_marks_recovered_delivery_and_weak_verification_partial
     assert "verification_evidence_weak" in result["risks"]
 
 
+def test_build_run_result_accepts_recovered_external_state_with_structured_verification() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "deliverables": [{"kind": "external_state", "description": "House model"}],
+    }
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        task_contract=contract,
+        contract_failed=True,
+        tool_events=[
+            {
+                "tool": "mcp_demo.execute",
+                "status": "failure",
+                "declared_effects": ["external_state_change"],
+                "declared_roles": ["deliverable"],
+                "error": "first attempt failed",
+            },
+            {
+                "tool": "mcp_demo.execute",
+                "status": "success",
+                "output": {
+                    "effects": ["external_state_change"],
+                    "roles": ["deliverable"],
+                },
+            },
+            {
+                "tool": "mcp_demo.screenshot",
+                "status": "failure",
+                "declared_roles": ["verification"],
+                "declared_verification_strength": "standard",
+                "error": "screenshot unsupported",
+            },
+            {
+                "tool": "mcp_demo.scene_info",
+                "status": "success",
+                "output": {
+                    "roles": ["evidence", "verification"],
+                    "verification_strength": "weak",
+                    "structured_content": {
+                        "object_count": 11,
+                        "objects": ["house", "roof"],
+                    },
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "success"
+    assert result["counts"]["deliverable_successes"] == 1
+    assert result["counts"]["verification_successes"] == 1
+    assert result["counts"]["recovered_failures"] == 2
+    assert result["counts"]["degraded_failures"] == 0
+    assert result["counts"]["unrecovered_write_failures"] == 0
+    assert result["verification_evidence"][0]["strength"] == "standard"
+    assert result["verification_evidence"][0]["sufficient"] is True
+    assert result["flags"]["contract_failed"] is True
+    assert result["flags"]["unresolved_contract_failed"] is False
+    assert "required_verification_not_satisfied" not in result["risks"]
+    assert "verification_evidence_weak" not in result["risks"]
+    assert "execution_contract_failed" not in result["risks"]
+    assert "partial_write_failure" not in result["risks"]
+    assert "recovered_tool_failure" in result["risks"]
+
+
+def test_build_run_result_requires_visual_evidence_when_contract_requires_visual_modality() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "deliverables": [{"kind": "external_state", "description": "House appearance"}],
+    }
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "mcp_demo.execute",
+                "status": "success",
+                "output": {
+                    "effects": ["external_state_change"],
+                    "roles": ["deliverable"],
+                },
+            },
+            {
+                "tool": "mcp_demo.scene_info",
+                "status": "success",
+                "output": {
+                    "roles": ["evidence", "verification"],
+                    "verification_strength": "weak",
+                    "structured_content": {"object_count": 11},
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["required_verification_modalities"] == ["visual"]
+    assert result["observed_verification_modalities"] == ["structural"]
+    assert result["missing_verification_modalities"] == ["visual"]
+    assert result["verification_evidence"][0]["modalities"] == ["structural"]
+    assert "visual_verification_not_observed" in result["risks"]
+    assert "verification_modality_missing" in result["risks"]
+    assert "verification_evidence_weak" not in result["risks"]
+
+
+def test_build_run_result_accepts_visual_evidence_for_visual_modality() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "deliverables": [{"kind": "external_state", "description": "House appearance"}],
+    }
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "mcp_demo.execute",
+                "status": "success",
+                "output": {
+                    "effects": ["external_state_change"],
+                    "roles": ["deliverable"],
+                },
+            },
+            {
+                "tool": "mcp_demo.get_viewport_screenshot",
+                "status": "success",
+                "output": {
+                    "roles": ["verification"],
+                    "verification_strength": "standard",
+                    "artifact_kind": "screenshot",
+                    "path": "D:/workspace/scene.png",
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "success"
+    assert result["observed_verification_modalities"] == ["visual"]
+    assert result["missing_verification_modalities"] == []
+    assert result["verification_evidence"][0]["modalities"] == ["visual"]
+    assert "visual_verification_not_observed" not in result["risks"]
+
+
 def test_build_run_result_marks_unverified_external_state_deliverable_partial() -> None:
     contract = {
         "requires_write": False,

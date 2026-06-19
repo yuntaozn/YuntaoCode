@@ -13,6 +13,15 @@ from .capability_router import build_capability_catalog
 
 
 CAPABILITY_SNAPSHOT_SCHEMA_VERSION = "capability_snapshot.v1"
+VISUAL_ARTIFACT_KINDS = {
+    "screenshot",
+    "image",
+    "render",
+    "rendered_image",
+    "viewport_screenshot",
+    "visual_capture",
+    "pdf",
+}
 
 
 def build_capability_snapshot(
@@ -134,6 +143,21 @@ def build_capability_snapshot(
             for tool_id, spec in sorted(spec_by_id.items())
             if bool(spec.get("available", True))
             and str(spec.get("verification_strength") or "").strip()
+        },
+        "tool_roles": {
+            tool_id: _string_list(spec.get("roles"))
+            for tool_id, spec in sorted(spec_by_id.items())
+            if _string_list(spec.get("roles"))
+        },
+        "tool_effects": {
+            tool_id: _string_list(spec.get("effects"))
+            for tool_id, spec in sorted(spec_by_id.items())
+            if _string_list(spec.get("effects"))
+        },
+        "tool_artifacts": {
+            tool_id: _string_list(spec.get("artifacts"))
+            for tool_id, spec in sorted(spec_by_id.items())
+            if _string_list(spec.get("artifacts"))
         },
         "capabilities": capabilities,
     }
@@ -308,9 +332,29 @@ def preflight_task_capabilities(
                     "message": "This task targets external application state, but no available capability reports external_state_change.",
                 })
 
-    preferred_tool_ids: list[str] | None = None
-    if target_tool_ids and (requires_external_state or target_has_external_state):
-        preferred_tool_ids = sorted(target_tool_ids)
+    if (
+        "visual" in _required_verification_modalities(contract)
+        and target_tool_ids
+        and not _healthy_visual_tool_ids(snapshot, target_tool_ids)
+    ):
+        advisories.append({
+            "code": "visual_verification_path_uncertain",
+            "message": (
+                "The task asks for visual verification, but no healthy target tool "
+                "currently advertises a visual artifact such as screenshot, image, "
+                "render, or PDF. This is advisory only: the model may use any safe "
+                "available strategy that returns a visual artifact, ask the user, "
+                "or report that visual verification is unavailable."
+            ),
+        })
+
+    preferred_tool_ids = _preferred_tool_ids(
+        contract,
+        snapshot,
+        target_tool_ids,
+        requires_external_state=requires_external_state,
+        target_has_external_state=target_has_external_state,
+    )
 
     return {
         "schema_version": "capability_preflight.v1",
@@ -323,6 +367,7 @@ def preflight_task_capabilities(
         "allowed_tool_ids": None,
         "preferred_tool_ids": preferred_tool_ids,
         "enforce_allowed_tools": False,
+        "enforce_stop": False,
     }
 
 
@@ -335,6 +380,15 @@ def tool_allowed_by_preflight(preflight: dict[str, Any] | None, tool_id: str) ->
     if not isinstance(allowed, list):
         return True
     return str(tool_id or "") in set(str(item) for item in allowed)
+
+
+def preflight_should_stop(preflight: dict[str, Any] | None) -> bool:
+    """Return whether preflight is explicitly allowed to stop a run."""
+    if not isinstance(preflight, dict):
+        return False
+    if bool(preflight.get("ok", True)):
+        return False
+    return bool(preflight.get("enforce_stop"))
 
 
 def preflight_blocker_messages(preflight: dict[str, Any] | None) -> list[str]:
@@ -378,6 +432,118 @@ def _string_set(value: Any) -> set[str]:
 def _tool_health(spec: dict[str, Any]) -> str:
     value = str(spec.get("tool_health") or "available").strip().lower()
     return value if value in {"available", "degraded", "unavailable", "unknown"} else "available"
+
+
+def _required_verification_modalities(contract: dict[str, Any]) -> set[str]:
+    values = contract.get("required_verification_modalities")
+    if not isinstance(values, list):
+        return set()
+    return {
+        str(item or "").strip().lower()
+        for item in values
+        if str(item or "").strip()
+    }
+
+
+def _preferred_tool_ids(
+    contract: dict[str, Any],
+    snapshot: dict[str, Any],
+    target_tool_ids: set[str],
+    *,
+    requires_external_state: bool,
+    target_has_external_state: bool,
+) -> list[str] | None:
+    if not target_tool_ids or not (requires_external_state or target_has_external_state):
+        return None
+    healthy_targets = sorted(
+        tool_id for tool_id in target_tool_ids
+        if _tool_snapshot_health(snapshot, tool_id) == "available"
+    )
+    if not healthy_targets:
+        return None
+
+    required_modalities = _required_verification_modalities(contract)
+    requires_verification = bool(contract.get("requires_verification"))
+    preferred: list[str] = []
+
+    if "visual" in required_modalities:
+        preferred.extend(_healthy_visual_tool_ids(snapshot, set(healthy_targets)))
+
+    deliverable_tools = [
+        tool_id for tool_id in healthy_targets
+        if "deliverable" in _tool_snapshot_roles(snapshot, tool_id)
+    ]
+    preferred.extend(deliverable_tools)
+
+    if not deliverable_tools:
+        preferred.extend(
+            tool_id for tool_id in healthy_targets
+            if "external_state_change" in _tool_snapshot_effects(snapshot, tool_id)
+        )
+
+    if requires_verification:
+        preferred.extend(
+            tool_id for tool_id in healthy_targets
+            if _tool_snapshot_roles(snapshot, tool_id) & {"verification", "evidence"}
+        )
+
+    return _dedupe(preferred)[:12] or None
+
+
+def _healthy_visual_tool_ids(snapshot: dict[str, Any], tool_ids: set[str]) -> list[str]:
+    return [
+        tool_id for tool_id in sorted(tool_ids)
+        if _tool_snapshot_health(snapshot, tool_id) == "available"
+        and _tool_supports_visual_artifact(snapshot, tool_id)
+    ]
+
+
+def _tool_supports_visual_artifact(snapshot: dict[str, Any], tool_id: str) -> bool:
+    artifacts = _tool_snapshot_artifacts(snapshot, tool_id)
+    if artifacts & VISUAL_ARTIFACT_KINDS:
+        return True
+    normalized = str(tool_id or "").strip().lower()
+    visual_terms = ("screenshot", "capture", "render", "viewport", "image", "pdf")
+    return any(term in normalized for term in visual_terms)
+
+
+def _tool_snapshot_health(snapshot: dict[str, Any], tool_id: str) -> str:
+    health = snapshot.get("tool_health") if isinstance(snapshot.get("tool_health"), dict) else {}
+    value = str(health.get(tool_id) or "available").strip().lower()
+    return value if value in {"available", "degraded", "unavailable", "unknown"} else "available"
+
+
+def _tool_snapshot_roles(snapshot: dict[str, Any], tool_id: str) -> set[str]:
+    return _tool_snapshot_string_set(snapshot, "tool_roles", tool_id)
+
+
+def _tool_snapshot_effects(snapshot: dict[str, Any], tool_id: str) -> set[str]:
+    return _tool_snapshot_string_set(snapshot, "tool_effects", tool_id)
+
+
+def _tool_snapshot_artifacts(snapshot: dict[str, Any], tool_id: str) -> set[str]:
+    return _tool_snapshot_string_set(snapshot, "tool_artifacts", tool_id)
+
+
+def _tool_snapshot_string_set(snapshot: dict[str, Any], key: str, tool_id: str) -> set[str]:
+    values = snapshot.get(key) if isinstance(snapshot.get(key), dict) else {}
+    return {
+        str(item or "").strip().lower()
+        for item in values.get(tool_id, [])
+        if str(item or "").strip()
+    }
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
 
 
 def _normalize_capability_issues(value: list[dict[str, Any]] | None) -> list[dict[str, Any]]:

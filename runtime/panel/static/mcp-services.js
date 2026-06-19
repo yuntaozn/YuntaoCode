@@ -195,6 +195,8 @@ function renderServiceCard(service) {
     const degradedBindings = bindings.filter((binding) => binding.health && binding.health !== "available");
     const toolHealth = status.tool_health || {};
     const toolHealthState = toolHealth.state || (status.protocol_connected ? "unknown" : "unavailable");
+    const probeCandidateCount = Number(status.probe_candidate_count || 0);
+    const canProbe = Boolean(status.protocol_connected && probeCandidateCount > 0);
     const prerequisites = status.prerequisites || [];
     const prerequisitesReady = prerequisites.every((item) => item.ready);
     const serverName = status.server_info?.name || "";
@@ -228,6 +230,7 @@ function renderServiceCard(service) {
             <span class="service-chip">${escapeHtml(t("mcp_js.linked_tools", {count: service.linked_capability_count || 0}))}</span>
             ${status.protocol_version ? `<span class="service-chip">MCP ${escapeHtml(status.protocol_version)}</span>` : ""}
             ${status.protocol_connected ? `<span class="service-chip tool-health-${escapeHtml(toolHealthState)}"><span class="state-dot"></span>${escapeHtml(t(`mcp_tool_health.${toolHealthState}`))}</span>` : ""}
+            ${status.last_probe_at ? `<span class="service-chip">${escapeHtml(t("mcp_js.probed"))}</span>` : ""}
             ${serverName ? `<span class="service-chip">${escapeHtml(serverName)}</span>` : ""}
         </div>
         <div class="service-message">${escapeHtml(status.message || "")}</div>
@@ -250,6 +253,7 @@ function renderServiceCard(service) {
         ${logs ? `<pre class="service-logs">${escapeHtml(logs)}</pre>` : ""}
         <div class="service-actions">
             <button class="secondary-button" data-service="${escapeHtml(service.id)}" data-action="check">${t("mcp_js.check")}</button>
+            <button class="secondary-button" data-service="${escapeHtml(service.id)}" data-action="probe" ${canProbe ? "" : "disabled"}>${t("mcp_js.probe")}</button>
             <button class="secondary-button" data-toggle-enabled="${escapeHtml(service.id)}" data-enabled="${service.enabled ? "true" : "false"}">${service.enabled ? t("mcp_js.disable_connection") : t("mcp_js.enable_connection")}</button>
             ${managesProcess ? `<button class="primary-button" data-service="${escapeHtml(service.id)}" data-action="start" ${canStart ? "" : "disabled"}>${t("mcp_js.start")}</button>` : ""}
             ${managesProcess ? `<button class="secondary-button" data-service="${escapeHtml(service.id)}" data-action="stop" ${canStop ? "" : "disabled"}>${t("mcp_js.stop")}</button>` : ""}

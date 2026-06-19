@@ -5,8 +5,10 @@ from runtime.agent_strategy.tool_event_roles import (
     classify_tool_event_role,
     deliverable_verification_events,
     failed_tool_event_role,
+    missing_required_verification_modalities,
     sufficient_deliverable_verification_events,
     successful_deliverable_events,
+    verification_evidence_modalities,
     verification_evidence_strength,
 )
 
@@ -250,6 +252,192 @@ def test_weak_external_state_inspection_is_not_sufficient_verification() -> None
         task_contract=contract,
         workspace_path="D:/workspace",
     ) == []
+
+
+def test_structured_external_state_inspection_upgrades_weak_verification() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "deliverables": [{"kind": "external_state", "description": "Scene"}],
+    }
+    events = [
+        {
+            "tool": "mcp_demo.execute",
+            "status": "success",
+            "output": {
+                "effects": ["external_state_change"],
+                "roles": ["deliverable"],
+            },
+        },
+        {
+            "tool": "mcp_demo.scene_info",
+            "status": "success",
+            "output": {
+                "roles": ["evidence", "verification"],
+                "verification_strength": "weak",
+                "structured_content": {
+                    "object_count": 11,
+                    "objects": ["house", "roof"],
+                },
+            },
+        },
+    ]
+
+    assert verification_evidence_strength(events[-1]) == "weak"
+    assert verification_evidence_strength(
+        events[-1],
+        task_contract=contract,
+    ) == "standard"
+    assert sufficient_deliverable_verification_events(
+        events,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) == [events[-1]]
+
+
+def test_text_external_state_summary_upgrades_weak_verification() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "deliverables": [{"kind": "external_state", "description": "Scene"}],
+    }
+    event = {
+        "tool": "mcp_demo.scene_info",
+        "status": "success",
+        "output": {
+            "roles": ["evidence", "verification"],
+            "verification_strength": "weak",
+            "content": "Scene has 11 objects and 4 materials",
+        },
+    }
+
+    assert verification_evidence_strength(event) == "weak"
+    assert verification_evidence_strength(event, task_contract=contract) == "standard"
+
+
+def test_visual_requirement_needs_visual_verification_modality() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "deliverables": [{"kind": "external_state", "description": "Scene appearance"}],
+    }
+    events = [
+        {
+            "tool": "mcp_demo.execute",
+            "status": "success",
+            "output": {
+                "effects": ["external_state_change"],
+                "roles": ["deliverable"],
+            },
+        },
+        {
+            "tool": "mcp_demo.scene_info",
+            "status": "success",
+            "output": {
+                "roles": ["evidence", "verification"],
+                "verification_strength": "weak",
+                "structured_content": {"object_count": 11},
+            },
+        },
+    ]
+
+    assert verification_evidence_modalities(
+        events[-1],
+        task_contract=contract,
+    ) == ("structural",)
+    assert sufficient_deliverable_verification_events(
+        events,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) == []
+    assert missing_required_verification_modalities(
+        [events[-1]],
+        contract,
+    ) == ("visual",)
+
+
+def test_visual_screenshot_satisfies_visual_verification_modality() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "deliverables": [{"kind": "external_state", "description": "Scene appearance"}],
+    }
+    events = [
+        {
+            "tool": "mcp_demo.execute",
+            "status": "success",
+            "output": {
+                "effects": ["external_state_change"],
+                "roles": ["deliverable"],
+            },
+        },
+        {
+            "tool": "mcp_demo.get_viewport_screenshot",
+            "status": "success",
+            "output": {
+                "roles": ["verification"],
+                "verification_strength": "standard",
+                "artifact_kind": "screenshot",
+                "path": "D:/workspace/scene.png",
+            },
+        },
+    ]
+
+    assert verification_evidence_modalities(
+        events[-1],
+        task_contract=contract,
+    ) == ("visual",)
+    assert sufficient_deliverable_verification_events(
+        events,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) == [events[-1]]
+    assert missing_required_verification_modalities(
+        [events[-1]],
+        contract,
+    ) == ()
+
+
+def test_visual_artifact_from_state_tool_satisfies_visual_verification_modality() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "deliverables": [{"kind": "external_state", "description": "Scene appearance"}],
+    }
+    events = [
+        {
+            "tool": "mcp_demo.execute",
+            "status": "success",
+            "output": {
+                "effects": ["external_state_change"],
+                "roles": ["deliverable"],
+                "path": "D:/workspace/scene_render.png",
+                "artifact_kind": "image",
+            },
+        },
+    ]
+
+    assert verification_evidence_modalities(
+        events[-1],
+        task_contract=contract,
+    ) == ("visual",)
+    assert sufficient_deliverable_verification_events(
+        events,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) == [events[-1]]
+    assert missing_required_verification_modalities(
+        [events[-1]],
+        contract,
+    ) == ()
 
 
 def test_failed_tool_uses_declared_task_role_without_claiming_successful_effect() -> None:

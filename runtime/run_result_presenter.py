@@ -38,6 +38,8 @@ RISK_MESSAGES_ZH: dict[str, str] = {
     "degraded_verification_failure": "验证工具失败，但可能不影响已生成产物本身。",
     "required_verification_not_satisfied": "没有满足任务要求的验证强度。",
     "verification_evidence_weak": "验证证据偏弱，不能充分证明任务已完成。",
+    "visual_verification_not_observed": "任务需要视觉效果验证，但没有观察到截图、渲染图或页面捕获等视觉证据。",
+    "verification_modality_missing": "已有验证证据，但验证形态不满足任务要求。",
     "document_output_coverage_low": "文档输出覆盖率过低：目标文件已生成，但内容明显少于源文档。",
     "document_output_too_short": "文档已导出，但实际内容字数少于用户要求。",
     "document_output_length_unknown": "无法确认文档输出长度，不能仅凭模型总结判断已完成。",

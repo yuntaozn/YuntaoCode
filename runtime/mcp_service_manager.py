@@ -17,17 +17,21 @@ import httpx
 from .mcp_protocol import McpStdioSession, McpToolDefinition, normalize_mcp_tool_result
 from .tool_registry import ToolRegistry, ToolSpec
 
-MCP_SERVICE_SCHEMA_VERSION = "mcp_service.v7"
+MCP_SERVICE_SCHEMA_VERSION = "mcp_service.v8"
 SUPPORTED_TRANSPORTS = {"stdio", "streamable_http", "legacy_sse"}
 TRANSPORT_ALIASES = {
     "http": "streamable_http",
     "sse": "legacy_sse",
     "streamable-http": "streamable_http",
 }
-SUPPORTED_ACTIONS = {"check", "start", "stop", "restart"}
+SUPPORTED_ACTIONS = {"check", "probe", "start", "stop", "restart"}
 SERVICE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 MAX_LOG_LINES = 120
 MAX_LOG_MESSAGE_CHARS = 1600
+MAX_TOOL_DIAGNOSTICS = 120
+MAX_TOOL_DIAGNOSTIC_ERROR_CHARS = 500
+MAX_PROBE_TOOLS = 8
+MAX_PROBE_MESSAGE_CHARS = 220
 PERMISSION_VALUES = {
     "filesystem": {"none", "workspace", "full_local"},
     "network": {"false", "confirm_each", "allow"},
@@ -99,6 +103,7 @@ DEFAULT_MCP_SERVICES: tuple[dict[str, Any], ...] = ({
         "get_viewport_screenshot": {
             "risk": "read_only",
             "roles": ["verification"],
+            "artifacts": ["screenshot"],
             "verification_strength": "standard",
             "call_timeout": 60.0,
         },
@@ -167,6 +172,34 @@ def _normalize_timeout_seconds(value: Any, default: float) -> float:
     if timeout <= 0:
         return default
     return min(timeout, 3600.0)
+
+
+def _normalize_tool_diagnostics(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    diagnostics: dict[str, dict[str, Any]] = {}
+    for remote_name, item in value.items():
+        name = str(remote_name or "").strip()
+        if not name or not isinstance(item, dict):
+            continue
+        health = str(item.get("health") or "").strip().lower()
+        if health not in {"degraded", "unknown"}:
+            continue
+        last_error = str(item.get("last_error") or "").strip()
+        updated_at = str(item.get("updated_at") or "").strip()
+        try:
+            failure_count = int(item.get("failure_count") or 1)
+        except (TypeError, ValueError):
+            failure_count = 1
+        diagnostics[name] = {
+            "health": health,
+            "last_error": last_error[:MAX_TOOL_DIAGNOSTIC_ERROR_CHARS],
+            "updated_at": updated_at,
+            "failure_count": max(1, min(failure_count, 9999)),
+        }
+        if len(diagnostics) >= MAX_TOOL_DIAGNOSTICS:
+            break
+    return diagnostics
 
 
 def _merge_seeded_service(default: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
@@ -370,6 +403,10 @@ def normalize_mcp_service(value: dict[str, Any], *, existing: dict[str, Any] | N
             prerequisite["command"] = command
         prerequisites.append(prerequisite)
 
+    incoming_tool_diagnostics = value.get("tool_diagnostics")
+    if incoming_tool_diagnostics is None:
+        incoming_tool_diagnostics = current.get("tool_diagnostics", {})
+
     return {
         "schema_version": MCP_SERVICE_SCHEMA_VERSION,
         "id": service_id,
@@ -389,6 +426,7 @@ def normalize_mcp_service(value: dict[str, Any], *, existing: dict[str, Any] | N
         },
         "permissions": normalized_permissions,
         "tool_policies": tool_policies,
+        "tool_diagnostics": _normalize_tool_diagnostics(incoming_tool_diagnostics),
         "prerequisites": prerequisites,
     }
 
@@ -453,6 +491,13 @@ def public_mcp_service(config: dict[str, Any], runtime: "McpServiceRuntime | Non
         "protocol_version": runtime.session.protocol_version if runtime and runtime.session else "",
         "server_info": dict(runtime.session.server_info) if runtime and runtime.session else {},
         "prerequisites": list(runtime.prerequisite_checks) if runtime else [],
+        "last_probe_at": runtime.last_probe_at if runtime else "",
+        "probe_results": list(runtime.probe_results) if runtime else [],
+        "probe_candidate_count": (
+            len(_probe_candidate_bindings(capability_bindings))
+            if capability_bindings
+            else 0
+        ),
     }
     definition = {
         key: config.get(key)
@@ -550,6 +595,43 @@ def _has_external_state_policy(config: dict[str, Any]) -> bool:
     return False
 
 
+def _probe_candidate_bindings(bindings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for binding in bindings:
+        if not isinstance(binding, dict):
+            continue
+        if str(binding.get("risk") or "") != "read_only":
+            continue
+        required_fields = binding.get("required_input_fields")
+        if isinstance(required_fields, list) and required_fields:
+            continue
+        roles = {str(item) for item in binding.get("roles") or []}
+        artifacts = {str(item) for item in binding.get("artifacts") or []}
+        verification_strength = str(binding.get("verification_strength") or "")
+        health = str(binding.get("health") or "available")
+        if (
+            roles & {"evidence", "verification"}
+            or artifacts
+            or verification_strength in {"weak", "standard", "strong"}
+            or health != "available"
+        ):
+            candidates.append(binding)
+    return candidates
+
+
+def _required_input_fields(schema: dict[str, Any]) -> list[str]:
+    required = schema.get("required") if isinstance(schema.get("required"), list) else []
+    return [str(item).strip() for item in required if str(item).strip()]
+
+
+def _truncate_probe_message(value: str) -> str:
+    text = str(value or "").strip()
+    if len(text) <= MAX_PROBE_MESSAGE_CHARS:
+        return text
+    omitted = len(text) - MAX_PROBE_MESSAGE_CHARS
+    return f"{text[:MAX_PROBE_MESSAGE_CHARS]} ... [{omitted} chars omitted]"
+
+
 @dataclass
 class McpServiceRuntime:
     state: str = "stopped"
@@ -563,6 +645,8 @@ class McpServiceRuntime:
     session: McpStdioSession | None = None
     capability_bindings: list[dict[str, Any]] = field(default_factory=list)
     prerequisite_checks: list[dict[str, Any]] = field(default_factory=list)
+    last_probe_at: str = ""
+    probe_results: list[dict[str, Any]] = field(default_factory=list)
     watch_task: asyncio.Task[None] | None = None
     stderr_task: asyncio.Task[None] | None = None
 
@@ -743,6 +827,8 @@ class McpServiceManager:
             raise ValueError(f"unsupported MCP service action: {normalized_action}")
         if normalized_action == "check":
             await self.check(service_id)
+        elif normalized_action == "probe":
+            await self.probe(service_id)
         elif normalized_action == "start":
             await self.start(service_id)
         elif normalized_action == "stop":
@@ -950,6 +1036,54 @@ class McpServiceManager:
             runtime.message = f"endpoint check failed: {exc}"
         self._append_log(runtime, "info" if runtime.state == "reachable" else "error", runtime.message)
 
+    async def probe(self, service_id: str, *, limit: int = MAX_PROBE_TOOLS) -> list[dict[str, Any]]:
+        """Run a small, read-only tool probe for observable MCP capabilities.
+
+        Probe is deliberately separate from check/start.  It may call MCP tools,
+        so it only targets read-only tools with no required input fields and an
+        evidence, verification, artifact, or previously degraded role.  Results
+        are advisory facts for capability snapshots; they never unregister or
+        block tools.
+        """
+        self.get_config(service_id)
+        runtime = self._runtime_for(service_id)
+        runtime.checked_at = _now_iso()
+        if not runtime.protocol_connected or runtime.session is None:
+            await self.check(service_id)
+        if not runtime.protocol_connected or runtime.session is None:
+            raise RuntimeError("MCP protocol is not connected; start the service before probing tools")
+
+        candidates = _probe_candidate_bindings(runtime.capability_bindings)
+        if limit > 0:
+            candidates = candidates[:limit]
+        results: list[dict[str, Any]] = []
+        for binding in candidates:
+            remote_name = str(binding.get("remote_name") or "").strip()
+            tool_id = str(binding.get("tool_id") or "").strip()
+            if not remote_name:
+                continue
+            output = await self.call_tool(service_id, remote_name, {})
+            error = str(output.get("message") or output.get("content") or "").strip() if output.get("error") else ""
+            content = str(output.get("content") or output.get("message") or "").strip()
+            results.append({
+                "tool_id": tool_id,
+                "remote_name": remote_name,
+                "status": "failure" if output.get("error") else "success",
+                "message": _truncate_probe_message(error or content),
+                "checked_at": _now_iso(),
+            })
+
+        runtime.last_probe_at = _now_iso()
+        runtime.probe_results = results
+        runtime.message = (
+            f"MCP tool probe completed; {sum(1 for item in results if item['status'] == 'success')}/"
+            f"{len(results)} probe candidate(s) succeeded"
+            if results
+            else "MCP tool probe completed; no safe no-argument probe candidates"
+        )
+        self._append_log(runtime, "info", runtime.message)
+        return results
+
     async def _check_prerequisites(self, config: dict[str, Any]) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for item in config.get("prerequisites") or []:
@@ -1118,6 +1252,10 @@ class McpServiceManager:
             artifacts = self._tool_artifacts(service_id, remote_tool)
             verification_strength = self._tool_verification_strength(service_id, remote_tool)
             call_timeout = self._tool_call_timeout(service_id, remote_tool.name)
+            required_input_fields = _required_input_fields(remote_tool.input_schema)
+            diagnostic = self._tool_diagnostic(service_id, remote_tool.name)
+            health = str(diagnostic.get("health") or "available")
+            last_error = str(diagnostic.get("last_error") or "")
 
             async def handler(
                 input_data: dict[str, Any],
@@ -1171,8 +1309,9 @@ class McpServiceManager:
                 "artifacts": artifacts,
                 "verification_strength": verification_strength,
                 "call_timeout": call_timeout,
-                "health": "available",
-                "last_error": "",
+                "required_input_fields": required_input_fields,
+                "health": health,
+                "last_error": last_error,
             })
         return tool_ids
 
@@ -1245,7 +1384,12 @@ class McpServiceManager:
         try:
             result = await runtime.session.call_tool(remote_name, arguments, timeout=timeout)
         except Exception as exc:
-            self._update_binding_health(runtime, remote_name, error=str(exc))
+            self._update_binding_health(
+                runtime,
+                remote_name,
+                error=str(exc),
+                service_id=service_id,
+            )
             return {
                 "error": True,
                 "message": f"MCP tool call failed: {exc}",
@@ -1258,22 +1402,61 @@ class McpServiceManager:
             runtime,
             remote_name,
             error=str(output.get("message") or "") if output.get("error") else "",
+            service_id=service_id,
         )
         return output
 
-    @staticmethod
     def _update_binding_health(
+        self,
         runtime: McpServiceRuntime,
         remote_name: str,
         *,
         error: str,
+        service_id: str = "",
     ) -> None:
         for binding in runtime.capability_bindings:
             if binding.get("remote_name") != remote_name:
                 continue
             binding["health"] = "degraded" if error else "available"
-            binding["last_error"] = error[:500]
+            binding["last_error"] = error[:MAX_TOOL_DIAGNOSTIC_ERROR_CHARS]
+            if service_id:
+                self._record_tool_diagnostic(service_id, remote_name, error=error)
             return
+        if service_id:
+            self._record_tool_diagnostic(service_id, remote_name, error=error)
+
+    def _tool_diagnostic(self, service_id: str, remote_name: str) -> dict[str, Any]:
+        config = self._configs.get(service_id) or {}
+        diagnostics = config.get("tool_diagnostics") if isinstance(config.get("tool_diagnostics"), dict) else {}
+        item = diagnostics.get(remote_name) if isinstance(diagnostics, dict) else None
+        return item if isinstance(item, dict) else {}
+
+    def _record_tool_diagnostic(self, service_id: str, remote_name: str, *, error: str) -> None:
+        config = self._configs.get(service_id)
+        name = str(remote_name or "").strip()
+        if not config or not name:
+            return
+        diagnostics = _normalize_tool_diagnostics(config.get("tool_diagnostics"))
+        before = json.dumps(diagnostics, sort_keys=True, ensure_ascii=False)
+        if error:
+            current = diagnostics.get(name, {})
+            try:
+                failure_count = int(current.get("failure_count") or 0) + 1
+            except (TypeError, ValueError):
+                failure_count = 1
+            diagnostics[name] = {
+                "health": "degraded",
+                "last_error": str(error)[:MAX_TOOL_DIAGNOSTIC_ERROR_CHARS],
+                "updated_at": _now_iso(),
+                "failure_count": max(1, min(failure_count, 9999)),
+            }
+        else:
+            diagnostics.pop(name, None)
+        after = json.dumps(diagnostics, sort_keys=True, ensure_ascii=False)
+        if before == after:
+            return
+        config["tool_diagnostics"] = diagnostics
+        self._save()
 
     async def _disconnect_session(self, service_id: str, message: str) -> None:
         runtime = self._runtime_for(service_id)

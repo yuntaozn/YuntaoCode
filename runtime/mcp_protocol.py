@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -9,6 +10,25 @@ from typing import Any, Callable
 MCP_PROTOCOL_VERSION = "2025-06-18"
 MCP_PROTOCOL_FALLBACK_VERSIONS = ("2024-11-05",)
 MCP_CLIENT_INFO = {"name": "YuntaoCode", "version": "0.1.0"}
+VISUAL_ARTIFACT_EXTENSIONS = {
+    ".png": ("image", "png"),
+    ".jpg": ("image", "jpg"),
+    ".jpeg": ("image", "jpeg"),
+    ".webp": ("image", "webp"),
+    ".gif": ("image", "gif"),
+    ".bmp": ("image", "bmp"),
+    ".tif": ("image", "tif"),
+    ".tiff": ("image", "tiff"),
+    ".pdf": ("pdf", "pdf"),
+}
+QUOTED_ARTIFACT_PATH_PATTERN = re.compile(
+    r"""["'](?P<path>(?:[A-Za-z]:[\\/]|/|\.{1,2}[\\/])[^"']+\.(?:png|jpe?g|webp|gif|bmp|tiff?|pdf))["']""",
+    re.IGNORECASE,
+)
+UNQUOTED_ARTIFACT_PATH_PATTERN = re.compile(
+    r"""(?P<path>(?:[A-Za-z]:[\\/]|/|\.{1,2}[\\/])(?:[^\s"'<>|]+[\\/])*[^\s"'<>|]+\.(?:png|jpe?g|webp|gif|bmp|tiff?|pdf))""",
+    re.IGNORECASE,
+)
 
 
 class McpProtocolError(RuntimeError):
@@ -227,10 +247,80 @@ def normalize_mcp_tool_result(result: dict[str, Any]) -> dict[str, Any]:
     }
     if isinstance(result.get("structuredContent"), dict):
         output["structured_content"] = result["structuredContent"]
+    _apply_artifact_hints(output, text, output.get("structured_content"))
     if result.get("isError") is True or _mcp_result_reports_error(text, output.get("structured_content")):
         output["error"] = True
         output["message"] = text or "MCP tool reported an error"
     return output
+
+
+def _apply_artifact_hints(
+    output: dict[str, Any],
+    text: str,
+    structured_content: Any,
+) -> None:
+    path = _first_artifact_path(structured_content) or _first_artifact_path(text)
+    if not path:
+        return
+    kind, format_name = _artifact_kind_for_path(path)
+    if not kind:
+        return
+    output.setdefault("path", path)
+    output.setdefault("artifact_kind", kind)
+    output.setdefault("format", format_name)
+    artifacts = output.get("artifacts")
+    if not isinstance(artifacts, list):
+        artifacts = []
+    artifacts.append(kind)
+    output["artifacts"] = list(dict.fromkeys(str(item) for item in artifacts if str(item).strip()))
+
+
+def _first_artifact_path(value: Any) -> str:
+    if isinstance(value, dict):
+        preferred_keys = (
+            "path",
+            "output_path",
+            "file_path",
+            "image_path",
+            "screenshot_path",
+            "render_path",
+            "pdf_path",
+        )
+        for key in preferred_keys:
+            path = _first_artifact_path(value.get(key))
+            if path:
+                return path
+        for item in value.values():
+            path = _first_artifact_path(item)
+            if path:
+                return path
+        return ""
+    if isinstance(value, list):
+        for item in value:
+            path = _first_artifact_path(item)
+            if path:
+                return path
+        return ""
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    if not text:
+        return ""
+    if _artifact_kind_for_path(text)[0]:
+        return text
+    for pattern in (QUOTED_ARTIFACT_PATH_PATTERN, UNQUOTED_ARTIFACT_PATH_PATTERN):
+        match = pattern.search(text)
+        if match:
+            return match.group("path").strip()
+    return ""
+
+
+def _artifact_kind_for_path(path: str) -> tuple[str, str]:
+    lower = str(path or "").strip().lower()
+    for extension, value in VISUAL_ARTIFACT_EXTENSIONS.items():
+        if lower.endswith(extension):
+            return value
+    return "", ""
 
 
 def _mcp_result_reports_error(text: str, structured_content: Any) -> bool:

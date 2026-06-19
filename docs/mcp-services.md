@@ -222,6 +222,21 @@ MCP tool results must be normalized before entering the Task Runtime:
 - generated files expose structured `path`, `artifact_kind`, size, and
   validation facts;
 - external application changes expose an explicit external-state-change fact;
+- external-state verification may be satisfied by a successful verification
+  call that returns structured or state-summary facts after the target state
+  change, even if the provider labels the coarse inspection as `weak`;
+- visual goals should prefer visual evidence such as screenshot, render, or
+  page-capture artifacts. Scene or object metadata is structural evidence and
+  should not by itself prove visual quality when the task contract requires
+  `visual`;
+- failed deliverable or verification attempts remain in the audit trace, but
+  a later successful deliverable plus sufficient verification should classify
+  them as recovered instead of making the whole run partial;
+- tool-call failures update a per-service diagnostic cache. The cache is
+  advisory: it helps the next capability snapshot avoid preferring a recently
+  degraded tool, but it does not unregister the tool or block the model from
+  choosing it when the task evidence supports that route. A later successful
+  call clears the diagnostic;
 - long-running operations expose progress and cancellation state;
 - raw MCP payloads may be retained for audit, but must not replace normalized
   result facts.
@@ -234,6 +249,9 @@ The runtime now provides an independent MCP service manager and page:
 - `stdio`, Streamable HTTP, and legacy SSE configurations are supported;
 - explicit start, stop, restart, endpoint check, state, and recent logs are
   available;
+- `check` reports service/process/protocol/prerequisite state without calling
+  MCP tools, while `probe` runs a small set of safe no-argument read-only
+  evidence/verification tools to confirm end-to-end tool usability;
 - enabled services may opt in to `lifecycle.auto_start`, which is attempted
   after Runtime startup and when a task targets the matching MCP capability
   while the service is stopped, on a best-effort basis;
@@ -248,7 +266,8 @@ The runtime now provides an independent MCP service manager and page:
 - an MCP-sourced tool enters model context only when its service is marked
   protocol-connected.
 - discovered tools carry provider-declared effect, role, and artifact facts
-  into Task Runtime events, while per-tool call failures update binding health;
+  into Task Runtime events, while per-tool call failures update binding health
+  and a local diagnostic cache that survives service reconnects;
 - provider log messages are length-bounded before entering the local service
   diagnostics view.
 

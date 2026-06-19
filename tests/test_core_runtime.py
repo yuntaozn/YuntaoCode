@@ -5,6 +5,7 @@ import pytest
 from runtime.core.capability import CapabilityContract, PermissionSet, needs_user_confirmation
 from runtime.core.context import ContextRecord, ContextSnapshot, EvidenceRecord, select_records_for_phase
 from runtime.core.events import build_trace_event
+from runtime.core.experience import ExperienceDigest, experience_sample_from_runbook
 from runtime.core.result import RUN_RESULT_SCHEMA_VERSION, RuntimeResult
 from runtime.core.task import ProductTask, TaskPlan, TaskStep, can_transition
 
@@ -124,3 +125,48 @@ def test_runtime_result_schema_is_core_owned() -> None:
     assert data["risks"] == ["write_not_verified"]
     assert data["verification_evidence"][0]["strength"] == "strong"
     assert data["failure_details"][0]["impact"] == "incidental"
+
+
+def test_experience_sample_is_between_runbook_and_skill_candidate() -> None:
+    runbook = {
+        "run": {
+            "id": "run-1",
+            "task_id": "task-1",
+            "workspace_id": "workspace-1",
+            "conversation_id": "conversation-1",
+            "goal": "Create a verified report",
+            "updated_at": "2026-06-13T00:01:00Z",
+        },
+        "task_contract": {"requires_write": True},
+        "result": {"status": "partial", "risks": ["write_not_verified"]},
+        "risks": ["write_not_verified"],
+        "verification_evidence": [{"kind": "file_exists", "path": "report.docx"}],
+    }
+
+    sample = experience_sample_from_runbook("experience-1", runbook)
+
+    data = sample.to_dict()
+    assert data["schema_version"] == "experience_sample.v1"
+    assert data["record_kind"] == "experience_sample"
+    assert data["outcome"] == "partial"
+    assert data["run_result"]["status"] == "partial"
+    assert data["risks"] == ["write_not_verified"]
+
+
+def test_experience_digest_serializes_reviewed_patterns() -> None:
+    digest = ExperienceDigest(
+        id="digest-1",
+        sample_ids=("experience-1",),
+        pattern_name="Document generation verification",
+        summary="Generated documents need post-write evidence.",
+        capability_ids=("document.word_export",),
+        evidence_requirements=("file_exists", "content_coverage"),
+        failure_modes=("document_output_too_short",),
+    )
+
+    data = digest.to_dict()
+
+    assert data["schema_version"] == "experience_digest.v1"
+    assert data["record_kind"] == "experience_digest"
+    assert data["sample_ids"] == ["experience-1"]
+    assert data["failure_modes"] == ["document_output_too_short"]

@@ -60,6 +60,13 @@ def apply_task_continuity(
         return result
 
     anchor = task_continuity_anchor(previous_contract)
+    if _anchor_has_state_target(anchor) and _looks_like_observation_followup(current_user_content):
+        _annotate_observation_followup(
+            result,
+            anchor=anchor,
+            current_user_content=current_user_content,
+        )
+
     anchored_deliverables = anchor.get("deliverables") if isinstance(anchor.get("deliverables"), list) else []
     proposed_deliverables = result.get("deliverables") if isinstance(result.get("deliverables"), list) else []
     preserve_external_state_target = _preserve_external_state_target(anchor, result)
@@ -126,6 +133,12 @@ def apply_task_continuity(
             result.get("intent"),
             requires_state_change=bool(result.get("requires_state_change")),
         )
+    result["required_verification_modalities"] = _merge_verification_modalities(
+        result.get("required_verification_modalities")
+        if retargets_read_only_answer
+        else anchor.get("required_verification_modalities"),
+        result.get("required_verification_modalities"),
+    )
     result["continuity_anchor"] = (
         task_continuity_anchor(result)
         if retargets_local_file_state or retargets_read_only_answer
@@ -149,6 +162,7 @@ def task_continuity_anchor(contract: dict[str, Any]) -> dict[str, Any]:
             "requires_write",
             "requires_state_change",
             "requires_verification",
+            "required_verification_modalities",
             "capability_ids",
             "deliverables",
         )
@@ -169,6 +183,7 @@ def inherit_task_contract_for_followup(
         "requires_write",
         "requires_state_change",
         "requires_verification",
+        "required_verification_modalities",
         "expected_document_coverage",
         "expected_min_output_chars",
         "capability_ids",
@@ -237,11 +252,19 @@ def promote_task_contract_for_write_intent(
 
 
 def success_conditions_for_contract(contract: dict[str, Any]) -> list[str]:
+    required_modalities = {
+        str(item or "").strip().lower()
+        for item in contract.get("required_verification_modalities") or []
+        if str(item or "").strip()
+    }
     conditions = [
         "target_deliverable_success"
         if contract.get("requires_write") or contract.get("requires_state_change")
         else "",
         "target_deliverable_verification" if contract.get("requires_verification") else "",
+        "target_visual_verification"
+        if contract.get("requires_verification") and "visual" in required_modalities
+        else "",
         "document_output_coverage" if contract.get("expected_document_coverage") else "",
         "document_min_output_chars"
         if _safe_int(contract.get("expected_min_output_chars")) > 0
@@ -285,6 +308,141 @@ def looks_like_task_revision_followup(content: str) -> bool:
     return any(term in text for term in terms)
 
 
+def _looks_like_observation_followup(content: str) -> bool:
+    """Return whether a follow-up asks to inspect/evaluate the current result.
+
+    This is a continuity rule, not a scenario rule: the previous task anchor
+    may identify what to inspect, but the current user wording decides whether
+    this turn should change state again.
+    """
+    text = str(content or "").strip().lower()
+    if not text or len(text) > 180:
+        return False
+    state_change_terms = (
+        "redo",
+        "do it again",
+        "try again",
+        "rebuild",
+        "regenerate",
+        "modify",
+        "change",
+        "fix",
+        "optimize",
+        "create",
+        "generate",
+        "run",
+        "execute",
+        "\u91cd\u65b0\u505a",
+        "\u91cd\u505a",
+        "\u518d\u505a",
+        "\u518d\u6765\u4e00\u6b21",
+        "\u4fee\u6539",
+        "\u6539\u4e00\u4e0b",
+        "\u8c03\u6574",
+        "\u4f18\u5316",
+        "\u4fee\u590d",
+        "\u521b\u5efa",
+        "\u751f\u6210",
+        "\u6267\u884c",
+        "\u5efa\u4e00\u4e2a",
+        "\u5efa\u4e2a",
+        "\u7ee7\u7eed\u505a",
+    )
+    if any(term in text for term in state_change_terms):
+        return False
+    observation_terms = (
+        "look",
+        "see",
+        "inspect",
+        "check",
+        "review",
+        "evaluate",
+        "assess",
+        "what does it look like",
+        "can you see",
+        "looks",
+        "\u770b",
+        "\u770b\u770b",
+        "\u770b\u4e0b",
+        "\u770b\u5230",
+        "\u68c0\u67e5",
+        "\u5206\u6790",
+        "\u8bc4\u4ef7",
+        "\u8bc4\u4f30",
+        "\u5224\u65ad",
+        "\u662f\u5426",
+        "\u662f\u4e0d\u662f",
+        "\u50cf\u4e0d\u50cf",
+        "\u6548\u679c",
+        "\u770b\u8d77\u6765",
+        "\u770b\u4e0a\u53bb",
+        "\u6563\u5f00",
+    )
+    return any(term in text for term in observation_terms)
+
+
+def _annotate_observation_followup(
+    contract: dict[str, Any],
+    *,
+    anchor: dict[str, Any],
+    current_user_content: str,
+) -> None:
+    """Attach non-binding continuity guidance for model/tool strategy."""
+    anchor_goal = _clean_text(anchor.get("goal") or contract.get("goal") or "previous task", 180)
+    needs_visual = _observation_needs_visual_evidence(anchor, current_user_content)
+    advisories = contract.get("continuity_advisories")
+    if not isinstance(advisories, list):
+        advisories = []
+    advisories.append({
+        "code": "possible_observation_followup",
+        "message": (
+            "The current follow-up may be asking to inspect or evaluate the "
+            "previous result rather than repeat the previous state-changing "
+            "action. This is guidance only; use the current user intent to "
+            "choose whether to verify, answer, ask, or modify."
+        ),
+        "previous_goal": anchor_goal,
+        "suggested_first_action": "verify" if needs_visual else "read",
+        "verification_modalities_hint": ["visual"] if needs_visual else [],
+    })
+    contract["continuity_advisories"] = _dedupe_advisories(advisories)
+
+
+def _observation_needs_visual_evidence(anchor: dict[str, Any], content: str) -> bool:
+    modalities = {
+        str(item or "").strip().lower()
+        for item in anchor.get("required_verification_modalities") or []
+        if str(item or "").strip()
+    }
+    if "visual" in modalities:
+        return True
+    text = str(content or "").strip().lower()
+    visual_terms = (
+        "visual",
+        "screenshot",
+        "render",
+        "appearance",
+        "looks",
+        "see",
+        "\u89c6\u89c9",
+        "\u622a\u56fe",
+        "\u6e32\u67d3",
+        "\u6548\u679c",
+        "\u770b\u5230",
+        "\u770b\u8d77\u6765",
+        "\u770b\u4e0a\u53bb",
+        "\u50cf\u4e0d\u50cf",
+        "\u6563\u5f00",
+    )
+    return any(term in text for term in visual_terms)
+
+
+def _anchor_has_state_target(anchor: dict[str, Any]) -> bool:
+    if bool(anchor.get("requires_write")) or bool(anchor.get("requires_state_change")):
+        return True
+    return "external_state" in _deliverable_kinds(anchor.get("deliverables"))
+
+
 def _merge_capability_ids(*values: Any) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
@@ -295,6 +453,37 @@ def _merge_capability_ids(*values: Any) -> list[str]:
                 continue
             seen.add(text)
             result.append(text)
+    return result[:6]
+
+
+def _merge_verification_modalities(*values: Any) -> list[str]:
+    allowed = {"structural", "visual", "behavioral", "content"}
+    result: list[str] = []
+    for value in values:
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            text = str(item or "").strip().lower()
+            if text in allowed and text not in result:
+                result.append(text)
+    return result[:4]
+
+
+def _dedupe_advisories(values: list[Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip()
+        message = str(item.get("message") or "").strip()
+        if not code and not message:
+            continue
+        key = (code, message)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(dict(item))
     return result[:6]
 
 

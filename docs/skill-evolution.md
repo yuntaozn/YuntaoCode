@@ -1,14 +1,16 @@
 # Skill Evolution
 
-Skill Evolution is the path from real task experience to a reusable skill. It
-uses Runbook and Replay evidence, but it is not the same as source update,
-plugin auto-loading, or model self-modification.
+Skill Evolution is the path from reviewed task experience to a reusable skill.
+It uses Experience Samples, Replay Fixtures, and Replay evidence, but it is not
+the same as source update, plugin auto-loading, or model self-modification.
 
 The goal is to let YuntaoCode learn from completed work without letting the
 model directly change trusted runtime code.
 
 ```text
 Runbook
+  -> Experience Sample
+  -> Experience Digest
   -> Replay Fixture
   -> Skill Candidate
   -> Skill Replay Result
@@ -31,6 +33,11 @@ Source updates and desktop client updates are separate concerns. They update
 the product code. Skill Evolution improves reusable task capability through
 local evidence and replay verification.
 
+Experience collection and digestion are a separate layer before Skill
+Evolution. A selected Run may become an Experience Sample, and multiple samples
+may be summarized into an Experience Digest. Neither record is an active skill
+or a trusted execution path. See [experience-runtime.md](experience-runtime.md).
+
 ## Concepts
 
 ### Runbook
@@ -40,6 +47,17 @@ contract, capability snapshot, plan, tool steps, status timeline, result,
 risks, failures, verification evidence, checkpoints, and replay request.
 
 Runbook is evidence. It is not itself a skill.
+
+### Experience Sample And Digest
+
+Experience Samples and Digests capture what a task taught the runtime before a
+skill exists:
+
+- an Experience Sample is extracted from one Runbook;
+- an Experience Digest summarizes one or more reviewed samples;
+- neither record is injected into model context or promoted by default;
+- both records can become inputs to Replay Fixtures, Evaluation, and Skill
+  Candidate drafting.
 
 ### Replay Fixture
 
@@ -51,7 +69,7 @@ A Replay Fixture is a stable test sample extracted from a Runbook. It captures:
 - expected artifacts;
 - verification evidence from the original task.
 
-Fixtures are how historical tasks become tests for future skills.
+Fixtures are how reviewed historical tasks become tests for future skills.
 
 ### Skill Candidate
 
@@ -130,14 +148,16 @@ manifest versions.
 
 1. A task completes or partially completes.
 2. The Runtime creates a Runbook.
-3. The user or model proposes that the Runbook contains a reusable pattern.
-4. The Runtime creates a Skill Candidate draft.
-5. One or more Replay Fixtures are extracted from Runbooks.
-6. The candidate is tested against fixtures through normal Task Runtime runs.
-7. Replay Results are recorded with evidence and failures.
-8. If readiness checks pass, the Runtime may propose Skill Promotion.
-9. The user confirms promotion.
-10. The enabled skill remains disableable and replay-testable.
+3. The user explicitly exports or selects an Experience Sample.
+4. One or more samples may be reviewed into an Experience Digest.
+5. Replay Fixtures are extracted from selected samples or Runbooks.
+6. The user or model proposes that the evidence contains a reusable pattern.
+7. The Runtime creates a Skill Candidate draft.
+8. The candidate is tested against fixtures through normal Task Runtime runs.
+9. Replay Results are recorded with evidence and failures.
+10. If readiness checks pass, the Runtime may propose Skill Promotion.
+11. The user confirms promotion.
+12. The enabled skill remains disableable and replay-testable.
 
 ## Non-Goals
 
@@ -163,16 +183,16 @@ For 0.1, the useful minimum is:
 
 - data structures for candidates, fixtures, replay results, and promotions;
 - Runbook-to-fixture extraction;
-- on-demand sample export from a selected Run, without storing the full Runbook;
+- on-demand Experience Sample export from a selected Run, without storing the full Runbook;
 - readiness summary from replay results;
 - documentation in architecture and plugin docs;
 - no automatic registration path.
 
 Later versions can add persistence, UI, and controlled execution boundaries.
 
-## Skill Sample Export
+## Experience Sample Export
 
-Skill sample export is the first practical way to collect replay fixtures
+Experience Sample export is the first practical way to collect replay material
 across test machines without building a central service too early.
 
 The export action should:
@@ -192,12 +212,16 @@ Remote sample submission is intentionally out of scope for 0.1. A future
 service should add explicit consent, preview, redaction, provenance, and delete
 controls before accepting user samples.
 
+Older API paths may still call this "skill sample export" for compatibility,
+but the exported record should be understood as an Experience Sample plus
+Replay Fixture, not as a promoted skill.
+
 ## Not A Diagnostic Export
 
-Skill sample export is different from a diagnostic package.
+Experience Sample export is different from a diagnostic package.
 
-- Skill sample export produces a small Replay Fixture for future Skill
-  Evolution testing.
+- Experience Sample export produces a reviewed sample and small Replay Fixture
+  for future Evaluation and Skill Evolution testing.
 - Diagnostic export helps debug why a task behaved differently on another
   machine. It may include runtime version, environment summary, tool and MCP
   status, compact Runbook evidence, recent event summaries, and sanitized

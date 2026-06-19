@@ -1,5 +1,6 @@
 from runtime.agent_strategy.capability_preflight import (
     build_capability_snapshot,
+    preflight_should_stop,
     preflight_task_capabilities,
     task_contract_capability_ids,
 )
@@ -73,6 +74,24 @@ def test_preflight_advises_external_state_when_no_external_capability_available(
     assert result["restrict_fallback"] is False
     assert result["allowed_tool_ids"] is None
     assert result["preferred_tool_ids"] is None
+    assert result["enforce_stop"] is False
+    assert preflight_should_stop(result) is False
+
+
+def test_preflight_only_stops_when_explicitly_enforced() -> None:
+    advisory_preflight = {
+        "ok": False,
+        "blockers": [{"message": "Capability unavailable"}],
+        "enforce_stop": False,
+    }
+    enforced_preflight = {
+        "ok": False,
+        "blockers": [{"message": "Safety boundary"}],
+        "enforce_stop": True,
+    }
+
+    assert preflight_should_stop(advisory_preflight) is False
+    assert preflight_should_stop(enforced_preflight) is True
 
 
 def test_preflight_reports_mcp_protocol_issue_for_external_state_target() -> None:
@@ -148,7 +167,7 @@ def test_preflight_reports_degraded_target_tool_as_advisory() -> None:
     result = preflight_task_capabilities(contract, snapshot)
 
     assert result["ok"] is True
-    assert result["preferred_tool_ids"] == ["mcp_blender.execute_blender_code"]
+    assert result["preferred_tool_ids"] is None
     assert result["advisories"][0]["code"] == "tool_degraded"
     assert result["advisories"][0]["tool_id"] == "mcp_blender.execute_blender_code"
 
@@ -228,6 +247,94 @@ def test_preflight_prefers_external_state_capability_without_restricting_fallbac
     assert result["allowed_tool_ids"] is None
     assert result["enforce_allowed_tools"] is False
     assert result["preferred_tool_ids"] == ["mcp_blender.execute_blender_code"]
+
+
+def test_preflight_prefers_role_relevant_tools_instead_of_entire_mcp_service() -> None:
+    snapshot = build_capability_snapshot([
+        {
+            "id": "mcp_blender.execute_blender_code",
+            "capability": "mcp.blender",
+            "effects": ["external_state_change"],
+            "roles": ["deliverable"],
+            "available": True,
+            "source_type": "mcp",
+        },
+        {
+            "id": "mcp_blender.get_scene_info",
+            "capability": "mcp.blender",
+            "roles": ["evidence", "verification"],
+            "verification_strength": "weak",
+            "available": True,
+            "source_type": "mcp",
+        },
+        {
+            "id": "mcp_blender.download_sketchfab_model",
+            "capability": "mcp.blender",
+            "effects": ["external_state_change"],
+            "available": True,
+            "source_type": "mcp",
+        },
+    ], state_changing_tool_ids={
+        "mcp_blender.execute_blender_code",
+        "mcp_blender.download_sketchfab_model",
+    })
+    contract = {
+        "requires_state_change": True,
+        "requires_write": False,
+        "requires_verification": True,
+        "capability_ids": ["mcp.blender"],
+        "deliverables": [{"kind": "external_state", "description": "Blender scene"}],
+    }
+
+    result = preflight_task_capabilities(contract, snapshot)
+
+    assert result["preferred_tool_ids"] == [
+        "mcp_blender.execute_blender_code",
+        "mcp_blender.get_scene_info",
+    ]
+    assert "mcp_blender.download_sketchfab_model" not in result["preferred_tool_ids"]
+
+
+def test_preflight_adds_soft_visual_advisory_when_no_healthy_visual_tool() -> None:
+    snapshot = build_capability_snapshot([
+        {
+            "id": "mcp_blender.execute_blender_code",
+            "capability": "mcp.blender",
+            "effects": ["external_state_change"],
+            "roles": ["deliverable"],
+            "available": True,
+            "source_type": "mcp",
+        },
+        {
+            "id": "mcp_blender.get_viewport_screenshot",
+            "capability": "mcp.blender",
+            "roles": ["verification"],
+            "artifacts": ["screenshot"],
+            "verification_strength": "standard",
+            "available": True,
+            "source_type": "mcp",
+            "tool_health": "degraded",
+            "tool_last_error": "Unknown command type: get_viewport_screenshot",
+        },
+    ], state_changing_tool_ids={"mcp_blender.execute_blender_code"})
+    contract = {
+        "requires_state_change": True,
+        "requires_write": False,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "capability_ids": ["mcp.blender"],
+        "deliverables": [{"kind": "external_state", "description": "Blender scene"}],
+    }
+
+    result = preflight_task_capabilities(contract, snapshot)
+
+    assert result["ok"] is True
+    assert result["blockers"] == []
+    assert result["preferred_tool_ids"] == ["mcp_blender.execute_blender_code"]
+    assert any(
+        item["code"] == "visual_verification_path_uncertain"
+        for item in result["advisories"]
+    )
 
 
 def test_preflight_advises_unavailable_target_capability() -> None:

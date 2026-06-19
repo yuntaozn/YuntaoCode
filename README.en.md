@@ -157,7 +157,7 @@ The current implementation already includes tool calling, plan generation, stage
 
 The Agent Runtime strategy layer lives in `runtime/agent_strategy/`. It owns intent classification, internal profiles, planning policy, stage prompts, and execution-plan lifecycle helpers so that `conversation_runner.py` can remain an orchestration layer.
 
-See the Task Model draft in [docs/task-model.md](docs/task-model.md), the Context Runtime plan in [docs/context-runtime.md](docs/context-runtime.md), the Capability Runtime plan in [docs/capability-runtime.md](docs/capability-runtime.md), the Document Draft Runtime in [docs/document-draft-runtime.md](docs/document-draft-runtime.md), Skill Evolution in [docs/skill-evolution.md](docs/skill-evolution.md), the local replay and evaluation direction in [docs/evaluation.md](docs/evaluation.md), and the current runtime foundation contract in [docs/runtime-foundation.md](docs/runtime-foundation.md).
+Start from the documentation map in [docs/README.md](docs/README.md). The core foundation contract is [docs/runtime-foundation.md](docs/runtime-foundation.md), and the Task / Context / Capability lines are described in [docs/task-model.md](docs/task-model.md), [docs/context-runtime.md](docs/context-runtime.md), and [docs/capability-runtime.md](docs/capability-runtime.md).
 
 ---
 
@@ -273,7 +273,7 @@ python -m runtime.app --host 127.0.0.1 --port 8765
 
 ### Understand the Task Model
 
-Before contributing a new capability, read [docs/task-model.md](docs/task-model.md), [docs/context-runtime.md](docs/context-runtime.md), [docs/capability-runtime.md](docs/capability-runtime.md), [docs/document-draft-runtime.md](docs/document-draft-runtime.md), [docs/skill-evolution.md](docs/skill-evolution.md), [docs/evaluation.md](docs/evaluation.md), and [docs/runtime-foundation.md](docs/runtime-foundation.md).
+Before contributing a new capability, start with the documentation map in [docs/README.md](docs/README.md), then follow the Task, Context, Capability, Experience, plugin, or MCP document that matches the change.
 
 At this stage, the project does not prioritize piling up application scenarios.
 More valuable contributions are changes that:
@@ -342,6 +342,7 @@ Contributions are welcome. Please read:
 * [CONTRIBUTING.md](CONTRIBUTING.md)
 * [SECURITY.md](SECURITY.md)
 * [CHANGELOG.md](CHANGELOG.md)
+* [Documentation map](docs/README.md)
 * [Versioning and release rules](docs/versioning.md)
 
 Do not commit API keys, local conversation data, user data, packaged binaries, or `node_modules`.

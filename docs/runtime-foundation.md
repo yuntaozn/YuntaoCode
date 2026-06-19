@@ -9,8 +9,8 @@ hard-coded branch in the runner.
 
 ## Runtime Lines
 
-YuntaoCode should be read as three connected runtime lines, not as a growing
-tool list:
+YuntaoCode should be read as a layered runtime, not as a growing tool list.
+The three execution-facing lines are:
 
 - **Task Runtime** owns product-level tasks, plans, steps, trace, recovery,
   verification, and final results.
@@ -19,6 +19,13 @@ tool list:
 - **Capability Runtime** owns tool capability contracts, permissions,
   confirmations, plugin drafts, external providers, and local execution
   boundaries.
+
+Above them is an evidence-learning layer:
+
+- **Experience Runtime** extracts reviewed task experience from Runbook and
+  RunResult facts. It prepares selected samples and digests for Replay,
+  Evaluation, and future Skill Evolution, but it does not control live task
+  execution or make generated code trusted.
 
 The model may propose task semantics, routing, and next actions. The runtime
 owns schema, permissions, state transitions, evidence, and completion checks.
@@ -119,6 +126,10 @@ Current canonical event names include:
 - `run.completed`
 - `run.failed`
 
+Lower-level tool-call submission, temporary-file handling, and structured
+write protocol details live in [tool-protocol.md](tool-protocol.md). This
+foundation document keeps only the product-level Task/Run distinction.
+
 ## Pause, Resume, Replay, And Runbook
 
 YuntaoCode 0.1 treats pause/resume/replay as Run-level foundation features.
@@ -146,10 +157,12 @@ Completed or partial Runs persist a recovery `ContextSnapshot` and
 unresolved risks from the checkpoint instead of replaying the full failed
 conversation as instructions.
 
-Runbook and Replay also provide the evidence base for future Skill Evolution.
-In that path, a Runbook can become a Replay Fixture, a Skill Candidate can be
-tested against fixtures, and only replay evidence plus manual promotion can
-make the candidate available as a user skill. See [skill-evolution.md](skill-evolution.md).
+Runbook and Replay also provide the evidence base for future Experience and
+Skill Evolution work. In that path, a Runbook can become an Experience Sample,
+selected samples can become Replay Fixtures, a Skill Candidate can be tested
+against fixtures, and only replay evidence plus manual promotion can make the
+candidate available as a user skill. See [experience-runtime.md](experience-runtime.md)
+and [skill-evolution.md](skill-evolution.md).
 
 ## Diagnostic Export
 
@@ -179,19 +192,20 @@ The foundation chain is:
 ```text
 Run
   -> Diagnostic Export
-  -> Skill Sample Export
+  -> Experience Sample Export
   -> Replay Fixture
   -> Evaluation Report
   -> Skill Evolution
 ```
 
-Diagnostic Export is for debugging a specific Run on a specific machine. Skill
-Sample Export is for creating a small replayable fixture. Evaluation should
-later compare those fixtures under controlled runtime or model changes and
-produce evidence-based reports. Skill Evolution should only build on that
-evidence after replay proves a pattern is stable.
+Diagnostic Export is for debugging a specific Run on a specific machine.
+Experience Sample Export is for creating a reviewed sample that can later
+become a small replayable fixture. Evaluation should compare those fixtures
+under controlled runtime or model changes and produce evidence-based reports.
+Skill Evolution should only build on that evidence after replay proves a
+pattern is stable.
 
-For 0.1, evaluation remains a direction anchor. There is no automatic task
+For 0.1, Experience and Evaluation remain direction anchors. There is no automatic task
 collection, upload, public leaderboard, central sample service, or trusted
 execution of AI-generated code. Design notes live in [evaluation.md](evaluation.md).
 
@@ -396,6 +410,11 @@ result as modified-but-unverified without blocking the model's chosen strategy.
 Future UI work should prefer showing facts from `RunResult` over inferring task
 state from assistant text.
 
+Tool-result risks are advisory runtime facts discovered after a tool finishes.
+They help the model notice evidence without letting the runtime choose a fixed
+repair strategy. The risk pipeline is documented in
+[tool-result-risks.md](tool-result-risks.md).
+
 When `RunResult.status` is `partial` or `failure`, the runtime replaces
 accumulated model narration with a deterministic, evidence-based final answer.
 Intermediate text emitted before a structured tool call is process narration,
@@ -534,3 +553,5 @@ Recommended next steps:
 5. Split `conversation_runner.execute()` by controller responsibility.
 6. Teach the frontend to display `RunResult` explicitly.
 7. Add checkpoint rollback and policy-controlled unattended Runbook execution.
+8. Connect selected Experience Samples to local Replay/Evaluation without
+   automatic collection or promotion.

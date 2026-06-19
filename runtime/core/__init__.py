@@ -8,6 +8,7 @@ adapters can depend on them without pulling in model providers or local I/O.
 from .capability import CapabilityContract, PermissionSet
 from .context import ContextRecord, ContextSnapshot, EvidenceRecord
 from .events import TraceEvent, build_trace_event
+from .experience import ExperienceDigest, ExperienceSample
 from .result import RUN_RESULT_SCHEMA_VERSION, RuntimeResult
 from .skill_evolution import ReplayFixture, SkillCandidate, SkillPromotion, SkillReplayResult
 from .task import ProductTask, TaskPlan, TaskStep
@@ -17,6 +18,8 @@ __all__ = [
     "ContextRecord",
     "ContextSnapshot",
     "EvidenceRecord",
+    "ExperienceDigest",
+    "ExperienceSample",
     "PermissionSet",
     "ProductTask",
     "RUN_RESULT_SCHEMA_VERSION",

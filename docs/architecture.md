@@ -31,7 +31,7 @@ Tauri 是壳，真正的产品壁垒是本地技能运行时。先把 Python sid
 
 YuntaoCode 不应只按工具清单扩展。Filesystem、Shell、Git、文档解析、浏览器和 MCP 都是工具入口；真正需要沉淀的是本地 AI 任务运行基座。
 
-当前基座应按三条运行时主线理解：
+当前基座应按三条执行主线加一条经验学习层理解：
 
 ```text
 Task Runtime
@@ -42,6 +42,10 @@ Context Runtime
 
 Capability Runtime
   能力契约、工具、权限、确认、插件草案、外部能力接入。
+
+Experience Runtime
+  从 Runbook / RunResult 中抽取经验样本和经验消化结果，供 Replay、
+  Evaluation 和未来 Skill Evolution 使用；不直接控制当前任务执行。
 ```
 
 外部能力接入进一步区分为：
@@ -90,7 +94,7 @@ Task
 - 区分本地文件写入与更广义的可观察状态变更，让 MCP、CAD、数据库和浏览器
   自动化通过统一的 `effects / roles / artifacts` 事实进入任务验收。
 
-Task Model 草案见 [task-model.md](task-model.md)，Context Runtime 规划见 [context-runtime.md](context-runtime.md)，Capability Runtime 规划见 [capability-runtime.md](capability-runtime.md)，Document Draft Runtime 见 [document-draft-runtime.md](document-draft-runtime.md)，当前代码层基础契约见 [runtime-foundation.md](runtime-foundation.md)。
+Task Model 草案见 [task-model.md](task-model.md)，Context Runtime 规划见 [context-runtime.md](context-runtime.md)，Capability Runtime 规划见 [capability-runtime.md](capability-runtime.md)，Experience Runtime 规划见 [experience-runtime.md](experience-runtime.md)，Document Draft Runtime 见 [document-draft-runtime.md](document-draft-runtime.md)，当前代码层基础契约见 [runtime-foundation.md](runtime-foundation.md)。
 
 ## 当前运行边界
 
@@ -147,7 +151,7 @@ Runtime 可以审计“声明与结果是否一致”，但不应因为路径提
 ## 扩展原则
 
 - 用户侧保持统一终端，内部通过 Profile 区分执行策略。
-- 基建优先级高于功能清单：先让 Task、Context、Capability 三条 Runtime 主线清楚。
+- 基建优先级高于功能清单：先让 Task、Context、Capability 三条执行主线和 Experience 学习层清楚。
 - 新增任务类型先补 Profile / Policy / Prompt / Plan 测试，再接入主循环。
 - 工具权限、安全确认和路径边界留在执行层，不由 prompt 或 UI 文案代替。
 - 前端过程记录应展示 Runtime 的真实执行轨迹，而不是隐藏计划、推理、工具事件。

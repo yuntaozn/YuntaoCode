@@ -31,6 +31,26 @@ def test_shell_output_preview_includes_timeout_fields() -> None:
     assert preview["timeout"] == 5
 
 
+def test_web_capture_preview_keeps_visual_artifact_fields() -> None:
+    preview = tool_output_preview(
+        "web.capture_page",
+        {
+            "url": "https://example.com",
+            "status_code": 200,
+            "title": "Example",
+            "path": "D:/workspace/capture.png",
+            "format": "png",
+            "artifact_kind": "screenshot",
+        },
+    )
+
+    assert preview is not None
+    assert preview["type"] == "web"
+    assert preview["path"] == "D:/workspace/capture.png"
+    assert preview["format"] == "png"
+    assert preview["artifact_kind"] == "screenshot"
+
+
 def test_document_translation_progress_message_includes_counts() -> None:
     task = FakeTask(logs=[
         {
