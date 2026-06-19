@@ -27,8 +27,9 @@ def _stdio_service(**overrides):
             "args": [str(FAKE_MCP_SERVER)],
             "env": {"DEMO_TOKEN": "secret"},
         },
+        "timeouts": {"call": 12},
         "tool_policies": {
-            "echo": {"risk": "read_only", "roles": ["evidence"]},
+            "echo": {"risk": "read_only", "roles": ["evidence"], "call_timeout": 3},
             "change_state": {
                 "risk": "state_change",
                 "effects": ["external_state_change"],
@@ -55,6 +56,8 @@ def test_mcp_service_configuration_is_persisted_and_secrets_are_redacted(tmp_pat
     reloaded = McpServiceManager(path).get_public("demo-mcp")
 
     assert reloaded["name"] == "Demo MCP"
+    assert reloaded["timeouts"]["call"] == 12
+    assert reloaded["tool_policies"]["echo"]["call_timeout"] == 3
     assert reloaded["transport"]["env_keys"] == ["DEMO_TOKEN"]
 
 
@@ -76,6 +79,76 @@ def test_mcp_service_update_preserves_hidden_environment_when_omitted(tmp_path: 
     )
 
     assert manager.get_public("demo-mcp")["transport"]["env_keys"] == ["DEMO_TOKEN"]
+
+
+def test_mcp_service_persists_auto_start_lifecycle(tmp_path: Path) -> None:
+    manager = McpServiceManager(tmp_path / "mcp-services.json")
+
+    public = manager.upsert(_stdio_service(lifecycle={"auto_start": True}))
+    reloaded = McpServiceManager(tmp_path / "mcp-services.json").get_public("demo-mcp")
+
+    assert public["lifecycle"]["auto_start"] is True
+    assert reloaded["lifecycle"]["auto_start"] is True
+
+
+def test_mcp_tool_call_timeout_prefers_tool_policy_over_service_default(tmp_path: Path) -> None:
+    manager = McpServiceManager(tmp_path / "mcp-services.json")
+    manager.upsert(_stdio_service())
+
+    assert manager._tool_call_timeout("demo-mcp", "echo") == 3
+    assert manager._tool_call_timeout("demo-mcp", "change_state") == 12
+
+
+def test_mcp_public_status_reports_protocol_disconnected_process(tmp_path: Path) -> None:
+    manager = McpServiceManager(tmp_path / "mcp-services.json")
+    manager.upsert(_stdio_service())
+    runtime = manager._runtime_for("demo-mcp")
+    runtime.state = "running"
+    runtime.message = "process running; MCP protocol is not connected"
+    runtime.process = SimpleNamespace(returncode=None, pid=1234)
+
+    public = manager.get_public("demo-mcp")
+
+    assert public["status"]["state"] == "protocol_disconnected"
+    assert public["status"]["raw_state"] == "running"
+    assert public["status"]["process_running"] is True
+    assert public["status"]["protocol_connected"] is False
+    assert public["status"]["requires_attention"] is True
+    assert public["status"]["recommended_action"] == "restart"
+
+    [issue] = [
+        item for item in manager.capability_issues()
+        if item["source_id"] == "demo-mcp"
+    ]
+    assert issue["capability_id"] == "mcp.demo-mcp"
+    assert issue["code"] == "protocol_disconnected"
+    assert issue["recommended_action"] == "restart"
+
+
+@pytest.mark.asyncio
+async def test_mcp_call_tool_passes_configured_timeout_to_session(tmp_path: Path) -> None:
+    manager = McpServiceManager(tmp_path / "mcp-services.json")
+    manager.upsert(_stdio_service())
+    runtime = manager._runtime_for("demo-mcp")
+    captured: dict[str, object] = {}
+
+    async def fake_call_tool(
+        name: str,
+        arguments: dict[str, object],
+        *,
+        timeout: float = 30.0,
+    ) -> dict[str, object]:
+        captured.update({"name": name, "arguments": arguments, "timeout": timeout})
+        return {"content": [{"type": "text", "text": "ok"}]}
+
+    runtime.protocol_connected = True
+    runtime.session = SimpleNamespace(call_tool=fake_call_tool)
+
+    output = await manager.call_tool("demo-mcp", "echo", {"text": "hello"})
+
+    assert output["content"] == "ok"
+    assert output["call_timeout"] == 3
+    assert captured == {"name": "echo", "arguments": {"text": "hello"}, "timeout": 3}
 
 
 def test_mcp_service_validation_rejects_unsupported_transport() -> None:
@@ -139,11 +212,46 @@ async def test_mcp_stdio_lifecycle_connects_discovers_and_unbinds_tools(tmp_path
     degraded = manager.get_public("demo-mcp")["capability_bindings"][0]
     assert degraded["health"] == "degraded"
     assert degraded["last_error"] == "demo failure"
+    degraded_public = manager.get_public("demo-mcp")
+    assert degraded_public["status"]["state"] == "connected"
+    assert degraded_public["status"]["issue_code"] == "tool_degraded"
+    assert degraded_public["status"]["tool_health"]["state"] == "degraded"
+    assert degraded_public["status"]["tool_roundtrip_healthy"] is False
+    assert manager.tool_runtime_metadata(
+        "mcp_demo_mcp.echo",
+        source_id="demo-mcp",
+    )["tool_health"] == "degraded"
 
     await manager.stop("demo-mcp")
     assert manager.get_public("demo-mcp")["status"]["state"] == "stopped"
     with pytest.raises(KeyError):
         registry.get("mcp_demo_mcp.echo")
+
+
+def test_mcp_capability_issues_report_degraded_bindings(tmp_path: Path) -> None:
+    manager = McpServiceManager(tmp_path / "mcp-services.json")
+    manager.upsert(_stdio_service())
+    runtime = manager._runtime_for("demo-mcp")
+    runtime.protocol_connected = True
+    runtime.state = "connected"
+    runtime.capability_bindings = [{
+        "tool_id": "mcp_demo_mcp.change_state",
+        "remote_name": "change_state",
+        "health": "degraded",
+        "last_error": "MCP request timed out after 12s: tools/call",
+        "effects": ["external_state_change"],
+        "roles": ["deliverable"],
+    }]
+
+    [issue] = [
+        item for item in manager.capability_issues()
+        if item["source_id"] == "demo-mcp"
+    ]
+
+    assert issue["code"] == "tool_degraded"
+    assert issue["capability_id"] == "mcp.demo-mcp"
+    assert issue["tool_id"] == "mcp_demo_mcp.change_state"
+    assert issue["recommended_action"] == "restart"
 
 
 @pytest.mark.asyncio
@@ -153,6 +261,57 @@ async def test_disabled_mcp_service_cannot_start(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="enable"):
         await manager.start("demo-mcp")
+
+
+@pytest.mark.asyncio
+async def test_mcp_auto_start_connects_enabled_opt_in_service(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    manager = McpServiceManager(tmp_path / "mcp-services.json", registry=registry)
+    manager.upsert(_stdio_service(lifecycle={"auto_start": True}))
+
+    started = await manager.start_auto_services()
+
+    assert [service["id"] for service in started] == ["demo-mcp"]
+    public = manager.get_public("demo-mcp")
+    assert public["status"]["state"] == "connected"
+    assert registry.get_public_spec("mcp_demo_mcp.echo")["source_type"] == "mcp"
+
+    await manager.stop("demo-mcp")
+
+
+@pytest.mark.asyncio
+async def test_mcp_on_demand_auto_start_connects_target_capability(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    manager = McpServiceManager(tmp_path / "mcp-services.json", registry=registry)
+    manager.upsert(_stdio_service(lifecycle={"auto_start": True}))
+
+    started = await manager.start_capability_services(["mcp.demo-mcp"])
+
+    assert started == [{
+        "service_id": "demo-mcp",
+        "capability_id": "mcp.demo-mcp",
+        "status": "started",
+        "message": "MCP service started for targeted task capability.",
+    }]
+    public = manager.get_public("demo-mcp")
+    assert public["status"]["state"] == "connected"
+    assert registry.get_public_spec("mcp_demo_mcp.echo")["source_type"] == "mcp"
+
+    await manager.stop("demo-mcp")
+
+
+@pytest.mark.asyncio
+async def test_mcp_on_demand_auto_start_requires_lifecycle_opt_in(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    manager = McpServiceManager(tmp_path / "mcp-services.json", registry=registry)
+    manager.upsert(_stdio_service(lifecycle={"auto_start": False}))
+
+    started = await manager.start_capability_services(["mcp.demo-mcp"])
+
+    assert started == []
+    assert manager.get_public("demo-mcp")["status"]["state"] == "stopped"
+    with pytest.raises(KeyError):
+        registry.get_public_spec("mcp_demo_mcp.echo")
 
 
 def test_mcp_service_links_only_tools_from_matching_service() -> None:
@@ -185,11 +344,26 @@ def test_mcp_manager_seeds_disabled_blender_example_once(tmp_path: Path) -> None
     assert blender["transport"]["args"] == ["blender-mcp"]
     assert blender["transport"]["env_keys"] == ["BLENDER_MCP_DISABLE_TELEMETRY"]
     assert [item["id"] for item in blender["prerequisites"]] == ["blender-addon", "uvx"]
+    assert blender["timeouts"]["call"] == 30
     assert blender["tool_policies"]["get_scene_info"]["risk"] == "read_only"
     assert blender["tool_policies"]["get_scene_info"]["roles"] == ["evidence", "verification"]
     assert blender["tool_policies"]["get_scene_info"]["verification_strength"] == "weak"
+    assert blender["tool_policies"]["get_scene_info"]["call_timeout"] == 25
     assert blender["tool_policies"]["get_viewport_screenshot"]["verification_strength"] == "standard"
+    assert blender["tool_policies"]["get_viewport_screenshot"]["call_timeout"] == 60
     assert blender["tool_policies"]["execute_blender_code"]["effects"] == [
+        "external_state_change"
+    ]
+    assert blender["tool_policies"]["execute_blender_code"]["call_timeout"] == 120
+    assert blender["tool_policies"]["get_hunyuan3d_status"]["risk"] == "read_only"
+    assert blender["tool_policies"]["poll_hunyuan_job_status"]["risk"] == "read_only"
+    assert blender["tool_policies"]["get_sketchfab_status"]["risk"] == "read_only"
+    assert blender["tool_policies"]["search_sketchfab_models"]["risk"] == "read_only"
+    assert blender["tool_policies"]["get_sketchfab_model_preview"]["risk"] == "read_only"
+    assert blender["tool_policies"]["download_sketchfab_model"]["effects"] == [
+        "external_state_change"
+    ]
+    assert blender["tool_policies"]["generate_hunyuan3d_model"]["effects"] == [
         "external_state_change"
     ]
     assert blender["server_definition"]["id"] == "blender"
@@ -227,6 +401,8 @@ def test_mcp_schema_migration_adds_new_seed_prerequisites_to_old_blender_config(
 
     assert blender["name"] == "My Blender"
     assert [item["id"] for item in blender["prerequisites"]] == ["blender-addon", "uvx"]
+    assert blender["timeouts"]["call"] == 30
+    assert blender["tool_policies"]["get_scene_info"]["call_timeout"] == 25
     assert blender["transport"]["env_keys"] == ["BLENDER_MCP_DISABLE_TELEMETRY"]
 
 

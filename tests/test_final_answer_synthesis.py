@@ -12,6 +12,19 @@ def test_raw_toolcall_text_triggers_synthesized_final_answer() -> None:
     )
 
 
+def test_answer_only_dangling_text_without_tools_is_invalid_final_answer() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    contract = {
+        "intent": "answer_only",
+        "requires_write": False,
+        "requires_state_change": False,
+    }
+    content = "我来帮你了解 Blender MCP 的安装方法。首先让我查看一下当前项目目录的情况。"
+
+    assert handler._answer_only_final_answer_error(content, [], contract)
+    assert handler._needs_synthesized_final_answer(content, [], task_contract=contract)
+
+
 def test_tool_failure_message_prefers_shell_timeout() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
 

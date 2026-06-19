@@ -19,6 +19,8 @@ def test_snapshot_groups_available_and_unavailable_capability_tools() -> None:
             "verification_strength": "weak",
             "available": True,
             "source_type": "mcp",
+            "tool_health": "degraded",
+            "tool_last_error": "MCP request timed out",
         },
         {
             "id": "mcp_blender.execute_blender_code",
@@ -35,6 +37,11 @@ def test_snapshot_groups_available_and_unavailable_capability_tools() -> None:
     assert capability["available"] is True
     assert capability["available_tool_ids"] == ["mcp_blender.get_scene_info"]
     assert capability["unavailable_tool_ids"] == ["mcp_blender.execute_blender_code"]
+    assert capability["degraded_tool_ids"] == ["mcp_blender.get_scene_info"]
+    assert snapshot["degraded_tool_ids"] == ["mcp_blender.get_scene_info"]
+    assert snapshot["tool_last_errors"] == {
+        "mcp_blender.get_scene_info": "MCP request timed out",
+    }
     assert capability["available_effects"] == []
     assert capability["available_verification_strengths"] == ["weak"]
     assert snapshot["verification_tool_strengths"] == {
@@ -43,7 +50,7 @@ def test_snapshot_groups_available_and_unavailable_capability_tools() -> None:
     assert snapshot["external_state_capability_ids"] == []
 
 
-def test_preflight_blocks_external_state_when_no_external_capability_available() -> None:
+def test_preflight_advises_external_state_when_no_external_capability_available() -> None:
     snapshot = build_capability_snapshot([
         {
             "id": "filesystem.write_file",
@@ -60,8 +67,90 @@ def test_preflight_blocks_external_state_when_no_external_capability_available()
 
     result = preflight_task_capabilities(contract, snapshot)
 
-    assert result["ok"] is False
-    assert result["blockers"][0]["code"] == "missing_external_state_capability"
+    assert result["ok"] is True
+    assert result["blockers"] == []
+    assert result["advisories"][0]["code"] == "missing_external_state_capability"
+    assert result["restrict_fallback"] is False
+    assert result["allowed_tool_ids"] is None
+    assert result["preferred_tool_ids"] is None
+
+
+def test_preflight_reports_mcp_protocol_issue_for_external_state_target() -> None:
+    snapshot = build_capability_snapshot(
+        [
+            {
+                "id": "filesystem.scan_folder",
+                "capability": "filesystem.local_files",
+                "available": True,
+            },
+        ],
+        capability_issues=[
+            {
+                "code": "protocol_disconnected",
+                "source_type": "mcp",
+                "source_id": "blender",
+                "capability_id": "mcp.blender",
+                "message": "MCP service Blender MCP is running, but the MCP protocol is not connected.",
+                "recommended_action": "restart",
+            }
+        ],
+    )
+    contract = {
+        "requires_state_change": True,
+        "requires_write": False,
+        "capability_ids": ["mcp.blender"],
+        "deliverables": [{"kind": "external_state", "capability_id": "mcp.blender"}],
+    }
+
+    result = preflight_task_capabilities(contract, snapshot)
+
+    assert result["ok"] is True
+    assert result["blockers"] == []
+    assert [item["code"] for item in result["advisories"]] == ["protocol_disconnected"]
+    assert result["advisories"][0]["capability_id"] == "mcp.blender"
+    assert result["advisories"][0]["recommended_action"] == "restart"
+
+
+def test_preflight_reports_degraded_target_tool_as_advisory() -> None:
+    snapshot = build_capability_snapshot(
+        [
+            {
+                "id": "mcp_blender.execute_blender_code",
+                "capability": "mcp.blender",
+                "effects": ["external_state_change"],
+                "roles": ["deliverable"],
+                "available": True,
+                "source_type": "mcp",
+                "tool_health": "degraded",
+                "tool_last_error": "MCP request timed out after 120s: tools/call",
+            },
+        ],
+        capability_issues=[
+            {
+                "code": "tool_degraded",
+                "source_type": "mcp",
+                "source_id": "blender",
+                "capability_id": "mcp.blender",
+                "tool_id": "mcp_blender.execute_blender_code",
+                "remote_name": "execute_blender_code",
+                "message": "MCP service Blender MCP is connected, but tool execute_blender_code is degraded.",
+                "recommended_action": "restart",
+            }
+        ],
+    )
+    contract = {
+        "requires_state_change": True,
+        "requires_write": False,
+        "capability_ids": ["mcp.blender"],
+        "deliverables": [{"kind": "external_state", "capability_id": "mcp.blender"}],
+    }
+
+    result = preflight_task_capabilities(contract, snapshot)
+
+    assert result["ok"] is True
+    assert result["preferred_tool_ids"] == ["mcp_blender.execute_blender_code"]
+    assert result["advisories"][0]["code"] == "tool_degraded"
+    assert result["advisories"][0]["tool_id"] == "mcp_blender.execute_blender_code"
 
 
 def test_preflight_allows_normalized_local_file_delete_contract() -> None:
@@ -104,7 +193,7 @@ def test_preflight_allows_normalized_local_file_delete_contract() -> None:
     assert result["blockers"] == []
 
 
-def test_preflight_restricts_fallback_for_external_state_capability() -> None:
+def test_preflight_prefers_external_state_capability_without_restricting_fallback() -> None:
     snapshot = build_capability_snapshot([
         {
             "id": "filesystem.scan_folder",
@@ -135,13 +224,13 @@ def test_preflight_restricts_fallback_for_external_state_capability() -> None:
     result = preflight_task_capabilities(contract, snapshot)
 
     assert result["ok"] is True
-    assert result["restrict_fallback"] is True
-    assert "mcp_blender.execute_blender_code" in result["allowed_tool_ids"]
-    assert "filesystem.scan_folder" in result["allowed_tool_ids"]
-    assert "shell.run_command" not in result["allowed_tool_ids"]
+    assert result["restrict_fallback"] is False
+    assert result["allowed_tool_ids"] is None
+    assert result["enforce_allowed_tools"] is False
+    assert result["preferred_tool_ids"] == ["mcp_blender.execute_blender_code"]
 
 
-def test_preflight_blocks_unavailable_target_capability() -> None:
+def test_preflight_advises_unavailable_target_capability() -> None:
     snapshot = build_capability_snapshot([
         {
             "id": "mcp_blender.execute_blender_code",
@@ -161,8 +250,9 @@ def test_preflight_blocks_unavailable_target_capability() -> None:
 
     result = preflight_task_capabilities(contract, snapshot)
 
-    assert result["ok"] is False
-    assert [item["code"] for item in result["blockers"]] == [
+    assert result["ok"] is True
+    assert result["blockers"] == []
+    assert [item["code"] for item in result["advisories"]] == [
         "capability_unavailable",
         "missing_external_state_capability",
     ]

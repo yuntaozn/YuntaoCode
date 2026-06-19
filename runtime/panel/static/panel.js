@@ -147,6 +147,14 @@ function hasActiveStreams() {
     return state.activeStreams.size > 0;
 }
 
+function hasActiveRuns() {
+    return state.activeRuns.some(isRunActive);
+}
+
+function hasActiveWork() {
+    return hasActiveStreams() || hasActiveRuns();
+}
+
 function isRunActive(run) {
     return ["running", "waiting_confirmation", "paused"].includes(String(run?.status || ""));
 }
@@ -243,9 +251,39 @@ async function refreshActiveRuns() {
         renderWorkspaces();
         renderConversations();
         renderCurrentWorkspace();
+        refreshComposerState();
+        syncCurrentConversationStreamStatus();
     } catch (error) {
         console.warn("refreshActiveRuns failed:", error);
     }
+}
+
+function syncPendingConfirmationBar() {
+    syncCurrentConversationStreamStatus();
+}
+
+function syncPersistentRunStatusBar() {
+    const statusBar = $("streaming-status-bar");
+    const statusText = $("streaming-status-text");
+    const statusElapsed = $("streaming-status-elapsed");
+    const statusActions = $("status-bar-actions");
+    if (!statusBar || !statusText || !statusActions) return;
+    if (!state.currentConversationId || state.activeStreams.has(state.currentConversationId)) {
+        return;
+    }
+    const run = latestActiveRunForConversation(state.currentConversationId);
+    if (!run) {
+        statusActions.classList.add("hidden");
+        statusBar.classList.add("hidden");
+        return;
+    }
+    const waitingConfirmation = String(run.status || "") === "waiting_confirmation";
+    const message = activeRunLabel(run);
+    statusBar.classList.remove("hidden");
+    statusActions.classList.toggle("hidden", !waitingConfirmation);
+    statusText.textContent = message;
+    statusText.title = message;
+    if (statusElapsed) statusElapsed.textContent = waitingConfirmation ? "" : formatRunUpdated(run);
 }
 
 async function refreshTaskHistory() {
@@ -424,12 +462,16 @@ async function startPreparedRun(prepared) {
 }
 
 function updateSendingState() {
-    state.isSending = Boolean(isComposerSubmitPending() || isConversationStreaming());
+    state.isSending = Boolean(
+        isComposerSubmitPending()
+        || isConversationStreaming()
+        || latestActiveRunForConversation(state.currentConversationId)
+    );
     refreshComposerState();
 }
 
 function openAuxiliaryPage(url) {
-    if (hasActiveStreams()) {
+    if (hasActiveWork()) {
         const opened = window.open(url, "_blank", "noopener,noreferrer");
         if (opened) {
             showToast(t('toast.task_new_tab'));
@@ -442,7 +484,11 @@ function openAuxiliaryPage(url) {
 }
 
 function refreshComposerState() {
-    setSendButtonState(Boolean(isComposerSubmitPending() || isConversationStreaming()));
+    setSendButtonState(Boolean(
+        isComposerSubmitPending()
+        || isConversationStreaming()
+        || latestActiveRunForConversation(state.currentConversationId)
+    ));
 }
 
 function syncCurrentConversationStreamStatus() {
@@ -453,8 +499,7 @@ function syncCurrentConversationStreamStatus() {
     if (!statusBar || !statusBarText || !statusBarElapsed || !statusBarActions) return;
     const activeStream = state.activeStreams.get(state.currentConversationId);
     if (!activeStream) {
-        statusBar.classList.add("hidden");
-        statusBarActions.classList.add("hidden");
+        syncPersistentRunStatusBar();
         return;
     }
     const pendingAssistant = [...(activeStream.messages || [])]
@@ -1414,6 +1459,7 @@ async function loadConversation(conversationId) {
         renderConversations();
         refreshComposerState();
         syncCurrentConversationStreamStatus();
+        syncPendingConfirmationBar();
     } catch (error) {
         showToast(error.message || t('error.load_failed'));
         console.error("loadConversation failed:", error);
@@ -1551,7 +1597,8 @@ async function sendMessage(event) {
     const input = $("message-input");
     const content = input.value.trim();
     const activeConversationId = state.currentConversationId;
-    if (activeConversationId && isConversationStreaming(activeConversationId)) {
+    const activeRun = activeConversationId ? latestActiveRunForConversation(activeConversationId) : null;
+    if (activeConversationId && (isConversationStreaming(activeConversationId) || activeRun)) {
         if (!content) return;
         await sendGuidance(activeConversationId, content);
         input.value = "";
@@ -2117,10 +2164,20 @@ async function sendMessage(event) {
 
 function setSendButtonState(sending) {
     const btn = $("send-btn");
+    const input = $("message-input");
+    const currentRun = latestActiveRunForConversation(state.currentConversationId);
+    const detachedRun = currentRun && !isConversationStreaming();
     if (sending) {
-        const input = $("message-input");
-        btn.textContent = input?.value.trim() ? t('composer.interrupt') : t('composer.stop');
-        btn.classList.add("stop-mode");
+        const hasText = Boolean(input?.value.trim());
+        if (detachedRun) {
+            btn.textContent = hasText ? t('composer.interrupt') : t('conv.running');
+            btn.classList.toggle("stop-mode", hasText);
+            btn.disabled = !hasText;
+        } else {
+            btn.textContent = hasText ? t('composer.interrupt') : t('composer.stop');
+            btn.classList.add("stop-mode");
+            btn.disabled = false;
+        }
         btn.type = "button";
     } else {
         btn.textContent = t('composer.send');
@@ -2162,10 +2219,15 @@ async function sendConfirmAction(action) {
     const statusText = $("streaming-status-text");
     if (statusText) statusText.textContent = action === "continue" ? t('status.continuing') : t('status.stopping');
     try {
-        await api(`/conversations/${state.currentConversationId}/confirm`, {
+        const result = await api(`/conversations/${state.currentConversationId}/confirm`, {
             method: "POST",
             body: JSON.stringify({ action }),
         });
+        if (result?.success === false) {
+            showToast(result.error || t('toast.confirm_failed', {error: t('status.waiting_confirm')}));
+        }
+        await refreshActiveRuns();
+        syncPendingConfirmationBar();
     } catch (err) {
         showToast(t('toast.confirm_failed', {error: err.message}));
     }
@@ -2935,7 +2997,8 @@ on("send-btn", "click", (event) => {
         event.preventDefault();
         return;
     }
-    if (isConversationStreaming()) {
+    const activeRun = latestActiveRunForConversation(state.currentConversationId);
+    if (isConversationStreaming() || activeRun) {
         event.preventDefault();
         const input = $("message-input");
         const content = input?.value.trim() || "";
@@ -2973,6 +3036,19 @@ window.addEventListener("beforeunload", (event) => {
     if (!hasActiveStreams()) return;
     event.preventDefault();
     event.returnValue = "";
+});
+
+window.addEventListener("pageshow", () => {
+    refreshActiveRuns().catch((error) => console.warn("pageshow refreshActiveRuns failed:", error));
+});
+
+window.addEventListener("focus", () => {
+    refreshActiveRuns().catch((error) => console.warn("focus refreshActiveRuns failed:", error));
+});
+
+document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    refreshActiveRuns().catch((error) => console.warn("visibility refreshActiveRuns failed:", error));
 });
 
 if ($("backend-url-input")) $("backend-url-input").value = state.backendUrl;

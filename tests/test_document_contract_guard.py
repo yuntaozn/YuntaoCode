@@ -79,6 +79,25 @@ def test_runtime_confirmation_message_describes_file_overwrite(tmp_path: Path) -
     assert f"目标：{target}" in message
 
 
+def test_runtime_confirmation_message_describes_external_mcp_operation() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    handler._tool_display_name = lambda _tool_id: "execute_blender_code"
+
+    operation = handler._runtime_confirmation_operation(
+        "mcp_blender.execute_blender_code",
+        {"code": "print(1)"},
+        "",
+    )
+    message = handler._runtime_confirmation_message(
+        "mcp_blender.execute_blender_code",
+        {"code": "print(1)"},
+    )
+
+    assert "MCP" in operation
+    assert "MCP" in message
+    assert "filesystem.write_file" not in message
+
+
 def test_runtime_confirmation_message_describes_patch_targets() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
     handler._tool_display_name = lambda _tool_id: "应用代码补丁"
@@ -182,6 +201,32 @@ def test_task_contract_accepts_structured_artifact_facts_as_verification() -> No
     ]
 
     assert handler._task_contract_failures(contract, events, "document") == []
+
+
+def test_task_contract_rejects_short_finalized_text_for_long_document() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    contract = {
+        "requires_write": True,
+        "requires_verification": True,
+        "expected_min_output_chars": 12000,
+        "deliverables": [
+            {"kind": "document", "path_hint": r"D:\workspace\story.docx"}
+        ],
+    }
+    events = [
+        {
+            "tool": "filesystem.finalize_text_file",
+            "status": "success",
+            "input": {"output_path": r"D:\workspace\story.txt"},
+            "output": {
+                "path": r"D:\workspace\story.txt",
+                "draft_stats": {"text_chars": 5000},
+                "validation": {"valid": True, "text_chars": 5000},
+            },
+        },
+    ]
+
+    assert "document_output_too_short" in handler._task_contract_failures(contract, events, "document")
 
 
 def test_task_contract_uses_declared_deliverable_role_for_write_and_verification() -> None:

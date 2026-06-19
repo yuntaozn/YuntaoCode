@@ -271,8 +271,18 @@ class TestLooksLikeDanglingAction:
     def test_dangling_with_colon(self):
         assert looks_like_dangling_action("让我先验证一下：")
 
+    def test_dangling_preface_with_view_action(self):
+        assert looks_like_dangling_action(
+            "我来帮你了解 Blender MCP 的安装方法。首先让我查看一下当前项目目录的情况。"
+        )
+
     def test_completed_statement(self):
         assert not looks_like_dangling_action("修改已完成。")
+
+    def test_instructional_answer_is_not_dangling(self):
+        assert not looks_like_dangling_action(
+            "我来说明一下安装方式：使用 uvx blender-mcp 启动 MCP server。"
+        )
 
     def test_empty(self):
         assert not looks_like_dangling_action("")

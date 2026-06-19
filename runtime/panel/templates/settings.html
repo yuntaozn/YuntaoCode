@@ -438,8 +438,8 @@
         <div class="settings-dialog-panel">
             <div class="settings-dialog-head">
                 <div>
-                    <h3 data-i18n="settings_js.add_model_dialog_title">新增模型</h3>
-                    <p data-i18n="settings_js.add_model_dialog_desc">先选择接口，再填写模型 ID 和 API 模型名。连接地址与 Key 仍在“接口”里维护。</p>
+                    <h3 data-i18n="settings_js.save_model_dialog_title">保存模型</h3>
+                    <p data-i18n="settings_js.save_model_dialog_desc">选择接口并填写 API 模型名即可；显示别名只用于界面展示，本地模型 ID 会自动生成。</p>
                 </div>
                 <button class="icon-close" id="close-add-model-dialog-btn" type="button">×</button>
             </div>
@@ -447,19 +447,14 @@
                 <label for="add-model-provider-input" data-i18n="settings_js.provider_label">接口</label>
                 <select id="add-model-provider-input"></select>
             </div>
-            <div class="settings-inline">
-                <div class="settings-form-row">
-                    <label for="add-model-id-input" data-i18n="settings_js.model_id">模型 ID</label>
-                    <input id="add-model-id-input" placeholder="qwen3.7-max">
-                </div>
-                <div class="settings-form-row">
-                    <label for="add-model-api-model-input" data-i18n="settings_js.api_model_name">API 模型名</label>
-                    <input id="add-model-api-model-input" placeholder="qwen3.7-max">
-                </div>
+            <div class="settings-form-row">
+                <label for="add-model-api-model-input" data-i18n="settings_js.api_model_name">API 模型名</label>
+                <input id="add-model-api-model-input" placeholder="qwen3.7-max">
+                <span class="hint-line" data-i18n="settings_js.api_model_name_hint">用于实际请求接口；本地模型 ID 会自动生成。</span>
             </div>
             <div class="settings-form-row">
-                <label for="add-model-name-input" data-i18n="settings_js.display_name">显示名称</label>
-                <input id="add-model-name-input" placeholder="Qwen3.7 Max">
+                <label for="add-model-name-input" data-i18n="settings_js.display_alias">显示别名（可选）</label>
+                <input id="add-model-name-input" placeholder="留空则使用模型 ID" data-i18n-placeholder="settings_js.model_alias_placeholder">
             </div>
             <div class="settings-form-row">
                 <label for="add-model-thinking-mode-input" data-i18n="settings_js.thinking_mode">思考参数适配</label>
@@ -477,7 +472,7 @@
             <span class="hint-line" data-i18n="settings_js.allow_disable_thinking_hint">部分 Qwen / DashScope 模型要求 enable_thinking=true；不确定时请保持关闭。</span>
             <div class="dialog-actions">
                 <button class="secondary-button" id="cancel-add-model-btn" type="button" data-i18n="common.cancel">取消</button>
-                <button class="primary-button" id="confirm-add-model-btn" type="button" data-i18n="settings_page.add_model">新增模型</button>
+                <button class="primary-button" id="confirm-add-model-btn" type="button" data-i18n="settings_js.save_model">保存模型</button>
             </div>
         </div>
     </dialog>

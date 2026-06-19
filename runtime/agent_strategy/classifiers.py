@@ -478,11 +478,11 @@ def looks_like_dangling_action(content: str) -> bool:
         return False
     tail = text[-260:].lower()
     action_terms = (
-        "让我先", "我先", "接下来", "现在我", "我将", "我会", "准备",
-        "开始", "需要先", "继续", "let me", "i will", "next",
+        "让我先", "首先让我", "让我来", "我先", "接下来", "现在我", "我将",
+        "我会", "准备", "开始", "需要先", "继续", "let me", "i will", "next",
     )
     toolish_terms = (
-        "验证", "检查", "读取", "搜索", "查找", "扫描", "修改", "写入",
+        "验证", "检查", "查看", "读取", "搜索", "查找", "扫描", "修改", "写入",
         "替换", "运行", "调用", "测试", "确认", "verify", "check",
         "read", "search", "scan", "edit", "write", "run", "test",
     )
@@ -1176,6 +1176,8 @@ def _artifact_write_has_verification_facts(
         _nonnegative_int(draft_stats.get("text_chars")),
         _nonnegative_int(draft_stats.get("block_count")),
     )
+    if tool_id.startswith("document.") and content_measure > 0:
+        return True
     return file_size > 0 and content_measure > 0
 
 

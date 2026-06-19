@@ -59,12 +59,17 @@ For Blender specifically:
 - Blender-specific tools are not copied into `runtime/skills/`.
 - A disabled `blender` example definition is created during the MCP service
   schema migration. It uses the explicit `uvx blender-mcp` package-runner
-  command and never starts automatically.
+  command. It does not start automatically by default; users may explicitly
+  enable the service and opt in to `lifecycle.auto_start`.
 - MCP service source/reference trees live under `mcp-services/<service-id>/`.
   A local source copy, such as `mcp-services/blender-mcp/`, is third-party
   reference material for the MCP service boundary. It is not a built-in Python
   skill, not an automatically loaded plugin, and not required by the default
   `uvx blender-mcp` connection path.
+- The Blender example uses conservative per-tool timeouts because the official
+  socket bridge can take longer than a normal local tool call, especially for
+  viewport screenshots and code execution. These timeouts are operational
+  defaults, not success guarantees.
 
 ## Runtime Concepts
 
@@ -83,14 +88,23 @@ configuration stores them together:
 
 Installation is separate from connection. The Blender example declares
 `installation.kind = package_runner`: YuntaoCode does not install or own the
-package, and `uvx` may acquire it only after the user explicitly enables and
-starts the service.
+package, and `uvx` may acquire it only after the user explicitly enables the
+service and starts it manually or opts in to auto-start.
 
 External application readiness is also separate from MCP connection state.
 Service definitions may declare generic `tcp` or `executable` prerequisites.
 The Blender example checks both the Add-on socket at `127.0.0.1:9876` and the
 availability of `uvx`. A ready Add-on does not mean the MCP protocol session is
 connected; it only explains which part of the connection chain is ready.
+
+Capability readiness is advisory by default. If an MCP service is stopped,
+protocol-disconnected, or has degraded tool roundtrips, the runtime can still
+ground a matching task to that MCP capability and pass the readiness issue to
+the model. For enabled services that opted in to `lifecycle.auto_start`, the
+runtime may also start the targeted MCP service on demand before the model gets
+the final tool snapshot. This keeps the model in charge of strategy while
+preventing a missing dynamic tool list from erasing the intended
+external-application boundary.
 
 The Blender example also sets `BLENDER_MCP_DISABLE_TELEMETRY=1` by default.
 This follows YuntaoCode's local-first boundary, but it is not a substitute for
@@ -114,6 +128,8 @@ Tool policies may declare:
 - `artifacts`: artifact kinds produced by a successful call.
 - `verification_strength`: `weak`, `standard`, or `strong` evidence supplied
   by a successful verification call.
+- `call_timeout`: optional per-tool call timeout in seconds. If omitted, the
+  service-level `timeouts.call` value is used.
 
 These declarations describe successful result facts, not permission grants.
 Failed calls never receive the declared successful effects. Their intended
@@ -141,6 +157,9 @@ MCP service.
   "lifecycle": {
     "auto_start": false,
     "restart_policy": "manual"
+  },
+  "timeouts": {
+    "call": 30
   },
   "permissions": {
     "filesystem": "workspace",
@@ -171,6 +190,16 @@ The MCP management page should display stable service states:
 Tool availability should follow connection state. A disconnected MCP service
 must not leave apparently callable tools in the model context without clear
 availability evidence.
+
+Protocol connection and tool roundtrip health are separate. A service can be
+`connected` at the MCP protocol layer while one or more discovered tools are
+`degraded` because the external application bridge timed out, returned invalid
+data, or rejected the operation. In that case YuntaoCode keeps the protocol
+state visible, marks the affected bindings with `health` and `last_error`, and
+surfaces advisory capability issues to the model. This is not a permission
+block; it is runtime evidence that the model should use for strategy selection,
+such as restarting the service, running a small smoke test, or choosing another
+safe route.
 
 ## UI Direction
 
@@ -205,10 +234,14 @@ The runtime now provides an independent MCP service manager and page:
 - `stdio`, Streamable HTTP, and legacy SSE configurations are supported;
 - explicit start, stop, restart, endpoint check, state, and recent logs are
   available;
+- enabled services may opt in to `lifecycle.auto_start`, which is attempted
+  after Runtime startup and when a task targets the matching MCP capability
+  while the service is stopped, on a best-effort basis;
 - stdio services perform an MCP initialize handshake, discover tools, call
   tools, and dynamically bind/unbind them in `ToolRegistry`;
 - session protocol version, server identity, and capability bindings are
   visible through the service API and management page;
+- service pages distinguish protocol connection from tool roundtrip health;
 - environment values and HTTP headers are redacted from public API responses;
 - MCP-sourced capabilities are visible in the plugin catalog but managed from
   the MCP service page;
@@ -219,6 +252,8 @@ The runtime now provides an independent MCP service manager and page:
 - provider log messages are length-bounded before entering the local service
   diagnostics view.
 
-Automatic installation, automatic startup, remote marketplaces, and live
-Streamable HTTP/legacy SSE protocol sessions remain out of scope. Starting a
-configured stdio service is always an explicit user action.
+Automatic installation, remote marketplaces, and live Streamable HTTP/legacy
+SSE protocol sessions remain out of scope. Starting a configured stdio service
+is explicit by default; `auto_start` is a per-service lifecycle opt-in, not a
+global background plugin loader. It covers both Runtime startup and task-demand
+startup.

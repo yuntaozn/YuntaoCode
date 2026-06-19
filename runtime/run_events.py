@@ -186,6 +186,9 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
             "event": "confirm",
             "event_name": event_name,
             "message": payload.get("message"),
+            "tool": payload.get("tool"),
+            "name": payload.get("name"),
+            "confirmation_decision": payload.get("confirmation_decision"),
             "progress": payload.get("progress"),
         }
     if event_type == "result":

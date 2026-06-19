@@ -119,6 +119,18 @@ def test_diagnostic_export_is_sanitized_and_not_a_fixture(monkeypatch) -> None:
                 "error": "timeout",
             },
             {
+                "event": "tool",
+                "tool": "filesystem.finalize_text_file",
+                "status": "success",
+                "input": {"output_path": "story.txt"},
+                "output": {
+                    "path": "story.txt",
+                    "draft_stats": {"text_chars": 5200, "chunk_count": 2},
+                    "validation": {"valid": True, "text_chars": 5200},
+                    "content": "generated story content should not appear",
+                },
+            },
+            {
                 "event": "error",
                 "error": "HTTP 400: invalid provider request",
                 "terminal": False,
@@ -168,9 +180,14 @@ def test_diagnostic_export_is_sanitized_and_not_a_fixture(monkeypatch) -> None:
     assert "sk-***secret" not in text
     assert "secret_option" not in text
     assert "full file content should not appear" not in text
+    assert "generated story content should not appear" not in text
     assert exported["settings"]["providers"]["demo"]["base_url_origin"] == "https://example.com"
     assert exported["tools"]["count"] == 1
     assert exported["mcp_services"]["services"][0]["session"]["state"] == "connected"
     assert exported["model_errors"]["count"] == 1
     assert exported["model_errors"]["latest"]["recoverable"] is True
-    assert exported["recent_events"][1]["terminal"] is False
+    tool_outputs = exported["runbook_summary"]["tool_steps"]
+    finalized = next(item for item in tool_outputs if item["tool"] == "filesystem.finalize_text_file")
+    assert finalized["output"]["draft_stats"]["text_chars"] == 5200
+    assert finalized["output"]["validation"]["text_chars"] == 5200
+    assert exported["recent_events"][2]["terminal"] is False

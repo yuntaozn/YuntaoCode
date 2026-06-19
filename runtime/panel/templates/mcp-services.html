@@ -22,6 +22,7 @@
             background: var(--panel);
         }
         .service-card.disabled { opacity: 0.6; }
+        .service-card.attention { border-color: rgba(180, 110, 20, 0.42); }
         .service-head, .service-actions, .service-meta, .service-title-row {
             display: flex;
             align-items: center;
@@ -45,18 +46,49 @@
             font-size: 11px;
         }
         .state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
-        .state-connected .state-dot, .state-reachable .state-dot, .state-running .state-dot,
-        .state-dot.state-connected, .state-dot.state-reachable, .state-dot.state-running { background: var(--success); }
+        .state-connected .state-dot, .state-reachable .state-dot,
+        .state-dot.state-connected, .state-dot.state-reachable { background: var(--success); }
+        .state-running .state-dot, .state-protocol_disconnected .state-dot,
+        .state-dot.state-running, .state-dot.state-protocol_disconnected { background: #b7791f; }
         .state-failed .state-dot, .state-degraded .state-dot,
         .state-dot.state-failed, .state-dot.state-degraded { background: var(--danger); }
+        .tool-health-available .state-dot { background: var(--success); }
+        .tool-health-degraded .state-dot,
+        .tool-health-unavailable .state-dot { background: var(--danger); }
+        .tool-health-unknown .state-dot { background: #b7791f; }
         .service-actions { margin-top: 14px; flex-wrap: wrap; }
         .service-actions button { min-height: 30px; }
         button:disabled { cursor: default; opacity: 0.45; }
         .service-message { margin-top: 10px; color: var(--muted); font-size: 12px; }
+        .service-issue {
+            margin-top: 10px;
+            padding: 8px 10px;
+            border: 1px solid rgba(180, 110, 20, 0.28);
+            border-radius: 6px;
+            background: rgba(255, 247, 230, 0.88);
+            color: var(--text);
+            font-size: 12px;
+            line-height: 1.45;
+        }
         .service-bindings, .service-prerequisites { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
         .service-bindings .tool-chip { display: inline-flex; align-items: center; gap: 5px; }
         .service-bindings .binding-available .state-dot { background: var(--success); }
         .service-bindings .binding-degraded .state-dot { background: var(--danger); }
+        .service-binding-errors {
+            margin-top: 10px;
+            padding: 8px 10px;
+            border: 1px solid rgba(180, 40, 40, 0.22);
+            border-radius: 6px;
+            background: rgba(255, 238, 238, 0.68);
+            color: var(--text);
+            font-size: 12px;
+            line-height: 1.45;
+        }
+        .service-binding-errors strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+        .service-binding-errors div + div { margin-top: 4px; }
         .prerequisite-item {
             display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px;
             border: 1px solid var(--line); border-radius: 4px; color: var(--muted); font-size: 11px;
@@ -75,6 +107,29 @@
             font-size: 11px;
             line-height: 1.5;
             white-space: pre-wrap;
+        }
+        .pending-confirm-banner {
+            margin: 14px 20px 0;
+            padding: 12px 14px;
+            border: 1px solid rgba(180, 110, 20, 0.28);
+            border-radius: 8px;
+            background: rgba(255, 247, 230, 0.88);
+            color: var(--text);
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            justify-content: space-between;
+        }
+        .pending-confirm-banner.hidden { display: none; }
+        .pending-confirm-text {
+            white-space: pre-wrap;
+            line-height: 1.55;
+            font-size: 13px;
+        }
+        .pending-confirm-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
         }
         .empty-state { padding: 64px 20px; text-align: center; color: var(--muted); }
         .service-form {
@@ -154,6 +209,13 @@
                     <button class="primary-button" id="add-mcp-btn" data-i18n="mcp_page.add">新增服务</button>
                 </div>
             </header>
+            <div class="pending-confirm-banner hidden" id="pending-confirm-banner">
+                <div class="pending-confirm-text" id="pending-confirm-text"></div>
+                <div class="pending-confirm-actions">
+                    <button class="primary-button" id="pending-confirm-continue" data-i18n="status.continue_exec">继续执行</button>
+                    <button class="secondary-button" id="pending-confirm-cancel" data-i18n="status.stop_btn">停止</button>
+                </div>
+            </div>
             <section class="chat-panel service-list">
                 <div id="mcp-service-list"></div>
             </section>
@@ -188,6 +250,13 @@
                     <select id="mcp-enabled">
                         <option value="true" data-i18n="mcp_page.enabled_yes">启用</option>
                         <option value="false" data-i18n="mcp_page.enabled_no">禁用</option>
+                    </select>
+                </label>
+                <label>
+                    <span data-i18n="mcp_page.auto_start">随 Runtime 自动启动</span>
+                    <select id="mcp-auto-start">
+                        <option value="false" data-i18n="mcp_page.auto_start_no">不自动启动</option>
+                        <option value="true" data-i18n="mcp_page.auto_start_yes">自动启动</option>
                     </select>
                 </label>
                 <label>
@@ -271,7 +340,7 @@
         </form>
     </dialog>
 
-    <script src="/static/i18n.js?v=20260614-3"></script>
-    <script src="/static/mcp-services.js?v=20260612-6"></script>
+    <script src="/static/i18n.js?v=20260619-1"></script>
+    <script src="/static/mcp-services.js?v=20260619-1"></script>
 </body>
 </html>

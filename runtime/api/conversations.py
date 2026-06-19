@@ -21,6 +21,7 @@ from runtime.agent_strategy import confirmation_policy as _cp
 from runtime.agent_strategy import conversation_task_context as _task_ctx
 from runtime.agent_strategy import context_hygiene as _ctx_hygiene
 from runtime.agent_strategy.document_contract_guard import document_contract_tool_guard_message
+from runtime.agent_strategy.document_completion import min_text_output_check
 from runtime.agent_strategy import prompts as _prp
 from runtime.agent_strategy import plan_tracker as _pt
 from runtime.agent_strategy import policy as _pol
@@ -47,11 +48,28 @@ from runtime.conversation_interactions import (
     runtime_guidance as _runtime_guidance,
 )
 from runtime.prompt_context import build_system_prompt
+from runtime.run_result_presenter import (
+    synthesize_failure_answer,
+    synthesize_final_answer,
+    synthesize_partial_answer,
+)
 from runtime.task_runner import ToolContext
 from runtime import tool_event_presentation as _tool_present
 
 
 _active_stream_conversation_runs: dict[str, str] = {}
+_ACTIVE_CONVERSATION_RUN_STATUSES = {"running", "waiting_confirmation", "paused"}
+
+
+def _active_persisted_run_id_for_conversation(runtime: Any, conversation_id: str) -> str:
+    try:
+        runs = runtime.runs.list(conversation_id=conversation_id)
+    except Exception:
+        return ""
+    for run in runs:
+        if str(getattr(run, "status", "") or "") in _ACTIVE_CONVERSATION_RUN_STATUSES:
+            return str(getattr(run, "id", "") or "")
+    return ""
 
 _TOOL_TASK_FAST_POLL_SECONDS = 0.25
 _TOOL_TASK_STEADY_POLL_SECONDS = 1.0
@@ -229,7 +247,10 @@ class ConversationMessagesHandler(ApiHandler):
         if not workspace:
             raise tornado.web.HTTPError(404, reason="workspace not found")
 
-        active_run_id = _active_stream_conversation_runs.get(conversation_id)
+        active_run_id = (
+            _active_stream_conversation_runs.get(conversation_id)
+            or _active_persisted_run_id_for_conversation(self.runtime, conversation_id)
+        )
         if active_run_id:
             raise tornado.web.HTTPError(
                 409,
@@ -343,6 +364,9 @@ class ConversationMessagesHandler(ApiHandler):
                 continue
             item = dict(spec)
             item["available"] = bool(self.runtime.is_tool_available(spec))
+            metadata_provider = getattr(self.runtime, "tool_runtime_metadata", None)
+            if callable(metadata_provider):
+                item.update(metadata_provider(spec))
             specs.append(item)
         return specs
 
@@ -356,9 +380,17 @@ class ConversationMessagesHandler(ApiHandler):
                 or "external_state_change" in set(spec.get("effects") or [])
             )
         }
+        capability_issues: list[dict[str, Any]] = []
+        mcp_services = getattr(self.runtime, "mcp_services", None)
+        if mcp_services is not None and hasattr(mcp_services, "capability_issues"):
+            try:
+                capability_issues = list(mcp_services.capability_issues())
+            except Exception:
+                capability_issues = []
         return _cap_preflight.build_capability_snapshot(
             specs,
             state_changing_tool_ids=state_changing_tool_ids,
+            capability_issues=capability_issues,
         )
 
     def _preflight_task_capabilities(
@@ -368,6 +400,39 @@ class ConversationMessagesHandler(ApiHandler):
     ) -> dict[str, Any]:
         return _cap_preflight.preflight_task_capabilities(task_contract, capability_snapshot)
 
+    async def _auto_start_mcp_services_for_preflight(self, preflight: dict[str, Any]) -> list[dict[str, Any]]:
+        if not isinstance(preflight, dict):
+            return []
+        target_capability_ids = [
+            str(item).strip()
+            for item in preflight.get("target_capability_ids") or []
+            if str(item).strip().startswith("mcp.")
+        ]
+        if not target_capability_ids:
+            return []
+        advisories = preflight.get("advisories") if isinstance(preflight.get("advisories"), list) else []
+        startable_targets = {
+            str(item.get("capability_id") or "").strip()
+            for item in advisories
+            if isinstance(item, dict)
+            and str(item.get("capability_id") or "").strip() in set(target_capability_ids)
+            and str(item.get("recommended_action") or "").strip() == "start"
+        }
+        if not startable_targets:
+            return []
+        mcp_services = getattr(self.runtime, "mcp_services", None)
+        if mcp_services is None or not hasattr(mcp_services, "start_capability_services"):
+            return []
+        try:
+            return await mcp_services.start_capability_services(sorted(startable_targets))
+        except Exception as exc:
+            return [{
+                "service_id": "",
+                "capability_id": ",".join(sorted(startable_targets)),
+                "status": "failed",
+                "message": str(exc),
+            }]
+
     def _capability_fallback_guard(self, tool_id: str) -> str:
         preflight = getattr(self, "_active_capability_preflight", None)
         if _cap_preflight.tool_allowed_by_preflight(preflight, tool_id):
@@ -376,39 +441,66 @@ class ConversationMessagesHandler(ApiHandler):
         if targets:
             return (
                 f"Tool {tool_id} is outside the target capability boundary ({targets}). "
-                "The runtime blocked this fallback so an external-state task cannot silently become another implementation path."
+                "This boundary is enforced by the active task policy."
             )
         return (
             f"Tool {tool_id} is outside the current capability preflight boundary. "
-            "Use an available target capability or report the capability blocker."
+            "Use an available target capability or explain why another safe strategy is necessary."
         )
 
     def _capability_preflight_failure_message(self, preflight: dict[str, Any]) -> str:
         messages = _cap_preflight.preflight_blocker_messages(preflight)
         lines = [
-            "未完成：当前任务需要的能力在本轮运行前检查中不可用，系统已阻止自动降级到其他实现路径。",
+            "未完成：当前任务被运行时策略阻止，模型和工具尚未继续执行。",
         ]
         if messages:
             lines.append("")
-            lines.append("能力阻断原因：")
+            lines.append("阻断原因：")
             lines.extend(f"- {message}" for message in messages[:6])
         lines.extend([
             "",
-            "请在 MCP 服务或相关能力连接正常后重试；系统不会把外部应用状态变更任务静默改成脚本或普通文件产物。",
+            "这类阻断只应由明确的安全或权限策略触发；普通能力缺失会作为提示交给模型自主处理。",
         ])
         return "\n".join(lines)
 
     def _capability_boundary_prompt(self, preflight: dict[str, Any]) -> str:
-        allowed = preflight.get("allowed_tool_ids") if isinstance(preflight, dict) else None
-        if not isinstance(allowed, list):
+        if not isinstance(preflight, dict):
+            return ""
+        advisory_messages = _cap_preflight.preflight_advisory_messages(preflight)
+        preferred = preflight.get("preferred_tool_ids")
+        allowed = preflight.get("allowed_tool_ids")
+        enforce_allowed = isinstance(allowed, list) and bool(preflight.get("enforce_allowed_tools"))
+        if not advisory_messages and not isinstance(preferred, list) and not enforce_allowed:
             return ""
         targets = ", ".join(preflight.get("target_capability_ids") or [])
-        return (
-            "Capability preflight boundary: this run targets "
-            f"{targets or 'an external-state capability'}. "
-            "Use only the provided tools that remain visible in this round for state-changing work. "
-            "Do not fall back to shell scripts, local file generation, or another provider unless the user explicitly changes the task goal."
-        )
+        lines = [
+            "Capability preflight advisory: use these runtime facts when choosing the task strategy.",
+            (
+                "Call only exact tool IDs that are visible in the current tool list. "
+                "Do not invent generic discovery or management tools such as mcp.list_tools "
+                "unless that exact tool ID is listed."
+            ),
+        ]
+        if targets:
+            lines.append(f"Target capability: {targets}.")
+        if advisory_messages:
+            lines.append("Current capability notes:")
+            lines.extend(f"- {message}" for message in advisory_messages[:6])
+        if isinstance(preferred, list) and preferred:
+            lines.append("Preferred tools when they fit the goal: " + ", ".join(str(item) for item in preferred[:12]) + ".")
+        if str(preflight.get("requires_external_state_capability") or "").lower() == "true":
+            lines.append(
+                "For external application or MCP state changes, prefer a small roundtrip check before a large script, "
+                "and split complex actions into smaller verifiable tool calls when the provider has recent failures."
+            )
+        if enforce_allowed and isinstance(allowed, list):
+            lines.append("This run has an enforced tool boundary: use only the tools still visible for state-changing work.")
+        else:
+            lines.append(
+                "This is not a hard blocker. You may choose another safe strategy, ask the user, or explain the missing capability. "
+                "Do not claim an external application state changed unless tool evidence confirms it."
+            )
+        return "\n".join(lines)
 
 class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def flush(self, include_footers: bool = False) -> asyncio.Task[None]:
@@ -453,7 +545,10 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         except ValueError as exc:
             raise tornado.web.HTTPError(400, reason=str(exc)) from exc
 
-        active_run_id = _active_stream_conversation_runs.get(conversation_id)
+        active_run_id = (
+            _active_stream_conversation_runs.get(conversation_id)
+            or _active_persisted_run_id_for_conversation(self.runtime, conversation_id)
+        )
         if active_run_id:
             raise tornado.web.HTTPError(
                 409,
@@ -833,6 +928,15 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             and not verifications
         ):
             failures.append("missing_target_deliverable_verification")
+        min_output_check = min_text_output_check(
+            tool_events,
+            expected_min_output_chars=contract.get("expected_min_output_chars") or 0,
+            task_contract=contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+        if min_output_check.get("required") and not min_output_check.get("ok"):
+            failures.append(str(min_output_check.get("reason") or "document_output_too_short"))
         return failures
 
     async def _decide_plan_execution(
@@ -1049,7 +1153,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "type": "function",
                 "function": {
                     "name": model_name,
-                    "description": spec["description"],
+                    "description": self._model_tool_description(spec),
                     "parameters": spec["input_schema"],
                 },
             })
@@ -1057,6 +1161,20 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
 
     def _model_tool_name(self, tool_id: str) -> str:
         return tool_id.replace(".", "__")
+
+    def _model_tool_description(self, spec: dict[str, Any]) -> str:
+        description = str(spec.get("description") or "")
+        if str(spec.get("source_type") or "") != "mcp":
+            return description
+        health = str(spec.get("tool_health") or "available")
+        if health == "available":
+            return description
+        last_error = str(spec.get("tool_last_error") or "").strip()
+        note = f"Runtime health: {health}."
+        if last_error:
+            note += f" Last error: {last_error[:240]}."
+        note += " Prefer a small roundtrip test, restart the service, or choose another safe strategy before relying on this tool."
+        return f"{description}\n\n{note}" if description else note
 
     def _messages_for_model_round(
         self,
@@ -1271,10 +1389,34 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _malformed_tool_call_prompt(self, workspace_path: str, unfinished_text: str) -> str:
         return _prp.malformed_tool_call_prompt(workspace_path, unfinished_text)
 
-    def _needs_synthesized_final_answer(self, content: str, tool_events: list[dict[str, Any]]) -> bool:
-        if not tool_events:
-            return False
+    def _answer_only_final_answer_error(
+        self,
+        content: str,
+        tool_events: list[dict[str, Any]],
+        task_contract: dict[str, Any] | None = None,
+    ) -> str:
+        if tool_events or not isinstance(task_contract, dict):
+            return ""
+        if str(task_contract.get("intent") or "") != "answer_only":
+            return ""
         text = (content or "").strip()
+        if not text or text == "模型没有返回内容。":
+            return "model did not return a final answer"
+        if _clf.strip_native_tool_call_blocks(text) != text:
+            return "model returned unresolved tool call markup instead of a final answer"
+        if self._looks_like_dangling_action(text):
+            return "model stopped at a pending action instead of answering"
+        return ""
+
+    def _needs_synthesized_final_answer(
+        self,
+        content: str,
+        tool_events: list[dict[str, Any]],
+        task_contract: dict[str, Any] | None = None,
+    ) -> bool:
+        text = (content or "").strip()
+        if not tool_events:
+            return bool(self._answer_only_final_answer_error(content, tool_events, task_contract))
         if not text or text == "模型没有返回内容。":
             return True
         if _clf.strip_native_tool_call_blocks(text) != text:
@@ -1297,47 +1439,14 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         tool_events: list[dict[str, Any]],
         run_result: dict[str, Any],
     ) -> str:
-        failures = run_result.get("failures") if isinstance(run_result, dict) else []
-        lines = [
-            "未完成：本轮有工具执行失败，系统已按实际执行结果标记为失败。",
-            "",
-            "失败记录：",
-        ]
-        if isinstance(failures, list) and failures:
-            for item in failures[:6]:
-                if not isinstance(item, dict):
-                    continue
-                tool = str(item.get("tool") or "unknown")
-                path = str(item.get("path") or "").strip()
-                error = str(item.get("error") or "工具执行失败").strip()
-                label = f"{tool}（{path}）" if path else tool
-                lines.append(f"- {label}: {error[:240]}")
-        else:
-            for event in tool_events:
-                if not self._tool_event_failed(event):
-                    continue
-                tool = str(event.get("tool") or "unknown")
-                error = self._tool_event_failure_message(event)
-                path = self._tool_event_display_path(workspace_path, event)
-                label = f"{tool}（{path}）" if path else tool
-                lines.append(f"- {label}: {error[:240]}")
-        if len(lines) == 3:
-            lines.append("- 工具返回失败，但没有提供详细错误信息。")
-        risks = run_result.get("risks") if isinstance(run_result, dict) else []
-        if isinstance(risks, list) and risks:
-            lines.extend(["", "未满足条件/风险："])
-            for risk in risks[:8]:
-                if risk == "document_output_coverage_low":
-                    lines.append("- 文档输出覆盖率过低：目标文件已生成，但内容明显少于源文档，不能视为全文完成。")
-                elif risk == "recovered_tool_failure":
-                    lines.append("- 过程中有工具失败，但后续步骤曾尝试恢复。")
-                else:
-                    lines.append(f"- {risk}")
-        lines.extend([
-            "",
-            "请根据上面的失败原因继续修正后再执行；不要以模型原始总结作为完成依据。",
-        ])
-        return "\n".join(lines)
+        return synthesize_failure_answer(
+            workspace_path,
+            tool_events,
+            run_result,
+            tool_event_failed=self._tool_event_failed,
+            tool_event_failure_message=self._tool_event_failure_message,
+            tool_event_display_path=self._tool_event_display_path,
+        )
 
     def _synthesize_partial_answer(
         self,
@@ -1345,45 +1454,11 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         tool_events: list[dict[str, Any]],
         run_result: dict[str, Any],
     ) -> str:
-        changed_paths = run_result.get("changed_paths") if isinstance(run_result, dict) else []
-        failures = run_result.get("failures") if isinstance(run_result, dict) else []
-        risks = run_result.get("risks") if isinstance(run_result, dict) else []
-        counts = run_result.get("counts") if isinstance(run_result, dict) else {}
-        lines = [
-            "未完整完成：本轮已有部分操作成功，但系统检测到失败项或缺少可靠验证。",
-        ]
-        if isinstance(changed_paths, list) and changed_paths:
-            lines.extend(["", "已变更文件："])
-            lines.extend(f"- {path}" for path in changed_paths[:12])
-        if isinstance(failures, list) and failures:
-            lines.extend(["", "失败记录："])
-            for item in failures[:6]:
-                if not isinstance(item, dict):
-                    continue
-                tool = str(item.get("tool") or "unknown")
-                path = str(item.get("path") or "").strip()
-                error = str(item.get("error") or "工具执行失败").strip()
-                label = f"{tool}（{path}）" if path else tool
-                lines.append(f"- {label}: {error[:240]}")
-        if isinstance(risks, list) and risks:
-            lines.extend(["", "仍需处理："])
-            risk_messages = {
-                "test_not_observed": "没有观察到测试、构建或语法检查成功。",
-                "write_not_verified": "写入后没有观察到有效验证。",
-                "partial_write_failure": "同一轮既有写入成功，也有写入失败，产物可能不完整。",
-                "runtime_verification_not_observed": "没有观察到可退出的运行时验证。",
-                "invalid_verification_method": "使用了无效的验证方式。",
-                "max_rounds_exceeded": "执行达到轮次上限。",
-                "document_output_too_short": "文档已导出，但实际内容字数少于用户要求，不能视为完整完成。",
-            }
-            for risk in risks[:8]:
-                lines.append(f"- {risk_messages.get(str(risk), str(risk))}")
-        if isinstance(counts, dict) and int(counts.get("test_successes") or 0) == 0:
-            lines.extend([
-                "",
-                "结论：不能把本轮视为目标已完成；请基于现有变更继续修复并执行实际验证。",
-            ])
-        return "\n".join(lines)
+        return synthesize_partial_answer(
+            workspace_path,
+            tool_events,
+            run_result,
+        )
 
     def _tool_event_failed(self, event: dict[str, Any]) -> bool:
         if str(event.get("status") or "") == "failure":
@@ -1445,106 +1520,18 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         mode: str | None,
         task_contract: dict[str, Any] | None = None,
     ) -> str:
-        write_paths: list[str] = []
-        verify_lines: list[str] = []
-        failure_lines: list[str] = []
-        target_deliverables = (
-            _event_roles.successful_deliverable_events(
-                tool_events,
-                task_contract=task_contract,
-                workspace_path=workspace_path,
-                mode=mode,
-            )
-            if isinstance(task_contract, dict)
-            else []
+        return synthesize_final_answer(
+            workspace_path,
+            tool_events,
+            change_summary,
+            mode,
+            task_contract,
+            is_write_tool=self._is_write_tool,
+            is_verification_tool=self._is_verification_tool,
+            relative_workspace_path=self._relative_workspace_path,
+            tool_event_failed=self._tool_event_failed,
+            tool_event_failure_message=self._tool_event_failure_message,
         )
-        target_verifications = (
-            _event_roles.deliverable_verification_events(
-                tool_events,
-                task_contract=task_contract,
-                workspace_path=workspace_path,
-                mode=mode,
-            )
-            if isinstance(task_contract, dict)
-            else []
-        )
-        external_deliverable_lines: list[str] = []
-        for event in tool_events:
-            tool_id = str(event.get("tool") or "")
-            status = str(event.get("status") or "")
-            event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
-            output = event.get("output") if isinstance(event.get("output"), dict) else {}
-            path = (
-                output.get("path")
-                or output.get("output_path")
-                or event_input.get("output_path")
-                or event_input.get("path")
-                or ""
-            )
-            rel_path = self._relative_workspace_path(workspace_path, path) if path else ""
-            display_path = rel_path or str(path or "")
-            if self._is_write_tool(tool_id) and status == "success" and display_path:
-                write_paths.append(display_path)
-            if (
-                self._is_verification_tool(tool_id, mode)
-                or event in target_verifications
-            ) and status == "success":
-                detail = tool_id
-                query = event_input.get("query")
-                if query:
-                    detail += f"（搜索：{query}）"
-                elif display_path:
-                    detail += f"（{display_path}）"
-                verify_lines.append(detail)
-            if event in target_deliverables and not display_path and status == "success":
-                external_deliverable_lines.append(tool_id)
-            if self._tool_event_failed(event):
-                error = self._tool_event_failure_message(event)
-                failure_lines.append(f"{tool_id}: {error[:160] if error else '失败'}")
-
-        changed_paths: list[str] = []
-        if isinstance(change_summary, dict):
-            for item in change_summary.get("files") or []:
-                if isinstance(item, dict) and item.get("path"):
-                    changed_paths.append(str(item["path"]))
-        if not changed_paths:
-            changed_paths = list(dict.fromkeys(write_paths))
-        write_paths = list(dict.fromkeys(write_paths))
-        verify_lines = list(dict.fromkeys(verify_lines))
-        external_deliverable_lines = list(dict.fromkeys(external_deliverable_lines))
-
-        lines = ["系统检测到模型最终回复停在待执行语句，已按真实工具记录收束本轮结果。"]
-        if changed_paths:
-            lines.append("")
-            lines.append("新增/变更文件：")
-            lines.extend(f"- {path}" for path in changed_paths[:12])
-        elif write_paths:
-            lines.append("")
-            lines.append("成功写入文件：")
-            lines.extend(f"- {path}" for path in write_paths[:12])
-        elif external_deliverable_lines:
-            lines.append("")
-            lines.append("已观察到目标外部状态变更：")
-            lines.extend(f"- {item}" for item in external_deliverable_lines[:12])
-        else:
-            lines.append("")
-            if isinstance(task_contract, dict) and task_contract.get("requires_state_change"):
-                lines.append("本轮没有观察到成功完成目标外部状态变更。")
-            else:
-                lines.append("本轮没有观察到成功写入文件。")
-
-        lines.append("")
-        if verify_lines:
-            lines.append("已执行验证：")
-            lines.extend(f"- {item}" for item in verify_lines[:8])
-        else:
-            lines.append("未观察到成功验证工具调用。")
-
-        if failure_lines:
-            lines.append("")
-            lines.append("失败或风险：")
-            lines.extend(f"- {item}" for item in failure_lines[:6])
-        return "\n".join(lines)
 
     def _progress_observer_prompt(
         self,
@@ -1712,6 +1699,10 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return "应用代码补丁"
         if tool_id == "filesystem.delete_file":
             return "Delete file"
+        if tool_id.startswith("mcp_"):
+            if target:
+                return "更新外部应用状态"
+            return "执行外部 MCP 操作"
         if target:
             exists = False
             is_dir = False
@@ -2247,6 +2238,15 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     ) -> bool:
         if not isinstance(task_contract, dict):
             return self._has_successful_verification(tool_events, mode)
+        min_output_check = min_text_output_check(
+            tool_events,
+            expected_min_output_chars=task_contract.get("expected_min_output_chars") or 0,
+            task_contract=task_contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+        if min_output_check.get("required") and not min_output_check.get("ok"):
+            return False
         return bool(_event_roles.sufficient_deliverable_verification_events(
             tool_events,
             task_contract=task_contract,

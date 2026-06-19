@@ -17,7 +17,7 @@ import httpx
 from .mcp_protocol import McpStdioSession, McpToolDefinition, normalize_mcp_tool_result
 from .tool_registry import ToolRegistry, ToolSpec
 
-MCP_SERVICE_SCHEMA_VERSION = "mcp_service.v5"
+MCP_SERVICE_SCHEMA_VERSION = "mcp_service.v7"
 SUPPORTED_TRANSPORTS = {"stdio", "streamable_http", "legacy_sse"}
 TRANSPORT_ALIASES = {
     "http": "streamable_http",
@@ -33,6 +33,12 @@ PERMISSION_VALUES = {
     "network": {"false", "confirm_each", "allow"},
     "external_state": {"false", "confirm_each", "allow"},
     "arbitrary_code": {"false", "confirm_each", "allow"},
+}
+BLENDER_TIMEOUT_UPGRADES = {
+    "get_scene_info": {10.0: 25.0},
+    "get_object_info": {10.0: 25.0},
+    "get_viewport_screenshot": {20.0: 60.0},
+    "execute_blender_code": {60.0: 120.0},
 }
 
 DEFAULT_MCP_SERVICES: tuple[dict[str, Any], ...] = ({
@@ -52,6 +58,9 @@ DEFAULT_MCP_SERVICES: tuple[dict[str, Any], ...] = ({
         "env": {
             "BLENDER_MCP_DISABLE_TELEMETRY": "1",
         },
+    },
+    "timeouts": {
+        "call": 30.0,
     },
     "prerequisites": [
         {
@@ -79,29 +88,51 @@ DEFAULT_MCP_SERVICES: tuple[dict[str, Any], ...] = ({
             "risk": "read_only",
             "roles": ["evidence", "verification"],
             "verification_strength": "weak",
+            "call_timeout": 25.0,
         },
         "get_object_info": {
             "risk": "read_only",
             "roles": ["evidence", "verification"],
             "verification_strength": "standard",
+            "call_timeout": 25.0,
         },
         "get_viewport_screenshot": {
             "risk": "read_only",
             "roles": ["verification"],
             "verification_strength": "standard",
+            "call_timeout": 60.0,
         },
         "execute_blender_code": {
             "risk": "state_change",
             "effects": ["external_state_change"],
             "roles": ["deliverable"],
+            "call_timeout": 120.0,
         },
         "get_polyhaven_categories": {"risk": "read_only"},
         "search_polyhaven_assets": {"risk": "read_only"},
         "get_polyhaven_status": {"risk": "read_only"},
         "get_hyper3d_status": {"risk": "read_only"},
         "poll_rodin_job_status": {"risk": "read_only"},
+        "get_hunyuan3d_status": {"risk": "read_only"},
+        "poll_hunyuan_job_status": {"risk": "read_only"},
+        "get_sketchfab_status": {"risk": "read_only"},
+        "search_sketchfab_models": {"risk": "read_only"},
+        "get_sketchfab_model_preview": {"risk": "read_only"},
         "download_polyhaven_asset": {"risk": "state_change", "effects": ["external_state_change"]},
+        "download_sketchfab_model": {"risk": "state_change", "effects": ["external_state_change"]},
         "set_texture": {"risk": "state_change", "effects": ["external_state_change"]},
+        "generate_hyper3d_model_via_text": {
+            "risk": "state_change",
+            "effects": ["external_state_change"],
+        },
+        "generate_hyper3d_model_via_images": {
+            "risk": "state_change",
+            "effects": ["external_state_change"],
+        },
+        "generate_hunyuan3d_model": {
+            "risk": "state_change",
+            "effects": ["external_state_change"],
+        },
         "import_generated_asset": {"risk": "state_change", "effects": ["external_state_change"]},
         "import_generated_asset_hunyuan": {
             "risk": "state_change",
@@ -118,6 +149,24 @@ def _now_iso() -> str:
 def _normalize_tool_name(value: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9_]+", "_", str(value or "").strip()).strip("_")
     return normalized or "tool"
+
+
+def _service_id_from_capability_id(value: str) -> str:
+    text = str(value or "").strip()
+    if not text.startswith("mcp."):
+        return ""
+    service_id = text.removeprefix("mcp.").strip()
+    return service_id if SERVICE_ID_PATTERN.fullmatch(service_id) else ""
+
+
+def _normalize_timeout_seconds(value: Any, default: float) -> float:
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError):
+        return default
+    if timeout <= 0:
+        return default
+    return min(timeout, 3600.0)
 
 
 def _merge_seeded_service(default: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
@@ -142,10 +191,26 @@ def _merge_seeded_service(default: dict[str, Any], existing: dict[str, Any]) -> 
                         merged_value[tool_name] = {**default_policy, **policy}
                     else:
                         merged_value[tool_name] = policy
+                if str(merged.get("id") or "") == "blender":
+                    _upgrade_blender_seed_timeouts(merged_value)
             merged[key] = merged_value
         else:
             merged[key] = value
     return merged
+
+
+def _upgrade_blender_seed_timeouts(tool_policies: dict[str, Any]) -> None:
+    for tool_name, upgrades in BLENDER_TIMEOUT_UPGRADES.items():
+        policy = tool_policies.get(tool_name)
+        if not isinstance(policy, dict):
+            continue
+        try:
+            current = float(policy.get("call_timeout"))
+        except (TypeError, ValueError):
+            continue
+        upgraded = upgrades.get(current)
+        if upgraded is not None:
+            policy["call_timeout"] = upgraded
 
 
 def normalize_mcp_service(value: dict[str, Any], *, existing: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -202,6 +267,15 @@ def normalize_mcp_service(value: dict[str, Any], *, existing: dict[str, Any] | N
             },
         })
 
+    incoming_timeouts = value.get("timeouts")
+    if incoming_timeouts is None:
+        incoming_timeouts = current.get("timeouts", {})
+    if not isinstance(incoming_timeouts, dict):
+        incoming_timeouts = {}
+    timeouts = {
+        "call": _normalize_timeout_seconds(incoming_timeouts.get("call"), 30.0),
+    }
+
     lifecycle = value.get("lifecycle")
     if lifecycle is None:
         lifecycle = current.get("lifecycle", {})
@@ -255,6 +329,11 @@ def normalize_mcp_service(value: dict[str, Any], *, existing: dict[str, Any] | N
         verification_strength = str(policy.get("verification_strength") or "").strip().lower()
         if verification_strength in {"none", "weak", "standard", "strong"}:
             normalized_policy["verification_strength"] = verification_strength
+        if "call_timeout" in policy:
+            normalized_policy["call_timeout"] = _normalize_timeout_seconds(
+                policy.get("call_timeout"),
+                timeouts["call"],
+            )
         if normalized_policy:
             tool_policies[str(tool_name)] = normalized_policy
     incoming_prerequisites = value.get("prerequisites")
@@ -303,6 +382,7 @@ def normalize_mcp_service(value: dict[str, Any], *, existing: dict[str, Any] | N
             "managed": bool(incoming_installation.get("managed", False)),
         },
         "transport": transport,
+        "timeouts": timeouts,
         "lifecycle": {
             "auto_start": bool(lifecycle.get("auto_start", False)),
             "restart_policy": "manual",
@@ -319,23 +399,73 @@ def public_mcp_service(config: dict[str, Any], runtime: "McpServiceRuntime | Non
     headers = transport.pop("headers", {})
     transport["env_keys"] = sorted(str(key) for key in env)
     transport["header_keys"] = sorted(str(key) for key in headers)
-    state = runtime.state if runtime else ("stopped" if config.get("enabled") else "disabled")
+    raw_state = runtime.state if runtime else ("stopped" if config.get("enabled") else "disabled")
+    process_running = bool(runtime and runtime.process and runtime.process.returncode is None)
+    protocol_connected = bool(runtime and runtime.protocol_connected)
+    capability_bindings = list(runtime.capability_bindings) if runtime else []
+    degraded_bindings = [
+        binding
+        for binding in capability_bindings
+        if str(binding.get("health") or "available") != "available"
+    ]
+    state = _public_session_state(config, raw_state, process_running, protocol_connected)
+    issue_code = _mcp_session_issue_code(config, state, process_running, protocol_connected)
+    if not issue_code and degraded_bindings:
+        issue_code = "tool_degraded"
+    tool_health_state = (
+        "unavailable"
+        if not protocol_connected
+        else "degraded"
+        if degraded_bindings
+        else "available"
+        if capability_bindings
+        else "unknown"
+    )
+    tool_health = {
+        "state": tool_health_state,
+        "healthy": tool_health_state == "available",
+        "degraded_count": len(degraded_bindings),
+        "degraded_tool_ids": [
+            str(binding.get("tool_id") or "")
+            for binding in degraded_bindings
+            if str(binding.get("tool_id") or "")
+        ],
+        "message": _mcp_tool_health_message(tool_health_state, degraded_bindings),
+    }
     status = {
         "state": state,
+        "raw_state": raw_state,
         "message": runtime.message if runtime else "",
         "pid": runtime.process.pid if runtime and runtime.process else None,
         "started_at": runtime.started_at if runtime else "",
         "checked_at": runtime.checked_at if runtime else "",
         "logs": list(runtime.logs) if runtime else [],
         "tool_ids": list(runtime.tool_ids) if runtime else [],
-        "protocol_connected": bool(runtime and runtime.protocol_connected),
+        "process_running": process_running,
+        "protocol_connected": protocol_connected,
+        "requires_attention": bool(issue_code),
+        "issue_code": issue_code,
+        "recommended_action": _mcp_session_recommended_action(issue_code),
+        "tool_roundtrip_healthy": tool_health["healthy"],
+        "tool_health": tool_health,
+        "tool_health_state": tool_health_state,
+        "degraded_tool_count": len(degraded_bindings),
         "protocol_version": runtime.session.protocol_version if runtime and runtime.session else "",
         "server_info": dict(runtime.session.server_info) if runtime and runtime.session else {},
         "prerequisites": list(runtime.prerequisite_checks) if runtime else [],
     }
     definition = {
         key: config.get(key)
-        for key in ("schema_version", "id", "name", "description", "enabled", "lifecycle", "permissions")
+        for key in (
+            "schema_version",
+            "id",
+            "name",
+            "description",
+            "enabled",
+            "timeouts",
+            "lifecycle",
+            "permissions",
+        )
     }
     return {
         **config,
@@ -344,8 +474,80 @@ def public_mcp_service(config: dict[str, Any], runtime: "McpServiceRuntime | Non
         "connection_profile": transport,
         "session": status,
         "status": status,
-        "capability_bindings": list(runtime.capability_bindings) if runtime else [],
+        "capability_bindings": capability_bindings,
     }
+
+
+def _mcp_tool_health_message(state: str, degraded_bindings: list[dict[str, Any]]) -> str:
+    if state == "available":
+        return "All discovered tools are healthy."
+    if state == "degraded":
+        first = degraded_bindings[0] if degraded_bindings else {}
+        name = str(first.get("remote_name") or first.get("tool_id") or "tool")
+        error = str(first.get("last_error") or "last call failed")
+        if len(error) > 180:
+            error = f"{error[:180]}..."
+        return f"{len(degraded_bindings)} tool(s) degraded; {name}: {error}"
+    if state == "unavailable":
+        return "MCP protocol is not connected."
+    return "No successful tool roundtrip has been observed yet."
+
+
+def _public_session_state(
+    config: dict[str, Any],
+    raw_state: str,
+    process_running: bool,
+    protocol_connected: bool,
+) -> str:
+    if not config.get("enabled"):
+        return "disabled"
+    transport = config.get("transport") if isinstance(config.get("transport"), dict) else {}
+    if transport.get("type") == "stdio" and process_running and not protocol_connected:
+        return "protocol_disconnected"
+    return raw_state or "stopped"
+
+
+def _mcp_session_issue_code(
+    config: dict[str, Any],
+    state: str,
+    process_running: bool,
+    protocol_connected: bool,
+) -> str:
+    if not config.get("enabled"):
+        return "service_disabled"
+    transport = config.get("transport") if isinstance(config.get("transport"), dict) else {}
+    if transport.get("type") == "stdio" and process_running and not protocol_connected:
+        return "protocol_disconnected"
+    if state in {"failed", "degraded"}:
+        return f"service_{state}"
+    if state == "stopped":
+        return "service_stopped"
+    if transport.get("type") in {"streamable_http", "legacy_sse"} and not protocol_connected and state != "reachable":
+        return "endpoint_unreachable"
+    return ""
+
+
+def _mcp_session_recommended_action(issue_code: str) -> str:
+    if issue_code == "service_disabled":
+        return "enable"
+    if issue_code in {"protocol_disconnected", "service_failed", "service_degraded", "tool_degraded"}:
+        return "restart"
+    if issue_code == "service_stopped":
+        return "start"
+    if issue_code == "endpoint_unreachable":
+        return "check"
+    return ""
+
+
+def _has_external_state_policy(config: dict[str, Any]) -> bool:
+    policies = config.get("tool_policies") if isinstance(config.get("tool_policies"), dict) else {}
+    for policy in policies.values():
+        if not isinstance(policy, dict):
+            continue
+        effects = policy.get("effects") if isinstance(policy.get("effects"), list) else []
+        if "external_state_change" in {str(item) for item in effects}:
+            return True
+    return False
 
 
 @dataclass
@@ -396,6 +598,104 @@ class McpServiceManager:
             public_mcp_service(config, self._runtime.get(service_id))
             for service_id, config in sorted(self._configs.items())
         ]
+
+    def capability_issues(self) -> list[dict[str, Any]]:
+        """Return compact MCP capability readiness issues for task preflight.
+
+        This deliberately avoids logs and secrets.  The Task Runtime only needs
+        to know whether a configured MCP capability is currently usable and
+        what action should recover it.
+        """
+        issues: list[dict[str, Any]] = []
+        for service_id, config in sorted(self._configs.items()):
+            if not _has_external_state_policy(config):
+                continue
+            public = public_mcp_service(config, self._runtime.get(service_id))
+            status = public.get("status") if isinstance(public.get("status"), dict) else {}
+            degraded_bindings = [
+                binding
+                for binding in public.get("capability_bindings") or []
+                if isinstance(binding, dict)
+                and str(binding.get("health") or "available") != "available"
+            ]
+            if bool(status.get("protocol_connected")) and public.get("capability_bindings") and not degraded_bindings:
+                continue
+            issue_code = str(status.get("issue_code") or "capability_unavailable")
+            state = str(status.get("state") or "")
+            message = str(status.get("message") or "").strip()
+            name = str(config.get("name") or service_id)
+            if degraded_bindings:
+                for binding in degraded_bindings[:6]:
+                    tool_id = str(binding.get("tool_id") or "")
+                    remote_name = str(binding.get("remote_name") or tool_id or "tool")
+                    last_error = str(binding.get("last_error") or "recent call failed")
+                    issues.append({
+                        "code": "tool_degraded",
+                        "source_type": "mcp",
+                        "source_id": service_id,
+                        "capability_id": f"mcp.{service_id}",
+                        "tool_id": tool_id,
+                        "remote_name": remote_name,
+                        "name": name,
+                        "state": state,
+                        "message": (
+                            f"MCP service {name} is connected, but tool {remote_name} is degraded: "
+                            f"{last_error}. Prefer a small roundtrip test, restart the MCP service, "
+                            "or choose another safe strategy before relying on this tool."
+                        ),
+                        "recommended_action": "restart",
+                    })
+                continue
+            if issue_code == "protocol_disconnected":
+                reason = (
+                    f"MCP service {name} is running, but the MCP protocol is not connected; "
+                    "restart the service from the MCP Services page."
+                )
+            elif issue_code == "service_disabled":
+                reason = f"MCP service {name} is disabled; enable and start it before retrying."
+            elif issue_code == "service_stopped":
+                reason = f"MCP service {name} is stopped; start it before retrying."
+            elif message:
+                reason = f"MCP service {name} is unavailable: {message}"
+            else:
+                reason = f"MCP service {name} is unavailable for this run."
+            issues.append({
+                "code": issue_code,
+                "source_type": "mcp",
+                "source_id": service_id,
+                "capability_id": f"mcp.{service_id}",
+                "name": name,
+                "state": state,
+                "message": reason,
+                "recommended_action": str(status.get("recommended_action") or ""),
+            })
+        return issues
+
+    def tool_runtime_metadata(self, tool_id: str, *, source_id: str = "") -> dict[str, Any]:
+        """Return live MCP binding health for a registered tool.
+
+        This is advisory metadata for tools and capability snapshots.  It does
+        not decide whether the model may call a tool; availability remains tied
+        to service/protocol connection and explicit permission gates.
+        """
+        normalized_tool_id = str(tool_id or "").strip()
+        if not normalized_tool_id:
+            return {}
+        candidate_services = [source_id] if source_id else list(self._runtime)
+        for service_id in candidate_services:
+            runtime = self._runtime.get(str(service_id or ""))
+            if not runtime:
+                continue
+            for binding in runtime.capability_bindings:
+                if str(binding.get("tool_id") or "") != normalized_tool_id:
+                    continue
+                return {
+                    "tool_health": str(binding.get("health") or "available"),
+                    "tool_last_error": str(binding.get("last_error") or ""),
+                    "remote_name": str(binding.get("remote_name") or ""),
+                    "call_timeout": binding.get("call_timeout"),
+                }
+        return {}
 
     def get_public(self, service_id: str) -> dict[str, Any]:
         return public_mcp_service(self.get_config(service_id), self._runtime.get(service_id))
@@ -452,6 +752,72 @@ class McpServiceManager:
             await self.start(service_id)
         return self.get_public(service_id)
 
+    async def start_auto_services(self) -> list[dict[str, Any]]:
+        """Start enabled services that explicitly opt in to auto-start.
+
+        Startup is best-effort: a broken optional MCP service should degrade
+        that capability, not prevent the local runtime from opening.
+        """
+        results: list[dict[str, Any]] = []
+        for service_id, config in sorted(self._configs.items()):
+            lifecycle = config.get("lifecycle") if isinstance(config.get("lifecycle"), dict) else {}
+            if not config.get("enabled") or not lifecycle.get("auto_start"):
+                continue
+            try:
+                await self.start(service_id)
+            except Exception as exc:
+                runtime = self._runtime_for(service_id)
+                runtime.state = "failed"
+                runtime.message = f"auto-start failed: {exc}"
+                self._append_log(runtime, "error", runtime.message)
+            results.append(self.get_public(service_id))
+        return results
+
+    async def start_capability_services(
+        self,
+        capability_ids: list[str],
+        *,
+        require_auto_start: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Best-effort start for MCP services targeted by a task.
+
+        This is the on-demand counterpart to ``start_auto_services``.  It does
+        not broaden model permissions or force a strategy; it only makes an
+        explicitly targeted, enabled MCP provider available before the model
+        receives the final tool snapshot.
+        """
+        results: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for capability_id in capability_ids:
+            service_id = _service_id_from_capability_id(capability_id)
+            if not service_id or service_id in seen or service_id not in self._configs:
+                continue
+            seen.add(service_id)
+            config = self._configs[service_id]
+            lifecycle = config.get("lifecycle") if isinstance(config.get("lifecycle"), dict) else {}
+            if require_auto_start and not lifecycle.get("auto_start"):
+                continue
+            if not config.get("enabled"):
+                continue
+            public = public_mcp_service(config, self._runtime.get(service_id))
+            status = public.get("status") if isinstance(public.get("status"), dict) else {}
+            if bool(status.get("protocol_connected")):
+                continue
+            try:
+                await self.start(service_id)
+                result_status = "started"
+                message = "MCP service started for targeted task capability."
+            except Exception as exc:
+                result_status = "failed"
+                message = str(exc)
+            results.append({
+                "service_id": service_id,
+                "capability_id": f"mcp.{service_id}",
+                "status": result_status,
+                "message": message,
+            })
+        return results
+
     async def start(self, service_id: str) -> None:
         config = self.get_config(service_id)
         if not config.get("enabled"):
@@ -461,7 +827,13 @@ class McpServiceManager:
             if runtime.protocol_connected:
                 await self.check(service_id)
             else:
-                await self._connect_stdio(service_id)
+                runtime.state = "protocol_disconnected"
+                runtime.message = (
+                    "MCP process is running but the protocol is not connected; "
+                    "restart the service before using its tools"
+                )
+                self._append_log(runtime, "error", runtime.message)
+                raise RuntimeError(runtime.message)
             return
         transport = config["transport"]
         if transport["type"] != "stdio":
@@ -553,11 +925,11 @@ class McpServiceManager:
         transport = config["transport"]
         if transport["type"] == "stdio":
             if runtime.process and runtime.process.returncode is None:
-                runtime.state = "connected" if runtime.protocol_connected else "running"
+                runtime.state = "connected" if runtime.protocol_connected else "protocol_disconnected"
                 runtime.message = (
                     "MCP protocol connected"
                     if runtime.protocol_connected
-                    else "process running; MCP protocol is not connected"
+                    else "process running; MCP protocol is not connected; restart the service"
                 )
             elif runtime.process and runtime.process.returncode is not None:
                 runtime.state = "failed"
@@ -710,7 +1082,8 @@ class McpServiceManager:
             tools = await session.connect()
         except Exception as exc:
             await self._disconnect_session(service_id, f"MCP handshake failed: {exc}")
-            runtime.state = "failed"
+            process_running = bool(runtime.process and runtime.process.returncode is None)
+            runtime.state = "protocol_disconnected" if process_running else "failed"
             runtime.message = f"MCP handshake failed: {exc}"
             self._append_log(runtime, "error", runtime.message)
             raise RuntimeError(runtime.message) from exc
@@ -744,6 +1117,7 @@ class McpServiceManager:
             roles = self._tool_roles(service_id, remote_tool)
             artifacts = self._tool_artifacts(service_id, remote_tool)
             verification_strength = self._tool_verification_strength(service_id, remote_tool)
+            call_timeout = self._tool_call_timeout(service_id, remote_tool.name)
 
             async def handler(
                 input_data: dict[str, Any],
@@ -796,6 +1170,7 @@ class McpServiceManager:
                 "roles": roles,
                 "artifacts": artifacts,
                 "verification_strength": verification_strength,
+                "call_timeout": call_timeout,
                 "health": "available",
                 "last_error": "",
             })
@@ -833,6 +1208,18 @@ class McpServiceManager:
         value = str(policy.get("verification_strength") or "").strip().lower() if isinstance(policy, dict) else ""
         return value if value in {"none", "weak", "standard", "strong"} else ""
 
+    def _tool_call_timeout(self, service_id: str, tool_name: str) -> float:
+        config = self.get_config(service_id)
+        policies = config.get("tool_policies") or {}
+        policy = policies.get(tool_name) if isinstance(policies, dict) else None
+        service_timeout = _normalize_timeout_seconds(
+            (config.get("timeouts") or {}).get("call"),
+            30.0,
+        )
+        if isinstance(policy, dict) and "call_timeout" in policy:
+            return _normalize_timeout_seconds(policy.get("call_timeout"), service_timeout)
+        return service_timeout
+
     def _tool_policy_values(self, service_id: str, tool_name: str, key: str) -> list[str]:
         policies = self.get_config(service_id).get("tool_policies") or {}
         policy = policies.get(tool_name) if isinstance(policies, dict) else None
@@ -854,16 +1241,19 @@ class McpServiceManager:
                 "message": f"MCP service is not connected: {service_id}",
                 "content": f"MCP service is not connected: {service_id}",
             }
+        timeout = self._tool_call_timeout(service_id, remote_name)
         try:
-            result = await runtime.session.call_tool(remote_name, arguments)
+            result = await runtime.session.call_tool(remote_name, arguments, timeout=timeout)
         except Exception as exc:
             self._update_binding_health(runtime, remote_name, error=str(exc))
             return {
                 "error": True,
                 "message": f"MCP tool call failed: {exc}",
                 "content": f"MCP tool call failed: {exc}",
+                "call_timeout": timeout,
             }
         output = normalize_mcp_tool_result(result)
+        output.setdefault("call_timeout", timeout)
         self._update_binding_health(
             runtime,
             remote_name,

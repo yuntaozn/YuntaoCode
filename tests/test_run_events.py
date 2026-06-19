@@ -46,6 +46,25 @@ def test_result_event_is_recorded_as_runtime_result() -> None:
     }
 
 
+def test_confirm_event_preserves_tool_and_decision_summary() -> None:
+    event = compact_run_event({
+        "event": "confirm",
+        "message": "confirm?",
+        "tool": "mcp_blender.execute_blender_code",
+        "name": "execute_blender_code",
+        "confirmation_decision": {
+            "policy": "auto",
+            "risk": "declared_state_change",
+            "requires_confirmation": True,
+        },
+    })
+
+    assert event["event_name"] == "confirmation.requested"
+    assert event["tool"] == "mcp_blender.execute_blender_code"
+    assert event["name"] == "execute_blender_code"
+    assert event["confirmation_decision"]["risk"] == "declared_state_change"
+
+
 def test_context_hygiene_event_is_recorded_as_context_fact() -> None:
     event = compact_run_event({
         "event": "context_hygiene",

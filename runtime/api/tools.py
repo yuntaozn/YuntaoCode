@@ -15,6 +15,9 @@ class ToolsHandler(ApiHandler):
             ]
         for tool in tools:
             tool["available"] = self.runtime.is_tool_available(tool)
+            metadata_provider = getattr(self.runtime, "tool_runtime_metadata", None)
+            if callable(metadata_provider):
+                tool.update(metadata_provider(tool))
         self.finish_json({
             "success": True,
             "data": tools,

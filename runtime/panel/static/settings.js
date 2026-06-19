@@ -188,7 +188,7 @@ function renderModels() {
             </div>
             <div class="settings-inline">
                 <div class="settings-form-row">
-                    <label>${t('settings_js.display_name')}</label>
+                    <label>${t('settings_js.display_alias')}</label>
                     <input data-model-field="name" value="${escapeHtml(model.name || "")}">
                 </div>
                 <div class="settings-form-row">
@@ -451,7 +451,7 @@ function collectMemories() {
     return [];
 }
 
-async function saveSettings() {
+async function saveSettings(options = {}) {
     let providers;
     let models;
     try {
@@ -490,7 +490,7 @@ async function saveSettings() {
     localStorage.setItem("lit_confirmation_policy", settings.confirmation_policy || $("confirmation-policy-input").value);
     localStorage.setItem("lit_plan_execution_mode", settings.planning_policy || "auto");
     renderSettings();
-    showToast(t('toast.settings_saved'));
+    showToast(options.toastMessage || t('toast.settings_saved'));
 }
 
 function planningPolicyFromLegacyExecutionMode(value) {
@@ -576,6 +576,29 @@ function defaultThinkingModeForProvider(providerId) {
     return "";
 }
 
+function modelIdFromApiModel(provider, apiModel) {
+    const base = String(apiModel || "").trim();
+    const providerId = String(provider || "").trim();
+    const models = modelEntries();
+    const sameProviderExists = models.some((model) =>
+        String(model.provider || "") === providerId
+        && String(model.api_model || model.id || "") === base
+    );
+    if (sameProviderExists) return "";
+    if (!models.some((model) => String(model.id || "") === base)) {
+        return base;
+    }
+    const providerScoped = `${providerId}:${base}`;
+    if (!models.some((model) => String(model.id || "") === providerScoped)) {
+        return providerScoped;
+    }
+    let index = 2;
+    while (models.some((model) => String(model.id || "") === `${providerScoped}:${index}`)) {
+        index += 1;
+    }
+    return `${providerScoped}:${index}`;
+}
+
 function openAddModelDialog() {
     const providers = providerEntries();
     if (!providers.length) {
@@ -588,7 +611,6 @@ function openAddModelDialog() {
     const providerInput = $("add-model-provider-input");
     providerInput.innerHTML = renderProviderOptions(providers[0]?.id);
     providerInput.value = providers[0]?.id || "";
-    $("add-model-id-input").value = "";
     $("add-model-name-input").value = "";
     $("add-model-api-model-input").value = "";
     $("add-model-thinking-mode-input").value = defaultThinkingModeForProvider(providerInput.value);
@@ -596,34 +618,46 @@ function openAddModelDialog() {
     dialog.showModal();
 }
 
-function addModelFromDialog() {
+async function addModelFromDialog() {
     const provider = $("add-model-provider-input").value;
-    const modelId = $("add-model-id-input").value.trim();
-    if (!modelId) return;
-    if (modelEntries().some((model) => model.id === modelId)) {
+    const apiModel = $("add-model-api-model-input").value.trim();
+    if (!apiModel) return;
+    const modelId = modelIdFromApiModel(provider, apiModel);
+    if (!modelId) {
         showToast(t('settings_js.model_exists'));
         return;
     }
-    const apiModel = $("add-model-api-model-input").value.trim() || modelId;
+    const confirmButton = $("confirm-add-model-btn");
+    confirmButton.disabled = true;
+    const previousModels = settings.models.slice();
     const displayName = $("add-model-name-input").value.trim() || modelId;
-    settings.models.push({
-        id: modelId,
-        name: displayName,
-        provider,
-        api_model: apiModel,
-        context_limit: 128000,
-        max_output_tokens: 0,
-        output_token_param: "",
-        supports_tools: true,
-        supports_reasoning_effort: false,
-        thinking_mode: $("add-model-thinking-mode-input").value,
-        allow_disable_thinking: $("add-model-allow-disable-thinking-input").checked,
-        request_options: {},
-    });
-    deletedModelIds.delete(modelId);
-    activeSettingsPage = "models";
-    $("add-model-dialog").close();
-    renderSettings();
+    try {
+        settings.models.push({
+            id: modelId,
+            name: displayName,
+            provider,
+            api_model: apiModel,
+            context_limit: 128000,
+            max_output_tokens: 0,
+            output_token_param: "",
+            supports_tools: true,
+            supports_reasoning_effort: false,
+            thinking_mode: $("add-model-thinking-mode-input").value,
+            allow_disable_thinking: $("add-model-allow-disable-thinking-input").checked,
+            request_options: {},
+        });
+        deletedModelIds.delete(modelId);
+        activeSettingsPage = "models";
+        $("add-model-dialog").close();
+        renderSettings();
+        await saveSettings({ toastMessage: t('settings_js.model_saved') });
+    } catch (error) {
+        settings.models = previousModels;
+        renderSettings();
+        throw error;
+    } finally {
+        confirmButton.disabled = false;
+    }
 }
 
 async function addMemory() {
@@ -690,17 +724,11 @@ function bindEvents() {
     $("save-settings-btn").addEventListener("click", () => saveSettings().catch((error) => showToast(error.message)));
     $("add-provider-btn").addEventListener("click", addProvider);
     $("add-model-btn").addEventListener("click", openAddModelDialog);
-    $("confirm-add-model-btn").addEventListener("click", addModelFromDialog);
+    $("confirm-add-model-btn").addEventListener("click", () => addModelFromDialog().catch((error) => showToast(error.message)));
     $("cancel-add-model-btn").addEventListener("click", () => $("add-model-dialog").close());
     $("close-add-model-dialog-btn").addEventListener("click", () => $("add-model-dialog").close());
     $("add-model-provider-input").addEventListener("change", (event) => {
         $("add-model-thinking-mode-input").value = defaultThinkingModeForProvider(event.target.value);
-    });
-    $("add-model-id-input").addEventListener("input", (event) => {
-        const apiInput = $("add-model-api-model-input");
-        if (!apiInput.value.trim()) {
-            apiInput.placeholder = event.target.value.trim() || t('settings_js.api_model_name');
-        }
     });
     $("add-memory-btn").addEventListener("click", addMemory);
     $("refresh-backups-btn").addEventListener("click", () => refreshBackups().catch((error) => showToast(error.message)));

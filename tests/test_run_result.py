@@ -119,6 +119,29 @@ def test_build_run_result_marks_model_error_without_tools_as_failure() -> None:
     assert result["failure_details"][0]["tool"] == "model.provider"
 
 
+def test_build_run_result_marks_invalid_final_answer_without_tools_as_failure() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        tool_events=[],
+        final_answer_error="model stopped at a pending action instead of answering",
+    )
+
+    assert result["status"] == "failure"
+    assert result["counts"]["blocking_failures"] == 1
+    assert result["failures"] == [
+        {
+            "tool": "model.final_answer",
+            "path": "",
+            "error": "model stopped at a pending action instead of answering",
+        }
+    ]
+    assert result["failure_details"][0]["tool"] == "model.final_answer"
+    assert result["flags"]["invalid_final_answer"] is True
+    assert "invalid_final_answer" in result["risks"]
+
+
 def test_build_run_result_ignores_document_min_chars_for_code_contract() -> None:
     contract = {
         "intent": "write_required",
@@ -1034,6 +1057,86 @@ def test_build_run_result_marks_document_output_too_short_partial() -> None:
             "error": "document output is shorter than requested: expected_min_chars=20000, output_chars=12132",
         }
     ]
+
+
+def test_build_run_result_applies_min_chars_to_finalized_text_file() -> None:
+    contract = {
+        "intent": "write_required",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "expected_min_output_chars": 12000,
+        "deliverables": [
+            {"kind": "document", "path_hint": "D:/workspace/short-story.docx"}
+        ],
+    }
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="document",
+        change_summary={"files": [{"path": "short-story.txt"}]},
+        expected_min_output_chars=12000,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "filesystem.finalize_text_file",
+                "status": "success",
+                "input": {"output_path": "D:/workspace/short-story.txt"},
+                "output": {
+                    "path": "D:/workspace/short-story.txt",
+                    "draft_stats": {"text_chars": 5200},
+                    "validation": {"valid": True, "text_chars": 5200},
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["flags"]["observed_text_output_chars"] == 5200
+    assert "document_output_too_short" in result["risks"]
+    assert result["failures"] == [
+        {
+            "tool": "filesystem.finalize_text_file",
+            "path": "short-story.txt",
+            "error": "document output is shorter than requested: expected_min_chars=12000, output_chars=5200",
+        }
+    ]
+
+
+def test_build_run_result_requires_text_length_evidence_for_long_document() -> None:
+    contract = {
+        "intent": "document_export",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "expected_min_output_chars": 12000,
+        "deliverables": [
+            {"kind": "document", "path_hint": "D:/workspace/story.txt"}
+        ],
+    }
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="document",
+        change_summary={"files": [{"path": "story.txt"}]},
+        expected_min_output_chars=12000,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "filesystem.finalize_text_file",
+                "status": "success",
+                "input": {"output_path": "D:/workspace/story.txt"},
+                "output": {
+                    "path": "D:/workspace/story.txt",
+                    "size": 60000,
+                    "validation": {"valid": True},
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["flags"]["text_length_evidence_observed"] is True
+    assert result["flags"]["observed_text_output_chars"] == 0
+    assert "document_output_length_unknown" in result["risks"]
 
 
 def test_build_run_result_marks_repeated_failure_convergence_stop() -> None:

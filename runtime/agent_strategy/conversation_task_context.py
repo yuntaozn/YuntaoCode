@@ -114,10 +114,12 @@ def previous_task_contract_context(
         if not isinstance(metadata, dict):
             continue
         contract = metadata.get("task_contract")
-        if isinstance(contract, dict) and (
-            contract.get("goal")
-            or contract.get("intent") not in {None, "", "answer_only"}
-        ):
+        if isinstance(contract, dict):
+            intent = str(contract.get("intent") or "").strip()
+            if intent == "answer_only":
+                continue
+            if not (contract.get("goal") or intent):
+                continue
             previous_user_content = ""
             for previous in reversed(messages[:index]):
                 if is_runtime_guidance_message(previous):

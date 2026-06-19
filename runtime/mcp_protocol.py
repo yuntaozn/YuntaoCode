@@ -109,8 +109,18 @@ class McpStdioSession:
             if not cursor:
                 return tools
 
-    async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        return await self.request("tools/call", {"name": name, "arguments": arguments})
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        return await self.request(
+            "tools/call",
+            {"name": name, "arguments": arguments},
+            timeout=timeout,
+        )
 
     async def request(
         self,
@@ -133,7 +143,7 @@ class McpStdioSession:
             message = await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError as exc:
             self._pending.pop(request_id, None)
-            raise McpProtocolError(f"MCP request timed out: {method}") from exc
+            raise McpProtocolError(f"MCP request timed out after {timeout:g}s: {method}") from exc
         error = message.get("error")
         if isinstance(error, dict):
             raise McpProtocolError(str(error.get("message") or f"MCP request failed: {method}"))

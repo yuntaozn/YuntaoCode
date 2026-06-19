@@ -16,6 +16,8 @@ from runtime.conversation_interactions import (
     runtime_guidance as _runtime_guidance,
 )
 from runtime.model_providers.client import stream_chat_completion
+from runtime.agent_strategy import capability_preflight as _cap_preflight
+from runtime.agent_strategy.capability_grounding import ground_task_contract_with_capabilities
 from runtime.agent_strategy import task_contract as _tc
 from runtime.agent_strategy import tool_event_roles as _event_roles
 from runtime.agent_strategy.classifiers import (
@@ -263,6 +265,14 @@ class ConversationRunExecutor:
                 expected_min_output_chars=expected_min_output_chars,
                 previous_contract=inherited_contract,
             )
+        capability_snapshot = self._build_capability_snapshot(mode_config)
+        if ground_task_contract_with_capabilities(
+            task_contract,
+            capability_snapshot,
+            user_content=content,
+        ):
+            task_contract["success_conditions"] = _tc.success_conditions_for_contract(task_contract)
+            metadata["capability_grounded_task_contract"] = True
         task_intent = str(task_contract.get("intent") or task_intent)
         code_change_intent = bool(task_contract.get("requires_write"))
         state_change_intent = bool(task_contract.get("requires_state_change"))
@@ -281,8 +291,33 @@ class ConversationRunExecutor:
         )
         self._active_task_contract = task_contract
         self._active_confirmation_policy = confirmation_policy
-        capability_snapshot = self._build_capability_snapshot(mode_config)
         capability_preflight = self._preflight_task_capabilities(task_contract, capability_snapshot)
+        mcp_auto_start_results = await self._auto_start_mcp_services_for_preflight(capability_preflight)
+        if mcp_auto_start_results:
+            metadata["mcp_auto_start"] = mcp_auto_start_results
+            successful_auto_starts = [
+                item for item in mcp_auto_start_results
+                if isinstance(item, dict) and item.get("status") == "started"
+            ]
+            message = (
+                "MCP service auto-start completed; refreshing capability snapshot"
+                if successful_auto_starts
+                else "MCP service auto-start attempted but did not make the capability available"
+            )
+            self.write_event({
+                "event": "status",
+                "status": "mcp_auto_start",
+                "message": message,
+            })
+            capability_snapshot = self._build_capability_snapshot(mode_config)
+            if ground_task_contract_with_capabilities(
+                task_contract,
+                capability_snapshot,
+                user_content=content,
+            ):
+                task_contract["success_conditions"] = _tc.success_conditions_for_contract(task_contract)
+                metadata["capability_grounded_task_contract"] = True
+            capability_preflight = self._preflight_task_capabilities(task_contract, capability_snapshot)
         self._active_capability_snapshot = capability_snapshot
         self._active_capability_preflight = capability_preflight
         metadata["capability_snapshot"] = capability_snapshot
@@ -299,10 +334,11 @@ class ConversationRunExecutor:
         })
         await self.flush()
         if not bool(capability_preflight.get("ok", True)):
+            blocker_messages = _cap_preflight.preflight_blocker_messages(capability_preflight)
             self.write_event({
                 "event": "status",
                 "status": "capability_preflight_blocked",
-                "message": "Capability preflight blocked this run before model/tool execution.",
+                "message": blocker_messages[0] if blocker_messages else "Capability preflight blocked this run before model/tool execution.",
             })
             run_result = build_run_result(
                 workspace_path=workspace.path,
@@ -339,14 +375,14 @@ class ConversationRunExecutor:
             await self.flush()
             return
         allowed_tool_ids = capability_preflight.get("allowed_tool_ids")
-        if isinstance(allowed_tool_ids, list):
+        if isinstance(allowed_tool_ids, list) and bool(capability_preflight.get("enforce_allowed_tools")):
             tools, tool_name_map = self._build_model_tools(
                 mode_config,
                 allowed_tool_ids={str(item) for item in allowed_tool_ids},
             )
-            boundary_prompt = self._capability_boundary_prompt(capability_preflight)
-            if boundary_prompt:
-                messages.append({"role": "system", "content": boundary_prompt})
+        capability_prompt = self._capability_boundary_prompt(capability_preflight)
+        if capability_prompt:
+            messages.append({"role": "system", "content": capability_prompt})
         if task_intent == "read_only_analysis":
             messages.append({
                 "role": "system",
@@ -1658,6 +1694,17 @@ class ConversationRunExecutor:
                 "未完成需要的写入/导出：模型一直停留在读取/搜索阶段，已经超过本轮允许的侦察预算，"
                 "系统已停止继续空转。本轮没有成功生成或更新任务目标产物。"
             )
+        elif tool_contract_failed and (
+            "document_output_too_short" in contract_failures
+            or "document_output_length_unknown" in contract_failures
+        ):
+            model_content = "".join(content_parts).strip()
+            assistant_content = (
+                f"{model_content}\n\n" if model_content else ""
+            ) + (
+                "未完整完成：本轮已经观察到文本/文档产物，但没有证明达到任务要求的输出长度，"
+                "或实际字符数低于任务目标。因此系统不会把它标记为完整完成；请继续扩写、补全或重新导出后再验证。"
+            )
         elif tool_contract_failed and "missing_target_deliverable_verification" in contract_failures:
             model_content = "".join(content_parts).strip()
             assistant_content = (
@@ -1741,6 +1788,13 @@ class ConversationRunExecutor:
             metadata["change_summary"] = change_summary
             self.write_event({"event": "changes", "summary": change_summary})
             await self.flush()
+        final_answer_error = self._answer_only_final_answer_error(
+            assistant_content,
+            tool_events,
+            task_contract,
+        )
+        if final_answer_error:
+            metadata["final_answer_error"] = final_answer_error
         run_result = build_run_result(
             workspace_path=workspace.path,
             tool_events=tool_events,
@@ -1754,6 +1808,7 @@ class ConversationRunExecutor:
             max_rounds_exceeded=max_rounds_exceeded,
             convergence_stopped=convergence_stopped,
             model_error=model_provider_error,
+            final_answer_error=final_answer_error,
         )
         metadata["run_result"] = run_result
         self.write_event({"event": "result", "result": run_result})
@@ -1807,7 +1862,11 @@ class ConversationRunExecutor:
                 run_result,
             )
             metadata["synthesized_final_answer"] = True
-        elif self._needs_synthesized_final_answer(assistant_content, tool_events):
+        elif self._needs_synthesized_final_answer(
+            assistant_content,
+            tool_events,
+            task_contract=task_contract,
+        ):
             assistant_content = self._synthesize_final_answer(
                 workspace.path,
                 tool_events,

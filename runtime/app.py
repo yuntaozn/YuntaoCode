@@ -76,6 +76,14 @@ class RuntimeState:
             return True
         return self.mcp_services.is_connected(str(spec.get("source_id") or ""))
 
+    def tool_runtime_metadata(self, spec: dict[str, Any]) -> dict[str, Any]:
+        if spec.get("source_type") != "mcp":
+            return {}
+        return self.mcp_services.tool_runtime_metadata(
+            str(spec.get("id") or ""),
+            source_id=str(spec.get("source_id") or ""),
+        )
+
 
 def build_runtime(config: RuntimeConfig) -> RuntimeState:
     registry = ToolRegistry()
@@ -194,6 +202,8 @@ def main() -> None:
     runtime = build_runtime(config)
     app = make_app(runtime)
     app.listen(config.port, address=config.host)
+    io_loop = tornado.ioloop.IOLoop.current()
+    io_loop.spawn_callback(runtime.mcp_services.start_auto_services)
 
     print(json.dumps({
         "event": "ready",
@@ -202,7 +212,7 @@ def main() -> None:
     }, ensure_ascii=False), flush=True)
 
     try:
-        tornado.ioloop.IOLoop.current().start()
+        io_loop.start()
     except KeyboardInterrupt:
         print(json.dumps({"event": "stopped"}, ensure_ascii=False), file=sys.stderr)
     finally:

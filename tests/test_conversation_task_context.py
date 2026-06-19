@@ -41,6 +41,34 @@ def test_previous_task_contract_context_skips_unanchored_retry_contract() -> Non
     assert previous_task_contract_context(conversation, "try again") == external_contract
 
 
+def test_previous_task_contract_context_skips_answer_only_anchor() -> None:
+    external_contract = {
+        "intent": "write_required",
+        "goal": "Create a house model in Blender",
+        "requires_write": False,
+        "requires_state_change": True,
+        "deliverables": [{"kind": "external_state"}],
+    }
+    answer_contract = {
+        "intent": "answer_only",
+        "goal": "Explain how to install Blender MCP",
+        "requires_write": False,
+        "requires_state_change": False,
+        "deliverables": [{"kind": "answer"}],
+    }
+    conversation = SimpleNamespace(messages=[
+        _message("user", "Create a house in Blender"),
+        _message("assistant", "failed", {"task_contract": external_contract}),
+        _message("user", "How do I install Blender MCP?"),
+        _message("assistant", "install notes", {"task_contract": answer_contract}),
+    ])
+
+    assert (
+        previous_task_contract_context(conversation, "Now it is installed; build the house")
+        == external_contract
+    )
+
+
 def test_follow_up_inherits_previous_write_context_for_mode_and_intent() -> None:
     conversation = SimpleNamespace(messages=[
         _message("user", "创建一个 viewer.html 示例页"),

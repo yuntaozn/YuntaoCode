@@ -14,20 +14,33 @@ RESULT_STATUSES: frozenset[str] = frozenset(ResultStatus.__args__)  # type: igno
 
 RISK_CODES: frozenset[str] = frozenset({
     "expected_write_not_observed",
+    "target_deliverable_not_observed",
     "write_not_verified",
+    "deliverable_not_verified",
     "test_not_observed",
     "partial_write_failure",
     "partial_write_resumable",
+    "deliverable_path_hint_changed",
     "execution_contract_failed",
     "max_rounds_exceeded",
+    "repeated_tool_failure",
+    "capability_preflight_blocked",
+    "model_provider_error",
+    "invalid_tool_call_protocol",
+    "invalid_final_answer",
+    "model_output_truncated",
     "recovered_tool_failure",
     "incidental_tool_failure",
     "degraded_verification_failure",
     "required_verification_not_satisfied",
     "verification_evidence_weak",
     "document_output_coverage_low",
+    "document_output_too_short",
+    "document_output_length_unknown",
+    "optional_write_not_verified",
     "invalid_verification_method",
     "runtime_verification_not_observed",
+    "artifact_integrity_invalid",
 })
 
 
