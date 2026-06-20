@@ -1,6 +1,6 @@
 """
-PDF 智能解析器
-移植自 aipython/core/rag/document_parser.py，适配 local-intelligent-terminal 架构。
+PDF 文档解析器
+用于 YuntaoCode 本地文档能力；优先本地解析，质量不足时按能力边界降级。
 
 策略决策树：
 1. PyPDF2 快速提取 -> 质量检测（乱码率 + CID检测）

@@ -6,11 +6,12 @@ YuntaoCode is a local-first AI task execution foundation for developers, educati
 
 Rather than building yet another AI chat application, YuntaoCode focuses on making local tasks plannable, executable, pausable, recoverable, verifiable, and auditable.
 
-Its current open-source goal is to make three foundations explicit for AI working on real local tasks:
+Its current open-source goal is to make three execution foundations and one evidence-based experience layer explicit for AI working on real local tasks:
 
 * **Task Runtime**: task state, plans, steps, execution, verification, recovery, and results.
 * **Context Runtime**: context selection, compression, evidence boundaries, long-term memory, and a context ledger.
 * **Capability Runtime**: tools, permissions, plugins, capability contracts, and local execution boundaries.
+* **Experience Layer**: turns real task records into Experience Samples, Digests, and Replay Fixtures for later evaluation and capability improvement.
 
 ---
 
@@ -41,7 +42,7 @@ It is not an answer to what the future AI terminal should look like, but an ongo
 
 ### Runtime Foundation
 
-YuntaoCode is not built around a tool checklist. It is organized around three runtime lines that can evolve over time:
+YuntaoCode is not built around a tool checklist. It is organized around three execution runtime lines that can evolve over time, plus an evidence-based experience layer:
 
 ```text
 Task Runtime
@@ -52,9 +53,12 @@ Context Runtime
 
 Capability Runtime
   Manages tool capabilities, permissions, confirmations, plugin drafts, and external integrations
+
+Experience Layer
+  Turns task records into Experience Samples, Digests, and Replay Fixtures for later evaluation and capability improvement
 ```
 
-Together, these layers define the core boundary: the model may help understand and execute tasks, but the Runtime owns state, permission boundaries, evidence, and completion checks.
+The first three lines define how tasks run. The Experience Layer preserves evidence and lessons without registering AI-generated code by default or bypassing Runtime permission, verification, and manual confirmation boundaries. The model may help understand and execute tasks, but the Runtime owns state, permission boundaries, evidence, and completion checks.
 
 ### Task First
 
@@ -153,11 +157,11 @@ The Python Runtime is the core of the system.
 
 The Tauri desktop application is only one possible interface layer. The Runtime itself can operate independently.
 
-The current implementation already includes tool calling, plan generation, stage progression, confirmation, pre-write backups, and execution records. The next focus is to consolidate these capabilities into clearer Task, Context, and Capability Runtime foundations.
+The current implementation already includes tool calling, plan generation, stage progression, confirmation, pre-write backups, execution records, and experience sample export. The next focus is to consolidate these capabilities into clearer Task, Context, and Capability Runtime foundations plus an evidence-based Experience Layer.
 
 The Agent Runtime strategy layer lives in `runtime/agent_strategy/`. It owns intent classification, internal profiles, planning policy, stage prompts, and execution-plan lifecycle helpers so that `conversation_runner.py` can remain an orchestration layer.
 
-Start from the documentation map in [docs/README.md](docs/README.md). The core foundation contract is [docs/runtime-foundation.md](docs/runtime-foundation.md), and the Task / Context / Capability lines are described in [docs/task-model.md](docs/task-model.md), [docs/context-runtime.md](docs/context-runtime.md), and [docs/capability-runtime.md](docs/capability-runtime.md).
+Start from the documentation map in [docs/README.md](docs/README.md). The core foundation contract is [docs/runtime-foundation.md](docs/runtime-foundation.md), the Task / Context / Capability lines are described in [docs/task-model.md](docs/task-model.md), [docs/context-runtime.md](docs/context-runtime.md), and [docs/capability-runtime.md](docs/capability-runtime.md), and the Experience Layer is described in [docs/experience-runtime.md](docs/experience-runtime.md).
 
 ---
 
@@ -369,7 +373,7 @@ We believe that models will continue to change, but a stable, open, and extensib
 
 ### Phase 1: Runtime Foundation
 
-Goal: make the Task, Context, and Capability runtime lines clear before expanding the feature list.
+Goal: make the Task, Context, and Capability execution runtime lines, plus the Experience evidence-learning layer, clear before expanding the feature list.
 
 * [x] Task Model foundation: ProductTask, Run, ToolTask, state, results, and lineage
 * [x] Run Lifecycle foundation: running, waiting_confirmation, paused, resumed, completed, failed, stopped
@@ -380,6 +384,8 @@ Goal: make the Task, Context, and Capability runtime lines clear before expandin
 * [ ] Task Audit: readable execution records and testable state transitions
 * [ ] Context Runtime: context selection, evidence, compression snapshots, and memory boundaries
 * [ ] Capability Runtime: capability contracts, permissions, confirmations, artifacts, and verification rules
+* [x] Experience Runtime foundation: Experience Sample, Experience Digest, and the data boundary between Runbook and Replay
+* [ ] Evaluation Runtime foundation: local evaluation loop from diagnostic bundles, experience samples, and selected Replay Fixtures
 
 ### Phase 2: Reusable Capabilities
 
@@ -390,6 +396,7 @@ Goal: turn tools into reusable task capabilities.
 * [ ] Runtime Extension Contract: plugin manifest, permissions, dependencies, and task artifact conventions
 * [ ] AI-built plugin draft isolation, test summaries, and manual registration confirmation
 * [ ] Task-oriented wrappers for document parsing, code analysis, Git, and Shell
+* [ ] MCP Service Lifecycle: service configuration, start policy, protocol connection, tool discovery, diagnostics, and capability binding
 * [ ] MCP as an external tool integration path, not the core positioning itself
 
 ### Phase 3: Task Templates

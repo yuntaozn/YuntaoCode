@@ -1,8 +1,9 @@
-"""Unified assistant profile for the local intelligent terminal.
+"""Unified terminal profile compatibility helpers.
 
-The UI exposes a single terminal. Internally, runtime code may still infer
-task profiles such as code editing, document export, or paper research, but
-those profiles are execution hints rather than user-facing assistant modes.
+The UI exposes a single YuntaoCode terminal. Older clients may still send mode
+IDs such as ``coding`` or ``document``; this module normalizes those legacy IDs
+to the unified terminal profile. Runtime task profiles live in
+``runtime.agent_strategy.profiles`` and are not user-facing assistant modes.
 """
 
 from __future__ import annotations

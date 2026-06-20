@@ -1,6 +1,6 @@
 """
-Word 文档智能解析器
-移植自 aipython/core/plan_review.py，适配 local-intelligent-terminal 架构。
+Word 文档解析器
+用于 YuntaoCode 本地文档能力；可在缺少可选依赖时降级。
 
 支持特性：
 1. python-docx 正常提取（段落 + 表格）

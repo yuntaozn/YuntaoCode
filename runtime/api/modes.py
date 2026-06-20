@@ -1,4 +1,8 @@
-"""GET /modes — list available assistant modes."""
+"""GET /modes — compatibility endpoint for the unified terminal profile.
+
+The product no longer exposes multiple assistant modes. This endpoint remains
+for older UI/runtime callers and returns the single terminal profile.
+"""
 
 from __future__ import annotations
 

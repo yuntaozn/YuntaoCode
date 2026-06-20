@@ -1,7 +1,6 @@
 """
 文本后处理工具
 清理 PDF 解析产生的多余空格、格式化问题等
-移植自 aipython/core/rag/text_postprocessor.py
 """
 from __future__ import annotations
 

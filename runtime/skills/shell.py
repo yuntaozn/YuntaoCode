@@ -1,4 +1,4 @@
-"""Shell command execution skill for the local intelligent terminal."""
+"""Shell command execution tools for YuntaoCode local task execution."""
 
 from __future__ import annotations
 

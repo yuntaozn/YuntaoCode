@@ -43,7 +43,7 @@ class BackendLoginHandler(ApiHandler):
         except OSError as exc:
             raise tornado.web.HTTPError(
                 502,
-                reason=f"无法连接后台服务：{backend_url}，请确认 aipython 已启动并监听 8088",
+                reason=f"无法连接后台服务：{backend_url}，请确认 YuntaoCode 后台服务已启动并可访问",
             ) from exc
         data = decode_json_response(response.body)
         if response.code >= 400:

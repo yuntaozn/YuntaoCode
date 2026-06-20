@@ -1,4 +1,4 @@
-"""Website access tools for the local intelligent terminal."""
+"""Website access tools for YuntaoCode local task execution."""
 
 from __future__ import annotations
 

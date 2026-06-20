@@ -6,11 +6,12 @@
 
 YuntaoCode 关注的核心不是“再做一个 AI 聊天助手”，而是让本地任务可以被计划、执行、暂停、恢复、验证和审计。
 
-它当前最重要的开源目标，是把 AI 进入本地真实任务时必须面对的三件事做成清晰基座：
+它当前最重要的开源目标，是把 AI 进入本地真实任务时必须面对的三条执行主线和一条经验证据层做成清晰基座：
 
 * **Task Runtime**：任务状态、计划、步骤、执行、验证、恢复和结果。
 * **Context Runtime**：上下文选择、压缩、证据边界、长期记忆和上下文账本。
 * **Capability Runtime**：工具、权限、插件、能力契约和本地执行边界。
+* **Experience Layer**：从真实任务记录中沉淀 Experience Sample、Digest 和 Replay Fixture，用于后续评测与能力升级。
 
 ---
 
@@ -39,9 +40,9 @@ YuntaoCode 就是在这样的过程中自然演化出来的。
 
 ## 核心特性
 
-### 三层运行时（Runtime Foundation）
+### 运行时基座（Runtime Foundation）
 
-YuntaoCode 的底层不是一组工具清单，而是三条可以长期演进的运行时主线：
+YuntaoCode 的底层不是一组工具清单，而是三条可以长期演进的执行运行时主线，以及一条基于任务证据的经验沉淀层：
 
 ```text
 Task Runtime
@@ -52,9 +53,12 @@ Context Runtime
 
 Capability Runtime
   管理工具能力、权限、确认、插件草案和外部能力接入
+
+Experience Layer
+  从任务记录中整理 Experience Sample、Digest 和 Replay Fixture，用于后续评测和能力升级
 ```
 
-这三层共同决定一件事：模型可以参与任务判断和执行，但 Runtime 必须拥有状态、边界、证据和完成判定。
+前三条主线共同决定任务如何运行；Experience Layer 只沉淀证据和经验，不默认注册 AI 生成代码，也不绕过 Runtime 的权限、验证和人工确认边界。模型可以参与任务判断和执行，但 Runtime 必须拥有状态、边界、证据和完成判定。
 
 ### 任务优先（Task First）
 
@@ -153,11 +157,11 @@ Python Runtime 是系统核心。
 
 Tauri 桌面端只是其中一种界面形式，Runtime 本身可以独立运行。
 
-当前实现已经包含工具调用、计划生成、阶段推进、确认、写入备份和执行记录。下一阶段的重点是把这些能力收束成更明确的 Task / Context / Capability Runtime。
+当前实现已经包含工具调用、计划生成、阶段推进、确认、写入备份、执行记录和经验样本导出。下一阶段的重点是把这些能力收束成更明确的 Task / Context / Capability Runtime，以及基于证据的 Experience Layer。
 
 Agent Runtime 的策略层位于 `runtime/agent_strategy/`。它负责意图分类、内部 Profile、计划策略、阶段提示和执行计划生命周期，让 `conversation_runner.py` 尽量保持为编排层。
 
-文档入口见 [docs/README.md](docs/README.md)。核心基座契约见 [docs/runtime-foundation.md](docs/runtime-foundation.md)，Task / Context / Capability 三条主线分别见 [docs/task-model.md](docs/task-model.md)、[docs/context-runtime.md](docs/context-runtime.md) 和 [docs/capability-runtime.md](docs/capability-runtime.md)。
+文档入口见 [docs/README.md](docs/README.md)。核心基座契约见 [docs/runtime-foundation.md](docs/runtime-foundation.md)，Task / Context / Capability 三条主线分别见 [docs/task-model.md](docs/task-model.md)、[docs/context-runtime.md](docs/context-runtime.md) 和 [docs/capability-runtime.md](docs/capability-runtime.md)，Experience Layer 见 [docs/experience-runtime.md](docs/experience-runtime.md)。
 
 ---
 
@@ -367,7 +371,7 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 
 ### Phase 1：Runtime Foundation
 
-目标：先把 Task / Context / Capability 三条运行时主线做清楚，而不是继续堆功能清单。
+目标：先把 Task / Context / Capability 三条执行运行时主线，以及 Experience 证据学习层做清楚，而不是继续堆功能清单。
 
 * [x] Task Model 基础：ProductTask、Run、ToolTask、状态、结果和运行血缘
 * [x] Run Lifecycle 基础：running、waiting_confirmation、paused、resumed、completed、failed、stopped
@@ -378,6 +382,8 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 * [ ] Task Audit：可读的执行记录和可测试的状态迁移
 * [ ] Context Runtime：上下文选择、证据、压缩快照、记忆边界
 * [ ] Capability Runtime：能力契约、权限、确认、产物和验证规则
+* [x] Experience Runtime 基础：Experience Sample、Experience Digest、Runbook / Replay 之间的数据边界
+* [ ] Evaluation Runtime 基础：诊断包、经验样本和选定 Replay Fixture 的本地评测闭环
 
 ### Phase 2：Reusable Capabilities
 
@@ -388,6 +394,7 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 * [ ] Runtime Extension Contract：插件 Manifest、权限声明、依赖声明和任务产物规范
 * [ ] AI 自建插件草稿隔离、测试摘要和人工确认注册流程
 * [ ] 文档解析、代码分析、Git、Shell 等能力的任务化封装
+* [ ] MCP Service Lifecycle：服务配置、启动策略、协议连接、工具发现、诊断和能力绑定
 * [ ] MCP 作为外部工具接入方式，而不是核心定位本身
 
 ### Phase 3：Task Templates

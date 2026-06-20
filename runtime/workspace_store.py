@@ -9,6 +9,9 @@ from uuid import NAMESPACE_URL, uuid5
 from .security import PathGuard
 
 
+LEGACY_WORKSPACE_ID_NAMESPACE = "local-intelligent-terminal"
+
+
 @dataclass
 class WorkspaceRecord:
     id: str
@@ -113,4 +116,7 @@ class WorkspaceStore:
 
 def stable_workspace_id(path: Path) -> str:
     normalized = str(path.resolve()).lower()
-    return str(uuid5(NAMESPACE_URL, f"local-intelligent-terminal:{normalized}"))
+    # Keep the historical namespace stable so existing workspace IDs do not
+    # change across upgrades. This is a compatibility namespace, not the
+    # current product name.
+    return str(uuid5(NAMESPACE_URL, f"{LEGACY_WORKSPACE_ID_NAMESPACE}:{normalized}"))

@@ -1,4 +1,4 @@
-"""Git version control skills for the local intelligent terminal."""
+"""Git version control tools for YuntaoCode local task execution."""
 
 from __future__ import annotations
 

@@ -634,7 +634,7 @@ def classify_task_intent(
     content : str
         The user message text.
     mode : str | None
-        The current assistant mode (``"coding"``, ``"terminal"``, etc.).
+        Legacy mode/profile hint such as ``"coding"`` or ``"terminal"``.
     has_previous_write : bool
         Whether the conversation history contains a prior write context.
     is_follow_up_with_conversation : bool
