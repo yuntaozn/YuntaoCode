@@ -55,6 +55,8 @@ def test_legacy_skill_sample_export_contains_experience_sample_and_fixture() -> 
     assert exported["fixture"]["source_run_id"] == "run-1"
     assert exported["fixture"]["goal"] == "Translate the full document"
     assert exported["fixture"]["expected_artifacts"] == [{"kind": "file", "path": "translated.docx"}]
+    assert exported["run_evidence"]["schema_version"] == "run_evidence.v1"
+    assert exported["run_evidence"]["result_status"] == "success"
     assert exported["sample_policy"]["contains_full_runbook"] is False
     assert exported["sample_policy"]["contains_file_contents"] is False
     assert exported["sample_policy"]["promotes_skill"] is False
@@ -96,4 +98,5 @@ def test_experience_sample_export_is_the_preferred_sample_shape() -> None:
     assert exported["experience_sample"]["record_kind"] == "experience_sample"
     assert exported["experience_sample"]["outcome"] == "partial"
     assert exported["fixture"]["record_kind"] == "replay_fixture"
+    assert exported["run_evidence"]["risk_count"] == 1
     assert exported["sample_policy"]["manual_export"] is True

@@ -118,3 +118,23 @@ def test_expected_min_output_chars_does_not_inherit_for_read_only_question() -> 
         "\u770b\u5f53\u524d\u8bba\u6587\u6709\u591a\u5c11\u5b57\uff0c\u6269\u5199\u7a7a\u95f4\u6709\u591a\u5c11",
         conversation,
     ) == 0
+
+
+def test_expected_min_output_chars_does_not_inherit_from_code_contract() -> None:
+    conversation = SimpleNamespace(messages=[
+        _message("user", "create the interactive lesson page"),
+        _message(
+            "assistant",
+            "wrote code",
+            {
+                "task_contract": {
+                    "intent": "write_required",
+                    "requires_write": True,
+                    "expected_min_output_chars": 2000,
+                    "deliverables": [{"kind": "code", "path_hint": "src/app.js"}],
+                }
+            },
+        ),
+    ])
+
+    assert expected_min_output_chars("try again", conversation) == 0

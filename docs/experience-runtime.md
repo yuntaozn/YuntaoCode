@@ -19,7 +19,7 @@ Capability Runtime
   Manages tools, MCP services, permissions, confirmations, and capability health.
 
 Experience Runtime
-  Extracts reviewed task experience from Runbook/RunResult evidence.
+  Extracts reviewed task experience from RunEvidence and RunResult evidence.
 
 Evaluation / Skill Evolution
   Replays selected fixtures and promotes only evidence-backed reusable patterns.
@@ -40,7 +40,8 @@ from "a task happened" to "create a skill" creates three problems:
 Experience Runtime keeps the learning path slower and clearer:
 
 ```text
-Runbook
+RunEvidence
+  -> Runbook
   -> Experience Sample
   -> Experience Digest
   -> Replay Fixture
@@ -57,7 +58,7 @@ runtime capability.
 ### Experience Sample
 
 An Experience Sample is a compact, portable task experience extracted from one
-Runbook. It includes:
+reviewed RunEvidence/Runbook view. It includes:
 
 - source run and task lineage;
 - original goal;
@@ -96,6 +97,7 @@ For 0.1, this layer should stay intentionally small:
 - manual export only;
 - user-selected runs only;
 - no automatic collection of all tasks;
+- no local sample registry or sample workbench in 0.1;
 - no remote upload;
 - no central sample service;
 - no automatic skill generation;
@@ -106,6 +108,11 @@ For 0.1, this layer should stay intentionally small:
 The current compatibility export may still be named "skill sample" in older
 API paths, but the stable concept is an **Experience Sample plus Replay
 Fixture**.
+
+Experience material is currently exported as explicit local artifacts instead
+of being saved into a runtime-managed sample registry. This keeps the 0.1
+surface small while the project is still validating what should become
+replayable experience, evaluation fixtures, or future Skill Evolution input.
 
 ## Data Contract
 

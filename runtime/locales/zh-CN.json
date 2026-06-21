@@ -34,7 +34,6 @@
     "contract.title": "模型声明的任务理解：执行证据表明理解有偏差时，可自行修正。\n",
     "contract.workspace": "- 当前项目目录：{workspace_path}\n",
     "contract.access": "- 权限范围：{access_scope}\n",
-    "contract.exec_mode": "- 旧执行模式：{execution_mode}\n",
     "contract.planning_policy": "- 计划策略：{planning_policy}\n",
     "contract.confirmation_policy": "- 确认策略：{confirmation_policy}\n",
     "contract.intent": "- 任务意图：{intent}\n",

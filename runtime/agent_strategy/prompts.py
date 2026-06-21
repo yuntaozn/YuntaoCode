@@ -169,18 +169,43 @@ def repeated_failure_strategy_prompt(
     latest = tool_events[-1] if tool_events else {}
     tool_id = str(latest.get("tool") or "unknown")
     error = str(latest.get("error") or "unknown failure").strip()
+    output = latest.get("output") if isinstance(latest.get("output"), dict) else {}
+    reason = str(output.get("reason") or "").strip()
+    reason_line = f"失败类型：{reason}\n" if reason else ""
     write_status = (
         "本轮已经观察到成功写入；除非有新证据表明产物错误，不要继续重复写入，应优先验证或如实总结。"
         if has_successful_write(tool_events)
         else "本轮尚未观察到成功写入；如任务要求产物，请先获得真实目标路径和内容后再写入。"
     )
+    text_write_recovery = ""
+    if tool_id in {
+        "filesystem.write_file",
+        "filesystem.create_text_draft",
+        "filesystem.append_text_chunk",
+        "filesystem.finalize_text_file",
+    } and (
+        reason == "truncated_tool_call"
+        or "output limit" in error.lower()
+        or "incomplete arguments" in error.lower()
+    ):
+        text_write_recovery = (
+            "\n这不是目标失败，而是当前写入负载过大或参数未完整生成。"
+            "如果仍需生成较大的文本/代码产物，可以考虑换成小步执行："
+            "先用 filesystem.create_text_draft 创建空草稿（只给 title/path_hint/language），"
+            "再用 filesystem.append_text_chunk 分多次追加完整且有边界的片段，"
+            "必要时 inspect，最后用 filesystem.finalize_text_file 写入目标文件。"
+            "如果只是局部修改，也可以读取目标片段后使用精确编辑；"
+            "如果证据显示不应继续写入，请如实说明阻碍，不要重复同一个超大工具调用。"
+        )
     return (
-        "策略切换建议：完全相同的工具失败已经连续发生两次，原策略没有产生新进展。\n"
+        "策略切换建议：完全相同的工具失败已经连续发生多次，原策略没有产生新进展。\n"
         f"当前项目：{workspace_path}\n"
         f"当前阶段：{current_stage or '无'}\n"
         f"重复失败工具：{tool_id}\n"
         f"最近失败原因：{error}\n"
+        f"{reason_line}"
         f"{write_status}\n"
+        f"{text_write_recovery}\n"
         "请重新判断任务目标与已有证据，下一步应采用实质不同的策略，避免再次发送相同工具和相同参数。"
         "可选方向包括：补全真实参数、读取最小必要上下文、改用更合适的工具、转入验证，"
         "或在确实无法继续时如实说明阻碍并结束。由你根据当前任务选择最合适的一项。"
@@ -247,6 +272,9 @@ def write_repair_prompt(
 ) -> str:
     target = arguments.get("path") or arguments.get("output_path") or workspace_path
     error = str(event.get("error") or "")
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    reason = str(output.get("reason") or "")
+    reason_line = f"失败类型：{reason}\n" if reason else ""
     missing_path_rule = ""
     if "path is required" in error.lower():
         missing_path_rule = (
@@ -264,12 +292,28 @@ def write_repair_prompt(
             "较大文件可改用 filesystem.create_text_draft / append_text_chunk / finalize_text_file。"
             "写回内容必须基于刚读取到的真实文件，只修改用户要求的部分。"
         )
+    truncated_rule = ""
+    if (
+        reason == "truncated_tool_call"
+        or "output limit" in error.lower()
+        or "incomplete arguments" in error.lower()
+    ):
+        truncated_rule = (
+            "\n本次失败是因为模型在构造工具参数时达到输出上限，运行时没有执行不完整参数。"
+            "请不要重复同样的大参数写入。若目标是较大的完整文本/代码文件，"
+            "可改用文本草稿路线：filesystem.create_text_draft 创建空草稿，"
+            "然后 filesystem.append_text_chunk 追加多个较小且完整的片段，"
+            "必要时 filesystem.inspect_text_draft 检查进度，最后 filesystem.finalize_text_file 写入。"
+            "如果只是小范围修改，则读取目标片段后使用 code.edit_file / code.replace_text。"
+            "如果当前证据说明不该继续修改，也可以停止写入并解释真实阻碍。"
+        )
     return (
         "写入修复模式：刚才的写入工具调用失败，不能用文字声称已经修改完成。\n"
         f"当前项目目录：{workspace_path}\n"
         f"失败工具：{tool_id}\n"
         f"目标路径：{target}\n"
         f"失败原因：{error}\n"
+        f"{reason_line}"
         "下一步请只做必要的修复：\n"
         "1. 如果是 old_text 未匹配或不唯一，先用 filesystem.read_file 读取目标文件相关片段；\n"
         "2. 基于实际文件内容重新调用 code.edit_file 或 code.replace_text；\n"
@@ -277,6 +321,27 @@ def write_repair_prompt(
         "4. 写入成功后再进入验证，不要继续泛泛搜索。"
         f"{missing_path_rule}"
         f"{full_rewrite_rule}"
+        f"{truncated_rule}"
+    )
+
+
+def oversized_tool_arguments_prompt(
+    workspace_path: str,
+    accumulated_chars: int,
+    limit_chars: int,
+) -> str:
+    return (
+        "Runtime guard: the current model round was stopped before execution "
+        "because the streamed tool-call arguments grew too large.\n"
+        f"Current project: {workspace_path}\n"
+        f"Accumulated tool argument characters: {accumulated_chars}\n"
+        f"Runtime guard limit: {limit_chars}\n"
+        "This is not a task failure and not a permission denial. Choose the next "
+        "execution strategy yourself, but do not repeat one huge tool call. For "
+        "large complete text or code artifacts, create an empty text draft first, "
+        "append smaller complete chunks, inspect progress when useful, and then "
+        "finalize the draft to the target file. For small targeted edits, read "
+        "the relevant file section and use a precise edit tool."
     )
 
 
@@ -341,6 +406,72 @@ def post_deliverable_prompt(workspace_path: str) -> str:
     )
 
 
+def completion_review_prompt(
+    workspace_path: str,
+    task_contract: dict[str, Any] | None,
+    run_result: dict[str, Any],
+) -> str:
+    """Prompt the model to self-audit completion from runtime facts.
+
+    This is intentionally evidence-oriented instead of file-type-specific. The
+    runtime does not decide the next strategy; it exposes facts and asks the
+    model to either continue with tools or finish honestly.
+    """
+    contract = task_contract if isinstance(task_contract, dict) else {}
+    goal = str(contract.get("goal") or "").strip() or "(未声明)"
+    counts = run_result.get("counts") if isinstance(run_result.get("counts"), dict) else {}
+    paths = [
+        str(item)
+        for item in (
+            run_result.get("target_written_paths")
+            or run_result.get("written_paths")
+            or run_result.get("changed_paths")
+            or []
+        )
+        if str(item or "").strip()
+    ]
+    verified = run_result.get("verification_evidence")
+    if not isinstance(verified, list):
+        verified = []
+    failures = run_result.get("failures")
+    if not isinstance(failures, list):
+        failures = []
+    risks = [
+        str(item)
+        for item in run_result.get("risks", [])
+        if str(item or "").strip()
+    ]
+    path_text = ", ".join(paths[:8]) if paths else "无"
+    verification_text = "; ".join(
+        f"{item.get('tool') or 'unknown'}:{','.join(item.get('modalities') or []) or 'unknown'}"
+        for item in verified[:6]
+        if isinstance(item, dict)
+    ) or "无"
+    failure_text = "; ".join(
+        f"{item.get('tool') or 'unknown'}: {item.get('error') or ''}".strip()
+        for item in failures[:6]
+        if isinstance(item, dict)
+    ) or "无"
+    risk_text = ", ".join(risks[:12]) if risks else "无"
+    return (
+        "完成度自审：系统已经观察到目标产物或验证证据，但这不是终止命令。\n"
+        f"当前项目：{workspace_path}\n"
+        f"任务目标：{goal}\n"
+        f"当前运行状态：{run_result.get('status') or 'unknown'}\n"
+        f"写入/变更产物：{path_text}\n"
+        f"验证证据：{verification_text}\n"
+        f"失败记录：{failure_text}\n"
+        f"风险标记：{risk_text}\n"
+        f"计数：deliverables={counts.get('deliverable_successes', 0)}, "
+        f"verifications={counts.get('verification_successes', 0)}, "
+        f"failures={counts.get('failures', 0)}\n"
+        "请基于这些事实自己判断任务是否真正完整完成。"
+        "如果产物存在依赖、配套文件、引用资源、外部状态、内容长度、视觉效果、运行效果或用户目标仍未闭合，"
+        "继续调用最合适的工具修正或补证据；不要只给口头说明。"
+        "如果你判断已经完整完成，可以直接输出最终总结，必须说明依据、验证方式和仍未验证的边界。"
+    )
+
+
 def final_answer_prompt(workspace_path: str) -> str:
     return (
         f"收束阶段：不再调用工具。项目={workspace_path}。"
@@ -356,7 +487,8 @@ def verifier_retry_prompt(mode: str | None, workspace_path: str) -> str:
             "If you plan to claim the document or paper task is complete, gather "
             "real evidence first. Prefer a read/check tool that fits the artifact: "
             "filesystem.read_file for .md/.txt, document.extract_docx_outline for "
-            ".docx, document.extract_pdf_text_preview for .pdf, or another available "
+            ".docx, document.extract_pdf_text_preview for .pdf, "
+            "spreadsheet.inspect_workbook for .xlsx/.csv/.tsv, or another available "
             "tool that returns content or artifact facts. If no suitable evidence "
             "path is available, do not keep retrying blindly; summarize what is "
             "done and explicitly say what could not be verified."

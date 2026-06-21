@@ -242,6 +242,8 @@ def expected_min_output_chars(content: str, conversation: Any | None = None) -> 
             continue
         contract = metadata.get("task_contract")
         if isinstance(contract, dict):
+            if not _tc.contract_expects_text_output(contract):
+                continue
             try:
                 inherited = int(contract.get("expected_min_output_chars") or 0)
             except (TypeError, ValueError):

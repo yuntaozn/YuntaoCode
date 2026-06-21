@@ -95,6 +95,29 @@ def test_capability_catalog_keeps_local_file_state_separate_from_text_write() ->
     assert by_id["code.text_write"].tool_ids == ("filesystem.write_file",)
 
 
+def test_capability_catalog_exposes_filesystem_change_set() -> None:
+    catalog = build_capability_catalog([
+        {
+            "id": "filesystem.apply_changes",
+            "capability": "filesystem.change_set",
+            "requires_confirmation": True,
+            "artifacts": ["file"],
+            "effects": ["file_write", "file_delete", "local_state_change"],
+            "roles": ["deliverable", "verification"],
+            "verification_strength": "standard",
+        },
+    ])
+
+    [capability] = catalog
+
+    assert capability.id == "filesystem.change_set"
+    assert capability.tool_ids == ("filesystem.apply_changes",)
+    assert capability.requires_confirmation is True
+    assert capability.effects == ("file_delete", "file_write", "local_state_change")
+    assert capability.roles == ("deliverable", "verification")
+    assert capability.verification_strengths == ("standard",)
+
+
 def test_capability_prompt_tells_model_not_to_invent_tools() -> None:
     catalog = build_capability_catalog([
         {"id": "document.extract_pdf_to_docx", "capability": "document.pdf_to_docx", "artifacts": ["docx"]},

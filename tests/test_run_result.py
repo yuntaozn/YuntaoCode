@@ -1186,6 +1186,40 @@ def test_build_run_result_records_capability_preflight_blocker() -> None:
     assert "capability_preflight_blocked" in result["risks"]
 
 
+def test_build_run_result_includes_capability_evidence_summary() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        tool_events=[
+            {
+                "tool": "mcp_blender.execute_blender_code",
+                "status": "success",
+                "declared_capability": "mcp.blender",
+                "declared_effects": ["external_state_change"],
+                "declared_roles": ["deliverable"],
+                "output": {
+                    "effects": ["external_state_change"],
+                    "roles": ["deliverable"],
+                    "artifacts": ["external_state"],
+                },
+            },
+        ],
+        change_summary=None,
+        mode="terminal",
+        task_contract={
+            "requires_state_change": True,
+            "capability_ids": ["mcp.blender"],
+            "deliverables": [{"kind": "external_state", "capability_id": "mcp.blender"}],
+        },
+    )
+
+    evidence = result["capability_evidence"]
+    assert evidence["schema_version"] == "capability_evidence_summary.v1"
+    assert evidence["requested_capability_ids"] == ["mcp.blender"]
+    assert evidence["observed_capability_ids"] == ["mcp.blender"]
+    assert evidence["observed_effects"] == ["external_state_change"]
+    assert evidence["artifacts"] == ["external_state"]
+
+
 def test_build_run_result_marks_unverified_optional_write_partial() -> None:
     result = build_run_result(
         workspace_path="D:/workspace",

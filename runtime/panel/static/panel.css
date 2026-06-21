@@ -605,54 +605,6 @@ button {
     gap: 18px;
 }
 
-.mode-switcher {
-    display: flex;
-    gap: 4px;
-    padding: 3px;
-    background: var(--soft);
-    border-radius: 10px;
-}
-
-.mode-btn {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 6px 14px;
-    color: var(--muted);
-    background: transparent;
-    border-radius: 8px;
-    font-size: 13px;
-    font-weight: 600;
-    transition: all 0.18s;
-}
-
-.mode-btn:hover {
-    color: var(--text);
-    background: rgba(255,255,255,0.5);
-}
-
-.mode-btn.active {
-    color: var(--primary-strong);
-    background: #fff;
-    box-shadow: 0 1px 4px rgba(38, 48, 57, 0.1);
-}
-
-.mode-icon {
-    font-size: 15px;
-}
-
-.conv-mode-tag {
-    display: inline-block;
-    padding: 0 5px;
-    margin-right: 4px;
-    color: var(--primary);
-    background: rgba(47,111,98,0.1);
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 600;
-    vertical-align: middle;
-}
-
 .workspace-name {
     display: flex;
     min-width: 0;

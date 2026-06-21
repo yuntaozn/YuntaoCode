@@ -2,6 +2,13 @@ from __future__ import annotations
 
 import pytest
 
+from runtime.core.automation import (
+    Automation,
+    AutomationTaskTemplate,
+    AutomationTrigger,
+    automation_task_seed,
+    can_trigger_automation,
+)
 from runtime.core.capability import CapabilityContract, PermissionSet, needs_user_confirmation
 from runtime.core.context import ContextRecord, ContextSnapshot, EvidenceRecord, select_records_for_phase
 from runtime.core.events import build_trace_event
@@ -44,6 +51,66 @@ def test_task_plan_serializes_steps() -> None:
     assert data["steps"][0]["tool_hint"] == "filesystem.read_file"
 
 
+def test_automation_serializes_trigger_and_task_template() -> None:
+    automation = Automation(
+        id="automation-1",
+        name="Weekly project summary",
+        state="active",
+        trigger=AutomationTrigger(kind="weekly", days_of_week=("mon",), time_of_day="09:00"),
+        task_template=AutomationTaskTemplate(
+            goal="Summarize project changes from the last week",
+            workspace_id="workspace-1",
+            model="model-1",
+            planning_policy="auto",
+            confirmation_policy="auto",
+        ),
+    )
+
+    data = automation.to_dict()
+
+    assert data["schema_version"] == "automation.v1"
+    assert data["record_kind"] == "automation"
+    assert data["trigger"]["schema_version"] == "automation_trigger.v1"
+    assert data["trigger"]["kind"] == "weekly"
+    assert data["task_template"]["schema_version"] == "automation_task_template.v1"
+    assert data["task_template"]["goal"].startswith("Summarize")
+
+
+def test_automation_creates_run_seed_without_executing_tools() -> None:
+    automation = Automation(
+        id="automation-1",
+        name="Check failures",
+        state="active",
+        trigger=AutomationTrigger(kind="interval", interval_seconds=3600),
+        task_template=AutomationTaskTemplate(
+            goal="Review failed task records",
+            workspace_id="workspace-1",
+            access_scope="project_only",
+        ),
+    )
+
+    seed = automation_task_seed(automation)
+
+    assert can_trigger_automation(automation, active_runs=0)
+    assert not can_trigger_automation(automation, active_runs=1)
+    assert seed["content"] == "Review failed task records"
+    assert seed["automation_triggered"] is True
+    assert "tool_id" not in seed
+
+
+def test_automation_queue_next_does_not_start_parallel_run() -> None:
+    automation = Automation(
+        id="automation-queue",
+        name="Queued review",
+        state="active",
+        concurrency_policy="queue_next",
+        trigger=AutomationTrigger(kind="daily", time_of_day="09:00"),
+        task_template=AutomationTaskTemplate(goal="Review project status"),
+    )
+
+    assert not can_trigger_automation(automation, active_runs=1)
+
+
 def test_trace_event_normalizes_unknown_event_name() -> None:
     event = build_trace_event(
         "unknown.event",
@@ -57,6 +124,19 @@ def test_trace_event_normalizes_unknown_event_name() -> None:
     assert data["event_name"] == "run.status"
     assert data["event_family"] == "run"
     assert data["payload"] == {"message": "ok"}
+
+
+def test_trace_event_accepts_runtime_canonical_event_names() -> None:
+    event = build_trace_event(
+        "capability.snapshot",
+        run_id="run-1",
+        payload={"ok": True},
+    )
+
+    data = event.to_dict()
+
+    assert data["event_name"] == "capability.snapshot"
+    assert data["event_family"] == "capability"
 
 
 def test_context_snapshot_keeps_evidence_and_unresolved_items() -> None:

@@ -7,7 +7,6 @@ const state = {
     conversations: [],
     tools: [],
     plugins: [],
-    modes: [],
     backups: [],
     sourceUpdate: {
         status: "idle",
@@ -29,7 +28,6 @@ const state = {
     accessScope: loadAccessScope(),
     planningPolicy: loadPlanningPolicy(),
     confirmationPolicy: loadConfirmationPolicy(),
-    currentMode: "terminal",
     settings: null,
     currentWorkspaceId: localStorage.getItem("lit_workspace_id") || "",
     currentConversationId: localStorage.getItem("lit_conversation_id") || "",
@@ -56,6 +54,15 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
+function rememberCurrentPanelState() {
+    if (state.currentWorkspaceId) {
+        localStorage.setItem("lit_workspace_id", state.currentWorkspaceId);
+    }
+    if (state.currentConversationId) {
+        localStorage.setItem("lit_conversation_id", state.currentConversationId);
+    }
+}
+
 function loadPinnedWorkspaceIds() {
     try {
         const value = JSON.parse(localStorage.getItem("lit_pinned_workspace_ids") || "[]");
@@ -73,10 +80,6 @@ function normalizePlanningPolicy(value) {
     return ["off", "auto", "always"].includes(value) ? value : "auto";
 }
 
-function planningPolicyFromLegacyExecutionMode(value) {
-    return { conservative: "off", auto: "auto", aggressive: "always" }[value] || "auto";
-}
-
 function normalizeConfirmationPolicy(value) {
     return ["conservative", "auto", "aggressive"].includes(value) ? value : "auto";
 }
@@ -92,35 +95,11 @@ function loadAccessScope() {
 function loadPlanningPolicy() {
     const stored = localStorage.getItem("lit_planning_policy");
     if (stored) return normalizePlanningPolicy(stored);
-    const legacy = localStorage.getItem("lit_execution_mode");
-    if (legacy) return planningPolicyFromLegacyExecutionMode(legacy);
-    return normalizePlanningPolicy(localStorage.getItem("lit_plan_execution_mode") || "auto");
+    return "auto";
 }
 
 function loadConfirmationPolicy() {
     return normalizeConfirmationPolicy(localStorage.getItem("lit_confirmation_policy") || "auto");
-}
-
-function normalizeModeId(modeId) {
-    const fallback = "terminal";
-    const value = modeId || fallback;
-    if (state.modes.length && !state.modes.some((mode) => mode.id === value)) {
-        return state.modes[0]?.id || fallback;
-    }
-    return value;
-}
-
-function setCurrentMode(modeId) {
-    state.currentMode = normalizeModeId(modeId);
-    localStorage.setItem("lit_mode", state.currentMode);
-}
-
-async function persistAssistantMode(modeId) {
-    setCurrentMode(modeId);
-    state.settings = await api("/settings", {
-        method: "POST",
-        body: JSON.stringify({ assistant_mode: state.currentMode }),
-    });
 }
 
 function headers() {
@@ -236,6 +215,12 @@ function runDotMarkup(runs, fallbackActive = false) {
 }
 
 async function refreshActiveRuns() {
+    const currentConversationId = state.currentConversationId;
+    const hadPersistentRun = Boolean(
+        currentConversationId
+        && !state.activeStreams.has(currentConversationId)
+        && state.activeRuns.some((run) => isRunActive(run) && run.conversation_id === currentConversationId)
+    );
     try {
         const [running, waiting, paused] = await Promise.all([
             api("/runs?status=running"),
@@ -253,6 +238,20 @@ async function refreshActiveRuns() {
         renderCurrentWorkspace();
         refreshComposerState();
         syncCurrentConversationStreamStatus();
+        const hasPersistentRun = Boolean(
+            currentConversationId
+            && !state.activeStreams.has(currentConversationId)
+            && state.activeRuns.some((run) => isRunActive(run) && run.conversation_id === currentConversationId)
+        );
+        if (currentConversationId && hasPersistentRun && !hasPersistentRunPlaceholder(currentConversationId)) {
+            renderMessages(withPersistentRunPlaceholder({
+                id: currentConversationId,
+                messages: state.currentMessages,
+            }));
+        }
+        if (currentConversationId && hadPersistentRun && !hasPersistentRun && !state.activeStreams.has(currentConversationId)) {
+            await loadConversation(currentConversationId);
+        }
     } catch (error) {
         console.warn("refreshActiveRuns failed:", error);
     }
@@ -362,10 +361,10 @@ function renderTaskHistory() {
                         ${canPause ? `<button type="button" data-run-action="pause" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.pause'))}</button>` : ""}
                         ${canResume ? `<button type="button" data-run-action="resume" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.resume'))}</button>` : ""}
                         ${canStart ? `<button type="button" data-run-action="start" data-run-id="${escapeHtml(run.id)}" data-task-id="${escapeHtml(task.id)}" data-conversation-id="${escapeHtml(run.conversation_id || task.conversation_id || "")}" data-goal="${escapeHtml(task.goal || run.user_content || "")}">${escapeHtml(t('tasks.start'))}</button>` : ""}
-                        <button type="button" data-run-action="runbook" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.runbook'))}</button>
-                        <button type="button" data-run-action="export_diagnostic" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.export_diagnostic'))}</button>
                         <button type="button" data-run-action="export_fixture" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.export_fixture'))}</button>
                         <button type="button" data-run-action="replay" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.replay'))}</button>
+                        <button type="button" data-run-action="runbook" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.runbook'))}</button>
+                        <button type="button" data-run-action="export_diagnostic" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.export_diagnostic'))}</button>
                     </div>
                 </div>
             `;
@@ -471,6 +470,7 @@ function updateSendingState() {
 }
 
 function openAuxiliaryPage(url) {
+    rememberCurrentPanelState();
     if (hasActiveWork()) {
         const opened = window.open(url, "_blank", "noopener,noreferrer");
         if (opened) {
@@ -481,6 +481,15 @@ function openAuxiliaryPage(url) {
         return;
     }
     window.location.href = url;
+}
+
+function openTaskHistoryDialog() {
+    const dialog = $("task-history-dialog");
+    const output = $("task-runbook-output");
+    if (output) output.classList.add("hidden");
+    refreshTaskHistory()
+        .then(() => dialog?.showModal())
+        .catch((error) => showToast(error.message));
 }
 
 function refreshComposerState() {
@@ -736,10 +745,9 @@ function logoutBackend() {
 }
 
 async function loadAll() {
-    const [workspaces, tools, modes] = await Promise.all([
+    const [workspaces, tools] = await Promise.all([
         api("/workspaces"),
         api("/tools"),
-        api("/modes"),
     ]);
     const [settings, plugins, backups] = await Promise.all([
         api("/settings"),
@@ -748,7 +756,6 @@ async function loadAll() {
     ]);
     state.workspaces = workspaces;
     state.tools = tools;
-    state.modes = modes || [];
     state.settings = settings;
     state.plugins = plugins;
     state.backups = backups?.items || [];
@@ -759,11 +766,8 @@ async function loadAll() {
         localStorage.setItem("lit_model", state.model);
     }
     if ($("model-select")) $("model-select").value = state.model;
-    setCurrentMode(settings.assistant_mode || localStorage.getItem("lit_mode") || state.currentMode);
     state.accessScope = normalizeAccessScope(settings.access_scope || state.accessScope);
-    state.planningPolicy = normalizePlanningPolicy(
-        settings.planning_policy || planningPolicyFromLegacyExecutionMode(settings.execution_mode),
-    );
+    state.planningPolicy = normalizePlanningPolicy(settings.planning_policy || state.planningPolicy);
     state.confirmationPolicy = normalizeConfirmationPolicy(settings.confirmation_policy || state.confirmationPolicy);
     localStorage.setItem("lit_access_scope", state.accessScope);
     localStorage.setItem("lit_planning_policy", state.planningPolicy);
@@ -794,7 +798,6 @@ async function loadAll() {
     renderTools();
     renderPlugins();
     renderSettings();
-    renderModes();
     await refreshActiveRuns();
     await loadConversations();
     renderCurrentWorkspace();
@@ -904,21 +907,6 @@ function renderConversations() {
         </div>
     `;
     }).join("") : `<div class="item-subtitle">${t('conv.no_match')}</div>`;
-}
-
-function getModeNameById(modeId) {
-    const mode = state.modes.find((m) => m.id === modeId);
-    return mode ? mode.name : "YuntaoCode";
-}
-
-function getModeIcon(icon) {
-    if (icon === "code") return "⌨";
-    if (icon === "paper") return "✎";
-    return "📄";
-}
-
-function renderModes() {
-    $("mode-switcher").innerHTML = "";
 }
 
 function renderTools() {
@@ -1058,10 +1046,6 @@ function renderCurrentWorkspace() {
         ? `${t('conv.running')} - ${activeRunLabel(latestRun)} - ${formatRunUpdated(latestRun)}`
         : (workspace ? workspace.path : t('topbar.bind_conversation'));
     $("composer-meta").textContent = workspace ? `${workspace.name} · ${getModeLabel()}` : t('composer.select_project_first');
-    const modeConfig = state.modes.find((m) => m.id === state.currentMode);
-    if (modeConfig && modeConfig.placeholder) {
-        $("message-input").setAttribute("placeholder", modeConfig.placeholder);
-    }
     renderAccessScopeControl();
     renderPlanExecutionControl();
     renderConfirmationExecutionControl();
@@ -1110,7 +1094,6 @@ function cyclePlanExecutionMode() {
     const currentIndex = modes.indexOf(state.planningPolicy);
     state.planningPolicy = modes[(currentIndex + 1) % modes.length];
     localStorage.setItem("lit_planning_policy", state.planningPolicy);
-    localStorage.setItem("lit_plan_execution_mode", state.planningPolicy);
     renderPlanExecutionControl();
     api("/settings", {
         method: "POST",
@@ -1419,7 +1402,7 @@ async function newConversation() {
     try {
         const conversation = await api("/conversations", {
             method: "POST",
-            body: JSON.stringify({ workspace_id: state.currentWorkspaceId, mode: state.currentMode }),
+            body: JSON.stringify({ workspace_id: state.currentWorkspaceId }),
         });
         state.currentConversationId = conversation.id;
         const pendingWorkspaceSubmitKey = composerSubmitKey("");
@@ -1448,14 +1431,10 @@ async function loadConversation(conversationId) {
         state.contextTokens = conversation.context_tokens || 0;
         state.contextLimit = conversation.context_limit || 0;
         localStorage.setItem("lit_conversation_id", conversation.id);
-        if (conversation.mode) {
-            setCurrentMode(conversation.mode);
-            renderModes();
-        }
         renderContextBar();
         renderCurrentWorkspace();
         const activeStream = state.activeStreams.get(conversation.id);
-        renderMessages(activeStream?.messages || conversation.messages);
+        renderMessages(activeStream?.messages || withPersistentRunPlaceholder(conversation));
         renderConversations();
         refreshComposerState();
         syncCurrentConversationStreamStatus();
@@ -1464,6 +1443,60 @@ async function loadConversation(conversationId) {
         showToast(error.message || t('error.load_failed'));
         console.error("loadConversation failed:", error);
     }
+}
+
+function hasPersistentRunPlaceholder(conversationId) {
+    const run = latestActiveRunForConversation(conversationId);
+    if (!run) return false;
+    return state.currentMessages.some((message) =>
+        message?.metadata?.persistentRun === true
+        && message?.metadata?.runId === run.id
+    );
+}
+
+function withPersistentRunPlaceholder(conversation) {
+    const conversationId = conversation?.id || state.currentConversationId;
+    const messages = Array.isArray(conversation?.messages)
+        ? conversation.messages.map((message) => ({ ...message, metadata: { ...(message.metadata || {}) } }))
+        : [];
+    const run = latestActiveRunForConversation(conversationId);
+    if (!run || state.activeStreams.has(conversationId)) {
+        return messages;
+    }
+
+    const runContent = String(run.user_content || "").trim();
+    if (runContent && !messages.some((message) =>
+        message?.role === "user" && String(message.content || "").trim() === runContent
+    )) {
+        messages.push({
+            role: "user",
+            content: runContent,
+            metadata: { recoveredFromActiveRun: true, runId: run.id },
+        });
+    }
+
+    const hasAssistantForRun = messages.some((message) =>
+        message?.role === "assistant"
+        && (message?.metadata?.run_id === run.id || message?.metadata?.runId === run.id)
+    );
+    if (!hasAssistantForRun) {
+        const createdAt = Date.parse(run.created_at || "");
+        const startedAt = Number.isFinite(createdAt) ? createdAt : Date.now();
+        messages.push({
+            role: "assistant",
+            content: "",
+            metadata: {
+                pending: true,
+                persistentRun: true,
+                runId: run.id,
+                statusText: activeRunLabel(run),
+                baseStatusText: activeRunLabel(run),
+                startedAt,
+                elapsedSeconds: elapsedSeconds(startedAt),
+            },
+        });
+    }
+    return messages;
 }
 
 async function deleteConversation(conversationId) {
@@ -1632,7 +1665,6 @@ async function sendMessage(event) {
     const conversationSubmitKey = composerSubmitKey(conversationId);
     state.pendingComposerSubmits.delete(initialSubmitKey);
     state.pendingComposerSubmits.add(conversationSubmitKey);
-    const requestMode = state.currentMode;
     const runLaunch = state.pendingRunLaunch;
     const workspaceId = state.currentWorkspaceId;
     const previousMessages = [...state.currentMessages];
@@ -1823,11 +1855,9 @@ async function sendMessage(event) {
         const body = {
             content,
             model: state.model,
-            mode: requestMode,
             access_scope: state.accessScope,
             planning_policy: state.planningPolicy,
             confirmation_policy: state.confirmationPolicy,
-            plan_mode: state.planningPolicy,
             request_id: requestId,
         };
         if (runLaunch?.prepared_run_id) {
@@ -2878,11 +2908,6 @@ document.addEventListener("click", async (event) => {
         return;
     }
 
-    const modeButton = event.target.closest("[data-mode-id]");
-    if (modeButton) {
-        return;
-    }
-
     const suggestion = event.target.closest("[data-suggestion]");
     if (suggestion) {
         setSuggestion(suggestion.dataset.suggestion);
@@ -2911,13 +2936,9 @@ on("focus-search-btn", "click", () => $("conversation-search-input")?.focus());
 on("open-settings-btn", "click", () => openAuxiliaryPage("/settings-page"));
 on("open-plugins-btn", "click", () => openAuxiliaryPage("/plugins-page"));
 on("open-mcp-services-btn", "click", () => openAuxiliaryPage("/mcp-services-page"));
+on("open-automation-btn", "click", () => openAuxiliaryPage("/automation-page"));
 on("open-task-history-btn", "click", () => {
-    const dialog = $("task-history-dialog");
-    const output = $("task-runbook-output");
-    if (output) output.classList.add("hidden");
-    refreshTaskHistory()
-        .then(() => dialog?.showModal())
-        .catch((error) => showToast(error.message));
+    openTaskHistoryDialog();
 });
 on("close-task-history-btn", "click", () => $("task-history-dialog")?.close());
 on("task-history-search-input", "input", (event) => {
@@ -3054,7 +3075,35 @@ document.addEventListener("visibilitychange", () => {
 if ($("backend-url-input")) $("backend-url-input").value = state.backendUrl;
 if ($("model-select")) $("model-select").value = state.model;
 renderAuthState();
-loadAll().catch((error) => {
+
+function handleInitialRouteIntent() {
+    const params = new URLSearchParams(window.location.search || "");
+    let shouldCleanUrl = false;
+    if (params.get("open_tasks") === "1") {
+        shouldCleanUrl = true;
+        openTaskHistoryDialog();
+    }
+    if (params.get("start_prepared") === "1") {
+        shouldCleanUrl = true;
+        const raw = localStorage.getItem("lit_pending_prepared_run") || "";
+        localStorage.removeItem("lit_pending_prepared_run");
+        if (raw) {
+            try {
+                const prepared = JSON.parse(raw);
+                startPreparedRun(prepared).catch((error) => showToast(error.message));
+            } catch (error) {
+                showToast(t('tasks.prepared'));
+            }
+        }
+    }
+    if (shouldCleanUrl) {
+        window.history.replaceState({}, "", window.location.pathname || "/");
+    }
+}
+
+loadAll().then(() => {
+    handleInitialRouteIntent();
+}).catch((error) => {
     showToast(error.message);
     renderMessages([]);
 });
@@ -3184,7 +3233,6 @@ async function saveSettings() {
         method: "POST",
         body: JSON.stringify({
             default_model: state.model,
-            assistant_mode: state.currentMode,
             access_scope: $("access-scope-input") ? $("access-scope-input").value : state.accessScope,
             planning_policy: $("planning-policy-input") ? $("planning-policy-input").value : state.planningPolicy,
             confirmation_policy: $("confirmation-policy-input") ? $("confirmation-policy-input").value : state.confirmationPolicy,
@@ -3203,7 +3251,6 @@ async function saveSettings() {
     localStorage.setItem("lit_access_scope", state.accessScope);
     localStorage.setItem("lit_planning_policy", state.planningPolicy);
     localStorage.setItem("lit_confirmation_policy", state.confirmationPolicy);
-    localStorage.setItem("lit_plan_execution_mode", state.planningPolicy);
     renderSettings();
     renderAccessScopeControl();
     renderPlanExecutionControl();

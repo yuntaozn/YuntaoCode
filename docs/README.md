@@ -7,8 +7,8 @@ new architecture note belongs.
 
 - [runtime-foundation.md](runtime-foundation.md) is the current foundation
   contract. It summarizes the runtime lines, run events, task contract,
-  convergence, RunResult, context, capability, temporary artifacts, and next
-  foundation work.
+  convergence, RunEvidence, RunResult, context, capability, temporary
+  artifacts, and next foundation work.
 - [architecture.md](architecture.md) is the higher-level architecture sketch
   for the sidecar, desktop shell, unified terminal, and agent strategy layer.
 - [versioning.md](versioning.md) defines the product release version and
@@ -22,6 +22,9 @@ new architecture note belongs.
   Template, Task Contract, and route/capability relationships.
 - [run-artifacts.md](run-artifacts.md) describes shared temporary artifacts
   across ToolTasks in one Run.
+- [automation-runtime.md](automation-runtime.md) describes Automation as a
+  trigger layer that creates normal Tasks/Runs instead of a separate execution
+  engine.
 
 ## Context Runtime
 
@@ -56,8 +59,9 @@ new architecture note belongs.
 
 - [experience-runtime.md](experience-runtime.md) describes Experience Sample
   and Experience Digest as the layer between Runbook evidence and replay.
-- [evaluation.md](evaluation.md) anchors local replay/evaluation as an
-  engineering capability, not a separate benchmark product.
+- [evaluation.md](evaluation.md) anchors local replay/evaluation plus
+  `evaluation_fixture.v1` and `evaluation_report.v1` as engineering
+  capabilities, not a separate benchmark product.
 - [skill-evolution.md](skill-evolution.md) describes Replay Fixture, Skill
   Candidate, Replay Result, and manual Promotion.
 

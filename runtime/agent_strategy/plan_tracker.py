@@ -101,7 +101,7 @@ def fallback_execution_plan(mode: str | None) -> dict[str, Any]:
     elif mode == "paper":
         steps = [
             ("建立材料护照", "扫描论文项目目录，识别草稿、文献、笔记、数据说明和参考资料。", "filesystem.scan_folder / code.list_project_files"),
-            ("提取已确认事实", "读取核心文档，区分 raw、redacted、verified 信息，并列出未覆盖材料。", "filesystem.read_file / document.extract_docx_outline / document.extract_pdf_text_preview"),
+            ("提取已确认事实", "读取核心文档或表格，区分 raw、redacted、verified 信息，并列出未覆盖材料。", "filesystem.read_file / document.extract_docx_outline / document.extract_pdf_text_preview / spreadsheet.inspect_workbook"),
             ("形成论文产出", "根据用户目标生成大纲、综述、摘要、段落草稿、审稿回复或修改建议。", "本地模型 / document.create_draft"),
             ("学术质量门", "检查幻觉引用、方法论捏造、实验结果捏造、过早锁定框架和贡献夸大风险。", "本地模型"),
             ("汇总结论", "列出依据、可用文本、待确认项和建议的下一步用户决策。", "本地模型"),
@@ -109,7 +109,7 @@ def fallback_execution_plan(mode: str | None) -> dict[str, Any]:
     else:
         steps = [
             ("识别资料范围", "扫描当前项目目录，确定需要读取的文档和附件。", "filesystem.scan_folder"),
-            ("读取核心内容", "提取 Word、PDF 或文本中的标题、大纲和关键段落；PDF 转 Word 时直接使用 document.extract_pdf_to_docx。", "document.extract_docx_outline / document.extract_pdf_text_preview / document.extract_pdf_to_docx"),
+            ("读取核心内容", "提取 Word、PDF、表格或文本中的标题、大纲、关键段落和表格预览；PDF 转 Word 时直接使用 document.extract_pdf_to_docx。", "document.extract_docx_outline / document.extract_pdf_text_preview / spreadsheet.inspect_workbook / document.extract_pdf_to_docx"),
             ("分析和归纳", "按用户目标整理事实、问题、风险或结论。", "filesystem.read_file"),
             ("形成产出", "生成摘要、审查意见、清单或汇报内容。", "本地模型"),
             ("说明依据", "列出已读取资料、跳过项和不确定项。", "本地模型"),

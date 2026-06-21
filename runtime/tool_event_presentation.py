@@ -223,6 +223,21 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
             "integrity": output.get("integrity"),
             "backup": output.get("_backup"),
         }
+    elif tool_id == "filesystem.apply_changes":
+        preview = {
+            "type": "file_change_set",
+            "paths": (output.get("paths") or [])[:40],
+            "changed_paths": (output.get("changed_paths") or [])[:40],
+            "created_paths": (output.get("created_paths") or [])[:40],
+            "updated_paths": (output.get("updated_paths") or [])[:40],
+            "deleted_paths": (output.get("deleted_paths") or [])[:40],
+            "operation_count": output.get("operation_count"),
+            "changed_file_count": output.get("changed_file_count"),
+            "effects": list(output.get("effects") or [])[:12],
+            "roles": list(output.get("roles") or [])[:12],
+            "verification_strength": output.get("verification_strength"),
+            "backup": output.get("_backup"),
+        }
     elif tool_id == "filesystem.transform_text":
         preview = {
             "type": "file_transform",
@@ -280,6 +295,14 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
             "text_chars": output.get("text_chars"),
             "table_count": output.get("table_count"),
             "strategy": output.get("strategy"),
+        }
+    elif tool_id == "spreadsheet.inspect_workbook":
+        preview = {
+            "type": "spreadsheet_preview",
+            "path": output.get("path"),
+            "format": output.get("format"),
+            "sheet_count": output.get("sheet_count"),
+            "sheets": (output.get("sheets") or [])[:6],
         }
     elif tool_id == "document.export_docx":
         preview = {
@@ -541,6 +564,11 @@ def summarize_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "text": compact_text,
             "text_chars": output.get("text_chars") or len(text),
             "truncated_for_context": text_truncated,
+        }
+    elif tool_id == "spreadsheet.inspect_workbook":
+        compacted["output"] = {
+            **output,
+            "sheets": (output.get("sheets") or [])[:8],
         }
     elif tool_id.startswith("web."):
         text, text_truncated = _bounded_text(

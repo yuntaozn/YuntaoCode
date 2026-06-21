@@ -26,6 +26,7 @@ from runtime.agent_strategy.tool_event_roles import (
     verification_evidence_strength,
     verification_strength_meets,
 )
+from runtime.capability_evidence import build_capability_evidence_summary
 from runtime.core.result import RUN_RESULT_SCHEMA_VERSION
 
 
@@ -184,6 +185,10 @@ def build_run_result(
             task_contract,
             mode=mode,
         )
+    )
+    capability_evidence = build_capability_evidence_summary(
+        tool_events,
+        task_contract=task_contract,
     )
 
     risks: list[str] = []
@@ -422,6 +427,7 @@ def build_run_result(
         "observed_written_paths": observed_written_paths,
         "verified": verified[:12],
         "verification_evidence": verification_evidence[:12],
+        "capability_evidence": capability_evidence,
         "required_verification_strength": required_strength,
         "required_verification_modalities": list(required_modalities),
         "observed_verification_modalities": observed_verification_modalities,

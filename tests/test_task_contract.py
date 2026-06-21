@@ -1,5 +1,6 @@
 from runtime.agent_strategy.task_contract import (
     apply_task_continuity,
+    contract_expects_text_output,
     default_task_contract,
     extract_task_contract_json,
     inherit_task_contract_for_followup,
@@ -180,6 +181,41 @@ def test_task_contract_prompt_includes_runtime_capabilities_when_provided() -> N
     assert "required_verification_modalities" in prompt
 
 
+def test_task_contract_prompt_allows_analysis_first_repair_advisory() -> None:
+    prompt = task_contract_prompt("D:\\code\\demo", _fallback())
+
+    assert "analysis-first repairable task" in prompt
+    assert "execution_advisories" in prompt
+    assert "evidence_may_require_repair" in prompt
+
+
+def test_model_contract_preserves_execution_advisories_as_non_binding_context() -> None:
+    contract = merge_model_task_contract(
+        {
+            "intent": "read_only_analysis",
+            "requires_write": False,
+            "first_action": "read",
+            "execution_advisories": [
+                {
+                    "code": "evidence_may_require_repair",
+                    "message": "Read first; repair if evidence shows a broken local artifact.",
+                    "suggested_first_action": "read",
+                }
+            ],
+        },
+        _fallback("answer_only"),
+    )
+
+    assert contract["requires_write"] is False
+    assert contract["execution_advisories"] == [
+        {
+            "code": "evidence_may_require_repair",
+            "message": "Read first; repair if evidence shows a broken local artifact.",
+            "suggested_first_action": "read",
+        }
+    ]
+
+
 def test_task_contract_context_keeps_recent_task_and_current_follow_up() -> None:
     context = task_contract_context_messages(
         [
@@ -265,6 +301,25 @@ def test_execute_followup_inherits_visual_verification_requirement() -> None:
     assert contract["requires_state_change"] is True
     assert contract["required_verification_modalities"] == ["visual"]
     assert "target_visual_verification" in contract["success_conditions"]
+
+
+def test_execute_followup_does_not_inherit_text_length_from_code_contract() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "Create an interactive code artifact",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "expected_min_output_chars": 2000,
+        "deliverables": [
+            {"kind": "code", "path_hint": "src/app.js"}
+        ],
+    }
+
+    contract = inherit_task_contract_for_followup(previous, _fallback("answer_only"))
+
+    assert contract["expected_min_output_chars"] == 0
+    assert "document_min_output_chars" not in contract["success_conditions"]
 
 
 def test_revision_followup_preserves_previous_external_state_target() -> None:
@@ -606,6 +661,64 @@ def test_runtime_write_promotion_turns_answer_contract_into_verifiable_code_targ
     assert "target_deliverable_verification" in contract["success_conditions"]
 
 
+def test_model_selected_write_tool_can_promote_analysis_contract_without_scenario_rule() -> None:
+    contract = {
+        "intent": "read_only_analysis",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": False,
+        "deliverables": [{"kind": "answer", "description": "Analysis"}],
+        "system_overrides": [],
+    }
+
+    changed = promote_task_contract_for_write_intent(
+        contract,
+        reason="model_selected_write_tool",
+        path_hint="viewer/index.html",
+        deliverable_kind="code",
+        description="Model selected a write tool",
+    )
+
+    assert changed is True
+    assert contract["requires_write"] is True
+    assert contract["requires_verification"] is True
+    assert contract["deliverables"][0]["kind"] == "code"
+    assert contract["deliverables"][0]["path_hint"] == "viewer/index.html"
+    assert "model_selected_write_tool" in contract["system_overrides"]
+
+
+def test_model_code_contract_clears_fallback_text_length_goal() -> None:
+    fallback = default_task_contract(
+        task_intent="write_required",
+        mode="terminal",
+        planning_policy="auto",
+        confirmation_policy="auto",
+        workspace_path=r"D:\code\demo",
+        access_scope="workspace",
+        expected_min_output_chars=2000,
+    )
+
+    contract = merge_model_task_contract(
+        {
+            "intent": "write_required",
+            "requires_write": True,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "expected_min_output_chars": 0,
+            "deliverables": [
+                {"kind": "code", "path_hint": "src/app.js"}
+            ],
+        },
+        fallback,
+        expected_min_output_chars=2000,
+    )
+
+    assert contract["expected_min_output_chars"] == 0
+    assert contract_expects_text_output(contract) is False
+    assert "document_min_output_chars" not in contract["success_conditions"]
+    assert "cleared_non_text_min_output_chars" in contract["system_overrides"]
+
+
 def test_model_can_explicitly_replace_previous_task_target() -> None:
     previous = {
         "intent": "write_required",
@@ -792,6 +905,24 @@ def test_runtime_guidance_replaces_document_size_contract_with_latest_explicit_t
 
     assert changed is True
     assert contract["expected_min_output_chars"] == 30000
+
+
+def test_runtime_guidance_does_not_apply_document_size_to_code_contract() -> None:
+    executor = object.__new__(ConversationRunExecutor)
+    contract = default_task_contract(
+        task_intent="write_required",
+        mode="terminal",
+        planning_policy="auto",
+        confirmation_policy="auto",
+        workspace_path=r"D:\code\demo",
+        access_scope="workspace",
+    )
+    contract["deliverables"] = [{"kind": "code", "path_hint": "src/app.js"}]
+
+    changed = executor._apply_guidance_contract_updates(contract, "raise the target to 50000 words")
+
+    assert changed is False
+    assert contract["expected_min_output_chars"] == 0
 
 
 def test_model_declared_document_size_is_preserved_by_contract_normalization() -> None:

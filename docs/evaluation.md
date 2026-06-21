@@ -32,11 +32,18 @@ It should not become a generic leaderboard or benchmark product.
 The current 0.1 work already provides the first pieces:
 
 - **Runbook** records what happened in one Run.
+- **RunEvidence** is the shared post-run fact view consumed by Runbook,
+  diagnostics, Experience Sample export, Replay, and Evaluation.
 - **Diagnostic Export** explains why a Run behaved differently on a specific
   machine.
 - **Experience Sample Export** turns a selected Run into a reviewed sample and
   a small Replay Fixture.
 - **Replay Fixture** can later become a stable sample for regression testing.
+- **Evaluation Fixture** is a local, manually exported fixture generated from
+  RunEvidence for regression/evaluation runs.
+- **Evaluation Report** compares one fixture with one RunEvidence view and
+  explains pass, partial, failure, or blocked outcomes without replaying the
+  task.
 - **RunResult** provides runtime-owned facts instead of relying on assistant
   prose.
 
@@ -44,9 +51,11 @@ The direction is:
 
 ```text
 Run
+  -> RunEvidence
   -> Diagnostic Export
   -> Experience Sample Export
   -> Replay Fixture
+  -> Evaluation Fixture
   -> Evaluation Report
   -> Skill Evolution
 ```
@@ -98,31 +107,43 @@ For 0.1, evaluation remains a direction anchor:
 - manual export only;
 - local files only;
 - user-selected samples only;
+- selected RunEvidence can be exported as `evaluation_fixture.v1`;
+- selected RunEvidence can be compared with a fixture as
+  `evaluation_report.v1`;
+- selected RunEvidence can be exported as an Experience Sample;
+- no local sample registry or sample workbench in 0.1;
 - no automatic collection of all tasks;
 - no automatic upload;
 - no public leaderboard;
 - no central sample service;
 - no new database dependency;
+- no automatic fixture execution;
 - no automatic skill promotion;
 - no trusted execution of AI-generated code.
 
-The current priority is to keep diagnostic export, Experience Sample export,
-Runbook, Replay Fixture, and RunResult coherent enough that evaluation can be
-added later without changing the foundation again.
+The current priority is to keep RunEvidence, diagnostic export, Experience
+Sample export, Runbook, Replay Fixture, and RunResult coherent enough that
+evaluation can be added later without changing the foundation again.
 
 ## Future Shape
 
-A later implementation can add a small local evaluation layer:
+The first local evaluation modules are intentionally small:
 
 ```text
 runtime/evaluation/
   fixtures.py
-  runner.py
-  metrics.py
-  report.py
+  reports.py
 ```
 
-That layer should replay selected fixtures through normal Task Runtime
+Later implementation can add:
+
+```text
+runtime/evaluation/
+  runner.py
+  metrics.py
+```
+
+The future runner should replay selected fixtures through normal Task Runtime
 execution and produce local JSON or Markdown reports. It should not bypass
 normal capability contracts, permission checks, context hygiene, or result
 verification.

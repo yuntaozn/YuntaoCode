@@ -15,44 +15,37 @@ from dataclasses import dataclass
 class AgentProfile:
     id: str
     label: str
-    execution_mode: str
     description: str
 
 
 CHAT_PROFILE = AgentProfile(
     id="chat",
     label="Direct Chat",
-    execution_mode="terminal",
     description="Short answers, greetings, and simple explanations without planning or tools by default.",
 )
 ANALYSIS_PROFILE = AgentProfile(
     id="analysis",
     label="Local Analysis",
-    execution_mode="terminal",
     description="Read-only inspection and project/document analysis that may use tools when evidence is needed.",
 )
 CODING_PROFILE = AgentProfile(
     id="coding",
     label="Code Execution",
-    execution_mode="coding",
     description="Code edits, repairs, verification, and local project changes.",
 )
 DOCUMENT_PROFILE = AgentProfile(
     id="document",
     label="Document Workflow",
-    execution_mode="document",
     description="Document export, conversion, summarization, and file-oriented deliverables.",
 )
 EXECUTION_PROFILE = AgentProfile(
     id="execution",
     label="Capability Execution",
-    execution_mode="terminal",
     description="External application, MCP, browser, database, and other capability-driven state changes.",
 )
 PAPER_PROFILE = AgentProfile(
     id="paper",
     label="Paper Workflow",
-    execution_mode="paper",
     description="Academic writing, literature review, citation-risk checks, and research workflows.",
 )
 
@@ -157,6 +150,5 @@ def profile_to_public_dict(profile: AgentProfile) -> dict[str, str]:
     return {
         "id": profile.id,
         "label": profile.label,
-        "execution_mode": profile.execution_mode,
         "description": profile.description,
     }

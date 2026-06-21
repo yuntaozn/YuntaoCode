@@ -207,7 +207,6 @@ User Request
 - AI-built plugin draft 属于未加载 draft provider。
 - 外部插件未来属于本地或受控 provider。
 - MCP 工具属于外部 capability provider。
-
 所有 provider 都需要走同样的能力声明、权限、确认、Trace、RunResult。
 
 ## Current Implementation
@@ -233,14 +232,30 @@ Additional runtime guards now exist in `runtime/agent_strategy/capability_prefli
 - External-state tasks require an available capability with
   `external_state_change`.
 - Fallback from a target external-state capability to shell scripts or ordinary
-  file generation is blocked by both visible-tool filtering and a second
-  execution-time guard.
+  file generation is surfaced as capability-boundary evidence. The Runtime may
+  require normal safety confirmation, but the model remains responsible for
+  choosing whether to retry, ask the user, explain the boundary, or select
+  another safe strategy.
 - Preflight blockers are recorded in `RunResult` as deterministic failure
   evidence.
 
+`runtime/capability_evidence.py` builds `capability_evidence_summary.v1` from
+persisted tool events. It preserves declared ToolSpec metadata
+(`declared_capability`, effects, roles, and verification strength) alongside
+observed tool-output facts such as artifacts, effects, roles, paths, and
+verification strength. RunResult, Runbook, diagnostics, and future replay /
+evaluation code can use this summary as audit evidence. It is not an execution
+policy and must not block or force a strategy by itself.
+
 Current built-in local file capability split:
 
+- The 0.1 foundation treats YuntaoCode's own local file capability as the
+  primary file channel. Editor-specific bridges are deferred until there is a
+  separate product decision and a clear provider lifecycle.
 - `filesystem.local_files`: read and scan files inside the workspace boundary.
+- `filesystem.change_set`: apply a bounded local file transaction for create,
+  overwrite, literal replace, and delete operations, with PathGuard,
+  confirmation, backup, trace, and RunResult evidence.
 - `code.text_write`: create or modify text/code files through structured write
   tools.
 - `filesystem.local_state`: change local file state, such as
@@ -253,7 +268,7 @@ Current built-in local file capability split:
 
 1. 将 ToolSpec 的 artifact、effect、role 和权限元数据逐步映射为 CapabilityContract。
 2. 在 task_contract 之后增加可选 RouteProposal 验证事件。
-3. 在 RunResult 中记录 artifact 与 capability_id。
+3. 继续把 artifact、capability_id 和验证规则沉淀为可测试的 evidence schema。
 4. 前端插件页区分 built-in capability、AI draft、future external provider。
 
 中期建议：

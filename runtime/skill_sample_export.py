@@ -13,7 +13,8 @@ from typing import Any
 
 from runtime.core.experience import experience_sample_from_runbook
 from runtime.core.skill_evolution import replay_fixture_from_runbook
-from runtime.runbook import build_runbook
+from runtime.run_evidence import build_run_evidence
+from runtime.runbook import build_runbook_from_evidence
 
 
 EXPERIENCE_SAMPLE_EXPORT_SCHEMA_VERSION = "experience_sample_export.v1"
@@ -21,7 +22,8 @@ SKILL_SAMPLE_EXPORT_SCHEMA_VERSION = "skill_sample_export.v1"
 
 
 def build_experience_sample_export(run: Any) -> dict[str, Any]:
-    runbook = build_runbook(run)
+    evidence = build_run_evidence(run)
+    runbook = build_runbook_from_evidence(evidence)
     run_info = runbook.get("run") if isinstance(runbook.get("run"), dict) else {}
     run_id = str(run_info.get("id") or getattr(run, "id", "") or "")
     sample_id = f"experience-{run_id}" if run_id else "experience-export"
@@ -36,6 +38,7 @@ def build_experience_sample_export(run: Any) -> dict[str, Any]:
         "filename": filename,
         "experience_sample": experience_sample,
         "fixture": fixture,
+        "run_evidence": _sample_evidence_summary(evidence),
         "source": {
             "run_id": run_id,
             "task_id": str(run_info.get("task_id") or ""),
@@ -69,6 +72,22 @@ def build_skill_sample_export(run: Any) -> dict[str, Any]:
         "note": "Skill sample export is a compatibility name. The stable concept is an Experience Sample plus Replay Fixture.",
     }
     return exported
+
+
+def _sample_evidence_summary(evidence: dict[str, Any]) -> dict[str, Any]:
+    trace = evidence.get("trace") if isinstance(evidence.get("trace"), dict) else {}
+    capability_evidence = evidence.get("capability_evidence") if isinstance(evidence.get("capability_evidence"), dict) else {}
+    result = evidence.get("result") if isinstance(evidence.get("result"), dict) else {}
+    return {
+        "schema_version": str(evidence.get("schema_version") or ""),
+        "trace_schema_version": str(trace.get("schema_version") or ""),
+        "capability_evidence_schema_version": str(capability_evidence.get("schema_version") or ""),
+        "result_status": str(result.get("status") or ""),
+        "risk_count": len(evidence.get("risks") or []),
+        "failure_count": len(evidence.get("failures") or []),
+        "verification_count": len(evidence.get("verification_evidence") or []),
+        "observed_capability_ids": list(capability_evidence.get("observed_capability_ids") or []),
+    }
 
 
 def _sample_filename(value: str) -> str:

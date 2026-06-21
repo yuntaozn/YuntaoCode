@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
-from runtime.runbook import build_runbook
+from runtime.run_evidence import build_run_evidence
 from runtime.version import __version__
 
 
@@ -24,8 +24,8 @@ DIAGNOSTIC_EXPORT_SCHEMA_VERSION = "diagnostic_export.v1"
 
 
 def build_diagnostic_export(runtime: Any, run: Any) -> dict[str, Any]:
-    runbook = build_runbook(run)
-    run_info = runbook.get("run") if isinstance(runbook.get("run"), dict) else {}
+    evidence = build_run_evidence(run)
+    run_info = evidence.get("run") if isinstance(evidence.get("run"), dict) else {}
     run_id = str(run_info.get("id") or getattr(run, "id", "") or "")
     return {
         "schema_version": DIAGNOSTIC_EXPORT_SCHEMA_VERSION,
@@ -42,7 +42,8 @@ def build_diagnostic_export(runtime: Any, run: Any) -> dict[str, Any]:
         "tools": _tool_summary(runtime),
         "mcp_services": _mcp_summary(runtime),
         "run": _run_summary(run),
-        "runbook_summary": _runbook_summary(runbook),
+        "run_evidence_summary": _run_evidence_summary(evidence),
+        "runbook_summary": _run_evidence_summary(evidence),
         "model_errors": _model_error_summary(getattr(run, "events", []) or []),
         "recent_events": _recent_events(getattr(run, "events", []) or []),
         "export_policy": {
@@ -113,7 +114,6 @@ def _settings_summary(runtime: Any) -> dict[str, Any]:
         }
     return {
         "default_model": str(public.get("default_model") or ""),
-        "assistant_mode": str(public.get("assistant_mode") or ""),
         "access_scope": str(public.get("access_scope") or ""),
         "planning_policy": str(public.get("planning_policy") or ""),
         "confirmation_policy": str(public.get("confirmation_policy") or ""),
@@ -213,14 +213,17 @@ def _run_summary(run: Any) -> dict[str, Any]:
     }
 
 
-def _runbook_summary(runbook: dict[str, Any]) -> dict[str, Any]:
-    result = runbook.get("result") if isinstance(runbook.get("result"), dict) else {}
-    tool_steps = runbook.get("tool_steps") if isinstance(runbook.get("tool_steps"), list) else []
-    failures = runbook.get("failures") if isinstance(runbook.get("failures"), list) else []
+def _run_evidence_summary(evidence: dict[str, Any]) -> dict[str, Any]:
+    result = evidence.get("result") if isinstance(evidence.get("result"), dict) else {}
+    tool_steps = evidence.get("tool_steps") if isinstance(evidence.get("tool_steps"), list) else []
+    failures = evidence.get("failures") if isinstance(evidence.get("failures"), list) else []
     return {
-        "task_contract": runbook.get("task_contract") if isinstance(runbook.get("task_contract"), dict) else {},
-        "capability_snapshot": runbook.get("capability_snapshot") if isinstance(runbook.get("capability_snapshot"), dict) else {},
-        "plan": runbook.get("plan") if isinstance(runbook.get("plan"), dict) else {},
+        "schema_version": str(evidence.get("schema_version") or ""),
+        "trace": evidence.get("trace") if isinstance(evidence.get("trace"), dict) else {},
+        "capability_evidence": evidence.get("capability_evidence") if isinstance(evidence.get("capability_evidence"), dict) else {},
+        "task_contract": evidence.get("task_contract") if isinstance(evidence.get("task_contract"), dict) else {},
+        "capability_snapshot": evidence.get("capability_snapshot") if isinstance(evidence.get("capability_snapshot"), dict) else {},
+        "plan": evidence.get("plan") if isinstance(evidence.get("plan"), dict) else {},
         "result": {
             "status": str(result.get("status") or ""),
             "summary": _truncate(result.get("summary") or result.get("message") or "", 1000),
@@ -229,12 +232,13 @@ def _runbook_summary(runbook: dict[str, Any]) -> dict[str, Any]:
         },
         "tool_steps": [_tool_step_summary(step) for step in tool_steps[-50:] if isinstance(step, dict)],
         "failures": [_tool_step_summary(step) for step in failures[-20:] if isinstance(step, dict)],
-        "failure_details": [_compact_dict(item) for item in (runbook.get("failure_details") or []) if isinstance(item, dict)],
+        "failure_details": [_compact_dict(item) for item in (evidence.get("failure_details") or []) if isinstance(item, dict)],
         "verification_evidence": [
             _compact_dict(item)
-            for item in (runbook.get("verification_evidence") or [])
+            for item in (evidence.get("verification_evidence") or [])
             if isinstance(item, dict)
         ],
+        "recovery": evidence.get("recovery") if isinstance(evidence.get("recovery"), dict) else {},
     }
 
 

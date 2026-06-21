@@ -160,6 +160,25 @@ def test_registry_resolves_pdf_document_aliases_without_listing_them() -> None:
     assert [spec["id"] for spec in registry.list_specs()] == ["document.extract_pdf_text_preview"]
 
 
+def test_registry_resolves_spreadsheet_aliases_without_listing_them() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            id="spreadsheet.inspect_workbook",
+            name="Inspect Workbook",
+            description="Inspect spreadsheet",
+            input_schema={"type": "object"},
+        ),
+        _noop_handler,
+    )
+
+    assert registry.resolve_id("document.read_excel") == "spreadsheet.inspect_workbook"
+    assert registry.resolve_id("spreadsheet.read_excel") == "spreadsheet.inspect_workbook"
+    assert registry.resolve_id("spreadsheet.preview") == "spreadsheet.inspect_workbook"
+    assert registry.get("document.read_excel").spec.id == "spreadsheet.inspect_workbook"
+    assert [spec["id"] for spec in registry.list_specs()] == ["spreadsheet.inspect_workbook"]
+
+
 def test_registry_reports_missing_required_input_before_execution() -> None:
     registry = ToolRegistry()
     registry.register(

@@ -185,7 +185,6 @@ def inherit_task_contract_for_followup(
         "requires_verification",
         "required_verification_modalities",
         "expected_document_coverage",
-        "expected_min_output_chars",
         "capability_ids",
         "deliverables",
         "blockers",
@@ -193,6 +192,12 @@ def inherit_task_contract_for_followup(
     ):
         if key in inherited:
             contract[key] = deepcopy(inherited[key])
+    if _contract_expects_document_output(inherited):
+        contract["expected_min_output_chars"] = deepcopy(
+            inherited.get("expected_min_output_chars", 0)
+        )
+    else:
+        contract["expected_min_output_chars"] = 0
     contract.update({
         "source": "conversation_context",
         "raw_model_contract": None,
@@ -613,11 +618,13 @@ def _promote_deliverables_for_write(
 
 def _normalize_deliverable_kind(value: Any, *, path_hint: str = "") -> str:
     text = str(value or "").strip().lower()
-    if text in {"file", "code", "document"}:
+    if text in {"file", "code", "document", "spreadsheet"}:
         return text
     suffix = str(path_hint or "").strip().lower().rsplit(".", 1)
     ext = suffix[-1] if len(suffix) == 2 else ""
-    if ext in {"doc", "docx", "pdf", "ppt", "pptx", "xls", "xlsx", "csv", "md"}:
+    if ext in {"xls", "xlsx", "csv", "tsv"}:
+        return "spreadsheet"
+    if ext in {"doc", "docx", "pdf", "ppt", "pptx", "md"}:
         return "document"
     if ext in {
         "py", "js", "jsx", "ts", "tsx", "vue", "html", "css", "json", "toml",

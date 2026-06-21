@@ -46,6 +46,37 @@ def test_task_contract_prompt_is_model_declaration_not_fixed_target() -> None:
     assert "必须遵守以下硬条件" not in prompt
 
 
+def test_task_contract_prompt_includes_execution_advisories_without_hard_constraint() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    handler.get_lang = lambda: "zh-CN"
+
+    prompt = handler._task_contract_prompt({
+        "workspace_path": r"D:\ifctool",
+        "access_scope": "project_only",
+        "planning_policy": "auto",
+        "confirmation_policy": "auto",
+        "intent": "read_only_analysis",
+        "goal": "诊断页面访问问题",
+        "deliverables": [{"kind": "answer", "description": "诊断结果"}],
+        "routing_strategy": "model_first_task_contract",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": False,
+        "success_conditions": ["final_answer_with_evidence"],
+        "execution_advisories": [
+            {
+                "code": "evidence_may_require_repair",
+                "message": "Read first; repair if evidence shows the local artifact is broken.",
+                "suggested_first_action": "read",
+            }
+        ],
+    })
+
+    assert "Runtime execution advisories (not hard constraints)" in prompt
+    assert "Read first; repair if evidence shows the local artifact is broken." in prompt
+    assert "You may choose a different safe action" in prompt
+
+
 def test_runtime_confirmation_message_describes_file_creation(tmp_path: Path) -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
     handler._active_task_contract = {"goal": "重写 HTML 示例页"}

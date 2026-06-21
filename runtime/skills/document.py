@@ -1986,9 +1986,9 @@ async def merge_pdfs(input_data: dict[str, Any], context: Any) -> dict[str, Any]
     input_paths = input_data.get("input_paths", [])
     
     try:
-        from PyPDF2 import PdfMerger
+        from pypdf import PdfMerger
     except ImportError as exc:
-        raise RuntimeError("PyPDF2 is required for document.merge_pdfs") from exc
+        raise RuntimeError("pypdf is required for document.merge_pdfs") from exc
     
     merger = PdfMerger()
     
@@ -2013,9 +2013,9 @@ async def split_pdf(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
     output_dir = context.path_guard.resolve(input_data.get("output_dir", path.parent))
     
     try:
-        from PyPDF2 import PdfReader, PdfWriter
+        from pypdf import PdfReader, PdfWriter
     except ImportError as exc:
-        raise RuntimeError("PyPDF2 is required for document.split_pdf") from exc
+        raise RuntimeError("pypdf is required for document.split_pdf") from exc
     
     reader = PdfReader(str(path))
     output_dir.mkdir(exist_ok=True)
@@ -2045,9 +2045,9 @@ async def create_bookmark_outline(input_data: dict[str, Any], context: Any) -> d
     bookmarks = input_data.get("bookmarks", [])
     
     try:
-        from PyPDF2 import PdfReader, PdfWriter
+        from pypdf import PdfReader, PdfWriter
     except ImportError as exc:
-        raise RuntimeError("PyPDF2 is required for document.create_bookmark_outline") from exc
+        raise RuntimeError("pypdf is required for document.create_bookmark_outline") from exc
     
     reader = PdfReader(str(path))
     writer = PdfWriter()
@@ -2109,7 +2109,7 @@ def register_document_tools(registry: ToolRegistry) -> None:
                 },
                 "required": ["path"],
             },
-            optional_dependencies=["PyPDF2"],
+            optional_dependencies=["pypdf"],
         ),
         extract_pdf_text_preview,
     )
@@ -2135,7 +2135,7 @@ def register_document_tools(registry: ToolRegistry) -> None:
                 "required": ["path"],
             },
             requires_confirmation=True,
-            optional_dependencies=["PyPDF2", "docx", "fitz", "PIL"],
+            optional_dependencies=["pypdf", "docx", "fitz", "PIL"],
             capability="document.pdf_to_docx",
             artifacts=["docx"],
             long_running=True,
@@ -2480,7 +2480,7 @@ def register_document_tools(registry: ToolRegistry) -> None:
                 "required": ["output_path", "input_paths"],
             },
             requires_confirmation=True,
-            optional_dependencies=["PyPDF2"],
+            optional_dependencies=["pypdf"],
             capability="document.merge_pdf",
             artifacts=["pdf"],
             idempotent=True,
@@ -2501,7 +2501,7 @@ def register_document_tools(registry: ToolRegistry) -> None:
                 "required": ["path"],
             },
             requires_confirmation=True,
-            optional_dependencies=["PyPDF2"],
+            optional_dependencies=["pypdf"],
         ),
         split_pdf,
     )
@@ -2529,7 +2529,7 @@ def register_document_tools(registry: ToolRegistry) -> None:
                 "required": ["path", "bookmarks"],
             },
             requires_confirmation=True,
-            optional_dependencies=["PyPDF2"],
+            optional_dependencies=["pypdf"],
         ),
         create_bookmark_outline,
     )

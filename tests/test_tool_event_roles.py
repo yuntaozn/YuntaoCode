@@ -317,6 +317,46 @@ def test_text_external_state_summary_upgrades_weak_verification() -> None:
     assert verification_evidence_strength(event, task_contract=contract) == "standard"
 
 
+def test_spreadsheet_preview_is_content_evidence() -> None:
+    event = {
+        "tool": "spreadsheet.inspect_workbook",
+        "status": "success",
+        "output": {
+            "type": "spreadsheet_preview",
+            "path": "D:/workspace/data.xlsx",
+            "sheets": [{"name": "Sheet1", "preview_rows": [["name", "qty"]]}],
+        },
+    }
+
+    assert classify_tool_event_role(
+        event,
+        task_contract={"requires_verification": True},
+        workspace_path="D:/workspace",
+    ) == EVIDENCE
+    assert verification_evidence_strength(event) == "standard"
+    assert verification_evidence_modalities(event) == ("content",)
+
+
+def test_declared_tool_output_counts_as_standard_verification() -> None:
+    event = {
+        "tool": "mcp_demo.inspect_scene",
+        "status": "success",
+        "output": {
+            "type": "scene_inspection",
+            "roles": ["verification", "evidence"],
+            "verification_strength": "standard",
+        },
+    }
+
+    assert classify_tool_event_role(
+        event,
+        task_contract={"requires_verification": True},
+        workspace_path="D:/workspace",
+    ) == VERIFICATION
+    assert verification_evidence_strength(event) == "standard"
+    assert verification_evidence_modalities(event) == ("structural",)
+
+
 def test_visual_requirement_needs_visual_verification_modality() -> None:
     contract = {
         "requires_write": False,

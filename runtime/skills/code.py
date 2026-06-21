@@ -332,7 +332,9 @@ async def edit_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
         raise ValueError(
             f"edits is required and must be a list of {{old_text, new_text}}. "
             f"Received keys: {received_keys}. "
-            f"Hint: use filesystem.write_file to create new files."
+            "Hint: for a tiny new file use filesystem.write_file; for a non-trivial "
+            "complete text/code artifact use filesystem.create_text_draft, "
+            "filesystem.append_text_chunk, then filesystem.finalize_text_file."
         )
     return await asyncio.to_thread(edit_file_sync, path, edits, context)
 

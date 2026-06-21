@@ -95,7 +95,7 @@ def deterministic_plan_gate(
     content: str,
     task_intent: str,
     mode: str | None,
-    plan_mode: str,
+    planning_policy: str,
     *,
     profile: AgentProfile | None = None,
 ) -> PlanGateDecision:
@@ -105,10 +105,10 @@ def deterministic_plan_gate(
     plan judge can be used.  Everything else is decided without another model
     round.
     """
-    normalized_plan_mode = str(plan_mode or "auto").lower()
-    if normalized_plan_mode == "off":
+    normalized_planning_policy = str(planning_policy or "auto").lower()
+    if normalized_planning_policy == "off":
         return PlanGateDecision(False, "user", "计划执行已关闭")
-    if normalized_plan_mode == "always":
+    if normalized_planning_policy == "always":
         return PlanGateDecision(True, "user", "已选择总是使用计划执行")
 
     text = content.lower().strip()

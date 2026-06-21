@@ -216,6 +216,13 @@ async def delete_file(input_data: dict[str, Any], context: Any) -> dict[str, Any
     return await asyncio.to_thread(delete_file_sync, path, missing_ok, context)
 
 
+async def apply_changes(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    operations = input_data.get("operations") or input_data.get("changes")
+    create_dirs = bool(input_data.get("create_dirs", True))
+    reason = str(input_data.get("reason") or "").strip()
+    return await asyncio.to_thread(apply_changes_sync, operations, create_dirs, reason, context)
+
+
 async def write_temp_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
     temp_dir = getattr(context, "temp_dir", None)
     if temp_dir is None:
@@ -259,6 +266,7 @@ async def create_text_draft(input_data: dict[str, Any], context: Any) -> dict[st
             content=initial_content,
             label="initial",
             metadata={"source": "create_text_draft"},
+            data_dir=data_dir,
         )
     record = save_text_draft(data_dir, record)
     return {
@@ -267,9 +275,9 @@ async def create_text_draft(input_data: dict[str, Any], context: Any) -> dict[st
         "title": record["title"],
         "path_hint": record.get("path_hint") or "",
         "language": record.get("language") or "",
-        "stats": text_draft_stats(record),
+        "stats": text_draft_stats(record, data_dir=data_dir),
         "message": (
-            "text draft created; append complete bounded chunks with "
+            "file-backed text draft created; append complete bounded chunks with "
             "filesystem.append_text_chunk, inspect progress, then finalize with "
             "filesystem.finalize_text_file"
         ),
@@ -287,13 +295,14 @@ async def append_text_chunk(input_data: dict[str, Any], context: Any) -> dict[st
         label=str(input_data.get("label") or ""),
         sequence=sequence,
         metadata=input_data.get("metadata") if isinstance(input_data.get("metadata"), dict) else {},
+        data_dir=data_dir,
     )
     record = save_text_draft(data_dir, record)
     return {
         "type": "text_artifact_draft",
         "draft_id": record["draft_id"],
         "chunk_id": chunk["chunk_id"],
-        "stats": text_draft_stats(record),
+        "stats": text_draft_stats(record, data_dir=data_dir),
     }
 
 
@@ -301,7 +310,7 @@ async def inspect_text_draft(input_data: dict[str, Any], context: Any) -> dict[s
     data_dir = _text_artifact_data_dir(context)
     record = load_text_draft(data_dir, str(input_data.get("draft_id") or ""))
     preview_chars = int(input_data.get("preview_chars") or 1200)
-    return inspect_text_draft_record(record, preview_chars=preview_chars)
+    return inspect_text_draft_record(record, data_dir=data_dir, preview_chars=preview_chars)
 
 
 async def finalize_text_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -315,7 +324,7 @@ async def finalize_text_file(input_data: dict[str, Any], context: Any) -> dict[s
     if not output_path_value:
         raise ValueError("output_path is required")
     path = context.path_guard.resolve(str(output_path_value))
-    content = text_draft_content(record)
+    content = text_draft_content(record, data_dir=data_dir)
     if not content:
         raise ValueError("text draft has no content")
     validator = str(input_data.get("validator") or "auto").strip().lower() or "auto"
@@ -327,7 +336,7 @@ async def finalize_text_file(input_data: dict[str, Any], context: Any) -> dict[s
     output.update({
         "type": "file_write",
         "draft_id": record["draft_id"],
-        "draft_stats": text_draft_stats(record),
+        "draft_stats": text_draft_stats(record, data_dir=data_dir),
         "validation": validation,
         "artifact_kind": "text_file",
     })
@@ -428,6 +437,244 @@ def delete_file_sync(path: Path, missing_ok: bool, context: Any) -> dict[str, An
         "verification_strength": "standard",
         "artifact_kind": "file_delete",
     }
+
+
+def apply_changes_sync(operations: Any, create_dirs: bool, reason: str, context: Any) -> dict[str, Any]:
+    if not isinstance(operations, list) or not operations:
+        raise ValueError("operations is required and must be a non-empty list")
+
+    states: dict[Path, dict[str, Any]] = {}
+    operation_results: list[dict[str, Any]] = []
+
+    for index, raw in enumerate(operations, start=1):
+        if not isinstance(raw, dict):
+            raise ValueError(f"operation {index} must be an object")
+        operation_type = _normalize_change_operation_type(raw.get("type") or raw.get("operation"))
+        path = _change_operation_path(raw, context)
+        state = states.get(path)
+        if state is None:
+            state = _load_change_file_state(path)
+            states[path] = state
+
+        if operation_type in {"create_file", "overwrite_file"}:
+            content = _operation_content(raw, index)
+            if (
+                operation_type == "create_file"
+                and state["final_exists"]
+                and not bool(raw.get("overwrite", False))
+            ):
+                raise ValueError(f"operation {index} cannot create existing file: {path}")
+            _validate_text_artifact_integrity(path, content)
+            created = not state["final_exists"]
+            before_text = state.get("text") or ""
+            state.update({
+                "text": content,
+                "final_exists": True,
+                "deleted": False,
+                "encoding": state.get("encoding") or "utf-8",
+            })
+            operation_results.append({
+                "index": index,
+                "type": operation_type,
+                "path": str(path),
+                "created": created,
+                "changed": created or before_text != content,
+                "text_chars": len(content),
+            })
+            continue
+
+        if operation_type == "replace_text":
+            if not state["final_exists"] or state.get("deleted"):
+                raise ValueError(f"operation {index} cannot replace text in missing file: {path}")
+            old_text = str(raw.get("old_text") or raw.get("oldText") or "")
+            if not old_text:
+                raise ValueError(f"operation {index} old_text is required")
+            if "new_text" in raw:
+                new_text = str(raw.get("new_text") or "")
+            elif "newText" in raw:
+                new_text = str(raw.get("newText") or "")
+            else:
+                new_text = str(raw.get("replacement") or "")
+            replace_all = bool(raw.get("replace_all", False))
+            expected = int(raw.get("expected_replacements") or (0 if replace_all else 1))
+            current_text = str(state.get("text") or "")
+            count = current_text.count(old_text)
+            if count == 0:
+                raise ValueError(f"operation {index} old_text not found in file: {path}")
+            if not replace_all and count != expected:
+                raise ValueError(
+                    f"operation {index} old_text matches {count} locations in {path}; "
+                    "provide a more specific old_text or set replace_all=true"
+                )
+            limit = count if replace_all else expected
+            updated_text = current_text.replace(old_text, new_text, limit)
+            _validate_text_artifact_integrity(path, updated_text)
+            state.update({"text": updated_text, "final_exists": True, "deleted": False})
+            operation_results.append({
+                "index": index,
+                "type": operation_type,
+                "path": str(path),
+                "matched": count,
+                "replaced": limit,
+                "changed": updated_text != current_text,
+            })
+            continue
+
+        if operation_type == "delete_file":
+            missing_ok = bool(raw.get("missing_ok", False))
+            if not state["final_exists"]:
+                if not missing_ok:
+                    raise ValueError(f"operation {index} file not found: {path}")
+                operation_results.append({
+                    "index": index,
+                    "type": operation_type,
+                    "path": str(path),
+                    "deleted": False,
+                    "existed": False,
+                    "missing_ok": True,
+                    "changed": False,
+                })
+                continue
+            state.update({"text": "", "final_exists": False, "deleted": True})
+            operation_results.append({
+                "index": index,
+                "type": operation_type,
+                "path": str(path),
+                "deleted": True,
+                "existed": True,
+                "missing_ok": missing_ok,
+                "changed": True,
+            })
+            continue
+
+        raise ValueError(f"operation {index} has unsupported type: {operation_type}")
+
+    changed_paths: list[str] = []
+    created_paths: list[str] = []
+    updated_paths: list[str] = []
+    deleted_paths: list[str] = []
+
+    for path, state in states.items():
+        original_exists = bool(state["original_exists"])
+        original_text = str(state.get("original_text") or "")
+        final_exists = bool(state["final_exists"])
+        final_text = str(state.get("text") or "")
+        if final_exists and (not original_exists or original_text != final_text):
+            if callable(getattr(context, "backup_file", None)):
+                context.backup_file(path)
+            if create_dirs:
+                path.parent.mkdir(parents=True, exist_ok=True)
+            _write_text_preserving_encoding(path, final_text, str(state.get("encoding") or "utf-8"))
+            changed_paths.append(str(path))
+            if original_exists:
+                updated_paths.append(str(path))
+                context.log("info", f"updated file through change set: {path}")
+            else:
+                created_paths.append(str(path))
+                context.log("info", f"created file through change set: {path}")
+            continue
+        if not final_exists and original_exists:
+            if callable(getattr(context, "backup_file", None)):
+                context.backup_file(path)
+            if path.exists():
+                if not path.is_file():
+                    raise ValueError(f"refusing to delete non-file path: {path}")
+                path.unlink()
+            changed_paths.append(str(path))
+            deleted_paths.append(str(path))
+            context.log("info", f"deleted file through change set: {path}")
+
+    return {
+        "type": "file_change_set",
+        "reason": reason,
+        "operation_count": len(operations),
+        "changed_file_count": len(changed_paths),
+        "paths": changed_paths,
+        "changed_paths": changed_paths,
+        "created_paths": created_paths,
+        "updated_paths": updated_paths,
+        "deleted_paths": deleted_paths,
+        "operations": operation_results,
+        "effects": ["file_write", "file_delete", "local_state_change"],
+        "roles": ["deliverable", "verification"],
+        "verification_strength": "standard",
+        "artifact_kind": "file_change_set",
+    }
+
+
+def _normalize_change_operation_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    aliases = {
+        "add": "create_file",
+        "create": "create_file",
+        "write": "overwrite_file",
+        "write_file": "overwrite_file",
+        "overwrite": "overwrite_file",
+        "update": "overwrite_file",
+        "replace": "replace_text",
+        "replace_in_file": "replace_text",
+        "delete": "delete_file",
+        "remove": "delete_file",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _change_operation_path(operation: dict[str, Any], context: Any) -> Path:
+    path_value = operation.get("path") or operation.get("output_path")
+    if not isinstance(path_value, str) or not path_value.strip():
+        raise ValueError("each operation requires path")
+    path = context.path_guard.resolve(path_value)
+    if path.exists() and path.is_dir():
+        raise ValueError(f"operation path is a directory, not a file: {path}")
+    return path
+
+
+def _operation_content(operation: dict[str, Any], index: int) -> str:
+    if "content" not in operation:
+        raise ValueError(f"operation {index} content is required")
+    return str(operation.get("content") or "")
+
+
+def _load_change_file_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {
+            "original_exists": False,
+            "final_exists": False,
+            "deleted": False,
+            "text": "",
+            "original_text": "",
+            "encoding": "utf-8",
+        }
+    if not path.is_file():
+        raise ValueError(f"path is not a file: {path}")
+    raw = path.read_bytes()
+    encoding = _detect_encoding(raw[:8192])
+    text = raw.decode(encoding, errors="replace")
+    return {
+        "original_exists": True,
+        "final_exists": True,
+        "deleted": False,
+        "text": text,
+        "original_text": text,
+        "encoding": encoding,
+    }
+
+
+def _validate_text_artifact_integrity(path: Path, content: str) -> None:
+    integrity = inspect_text_artifact_integrity(path, content)
+    if integrity.get("checked") and not integrity.get("valid"):
+        issues = ", ".join(str(item) for item in integrity.get("issues") or [])
+        raise ValueError(
+            f"refusing incomplete {path.suffix.lower() or 'text'} change: {issues}. "
+            "Provide complete content or use a narrower edit."
+        )
+
+
+def _write_text_preserving_encoding(path: Path, text: str, encoding: str) -> None:
+    try:
+        path.write_text(text, encoding=encoding)
+    except (LookupError, UnicodeEncodeError):
+        path.write_text(text, encoding="utf-8")
 
 
 def inspect_text_artifact_integrity(path: Path, content: str) -> dict[str, Any]:
@@ -607,8 +854,10 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
             id="filesystem.write_file",
             name="写入文件",
             description=(
-                "在允许工作区内创建或覆盖完整文件。写入前会创建可恢复回退点；"
-                "修改已有大文件时优先使用 code.edit_file，完整 HTML 截断时会拒绝覆盖。"
+                "在允许工作区内创建或覆盖很小的完整文本文件。写入前会创建可恢复回退点；"
+                "不要把它作为较大 HTML/CSS/JS/Python/Markdown/JSON 完整产物的首选。"
+                "新建或重写非平凡文本/代码产物时，优先使用 filesystem.create_text_draft、"
+                "filesystem.append_text_chunk、filesystem.finalize_text_file。"
             ),
             input_schema={
                 "type": "object",
@@ -623,6 +872,58 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
             capability="code.text_write",
         ),
         write_file,
+    )
+    registry.register(
+        ToolSpec(
+            id="filesystem.apply_changes",
+            name="Apply local file changes",
+            description=(
+                "Apply a small transaction of local file changes inside the workspace boundary. "
+                "Use this as the main filesystem write channel for bounded create, overwrite, "
+                "literal replace, and delete operations. For complex code edits, use code.edit_file "
+                "or code.apply_patch; for large complete artifacts, use the text draft flow."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string", "description": "Short reason for the change set"},
+                    "create_dirs": {"type": "boolean", "default": True},
+                    "operations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "enum": [
+                                        "create_file",
+                                        "overwrite_file",
+                                        "replace_text",
+                                        "delete_file",
+                                    ],
+                                },
+                                "path": {"type": "string"},
+                                "content": {"type": "string"},
+                                "old_text": {"type": "string"},
+                                "new_text": {"type": "string"},
+                                "replace_all": {"type": "boolean", "default": False},
+                                "expected_replacements": {"type": "integer"},
+                                "missing_ok": {"type": "boolean", "default": False},
+                            },
+                            "required": ["type", "path"],
+                        },
+                    },
+                },
+                "required": ["operations"],
+            },
+            requires_confirmation=True,
+            capability="filesystem.change_set",
+            artifacts=["file"],
+            effects=["file_write", "file_delete", "local_state_change"],
+            roles=["deliverable", "verification"],
+            verification_strength="standard",
+        ),
+        apply_changes,
     )
     registry.register(
         ToolSpec(
@@ -722,7 +1023,6 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
                     "title": {"type": "string", "description": "草稿标题"},
                     "path_hint": {"type": "string", "description": "最终目标文件路径提示"},
                     "language": {"type": "string", "description": "文本类型，例如 html、javascript、python、markdown"},
-                    "content": {"type": "string", "description": "可选初始内容"},
                     "metadata": {"type": "object"},
                 },
             },

@@ -51,6 +51,31 @@ def test_web_capture_preview_keeps_visual_artifact_fields() -> None:
     assert preview["artifact_kind"] == "screenshot"
 
 
+def test_filesystem_apply_changes_preview_lists_changed_paths() -> None:
+    preview = tool_output_preview(
+        "filesystem.apply_changes",
+        {
+            "paths": ["D:/workspace/a.txt", "D:/workspace/b.txt"],
+            "changed_paths": ["D:/workspace/a.txt", "D:/workspace/b.txt"],
+            "created_paths": ["D:/workspace/a.txt"],
+            "updated_paths": [],
+            "deleted_paths": ["D:/workspace/b.txt"],
+            "operation_count": 2,
+            "changed_file_count": 2,
+            "effects": ["file_write", "file_delete", "local_state_change"],
+            "roles": ["deliverable", "verification"],
+            "verification_strength": "standard",
+        },
+    )
+
+    assert preview is not None
+    assert preview["type"] == "file_change_set"
+    assert preview["operation_count"] == 2
+    assert preview["changed_file_count"] == 2
+    assert preview["created_paths"] == ["D:/workspace/a.txt"]
+    assert preview["deleted_paths"] == ["D:/workspace/b.txt"]
+
+
 def test_document_translation_progress_message_includes_counts() -> None:
     task = FakeTask(logs=[
         {

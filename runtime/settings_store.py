@@ -18,14 +18,12 @@ from .memory_store import MemoryStore
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "settings_version": 5,
+    "settings_version": 10,
     "backend_url": "http://127.0.0.1:8088",
     "default_model": "doubao-seed-2-0-pro-260215",
     "access_scope": "project_only",
     "planning_policy": "auto",
     "confirmation_policy": "auto",
-    # Deprecated compatibility alias for planning_policy.
-    "execution_mode": "auto",
     "backups": {
         "enabled": True,
         "keep_rounds": 50,
@@ -160,28 +158,17 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
 }
 
-VALID_ASSISTANT_MODES = {"terminal", "document", "coding", "paper"}
-LEGACY_ASSISTANT_MODE_ALIASES = {"document": "terminal", "coding": "terminal", "paper": "terminal"}
 VALID_ACCESS_SCOPES = {"project_only", "full_local"}
-VALID_EXECUTION_MODES = {"conservative", "auto", "aggressive"}
 VALID_PLANNING_POLICIES = {"off", "auto", "always"}
 VALID_CONFIRMATION_POLICIES = {"conservative", "auto", "aggressive"}
 RUNTIME_MANAGED_PLUGIN_IDS = {"attachment", "memory"}
 
 
-def planning_policy_from_legacy_execution_mode(value: Any) -> str:
+def planning_policy_from_legacy_policy_alias(value: Any) -> str:
     return {
         "conservative": "off",
         "auto": "auto",
         "aggressive": "always",
-    }.get(str(value or "").strip().lower(), "auto")
-
-
-def legacy_execution_mode_from_planning_policy(value: Any) -> str:
-    return {
-        "off": "conservative",
-        "auto": "auto",
-        "always": "aggressive",
     }.get(str(value or "").strip().lower(), "auto")
 
 
@@ -225,11 +212,9 @@ class SettingsStore:
             "backend_url": self._settings.get("backend_url", DEFAULT_SETTINGS["backend_url"]),
             "default_model": self.get_default_model(),
             "models": self.get_models(),
-            "assistant_mode": self.get_assistant_mode(default=""),
             "access_scope": self.get_access_scope(),
             "planning_policy": self.get_planning_policy(),
             "confirmation_policy": self.get_confirmation_policy(),
-            "execution_mode": self.get_execution_mode(),
             "backups": self.get_backup_settings(),
             "memories": self.get_memory_settings(),
             "providers": providers,
@@ -250,9 +235,6 @@ class SettingsStore:
             if keep_rounds == 5:
                 backups["keep_rounds"] = DEFAULT_SETTINGS["backups"]["keep_rounds"]
         if version < 3:
-            self._settings["assistant_mode"] = normalize_assistant_mode(
-                self._settings.get("assistant_mode", "terminal")
-            )
             self._settings["memories"] = normalize_memory_settings(
                 self._settings.get("memories", DEFAULT_MEMORY_SETTINGS)
             )
@@ -266,7 +248,7 @@ class SettingsStore:
             self._settings["planning_policy"] = (
                 str(loaded_planning_policy)
                 if loaded_planning_policy in VALID_PLANNING_POLICIES
-                else planning_policy_from_legacy_execution_mode(
+                else planning_policy_from_legacy_policy_alias(
                     loaded.get("execution_mode") if isinstance(loaded, dict) else None
                 )
             )
@@ -275,13 +257,19 @@ class SettingsStore:
                 if loaded_confirmation_policy in VALID_CONFIRMATION_POLICIES
                 else DEFAULT_SETTINGS["confirmation_policy"]
             )
-            self._settings["execution_mode"] = legacy_execution_mode_from_planning_policy(
-                self._settings["planning_policy"]
-            )
         if version < 5:
             plugins = self._settings.get("plugins")
             if isinstance(plugins, dict):
                 plugins.pop("blender", None)
+        if version < 8:
+            # One-shot cleanup for the removed local opener customization UI/API.
+            self._settings.pop("local_integrations", None)
+        if version < 9:
+            # One-shot cleanup for the removed public execution_mode alias.
+            self._settings.pop("execution_mode", None)
+        if version < 10:
+            # One-shot cleanup for the removed user-facing assistant mode setting.
+            self._settings.pop("assistant_mode", None)
         if version < DEFAULT_SETTINGS["settings_version"]:
             self._settings["settings_version"] = DEFAULT_SETTINGS["settings_version"]
             self._save()
@@ -291,10 +279,6 @@ class SettingsStore:
             self._settings["backend_url"] = str(payload["backend_url"]).rstrip("/")
         if payload.get("default_model"):
             self._settings["default_model"] = str(payload["default_model"])
-        if payload.get("assistant_mode"):
-            assistant_mode = normalize_assistant_mode(payload["assistant_mode"])
-            if assistant_mode in VALID_ASSISTANT_MODES:
-                self._settings["assistant_mode"] = assistant_mode
         if payload.get("access_scope"):
             access_scope = str(payload["access_scope"])
             if access_scope in VALID_ACCESS_SCOPES:
@@ -303,12 +287,6 @@ class SettingsStore:
             planning_policy = str(payload["planning_policy"])
             if planning_policy in VALID_PLANNING_POLICIES:
                 self._settings["planning_policy"] = planning_policy
-                self._settings["execution_mode"] = legacy_execution_mode_from_planning_policy(planning_policy)
-        elif payload.get("execution_mode"):
-            execution_mode = str(payload["execution_mode"])
-            if execution_mode in VALID_EXECUTION_MODES:
-                self._settings["execution_mode"] = execution_mode
-                self._settings["planning_policy"] = planning_policy_from_legacy_execution_mode(execution_mode)
         if payload.get("confirmation_policy"):
             confirmation_policy = str(payload["confirmation_policy"])
             if confirmation_policy in VALID_CONFIRMATION_POLICIES:
@@ -329,7 +307,6 @@ class SettingsStore:
                 self._settings.get("memories", {}),
                 payload["memories"],
             )
-
         if isinstance(payload.get("providers"), dict):
             current_providers = self._settings.setdefault("providers", {})
             for provider_id, incoming in payload["providers"].items():
@@ -491,23 +468,15 @@ class SettingsStore:
             return model_id
         return active_ids[0] if active_ids else str(DEFAULT_SETTINGS["default_model"])
 
-    def get_assistant_mode(self, default: str = "terminal") -> str:
-        mode = normalize_assistant_mode(self._settings.get("assistant_mode") or default)
-        return mode if mode in VALID_ASSISTANT_MODES else default
-
     def get_access_scope(self) -> str:
         scope = str(self._settings.get("access_scope") or DEFAULT_SETTINGS["access_scope"])
         return scope if scope in VALID_ACCESS_SCOPES else DEFAULT_SETTINGS["access_scope"]
-
-    def get_execution_mode(self) -> str:
-        """Return the deprecated planning-policy compatibility alias."""
-        return legacy_execution_mode_from_planning_policy(self.get_planning_policy())
 
     def get_planning_policy(self) -> str:
         policy = str(self._settings.get("planning_policy") or "").strip().lower()
         if policy in VALID_PLANNING_POLICIES:
             return policy
-        return planning_policy_from_legacy_execution_mode(self._settings.get("execution_mode"))
+        return DEFAULT_SETTINGS["planning_policy"]
 
     def get_confirmation_policy(self) -> str:
         policy = str(self._settings.get("confirmation_policy") or "").strip().lower()
@@ -604,11 +573,6 @@ def default_settings_path() -> Path:
 
 def normalize_id(value: Any) -> str:
     return str(value or "").strip()
-
-
-def normalize_assistant_mode(value: Any) -> str:
-    mode = str(value or "terminal").strip() or "terminal"
-    return LEGACY_ASSISTANT_MODE_ALIASES.get(mode, mode)
 
 
 def normalize_chat_path(value: Any) -> str:

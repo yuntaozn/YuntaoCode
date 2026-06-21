@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
-import subprocess
-import sys
 
 import tornado.web
 
 from .base import ApiHandler
+from ..local_open import open_path
 
 
 class WorkspacesHandler(ApiHandler):
@@ -56,7 +54,7 @@ class WorkspaceOpenHandler(ApiHandler):
         try:
             open_folder(path)
         except OSError as exc:
-            raise tornado.web.HTTPError(500, reason=f"无法打开资源管理器：{exc}") from exc
+            raise tornado.web.HTTPError(500, reason=f"failed to open workspace folder: {exc}") from exc
 
         self.finish_json({
             "success": True,
@@ -82,23 +80,17 @@ def pick_folder() -> str:
         import tkinter as tk
         from tkinter import filedialog
     except Exception as exc:
-        raise tornado.web.HTTPError(500, reason=f"当前环境无法打开目录选择器：{exc}") from exc
+        raise tornado.web.HTTPError(500, reason=f"failed to open folder picker: {exc}") from exc
 
     root = tk.Tk()
     root.withdraw()
     root.attributes("-topmost", True)
     try:
-        selected = filedialog.askdirectory(title="选择项目目录")
+        selected = filedialog.askdirectory(title="Select workspace folder")
     finally:
         root.destroy()
     return str(Path(selected)) if selected else ""
 
 
 def open_folder(path: Path) -> None:
-    if sys.platform.startswith("win"):
-        os.startfile(str(path))  # type: ignore[attr-defined]
-        return
-    if sys.platform == "darwin":
-        subprocess.Popen(["open", str(path)])
-        return
-    subprocess.Popen(["xdg-open", str(path)])
+    open_path(path)

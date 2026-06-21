@@ -53,9 +53,11 @@ from runtime.agent_strategy.classifiers import (
     messages_for_model_round,
     parse_tool_arguments_strict,
     strip_native_tool_call_blocks,
+    tool_call_arguments_size,
     tool_signature,
     # Progress observation
     consecutive_repeated_failure_count,
+    failure_route_attempt_count_since_progress,
     has_successful_verification,
     has_successful_write,
     is_recoverable_write_failure,
@@ -72,6 +74,7 @@ from runtime.agent_strategy.classifiers import (
 # ── prompts ───────────────────────────────────────────────────────────────
 from runtime.agent_strategy.prompts import (
     analysis_first_task_prompt,
+    completion_review_prompt,
     dangling_action_prompt,
     execute_plan_prompt,
     final_answer_prompt,
@@ -79,6 +82,7 @@ from runtime.agent_strategy.prompts import (
     max_rounds_message,
     post_deliverable_prompt,
     progress_observer_prompt,
+    oversized_tool_arguments_prompt,
     repeated_failure_strategy_prompt,
     read_only_task_prompt,
     recon_budget_prompt,
@@ -454,6 +458,9 @@ class TestIsWriteTool:
         assert is_write_tool("web.collect_site_assets")
         assert is_write_tool("web.capture_page")
 
+    def test_filesystem_apply_changes(self):
+        assert is_write_tool("filesystem.apply_changes")
+
 
 class TestIsReconTool:
     def test_read_file(self):
@@ -557,6 +564,15 @@ class TestMergeToolCallChunks:
             {"index": 1, "id": "call_1", "function": {"name": "tool_b", "arguments": "{}"}},
         ])
         assert len(calls) == 2
+
+    def test_tool_call_argument_size_counts_accumulated_arguments(self):
+        calls: list = []
+        merge_tool_call_chunks(calls, [
+            {"index": 0, "function": {"name": "filesystem__write_file", "arguments": '{"path":"a",'}},
+            {"index": 0, "function": {"arguments": '"content":"abc"}'}},
+            {"index": 1, "function": {"name": "tool_b", "arguments": "{}"}},
+        ])
+        assert tool_call_arguments_size(calls) == len('{"path":"a","content":"abc"}{}')
 
 
 class TestCompleteToolCalls:
@@ -860,7 +876,59 @@ class TestConsecutiveRepeatedFailureCount:
 
         assert consecutive_repeated_failure_count(events) == 1
 
-    def test_repeated_failure_stops_without_strategy_prompt(self):
+    def test_route_attempt_count_detects_non_consecutive_same_route_without_progress(self):
+        write_failure = {
+            "tool": "filesystem.write_file",
+            "status": "failure",
+            "input": {"path": "viewer/index.html", "content": "<html>..."},
+            "error": "The model response stopped at its output limit.",
+            "output": {"reason": "truncated_tool_call"},
+        }
+        other_failure = {
+            "tool": "filesystem.append_text_chunk",
+            "status": "failure",
+            "input": {"draft_id": "", "content": ""},
+            "error": "draft_id is required",
+            "output": {"reason": "invalid_tool_input"},
+        }
+
+        assert failure_route_attempt_count_since_progress([write_failure, other_failure, write_failure]) == 2
+
+    def test_route_attempt_count_resets_after_real_progress(self):
+        failure = {
+            "tool": "filesystem.write_file",
+            "status": "failure",
+            "input": {"path": "viewer/index.html", "content": "<html>..."},
+            "error": "The model response stopped at its output limit.",
+            "output": {"reason": "truncated_tool_call"},
+        }
+        progress = {
+            "tool": "filesystem.create_text_draft",
+            "status": "success",
+            "input": {"path_hint": "viewer/index.html"},
+        }
+
+        assert failure_route_attempt_count_since_progress([failure, progress, failure]) == 1
+
+    def test_route_attempt_count_treats_different_arguments_as_new_route(self):
+        first = {
+            "tool": "filesystem.write_file",
+            "status": "failure",
+            "input": {"path": "viewer/index.html"},
+            "error": "missing content",
+            "output": {"reason": "invalid_tool_input"},
+        }
+        second = {
+            "tool": "filesystem.write_file",
+            "status": "failure",
+            "input": {"path": "viewer/style.css"},
+            "error": "missing content",
+            "output": {"reason": "invalid_tool_input"},
+        }
+
+        assert failure_route_attempt_count_since_progress([first, second]) == 1
+
+    def test_repeated_failure_first_requests_strategy_change(self):
         event = {
             "tool": "filesystem.write_file",
             "status": "failure",
@@ -870,8 +938,57 @@ class TestConsecutiveRepeatedFailureCount:
         }
         events = [event, event]
 
-        assert repeated_failure_action(events, strategy_change_intervened=False) == "stop"
-        assert repeated_failure_action(events, strategy_change_intervened=True) == "stop"
+        assert repeated_failure_action(events, strategy_change_intervened=False) == "change_strategy"
+        assert repeated_failure_action(events, strategy_change_intervened=True) == "change_strategy"
+
+    def test_repeated_failure_stops_after_bounded_no_progress_route_budget(self):
+        event = {
+            "tool": "filesystem.write_file",
+            "status": "failure",
+            "input": {},
+            "error": "missing required: path, content",
+            "output": {"reason": "invalid_tool_input"},
+        }
+
+        assert repeated_failure_action([event, event, event], strategy_change_intervened=True) == "change_strategy"
+        assert repeated_failure_action([event, event, event, event], strategy_change_intervened=True) == "stop"
+
+    def test_repeated_failure_action_counts_same_route_across_failed_detours(self):
+        write_failure = {
+            "tool": "filesystem.write_file",
+            "status": "failure",
+            "input": {"path": "viewer/index.html", "content": "<html>..."},
+            "error": "The model response stopped at its output limit.",
+            "output": {"reason": "truncated_tool_call"},
+        }
+        detour_failure = {
+            "tool": "filesystem.append_text_chunk",
+            "status": "failure",
+            "input": {"draft_id": "", "content": ""},
+            "error": "draft_id is required",
+            "output": {"reason": "invalid_tool_input"},
+        }
+
+        assert repeated_failure_action(
+            [write_failure, detour_failure, write_failure],
+            strategy_change_intervened=False,
+        ) == "change_strategy"
+
+    def test_repeated_failure_action_resets_after_progress(self):
+        failure = {
+            "tool": "filesystem.write_file",
+            "status": "failure",
+            "input": {"path": "viewer/index.html", "content": "<html>..."},
+            "error": "The model response stopped at its output limit.",
+            "output": {"reason": "truncated_tool_call"},
+        }
+        progress = {
+            "tool": "filesystem.create_text_draft",
+            "status": "success",
+            "input": {"path_hint": "viewer/index.html"},
+        }
+
+        assert repeated_failure_action([failure, progress, failure], strategy_change_intervened=True) == "none"
 
     def test_different_strategy_resets_intervention_state(self):
         events = [
@@ -1097,6 +1214,16 @@ class TestIsRecoverableWriteFailure:
         event = {"status": "failure", "error": "missing required: path, content"}
         assert not is_recoverable_write_failure("filesystem.write_file", event)
 
+    def test_truncated_write_call_is_recoverable(self):
+        event = {
+            "status": "failure",
+            "error": "The model response stopped at its output limit.",
+            "output": {"reason": "truncated_tool_call"},
+        }
+
+        assert is_recoverable_write_failure("filesystem.write_file", event)
+        assert is_recoverable_write_failure("filesystem.append_text_chunk", event)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 5d: Stage management
@@ -1245,6 +1372,13 @@ class TestPrompts:
         )
         assert "old_text" in prompt
 
+    def test_oversized_tool_arguments_prompt_keeps_strategy_model_directed(self):
+        prompt = oversized_tool_arguments_prompt("/tmp/project", 25000, 24000)
+
+        assert "not a permission denial" in prompt
+        assert "Choose the next execution strategy yourself" in prompt
+        assert "append smaller complete chunks" in prompt
+
     def test_format_execution_plan(self):
         plan = {
             "title": "Test Plan",
@@ -1281,3 +1415,65 @@ class TestPrompts:
 
         assert "目标产物" in prompt
         assert "外部应用" in prompt
+
+    def test_completion_review_prompt_exposes_facts_without_forcing_strategy(self):
+        prompt = completion_review_prompt(
+            "/tmp",
+            {"goal": "create an interactive viewer"},
+            {
+                "status": "partial",
+                "target_written_paths": ["viewer/index.html"],
+                "verification_evidence": [
+                    {"tool": "filesystem.read_file", "modalities": ["content"]},
+                ],
+                "failures": [{"tool": "filesystem.create_text_draft", "error": "truncated"}],
+                "risks": ["test_not_observed", "recovered_tool_failure"],
+                "counts": {
+                    "deliverable_successes": 1,
+                    "verification_successes": 1,
+                    "failures": 1,
+                },
+            },
+        )
+
+        assert "完成度自审" in prompt
+        assert "viewer/index.html" in prompt
+        assert "test_not_observed" in prompt
+        assert "继续调用最合适的工具" in prompt
+        assert "可以直接输出最终总结" in prompt
+
+    def test_repeated_failure_strategy_prompt_suggests_draft_route_after_truncation(self):
+        prompt = repeated_failure_strategy_prompt(
+            "/tmp/project",
+            "editor",
+            [
+                {
+                    "tool": "filesystem.write_file",
+                    "status": "failure",
+                    "error": "The model response stopped at its output limit.",
+                    "output": {"reason": "truncated_tool_call"},
+                }
+            ],
+        )
+
+        assert "当前写入负载过大" in prompt
+        assert "filesystem.create_text_draft" in prompt
+        assert "filesystem.append_text_chunk" in prompt
+        assert "filesystem.finalize_text_file" in prompt
+
+    def test_write_repair_prompt_suggests_draft_route_after_truncation(self):
+        prompt = write_repair_prompt(
+            "filesystem.write_file",
+            {"path": "viewer/index.html"},
+            {
+                "status": "failure",
+                "error": "The runtime did not execute incomplete arguments.",
+                "output": {"reason": "truncated_tool_call"},
+            },
+            "/tmp/project",
+        )
+
+        assert "达到输出上限" in prompt
+        assert "filesystem.create_text_draft" in prompt
+        assert "filesystem.append_text_chunk" in prompt
+        assert "filesystem.finalize_text_file" in prompt

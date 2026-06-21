@@ -13,6 +13,7 @@ import tornado.ioloop
 import tornado.web
 
 from .api.backend import BackendLoginHandler
+from .api.automations import AutomationActionHandler, AutomationDetailHandler, AutomationsHandler
 from .api.attachments import AttachmentContentHandler, AttachmentDetailHandler, AttachmentsHandler
 from .api.backups import BackupRestoreHandler, BackupsHandler
 from .api.conversations import (
@@ -28,7 +29,6 @@ from .api.health import HealthHandler
 from .api.logs import LogsWebSocketHandler
 from .api.memories import MemoriesHandler, MemoryDetailHandler, MemoryPromptHandler
 from .api.mcp_services import McpServiceActionHandler, McpServiceDetailHandler, McpServicesHandler
-from .api.modes import ModesHandler
 from .api.panel import PanelHandler
 from .api.plugins import PluginsHandler
 from .api.runs import RunActionHandler, RunDetailHandler, RunEventsStreamHandler, RunsHandler
@@ -40,6 +40,7 @@ from .api.updates import SourceUpdateHandler
 from .api.workspaces import WorkspaceDetailHandler, WorkspaceOpenHandler, WorkspacePickerHandler, WorkspacesHandler
 from .config import RuntimeConfig
 from .conversation_store import ConversationStore
+from .automation_store import AutomationStore
 from .backup_store import BackupStore
 from .attachment_store import AttachmentStore
 from .security import PathGuard
@@ -70,6 +71,7 @@ class RuntimeState:
     run_events: RunEventHub
     mcp_services: McpServiceManager
     attachments: AttachmentStore
+    automations: AutomationStore
 
     def is_tool_available(self, spec: dict[str, Any]) -> bool:
         if spec.get("source_type") != "mcp":
@@ -110,6 +112,7 @@ def build_runtime(config: RuntimeConfig) -> RuntimeState:
     product_tasks = ProductTaskStore(settings.data_dir / "runtime.db")
     run_events = RunEventHub(runs, product_tasks=product_tasks)
     mcp_services = McpServiceManager(settings.data_dir / "mcp-services.json", registry=registry)
+    automations = AutomationStore(settings.data_dir / "automations.json")
     return RuntimeState(
         config=config,
         registry=registry,
@@ -124,6 +127,7 @@ def build_runtime(config: RuntimeConfig) -> RuntimeState:
         run_events=run_events,
         mcp_services=mcp_services,
         attachments=attachments,
+        automations=automations,
     )
 
 
@@ -135,6 +139,7 @@ def make_app(runtime: RuntimeState) -> tornado.web.Application:
         (r"/", PanelHandler),
         (r"/plugins-page", PanelHandler, {"template_name": "plugins.html", **handler_kwargs}),
         (r"/mcp-services-page", PanelHandler, {"template_name": "mcp-services.html", **handler_kwargs}),
+        (r"/automation-page", PanelHandler, {"template_name": "automation.html", **handler_kwargs}),
         (r"/settings-page", PanelHandler, {"template_name": "settings.html", **handler_kwargs}),
         (r"/health", HealthHandler, handler_kwargs),
         (r"/updates/source", SourceUpdateHandler, handler_kwargs),
@@ -144,11 +149,13 @@ def make_app(runtime: RuntimeState) -> tornado.web.Application:
         (r"/memories", MemoriesHandler, handler_kwargs),
         (r"/backups/([^/]+)/restore", BackupRestoreHandler, handler_kwargs),
         (r"/backups", BackupsHandler, handler_kwargs),
-        (r"/modes", ModesHandler, handler_kwargs),
         (r"/plugins", PluginsHandler, handler_kwargs),
         (r"/mcp-services/([^/]+)/actions", McpServiceActionHandler, handler_kwargs),
         (r"/mcp-services/([^/]+)", McpServiceDetailHandler, handler_kwargs),
         (r"/mcp-services", McpServicesHandler, handler_kwargs),
+        (r"/automations/([^/]+)/actions", AutomationActionHandler, handler_kwargs),
+        (r"/automations/([^/]+)", AutomationDetailHandler, handler_kwargs),
+        (r"/automations", AutomationsHandler, handler_kwargs),
         (r"/tools", ToolsHandler, handler_kwargs),
         (r"/attachments", AttachmentsHandler, handler_kwargs),
         (r"/attachments/([^/]+)/content", AttachmentContentHandler, handler_kwargs),

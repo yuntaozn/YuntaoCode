@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pytest
 
 from runtime.security import PathGuard
 from runtime.skills.filesystem import (
+    apply_changes,
     append_text_chunk,
     create_text_draft,
     delete_file,
@@ -130,6 +132,95 @@ async def test_transform_text_rejects_unknown_transform(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_apply_changes_creates_replaces_and_deletes_files(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    old_path = workspace / "old.txt"
+    old_path.write_text("remove me", encoding="utf-8")
+    page_path = workspace / "page.html"
+    context = FakeContext(PathGuard([workspace]), tmp_path / "task")
+
+    result = await apply_changes(
+        {
+            "reason": "create demo page and remove stale file",
+            "operations": [
+                {
+                    "type": "create_file",
+                    "path": str(page_path),
+                    "content": "<!doctype html><html><body>hello</body></html>",
+                },
+                {
+                    "type": "replace_text",
+                    "path": str(page_path),
+                    "old_text": "hello",
+                    "new_text": "world",
+                },
+                {"type": "delete_file", "path": str(old_path)},
+            ],
+        },
+        context,
+    )
+
+    assert page_path.read_text(encoding="utf-8") == "<!doctype html><html><body>world</body></html>"
+    assert not old_path.exists()
+    assert result["type"] == "file_change_set"
+    assert result["operation_count"] == 3
+    assert result["changed_file_count"] == 2
+    assert str(page_path) in result["created_paths"]
+    assert str(old_path) in result["deleted_paths"]
+    assert result["roles"] == ["deliverable", "verification"]
+    assert result["verification_strength"] == "standard"
+
+
+@pytest.mark.asyncio
+async def test_apply_changes_preflights_before_writing_any_file(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "created.txt"
+    context = FakeContext(PathGuard([workspace]), tmp_path / "task")
+
+    with pytest.raises(ValueError, match="old_text not found"):
+        await apply_changes(
+            {
+                "operations": [
+                    {"type": "create_file", "path": str(target), "content": "new file"},
+                    {
+                        "type": "replace_text",
+                        "path": str(target),
+                        "old_text": "missing",
+                        "new_text": "replacement",
+                    },
+                ],
+            },
+            context,
+        )
+
+    assert not target.exists()
+
+
+@pytest.mark.asyncio
+async def test_apply_changes_rejects_truncated_html_without_overwriting(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    path = workspace / "viewer.html"
+    original = "<!doctype html><html><body>ok</body></html>"
+    path.write_text(original, encoding="utf-8")
+    context = FakeContext(PathGuard([workspace]), tmp_path / "task")
+
+    with pytest.raises(ValueError, match="refusing incomplete .html change"):
+        await apply_changes(
+            {
+                "operations": [
+                    {"type": "overwrite_file", "path": str(path), "content": "<!doctype html><html><body>bad"}
+                ],
+            },
+            context,
+        )
+
+    assert path.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.asyncio
 async def test_read_text_preview_reports_html_integrity(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -209,6 +300,36 @@ async def test_text_draft_can_append_and_finalize_html_file(tmp_path: Path) -> N
     assert finalized["validation"]["valid"] is True
     assert finalized["draft_stats"]["text_chars"] == len(path.read_text(encoding="utf-8").replace("\r\n", "\n"))
     assert path.read_text(encoding="utf-8").endswith("</body></html>")
+
+
+@pytest.mark.asyncio
+async def test_text_draft_stores_body_in_file_not_metadata_json(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    context = FakeContext(PathGuard([workspace]), tmp_path / "task")
+
+    created = await create_text_draft(
+        {
+            "title": "Large CSS",
+            "path_hint": str(workspace / "styles.css"),
+            "language": "css",
+        },
+        context,
+    )
+    content = ".panel { color: #234; }\n" * 200
+    await append_text_chunk(
+        {"draft_id": created["draft_id"], "content": content, "sequence": 1},
+        context,
+    )
+
+    draft_root = tmp_path / "task" / "runtime-data" / "text-artifact-drafts"
+    metadata = json.loads((draft_root / f"{created['draft_id']}.json").read_text(encoding="utf-8"))
+    body = draft_root / f"{created['draft_id']}.txt"
+
+    assert body.read_text(encoding="utf-8") == content
+    assert metadata["chunks"][0]["storage"] == "file"
+    assert "content" not in metadata["chunks"][0]
+    assert metadata["text_chars"] == len(content)
 
 
 @pytest.mark.asyncio

@@ -117,6 +117,10 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
             "input": payload.get("input"),
             "output": payload.get("output"),
             "error": payload.get("error"),
+            "declared_capability": payload.get("declared_capability"),
+            "declared_effects": payload.get("declared_effects"),
+            "declared_roles": payload.get("declared_roles"),
+            "declared_verification_strength": payload.get("declared_verification_strength"),
             "runtime_risks": payload.get("runtime_risks"),
         }
     if event_type == "status":

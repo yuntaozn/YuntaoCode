@@ -27,7 +27,6 @@ class FakeSettings:
     def public(self) -> dict:
         return {
             "default_model": "demo-model",
-            "assistant_mode": "terminal",
             "access_scope": "project_only",
             "planning_policy": "auto",
             "confirmation_policy": "auto",
@@ -186,6 +185,11 @@ def test_diagnostic_export_is_sanitized_and_not_a_fixture(monkeypatch) -> None:
     assert exported["mcp_services"]["services"][0]["session"]["state"] == "connected"
     assert exported["model_errors"]["count"] == 1
     assert exported["model_errors"]["latest"]["recoverable"] is True
+    assert exported["run_evidence_summary"]["schema_version"] == "run_evidence.v1"
+    assert exported["run_evidence_summary"] == exported["runbook_summary"]
+    assert exported["runbook_summary"]["trace"]["schema_version"] == "run_trace_summary.v1"
+    assert exported["runbook_summary"]["trace"]["result_status"] == "failure"
+    assert exported["runbook_summary"]["capability_evidence"]["schema_version"] == "capability_evidence_summary.v1"
     tool_outputs = exported["runbook_summary"]["tool_steps"]
     finalized = next(item for item in tool_outputs if item["tool"] == "filesystem.finalize_text_file")
     assert finalized["output"]["draft_stats"]["text_chars"] == 5200

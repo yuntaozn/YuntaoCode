@@ -47,6 +47,7 @@ class TaskRunner:
         "code.apply_patch",
         "code.edit_file",
         "code.replace_text",
+        "filesystem.apply_changes",
         "filesystem.transform_text",
         "filesystem.write_file",
         "filesystem.delete_file",

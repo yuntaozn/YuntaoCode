@@ -34,7 +34,6 @@
     "contract.title": "Task interpretation declared by the model. Revise it when execution evidence shows a better interpretation.\n",
     "contract.workspace": "- Current project directory: {workspace_path}\n",
     "contract.access": "- Access scope: {access_scope}\n",
-    "contract.exec_mode": "- Legacy execution mode: {execution_mode}\n",
     "contract.planning_policy": "- Planning policy: {planning_policy}\n",
     "contract.confirmation_policy": "- Confirmation policy: {confirmation_policy}\n",
     "contract.intent": "- Task intent: {intent}\n",

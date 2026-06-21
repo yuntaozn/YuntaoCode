@@ -54,3 +54,5 @@ def test_build_system_prompt_adds_text_write_route_guidance_when_available() -> 
     assert "filesystem.write_file" in prompt
     assert "filesystem.create_text_draft" in prompt
     assert "filesystem.finalize_text_file" in prompt
+    assert "New or rewritten complete text/code artifact with non-trivial length" in prompt
+    assert "not use filesystem.write_file as the first route for large complete artifacts" in prompt

@@ -99,7 +99,7 @@ function renderSettings() {
     renderMemories();
 
     $("access-scope-input").value = settings?.access_scope || "project_only";
-    $("planning-policy-input").value = settings?.planning_policy || planningPolicyFromLegacyExecutionMode(settings?.execution_mode);
+    $("planning-policy-input").value = settings?.planning_policy || "auto";
     $("confirmation-policy-input").value = settings?.confirmation_policy || "auto";
     $("backup-enabled-input").checked = backupSettings.enabled !== false;
     $("backup-keep-input").value = backupSettings.keep_rounds || 50;
@@ -488,13 +488,8 @@ async function saveSettings(options = {}) {
     localStorage.setItem("lit_model", settings.default_model || $("default-model-input").value);
     localStorage.setItem("lit_planning_policy", settings.planning_policy || $("planning-policy-input").value);
     localStorage.setItem("lit_confirmation_policy", settings.confirmation_policy || $("confirmation-policy-input").value);
-    localStorage.setItem("lit_plan_execution_mode", settings.planning_policy || "auto");
     renderSettings();
     showToast(options.toastMessage || t('toast.settings_saved'));
-}
-
-function planningPolicyFromLegacyExecutionMode(value) {
-    return { conservative: "off", auto: "auto", aggressive: "always" }[value] || "auto";
 }
 
 async function refreshBackups() {

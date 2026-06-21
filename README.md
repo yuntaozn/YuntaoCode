@@ -371,51 +371,54 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 
 ### Phase 1：Runtime Foundation
 
-目标：先把 Task / Context / Capability 三条执行运行时主线，以及 Experience 证据学习层做清楚，而不是继续堆功能清单。
+目标：先把 Task / Context / Capability / Evidence 四条基础线打稳。YuntaoCode 的价值不来自工具数量，而来自任务能被执行、观察、恢复、验证和复盘。
 
 * [x] Task Model 基础：ProductTask、Run、ToolTask、状态、结果和运行血缘
 * [x] Run Lifecycle 基础：running、waiting_confirmation、paused、resumed、completed、failed、stopped
 * [ ] Task Trace：模型输出、工具调用、确认、错误、验证和最终摘要
 * [x] Run Recovery 基础：暂停、恢复、Runbook、Replay Request
 * [x] Recovery Context 基础：Checkpoint、Context Snapshot、显式启动的 Replay Run
-* [ ] Task Recovery 深化：失败重试、写入回退、策略控制的自动 replay 执行
 * [ ] Task Audit：可读的执行记录和可测试的状态迁移
 * [ ] Context Runtime：上下文选择、证据、压缩快照、记忆边界
 * [ ] Capability Runtime：能力契约、权限、确认、产物和验证规则
-* [x] Experience Runtime 基础：Experience Sample、Experience Digest、Runbook / Replay 之间的数据边界
-* [ ] Evaluation Runtime 基础：诊断包、经验样本和选定 Replay Fixture 的本地评测闭环
-
-### Phase 2：Reusable Capabilities
-
-目标：把工具变成可复用的任务能力。
-
-* [ ] 稳定的工具协议和参数规范
-* [ ] 模块化技能注册
-* [ ] Runtime Extension Contract：插件 Manifest、权限声明、依赖声明和任务产物规范
-* [ ] AI 自建插件草稿隔离、测试摘要和人工确认注册流程
-* [ ] 文档解析、代码分析、Git、Shell 等能力的任务化封装
+* [x] Automation Runtime 基础：触发器、任务模板、并发边界、配置页和普通 Run 转换契约
 * [ ] MCP Service Lifecycle：服务配置、启动策略、协议连接、工具发现、诊断和能力绑定
-* [ ] MCP 作为外部工具接入方式，而不是核心定位本身
+* [ ] Runtime Extension Contract：插件 Manifest、权限声明、依赖声明和任务产物规范
 
-### Phase 3：Task Templates
+### Phase 2：Experience And Evaluation Loop
 
-目标：沉淀可复用的任务模板，而不是只沉淀 prompt。
+目标：让 YuntaoCode 从真实任务中留下可审计证据，提取经验样本，形成可回放、可比较、可评测的任务样本。不是把每一次任务都自动变成 skill，也不是收集用户数据做排行榜。
 
-* [ ] 代码修改任务模板
-* [ ] 项目审查任务模板
-* [ ] 文档处理任务模板
-* [ ] 论文/资料分析任务模板
-* [ ] 任务模板导入、导出和版本管理
+* [x] RunEvidence：统一的运行事实视图
+* [x] Experience Runtime 基础：Experience Sample、Experience Digest、Runbook / Replay 之间的数据边界
+* [x] Evaluation Fixture / Report 基础：从选定 RunEvidence 生成样本并比较结果
+* [x] Experience Sample Export：从选定 RunEvidence 手动导出经验样本
+* [ ] Experience Sample 文件导入、校验、标注和对比
+* [ ] Replay Runner：通过正常 Task Runtime 回放选定样本
+* [ ] Evaluation Report 深化：模型、Provider、Runtime 版本、能力可用性和失败原因对比
+* [ ] 经验消化机制：从多个样本总结稳定模式、适用边界和反例
 
-### Phase 4：Ecosystem
+### Phase 3：Skill / Capability Evolution
 
-目标：在 Task Runtime 稳定后再扩展生态。
+目标：让 AI 基于经验和评测证据提出候选技能、任务模板或能力草稿，并经过隔离、回放、验证和人工启用。Skill 不是一份提示词说明书，Plugin 也不是默认可信代码；它们都必须从证据链中获得信任。
 
-* [ ] 多工作区和长期任务
-* [ ] 本地知识库 / RAG 接口
-* [ ] 可选插件索引和签名分发
-* [ ] 团队同步与企业部署
-* [ ] 稳定 Runtime API 和插件兼容性
+* [ ] Experience Digest 到 Skill Candidate 的生成流程
+* [ ] Task Template Candidate：从成功任务和失败反例中沉淀可复用任务结构
+* [ ] AI 自建 Capability / Plugin Draft 隔离目录、测试摘要和启用边界
+* [ ] Candidate Replay：候选能力必须通过选定 fixture 的回放评测
+* [ ] Manual Promotion：用户确认后才进入可启用能力列表
+* [ ] 能力版本、兼容性、回滚和废弃策略
+
+### Phase 4：Self-Iteration Lab
+
+目标：让 YuntaoCode 在隔离分身、测试集、诊断报告和人工合并边界内辅助改进自己的 Runtime。这里关注的是“可控自我迭代”，不是让模型直接修改可信主运行时代码。
+
+* [ ] Runtime Self-Diagnostic：从失败任务、诊断包和评测报告定位基座问题
+* [ ] Runtime Sandbox / 分身：独立环境中生成、测试和验证改进方案
+* [ ] Fixture Regression Suite：用选定任务样本验证 Runtime 改动是否退化
+* [ ] Source Update Proposal：AI 生成带证据的代码变更建议、测试结果和风险摘要
+* [ ] Human Merge Boundary：人工审查、合并、发布和回滚
+* [ ] 可选生态：插件索引、签名分发、团队同步和企业部署只在进化闭环稳定后推进
 
 ---
 

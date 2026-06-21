@@ -36,9 +36,9 @@ def _extract_text(path: Path, media_type: str, max_pages: int) -> str:
     suffix = path.suffix.lower()
     if media_type == "application/pdf" or suffix == ".pdf":
         try:
-            from PyPDF2 import PdfReader
+            from pypdf import PdfReader
         except ImportError as exc:
-            raise RuntimeError("PyPDF2 is required to extract PDF attachments") from exc
+            raise RuntimeError("pypdf is required to extract PDF attachments") from exc
         reader = PdfReader(str(path))
         return "\n\n".join((page.extract_text() or "") for page in reader.pages[:max_pages])
     if (

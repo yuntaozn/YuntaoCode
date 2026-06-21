@@ -40,18 +40,22 @@ _TEXT_WRITE_ROUTE_ADDENDUM = """
 
 ## Text Write Route Addendum
 Use one text/code write capability for HTML, CSS, JavaScript, Python, Markdown,
-JSON, configuration files, and similar text artifacts. Choose the smallest
-route that matches the job:
+JSON, configuration files, and similar text artifacts. Choose the route by
+artifact shape, not by file extension:
 
 1. Existing local file, small targeted change: read the relevant snippet, then
    use code.edit_file, code.replace_text, or code.apply_patch.
-2. New small complete file: use filesystem.write_file with path and content.
-3. Large complete text/code artifact or full rewrite that may exceed one model
-   output: use filesystem.create_text_draft, append complete bounded chunks,
+2. New or rewritten complete text/code artifact with non-trivial length,
+   multiple sections, UI/CSS/JS, or any risk of exceeding one model output:
+   use filesystem.create_text_draft first, append complete bounded chunks,
    inspect when useful, then write once with filesystem.finalize_text_file.
+3. New tiny complete file only: filesystem.write_file with path and content is
+   acceptable when the full content is comfortably small and can fit in one
+   complete tool call.
 
 Do not use draft chunks when a precise edit or small patch is enough, and do
-not retry oversized filesystem.write_file calls after truncation.
+not use filesystem.write_file as the first route for large complete artifacts.
+Never retry oversized filesystem.write_file calls after truncation.
 """
 
 def build_system_prompt(

@@ -19,10 +19,12 @@ def test_legacy_execution_mode_migrates_to_independent_policies(tmp_path: Path) 
     )
 
     store = SettingsStore(settings_path)
+    saved = json.loads(settings_path.read_text(encoding="utf-8"))
 
     assert store.get_planning_policy() == "always"
     assert store.get_confirmation_policy() == "auto"
-    assert store.get_execution_mode() == "aggressive"
+    assert "execution_mode" not in store.public()
+    assert "execution_mode" not in saved
 
 
 def test_planning_and_confirmation_policies_update_independently(tmp_path: Path) -> None:
@@ -35,7 +37,24 @@ def test_planning_and_confirmation_policies_update_independently(tmp_path: Path)
 
     assert public["planning_policy"] == "off"
     assert public["confirmation_policy"] == "conservative"
-    assert public["execution_mode"] == "conservative"
+    assert "execution_mode" not in public
+
+
+def test_legacy_assistant_mode_is_removed_on_migration(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({
+            "settings_version": 9,
+            "assistant_mode": "coding",
+        }),
+        encoding="utf-8",
+    )
+
+    store = SettingsStore(settings_path)
+    saved = json.loads(settings_path.read_text(encoding="utf-8"))
+
+    assert "assistant_mode" not in store.public()
+    assert "assistant_mode" not in saved
 
 
 def test_any_model_can_declare_output_token_capability(tmp_path: Path) -> None:
@@ -83,6 +102,27 @@ def test_runtime_managed_capabilities_ignore_plugin_disable_setting(tmp_path: Pa
 
     assert store.is_plugin_enabled("memory") is True
     assert store.is_plugin_enabled("attachment") is True
+
+
+def test_local_integration_settings_are_removed_on_migration(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({
+            "settings_version": 7,
+            "local_integrations": {
+                "open_file_target": "system",
+                "open_folder_target": "cursor",
+                "custom_open_folder_command": r"C:\Tools\Cursor.exe",
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    store = SettingsStore(settings_path)
+    saved = json.loads(settings_path.read_text(encoding="utf-8"))
+
+    assert "local_integrations" not in store.public()
+    assert "local_integrations" not in saved
 
 
 def test_default_settings_path_uses_windows_local_app_data(monkeypatch: pytest.MonkeyPatch) -> None:

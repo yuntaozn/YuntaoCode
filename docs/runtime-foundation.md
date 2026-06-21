@@ -22,10 +22,19 @@ The three execution-facing lines are:
 
 Above them is an evidence-learning layer:
 
+- **Automation Runtime** sits above Task Runtime as a trigger layer. It turns a
+  saved user goal and schedule into a normal Task/Run, and does not execute
+  tools or bypass runtime permissions directly.
 - **Experience Runtime** extracts reviewed task experience from Runbook and
   RunResult facts. It prepares selected samples and digests for Replay,
   Evaluation, and future Skill Evolution, but it does not control live task
   execution or make generated code trusted.
+- **Skill / Capability Evolution** turns evaluated experience into candidate
+  skills, task templates, or capability drafts. It is evidence-driven and must
+  not silently register generated code as trusted runtime capability.
+- **Self-Iteration Lab** is a future boundary for improving YuntaoCode itself
+  through isolated clones, regression fixtures, diagnostics, and human merge
+  decisions. It is not direct model self-modification of the trusted runtime.
 
 The model may propose task semantics, routing, and next actions. The runtime
 owns schema, permissions, state transitions, evidence, and completion checks.
@@ -109,10 +118,31 @@ The legacy `event` field remains for compatibility with the current frontend
 streaming contract. The `event_name` field is the forward-looking, stable event
 taxonomy.
 
+`runtime/run_trace.py` builds a compact `run_trace_summary.v1` view from the
+persisted event stream. This is the shared audit surface for Runbook,
+diagnostic export, and future Evaluation/Replay work. It does not replace the
+stored events and does not include raw tool outputs or file contents; it keeps
+event families, canonical names, counts, terminal status, result status, and a
+sanitized timeline.
+
+`runtime/run_evidence.py` builds `run_evidence.v1`, the unified fact view for
+post-run consumers. RunEvidence gathers the Run metadata, task contract,
+trace summary, capability evidence, capability snapshot, plan, tool steps,
+result, verification evidence, failures, checkpoints, recovery summary, and a
+manual replay seed. Runbook, diagnostic export, Experience Sample export,
+Replay, and future Evaluation should consume RunEvidence instead of each
+parsing persisted events separately.
+
+RunEvidence is an evidence layer, not a strategy layer. It must not execute
+tools, silently promote generated code, alter model context, or decide whether
+a future run should retry, replay, or change strategy.
+
 Current canonical event names include:
 
 - `run.status`
+- `run.guidance`
 - `context.hygiene`
+- `capability.snapshot`
 - `task.contract`
 - `plan.decision`
 - `plan.generated`
@@ -120,7 +150,11 @@ Current canonical event names include:
 - `tool.started`
 - `tool.completed`
 - `tool.failed`
+- `tool.partial`
+- `tool.updated`
+- `tool.waiting_confirmation`
 - `confirmation.requested`
+- `checkpoint.created`
 - `run.changes`
 - `run.result`
 - `run.completed`
@@ -145,6 +179,14 @@ Task store is still being separated from historical ToolTask records.
 - `{"action": "runbook"}` builds a deterministic runbook from persisted run
   events: task contract, capability snapshot, plan, tool steps, status
   timeline, result, risks, and failures.
+- `{"action": "evidence"}` returns the full `run_evidence.v1` view for a Run.
+- `{"action": "export_evaluation_fixture"}` returns a local
+  `evaluation_fixture_export.v1` artifact built from RunEvidence. It does not
+  execute replay or submit anything remotely.
+- `{"action": "evaluate_fixture", "fixture": {...}}` compares the current
+  RunEvidence with a selected `evaluation_fixture.v1` and returns an
+  `evaluation_report.v1`. It does not execute replay, call a model, call tools,
+  or promote skills.
 - `{"action": "replay"}` creates a new prepared Run under the same Task and
   returns a replay request artifact. It does not execute tools until the user
   explicitly starts the prepared Run.
@@ -191,11 +233,14 @@ The foundation chain is:
 
 ```text
 Run
+  -> RunEvidence
   -> Diagnostic Export
   -> Experience Sample Export
   -> Replay Fixture
+  -> Evaluation Fixture
   -> Evaluation Report
   -> Skill Evolution
+  -> Self-Iteration Lab
 ```
 
 Diagnostic Export is for debugging a specific Run on a specific machine.
@@ -205,9 +250,29 @@ under controlled runtime or model changes and produce evidence-based reports.
 Skill Evolution should only build on that evidence after replay proves a
 pattern is stable.
 
-For 0.1, Experience and Evaluation remain direction anchors. There is no automatic task
-collection, upload, public leaderboard, central sample service, or trusted
-execution of AI-generated code. Design notes live in [evaluation.md](evaluation.md).
+Reusable task templates, plugin drafts, MCP capability bindings, and external
+extension contracts are supporting artifacts in this chain. They should not be
+described as the product's main roadmap by themselves, because that makes the
+project look like a traditional tool/plugin aggregation layer instead of an AI
+Task Runtime that can learn from evidence.
+
+The first local fixture shape now exists as `evaluation_fixture.v1`, exported
+manually from a selected RunEvidence view. It captures task goal, task
+contract, expected artifacts, verification requirements, capability evidence,
+baseline counts, and replay seed boundaries. It is not a runner and does not
+collect tasks automatically.
+
+The first local report shape now exists as `evaluation_report.v1`. It compares
+one selected fixture with one observed RunEvidence view. Result status and
+target artifacts are blocking checks; capability drift, verification strength,
+verification modality, failure-count drift, and new risks are warning checks.
+This keeps reports useful for regression analysis without turning baseline
+capability usage into live execution policy.
+
+For 0.1, Experience and Evaluation remain local, manual foundations. There is
+no automatic task collection, upload, public leaderboard, central sample
+service, automatic fixture execution, or trusted execution of AI-generated
+code. Design notes live in [evaluation.md](evaluation.md).
 
 ## Task Contract
 

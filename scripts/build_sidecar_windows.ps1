@@ -23,7 +23,7 @@ Write-Host "Building Python sidecar: $sidecarName"
     --onefile `
     --name $sidecarName `
     --hidden-import docx `
-    --hidden-import PyPDF2 `
+    --hidden-import pypdf `
     --hidden-import tkinter `
     --hidden-import tkinter.filedialog `
     --add-data "runtime\panel;runtime\panel" `

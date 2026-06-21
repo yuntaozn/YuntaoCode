@@ -32,6 +32,24 @@ def test_compact_tool_event_preserves_runtime_risks() -> None:
     ]
 
 
+def test_compact_tool_event_preserves_capability_evidence_metadata() -> None:
+    event = compact_run_event({
+        "event": "tool",
+        "status": "success",
+        "tool": "mcp_blender.execute_blender_code",
+        "declared_capability": "mcp.blender",
+        "declared_effects": ["external_state_change"],
+        "declared_roles": ["deliverable"],
+        "declared_verification_strength": "standard",
+    })
+
+    assert event["event_name"] == "tool.completed"
+    assert event["declared_capability"] == "mcp.blender"
+    assert event["declared_effects"] == ["external_state_change"]
+    assert event["declared_roles"] == ["deliverable"]
+    assert event["declared_verification_strength"] == "standard"
+
+
 def test_result_event_is_recorded_as_runtime_result() -> None:
     event = compact_run_event({
         "event": "result",

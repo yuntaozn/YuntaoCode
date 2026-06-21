@@ -35,8 +35,16 @@ def test_build_runbook_summarizes_trace_and_result(tmp_path) -> None:
         "event": "tool",
         "tool": "filesystem.write_file",
         "status": "success",
+        "declared_capability": "code.text_write",
+        "declared_effects": ["file_write", "local_state_change"],
+        "declared_roles": ["deliverable"],
         "input": {"path": "viewer.html"},
-        "output": {"path": "viewer.html"},
+        "output": {
+            "path": "viewer.html",
+            "artifacts": ["file"],
+            "effects": ["file_write", "local_state_change"],
+            "roles": ["deliverable"],
+        },
     })
     store.record_event(run.id, {
         "event": "result",
@@ -53,10 +61,18 @@ def test_build_runbook_summarizes_trace_and_result(tmp_path) -> None:
     assert runbook["schema_version"] == "runbook.v1"
     assert runbook["run"]["goal"] == "Create viewer.html"
     assert runbook["task_contract"]["requires_write"] is True
+    assert runbook["trace"]["schema_version"] == "run_trace_summary.v1"
+    assert runbook["trace"]["event_name_counts"]["tool.completed"] == 1
+    assert runbook["trace"]["result_status"] == "partial"
+    assert runbook["capability_evidence"]["schema_version"] == "capability_evidence_summary.v1"
+    assert runbook["capability_evidence"]["observed_capability_ids"] == ["code.text_write"]
+    assert runbook["capability_evidence"]["observed_effects"] == ["file_write", "local_state_change"]
     assert runbook["capability_snapshot"]["ok"] is True
     assert runbook["plan"]["step_count"] == 1
     assert runbook["tool_steps"][0]["tool"] == "filesystem.write_file"
+    assert runbook["tool_steps"][0]["declared_capability"] == "code.text_write"
     assert runbook["risks"] == ["write_not_verified"]
+    assert runbook["recovery"]["checkpoint_count"] == 0
     assert runbook["replay"]["kind"] == "replay_request"
     assert runbook["replay"]["boundary"] == "manual_start_required"
 

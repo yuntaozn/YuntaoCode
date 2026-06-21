@@ -34,7 +34,7 @@ from runtime.agent_strategy import tool_event_roles as _event_roles
 from runtime.agent_strategy import tool_result_risks as _tool_risks
 from runtime.model_providers import generate_chat_completion
 from runtime.model_providers.client import stream_chat_completion
-from runtime.assistant_modes import get_mode_config, normalize_mode
+from runtime.terminal_profile import get_terminal_config
 from runtime.context_manager import (
     compress_context,
     count_messages_tokens,
@@ -124,9 +124,8 @@ class ConversationsHandler(ApiHandler):
             raise tornado.web.HTTPError(400, reason="workspace_id is required")
         if not self.runtime.workspaces.get(workspace_id):
             raise tornado.web.HTTPError(404, reason="workspace not found")
-        mode = normalize_mode(payload.get("mode") or self.runtime.settings.get_assistant_mode())
         conversation = self.runtime.conversations.create(
-            workspace_id, payload.get("title"), mode=mode,
+            workspace_id, payload.get("title"), mode="terminal",
         )
         self.finish_json({
             "success": True,
@@ -146,7 +145,7 @@ class ConversationDetailHandler(ApiHandler):
         model = self.runtime.settings.get_default_model()
         workspace = self.runtime.workspaces.get(conversation.workspace_id)
         if workspace:
-            mode_config = get_mode_config(getattr(conversation, "mode", None), self.get_lang())
+            mode_config = get_terminal_config(self.get_lang())
             system_prompt = build_system_prompt(
                 settings=self.runtime.settings,
                 mode_config=mode_config,
@@ -172,21 +171,6 @@ class ConversationDetailHandler(ApiHandler):
             data["context_limit"] = get_context_limit(model, self.runtime.settings)
 
         self.finish_json({"success": True, "data": data})
-
-    def patch(self, conversation_id: str) -> None:
-        conversation = self.runtime.conversations.get(conversation_id)
-        if not conversation:
-            raise tornado.web.HTTPError(404, reason="conversation not found")
-
-        payload = self.parse_json_body()
-        mode = normalize_mode(payload.get("mode"))
-
-        conversation = self.runtime.conversations.update_mode(conversation_id, mode)
-        self.runtime.settings.update({"assistant_mode": mode})
-        self.finish_json({
-            "success": True,
-            "data": conversation.to_public_dict(include_messages=True),
-        })
 
     def delete(self, conversation_id: str) -> None:
         deleted = self.runtime.conversations.delete(conversation_id)
@@ -227,10 +211,6 @@ class ConversationGuidanceHandler(ApiHandler):
 
 
 class ConversationMessagesHandler(ApiHandler):
-    def _payload_mode(self, payload: dict[str, Any]) -> str | None:
-        mode = str(payload.get("mode") or "").strip()
-        return normalize_mode(mode) if mode else None
-
     async def post(self, conversation_id: str) -> None:
         conversation = self.runtime.conversations.get(conversation_id)
         if not conversation:
@@ -256,12 +236,6 @@ class ConversationMessagesHandler(ApiHandler):
                 409,
                 reason=f"conversation already has an active run: {active_run_id}",
             )
-
-        payload_mode = self._payload_mode(payload)
-        if payload_mode:
-            self.runtime.settings.update({"assistant_mode": payload_mode})
-            if payload_mode != conversation.mode:
-                conversation = self.runtime.conversations.update_mode(conversation_id, payload_mode)
 
         user_message = self.runtime.conversations.add_message(conversation_id, "user", content)
         assistant_content, metadata = await self._build_reply(conversation, workspace.to_public_dict(), content, payload)
@@ -310,9 +284,8 @@ class ConversationMessagesHandler(ApiHandler):
         self,
         conversation: Any,
         workspace: dict[str, Any],
-        mode: str | None = None,
     ) -> list[dict[str, Any]]:
-        mode_config = get_mode_config(mode if mode is not None else getattr(conversation, "mode", None), self.get_lang())
+        mode_config = get_terminal_config(self.get_lang())
         # Extract the latest user message for memory relevance scoring
         latest_user_message = ""
         for msg in reversed(getattr(conversation, "messages", [])):
@@ -558,12 +531,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             )
         _active_stream_conversation_runs[conversation_id] = "pending"
 
-        payload_mode = self._payload_mode(payload)
-        if payload_mode:
-            self.runtime.settings.update({"assistant_mode": payload_mode})
-            if payload_mode != conversation.mode:
-                conversation = self.runtime.conversations.update_mode(conversation_id, payload_mode)
-
         self.set_header("Content-Type", "application/x-ndjson; charset=utf-8")
         msg_metadata: dict[str, Any] = {}
         if image_data:
@@ -582,7 +549,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         await self.flush()
 
         model = payload.get("model") or self.runtime.settings.get_default_model()
-        requested_mode = getattr(conversation, "mode", None)
+        requested_mode = "terminal"
         effective_mode = self._effective_mode(requested_mode, content, conversation)
         source_run_id = str(payload.get("source_run_id") or "").strip()
         parent_run_id = str(payload.get("parent_run_id") or source_run_id).strip()
@@ -711,15 +678,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         policy = str(payload.get("planning_policy") or "").strip().lower()
         if policy in {"off", "auto", "always"}:
             return policy
-        if any(key in payload for key in ("plan_mode", "plan_execution")):
-            return self._normalize_plan_mode(payload)
-        legacy = str(payload.get("execution_mode") or "").strip().lower()
-        if legacy in {"conservative", "auto", "aggressive"}:
-            return {
-                "conservative": "off",
-                "auto": "auto",
-                "aggressive": "always",
-            }[legacy]
         return self.runtime.settings.get_planning_policy()
 
     def _normalize_confirmation_policy(self, payload: dict[str, Any]) -> str:
@@ -727,28 +685,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             payload.get("confirmation_policy"),
             self.runtime.settings.get_confirmation_policy(),
         )
-
-    def _normalize_execution_mode(self, payload: dict[str, Any]) -> str:
-        """Return the deprecated compatibility alias for planning_policy."""
-        return {
-            "off": "conservative",
-            "auto": "auto",
-            "always": "aggressive",
-        }[self._normalize_planning_policy(payload)]
-
-    def _plan_mode_for_execution_mode(self, execution_mode: str, payload: dict[str, Any]) -> str:
-        """Compatibility helper for older callers."""
-        return self._normalize_planning_policy({**payload, "execution_mode": execution_mode})
-
-    def _normalize_plan_mode(self, payload: dict[str, Any]) -> str:
-        mode = str(payload.get("plan_mode") or "").strip().lower()
-        if mode in {"auto", "always", "off"}:
-            return mode
-        if payload.get("plan_execution") is True:
-            return "always"
-        if payload.get("plan_execution") is False and "plan_execution" in payload:
-            return "off"
-        return "auto"
 
     def _build_task_contract(
         self,
@@ -806,7 +742,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             lang = self.get_lang()
         except Exception:
             lang = ""
-        mode_config = get_mode_config(fallback_contract.get("assistant_mode"), lang)
+        mode_config = get_terminal_config(lang)
         prompt = _tc.task_contract_prompt(
             workspace_path,
             fallback_contract,
@@ -911,6 +847,26 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 "are useful but do not prove visual quality. If no visual evidence is available, say the "
                 "result is not visually verified instead of repeating the same failing call.\n"
             )
+        execution_advisories = (
+            contract.get("execution_advisories")
+            if isinstance(contract.get("execution_advisories"), list)
+            else []
+        )
+        if execution_advisories:
+            prompt += "\nRuntime execution advisories (not hard constraints):\n"
+            for advisory in execution_advisories[:4]:
+                if not isinstance(advisory, dict):
+                    continue
+                message = str(advisory.get("message") or advisory.get("code") or "").strip()
+                if not message:
+                    continue
+                prompt += f"- {message}\n"
+                suggested = str(advisory.get("suggested_first_action") or "").strip()
+                if suggested:
+                    prompt += (
+                        f"  Suggested first action: {suggested}. You may choose a different "
+                        "safe action if the current task evidence requires it.\n"
+                    )
         continuity_advisories = (
             contract.get("continuity_advisories")
             if isinstance(contract.get("continuity_advisories"), list)
@@ -1222,6 +1178,9 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _merge_tool_call_chunks(self, calls: list[dict[str, Any]], chunks: list[dict[str, Any]]) -> None:
         _clf.merge_tool_call_chunks(calls, chunks)
 
+    def _tool_call_arguments_size(self, calls: list[dict[str, Any]]) -> int:
+        return _clf.tool_call_arguments_size(calls)
+
     def _complete_tool_calls(self, calls: list[dict[str, Any]], round_index: int) -> list[dict[str, Any]]:
         return _clf.complete_tool_calls(calls, round_index)
 
@@ -1384,6 +1343,9 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
 
     def _consecutive_repeated_failure_count(self, tool_events: list[dict[str, Any]]) -> int:
         return _clf.consecutive_repeated_failure_count(tool_events)
+
+    def _failure_route_attempt_count_since_progress(self, tool_events: list[dict[str, Any]]) -> int:
+        return _clf.failure_route_attempt_count_since_progress(tool_events)
 
     def _repeated_failure_action(
         self,
@@ -1861,6 +1823,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "input": arguments,
             "task_id": task.id,
             "confirmation_decision": confirmation_decision.to_dict(),
+            "declared_capability": tool_spec.capability,
             "declared_effects": list(tool_spec.effects or []),
             "declared_roles": list(tool_spec.roles or []),
             "declared_verification_strength": tool_spec.verification_strength,
@@ -1936,6 +1899,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "task_id": task.id,
             "error": task_error,
             "output": output_preview,
+            "declared_capability": tool_spec.capability,
             "declared_effects": list(tool_spec.effects or []),
             "declared_roles": list(tool_spec.roles or []),
             "declared_verification_strength": tool_spec.verification_strength,
@@ -2400,8 +2364,28 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _post_deliverable_prompt(self, workspace_path: str) -> str:
         return _prp.post_deliverable_prompt(workspace_path)
 
+    def _completion_review_prompt(
+        self,
+        workspace_path: str,
+        task_contract: dict[str, Any],
+        run_result: dict[str, Any],
+    ) -> str:
+        return _prp.completion_review_prompt(workspace_path, task_contract, run_result)
+
     def _final_answer_prompt(self, workspace_path: str) -> str:
         return _prp.final_answer_prompt(workspace_path)
+
+    def _oversized_tool_arguments_prompt(
+        self,
+        workspace_path: str,
+        accumulated_chars: int,
+        limit_chars: int,
+    ) -> str:
+        return _prp.oversized_tool_arguments_prompt(
+            workspace_path,
+            accumulated_chars,
+            limit_chars,
+        )
 
     def _user_requests_code_change(self, content: str, mode: str | None) -> bool:
         return _clf.user_requests_code_change(content, mode)

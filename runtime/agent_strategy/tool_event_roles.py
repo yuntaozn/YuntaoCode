@@ -60,6 +60,7 @@ EVIDENCE_TOOL_IDS: frozenset[str] = frozenset({
     "filesystem.read_text_preview",
     "document.extract_docx_outline",
     "document.extract_pdf_text_preview",
+    "spreadsheet.inspect_workbook",
     "web.extract_text",
     "web.render_page",
     "web.collect_site_assets",
@@ -416,9 +417,15 @@ def _path_looks_visual_artifact(path: str) -> bool:
 
 def _event_has_content_artifact(event: dict[str, Any]) -> bool:
     tool_id = canonical_tool_id(str(event.get("tool") or ""))
-    if tool_id in {"filesystem.read_file", "filesystem.read_text_preview"}:
+    if tool_id in {
+        "filesystem.read_file",
+        "filesystem.read_text_preview",
+        "spreadsheet.inspect_workbook",
+    }:
         return True
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    if str(output.get("type") or "").strip().lower() == "spreadsheet_preview":
+        return True
     artifact_values = [output.get("artifact_kind")]
     if isinstance(output.get("artifacts"), list):
         artifact_values.extend(output.get("artifacts") or [])

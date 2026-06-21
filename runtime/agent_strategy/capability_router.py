@@ -141,6 +141,11 @@ EXPLICIT_CAPABILITIES: dict[str, tuple[str, str, str]] = {
     "code.edit_file": TEXT_WRITE_CAPABILITY,
     "code.replace_text": TEXT_WRITE_CAPABILITY,
     "filesystem.write_file": TEXT_WRITE_CAPABILITY,
+    "filesystem.apply_changes": (
+        "filesystem.change_set",
+        "Local File Change Set",
+        "Apply a bounded transaction of local file create, overwrite, literal replace, and delete operations.",
+    ),
     "filesystem.delete_file": LOCAL_STATE_CAPABILITY,
     "filesystem.create_text_draft": TEXT_WRITE_CAPABILITY,
     "filesystem.append_text_chunk": TEXT_WRITE_CAPABILITY,

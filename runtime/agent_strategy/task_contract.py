@@ -99,12 +99,8 @@ def default_task_contract(
         "intent": intent,
         "goal": "",
         "routing_strategy": "model_first_task_contract",
-        "assistant_mode": mode or "terminal",
         "planning_policy": planning_policy,
         "confirmation_policy": confirmation_policy,
-        # Deprecated compatibility aliases. Planning and confirmation are now independent.
-        "execution_mode": _legacy_execution_mode(planning_policy),
-        "plan_mode": planning_policy,
         "access_scope": access_scope,
         "workspace_path": workspace_path,
         "requires_write": requires_write,
@@ -123,6 +119,7 @@ def default_task_contract(
         "scope_relation_source": "default",
         "revision_request": "",
         "system_overrides": [],
+        "execution_advisories": [],
     }
     contract["success_conditions"] = success_conditions_for_contract(contract)
     return contract
@@ -195,6 +192,11 @@ def merge_model_task_contract(
                 requires_write or requires_state_change,
             ),
             "blockers": _normalize_string_list(raw_contract.get("blockers"), limit=6, item_limit=180),
+            "execution_advisories": _normalize_advisories(
+                raw_contract.get("execution_advisories")
+                or raw_contract.get("advisories")
+                or raw_contract.get("strategy_advisories")
+            ),
             "confidence": _normalize_confidence(raw_contract.get("confidence")),
             "scope_relation": _normalize_scope_relation(raw_contract.get("scope_relation")),
             "scope_relation_source": (
@@ -207,6 +209,7 @@ def merge_model_task_contract(
     contract["scope_relation"] = _normalize_scope_relation(contract.get("scope_relation"))
     contract.setdefault("scope_relation_source", "default")
     contract.setdefault("revision_request", "")
+    contract["execution_advisories"] = _normalize_advisories(contract.get("execution_advisories"))
     contract["expected_document_coverage"] = (
         bool(contract.get("expected_document_coverage")) or bool(expected_document_coverage)
     )
@@ -243,6 +246,7 @@ def merge_model_task_contract(
 
     contract["system_overrides"] = list(dict.fromkeys(str(item) for item in overrides if item))
     _normalize_local_file_state_contract(contract)
+    _normalize_output_length_contract(contract)
     contract["success_conditions"] = success_conditions_for_contract(contract)
     return contract
 
@@ -308,6 +312,11 @@ def task_contract_prompt(
         "只有确实不需要任何本地动作的问答才使用 answer_only。\n"
         "请不要因为不确定就默认只聊天。如果用户要求产物、修改、导出、转换、生成文件或执行本地任务，"
         "应正确区分文件写入与外部状态修改；如果只是解释、建议或分析，两者都应为 false。\n"
+        "如果用户描述的是某个本地产物、页面、应用、脚本、文档或外部状态“不能访问、不能运行、出错、"
+        "效果不对、有问题”，且没有明确说只分析，这通常是 analysis-first repairable task："
+        "你可以先设为 read_only_analysis + first_action=read，并在 execution_advisories 中说明"
+        " evidence_may_require_repair；如果用户已明确要求修复或目标产物必须改变，则设为 write_required。"
+        "execution_advisories 只是给执行阶段的非硬约束提醒，不能替代 requires_write/requires_state_change。\n"
         "Verification modality rule: use required_verification_modalities=[] for ordinary structural checks. "
         "Include visual when the user cares about appearance, layout, UI rendering, screenshots, rendered images, "
         "model quality, whether something looks right, or any visual artifact. Use behavioral for tests/build/runtime "
@@ -325,6 +334,7 @@ def task_contract_prompt(
         '  "deliverables": [{"kind": "file|answer|document|code|external_state", "path_hint": "", "path_policy": "hint|exact", "description": ""}],\n'
         '  "scope_relation": "new|continue|revise|replace",\n'
         '  "expected_min_output_chars": 0,\n'
+        '  "execution_advisories": [{"code": "optional-short-code", "message": "non-binding execution note", "suggested_first_action": "read|write|verify|use_tool"}],\n'
         '  "first_action": "answer|read|search|plan|write|verify|ask_user|use_tool",\n'
         '  "blockers": [],\n'
         '  "confidence": 0.0\n'
@@ -494,6 +504,10 @@ def success_conditions_for_contract(contract: dict[str, Any]) -> list[str]:
     return _contract_evolution.success_conditions_for_contract(contract)
 
 
+def contract_expects_text_output(contract: dict[str, Any]) -> bool:
+    return _contract_expects_text_output(contract)
+
+
 def _intent_or_default(value: Any, default: Any = "answer_only") -> str:
     intent = str(value or default or "answer_only").strip()
     return intent if intent in VALID_INTENTS else "answer_only"
@@ -562,6 +576,45 @@ def _normalize_verification_modalities(value: Any) -> list[str]:
         text = str(item or "").strip().lower()
         if text in VALID_VERIFICATION_MODALITIES and text not in result:
             result.append(text)
+    return result
+
+
+def _normalize_advisories(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in value[:6]:
+        if isinstance(item, str):
+            advisory = {
+                "code": "",
+                "message": _clean_text(item, 240),
+                "suggested_first_action": "",
+            }
+        elif isinstance(item, dict):
+            advisory = {
+                "code": _clean_text(item.get("code"), 80),
+                "message": _clean_text(item.get("message") or item.get("description"), 240),
+                "suggested_first_action": _normalize_first_action(
+                    item.get("suggested_first_action"),
+                    False,
+                ),
+            }
+        else:
+            continue
+        if not advisory["message"] and advisory["code"]:
+            advisory["message"] = advisory["code"]
+        if not advisory["message"]:
+            continue
+        if advisory["suggested_first_action"] == "answer" and not (
+            isinstance(item, dict) and item.get("suggested_first_action")
+        ):
+            advisory["suggested_first_action"] = ""
+        key = (advisory["code"], advisory["message"])
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(advisory)
     return result
 
 
@@ -641,6 +694,28 @@ def _normalize_local_file_state_contract(contract: dict[str, Any]) -> None:
     contract["system_overrides"] = list(dict.fromkeys(item for item in overrides if item))
 
 
+def _normalize_output_length_contract(contract: dict[str, Any]) -> None:
+    """Keep output-length checks scoped to document/text deliverables.
+
+    Character-count goals are completion criteria for prose documents, reports,
+    papers, and similar text artifacts. They are not a useful correctness
+    signal for code, local file state, or external application state.
+    """
+    if _safe_int(contract.get("expected_min_output_chars")) <= 0:
+        return
+    if _contract_expects_text_output(contract):
+        return
+
+    contract["expected_min_output_chars"] = 0
+    overrides = [
+        str(item)
+        for item in contract.get("system_overrides") or []
+        if str(item or "").strip() != "expected_min_output_chars"
+    ]
+    overrides.append("cleared_non_text_min_output_chars")
+    contract["system_overrides"] = list(dict.fromkeys(item for item in overrides if item))
+
+
 def _looks_like_local_file_delete_contract(contract: dict[str, Any]) -> bool:
     text = _contract_text(contract)
     if not _has_delete_term(text):
@@ -675,6 +750,21 @@ def _looks_like_local_file_delete_contract(contract: dict[str, Any]) -> bool:
         or kinds & {"file", "code", "document"}
         or _has_local_file_term(text)
     )
+
+
+def _contract_expects_text_output(contract: dict[str, Any]) -> bool:
+    if str(contract.get("intent") or "") in {"document_export", "paper_workflow"}:
+        return True
+    if contract.get("expected_document_coverage"):
+        return True
+    deliverables = contract.get("deliverables") if isinstance(contract.get("deliverables"), list) else []
+    for item in deliverables:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip().lower()
+        if kind in {"document", "markdown", "docx", "paper", "report", "article"}:
+            return True
+    return False
 
 
 def _contract_text(contract: dict[str, Any]) -> str:
@@ -803,11 +893,3 @@ def _contract_prompt_fallback(contract: dict[str, Any]) -> dict[str, Any]:
         ),
         "requires_plan": bool(contract.get("requires_plan")),
     }
-
-
-def _legacy_execution_mode(planning_policy: str) -> str:
-    return {
-        "off": "conservative",
-        "auto": "auto",
-        "always": "aggressive",
-    }.get(str(planning_policy or "").strip().lower(), "auto")

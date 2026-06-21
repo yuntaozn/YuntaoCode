@@ -40,7 +40,7 @@ class PluginsHandler(ApiHandler):
                 "source_id": next(iter(source_ids)) if len(source_ids) == 1 else None,
                 "provider_kind": provider_kind,
                 "provider_label": i18n.t(f"plugins.kind.{provider_kind}", lang) or provider_kind,
-                "toggle_locked": provider_kind in {"runtime_capability", "mcp_capability"},
+            "toggle_locked": provider_kind in {"runtime_capability", "mcp_capability"},
                 "enabled": enabled,
                 "local_only": all(bool(tool.get("local_only", True)) for tool in tools),
                 "dependencies": dependency_status,

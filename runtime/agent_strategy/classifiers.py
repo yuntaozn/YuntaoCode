@@ -48,6 +48,7 @@ WRITE_TOOL_IDS: frozenset[str] = frozenset({
     "code.apply_patch",
     "code.edit_file",
     "code.replace_text",
+    "filesystem.apply_changes",
     "filesystem.transform_text",
     "filesystem.write_file",
     "filesystem.delete_file",
@@ -63,6 +64,7 @@ DELIVERABLE_VERIFICATION_TOOL_IDS: frozenset[str] = frozenset({
     "code.search_text",
     "code.list_project_files",
     "git.log",
+    "spreadsheet.inspect_workbook",
     "web.capture_page",
 })
 
@@ -119,6 +121,7 @@ RECON_TOOL_IDS: frozenset[str] = frozenset({
     "document.extract_docx_outline",
     "document.extract_pdf_text_preview",
     "document.inspect_draft",
+    "spreadsheet.inspect_workbook",
     "code.search_text",
     "code.list_project_files",
     "git.status",
@@ -149,6 +152,7 @@ def explorer_tool_ids(mode: str | None) -> set[str]:
         "filesystem.read_text_preview",
         "document.extract_docx_outline",
         "document.extract_pdf_text_preview",
+        "spreadsheet.inspect_workbook",
         "code.search_text",
         "code.list_project_files",
     }
@@ -167,6 +171,7 @@ def verification_tool_ids(mode: str | None) -> set[str]:
             "filesystem.read_text_preview",
             "document.extract_docx_outline",
             "document.extract_pdf_text_preview",
+            "spreadsheet.inspect_workbook",
         }
     return ids
 
@@ -700,6 +705,17 @@ def merge_tool_call_chunks(
             target["function"]["arguments"] += function["arguments"]
 
 
+def tool_call_arguments_size(calls: list[dict[str, Any]]) -> int:
+    """Return the total streamed argument size for accumulated tool calls."""
+    total = 0
+    for call in calls:
+        function = call.get("function") if isinstance(call, dict) else {}
+        if not isinstance(function, dict):
+            continue
+        total += len(str(function.get("arguments") or ""))
+    return total
+
+
 def complete_tool_calls(
     calls: list[dict[str, Any]],
     round_index: int,
@@ -1079,22 +1095,50 @@ def consecutive_repeated_failure_count(tool_events: list[dict[str, Any]]) -> int
     return count
 
 
+def failure_route_attempt_count_since_progress(tool_events: list[dict[str, Any]]) -> int:
+    """Count same failed execution route attempts since the last real progress.
+
+    This is intentionally route-oriented instead of turn-oriented.  A model may
+    try a different route after a failure; if that route produces a successful
+    tool event, the self-correction budget should reset.  If it only alternates
+    between failures and eventually returns to the same failed tool+arguments,
+    the route is still being repeated without progress.
+    """
+    latest = tool_events[-1] if tool_events else {}
+    if latest.get("status") != "failure":
+        return 0
+    target_signature = _tool_failure_signature(latest)
+    count = 0
+    is_latest = True
+    for event in reversed(tool_events):
+        if not is_latest and _is_progress_event(event):
+            break
+        is_latest = False
+        if event.get("status") != "failure":
+            continue
+        if _tool_failure_signature(event) == target_signature:
+            count += 1
+    return count
+
+
 def repeated_failure_action(
     tool_events: list[dict[str, Any]],
     *,
     strategy_change_intervened: bool,
 ) -> str:
-    """Return the convergence action without adding another strategy prompt.
+    """Return the convergence action for repeated failed execution routes.
 
-    Repeated identical failures usually mean the model is not producing a
-    valid executable call.  Stop and record the real failure instead of asking
-    the model to reinterpret the task through another soft strategy prompt.
-    The ``strategy_change_intervened`` argument is kept for API compatibility.
+    The first repeated route is evidence that the current route is not working,
+    not proof that the task should stop.  Give the model a small bounded
+    self-correction budget in the current no-progress window, then stop only if
+    it keeps returning to the same failed route without producing new evidence.
     """
-    count = consecutive_repeated_failure_count(tool_events)
-    if count < 2:
+    route_attempts = failure_route_attempt_count_since_progress(tool_events)
+    if route_attempts < 2:
         return "none"
-    return "stop"
+    if route_attempts >= 4:
+        return "stop"
+    return "change_strategy"
 
 
 def _tool_failure_signature(event: dict[str, Any]) -> str:
@@ -1112,6 +1156,10 @@ def _tool_failure_signature(event: dict[str, Any]) -> str:
         sort_keys=True,
         default=str,
     )
+
+
+def _is_progress_event(event: dict[str, Any]) -> bool:
+    return str(event.get("status") or "") in {"success", "partial"}
 
 
 def has_successful_write(tool_events: list[dict[str, Any]]) -> bool:
@@ -1376,11 +1424,30 @@ def _shell_command_verifies_behavior(
 
 
 def is_recoverable_write_failure(tool_id: str, event: dict[str, Any]) -> bool:
-    if tool_id not in {"code.apply_patch", "code.edit_file", "code.replace_text", "filesystem.write_file"}:
+    if tool_id not in {
+        "code.apply_patch",
+        "code.edit_file",
+        "code.replace_text",
+        "filesystem.write_file",
+        "filesystem.create_text_draft",
+        "filesystem.append_text_chunk",
+        "filesystem.finalize_text_file",
+    }:
         return False
     if event.get("status") == "success":
         return False
     error = str(event.get("error") or "").lower()
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    reason = str(output.get("reason") or "").lower()
+    if reason == "truncated_tool_call":
+        return True
+    if (
+        "output limit" in error
+        or "stopped at its output limit" in error
+        or "incomplete arguments" in error
+        or "truncated_tool_call" in error
+    ):
+        return True
     return any(
         marker in error
         for marker in (

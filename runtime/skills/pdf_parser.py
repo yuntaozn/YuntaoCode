@@ -3,7 +3,7 @@ PDF 文档解析器
 用于 YuntaoCode 本地文档能力；优先本地解析，质量不足时按能力边界降级。
 
 策略决策树：
-1. PyPDF2 快速提取 -> 质量检测（乱码率 + CID检测）
+1. pypdf 快速提取 -> 质量检测（乱码率 + CID检测）
 2. 质量差时启用 pdfplumber + PyMuPDF 兜底渲染
 3. 扫描件/乱码文件走 AI 多模态 OCR（复用终端已配置的模型）
 """
@@ -58,7 +58,7 @@ class ParseResult:
     text: str = ""
     total_pages: int = 0
     pages_parsed: int = 0
-    strategy: str = "pypdf2"  # pypdf2 | pdfplumber | ocr
+    strategy: str = "pypdf"  # pypdf | pdfplumber | ocr
     garbled_ratio: float = 0.0
     cid_garbled: bool = False
     ocr_used: bool = False
@@ -97,14 +97,14 @@ class PDFParser:
         result = ParseResult()
         file_str = str(file_path)
 
-        # 策略 1: PyPDF2 快速提取
-        text, total_pages = await self._extract_pypdf2(file_str, max_pages)
+        # 策略 1: pypdf 快速提取
+        text, total_pages = await self._extract_pypdf(file_str, max_pages)
         result.total_pages = total_pages
         result.pages_parsed = min(max_pages, total_pages) if max_pages > 0 else total_pages
 
         # 策略 2: 文本为空 -> 可能是扫描版
         if not text.strip():
-            logger.info("PyPDF2 提取为空，尝试 OCR 路径")
+            logger.info("pypdf 提取为空，尝试 OCR 路径")
             ocr_result = await self._ocr_path(file_str, result, context, force_ocr=False)
             return ocr_result
 
@@ -131,31 +131,31 @@ class PDFParser:
 
         # 策略 4: 文本质量良好，直接后处理返回
         result.text = self._post_processor.process(text)
-        result.strategy = "pypdf2"
+        result.strategy = "pypdf"
         return result
 
     # ------------------------------------------------------------------
-    # PyPDF2 提取
+    # pypdf 提取
     # ------------------------------------------------------------------
 
-    async def _extract_pypdf2(self, file_path: str, max_pages: int) -> tuple[str, int]:
-        """使用 PyPDF2 快速提取文本（不持锁）"""
+    async def _extract_pypdf(self, file_path: str, max_pages: int) -> tuple[str, int]:
+        """使用 pypdf 快速提取文本（不持锁）"""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
             self._executor,
-            self._sync_extract_pypdf2,
+            self._sync_extract_pypdf,
             file_path, max_pages,
         )
 
     @staticmethod
-    def _sync_extract_pypdf2(file_path: str, max_pages: int) -> tuple[str, int]:
-        """同步 PyPDF2 提取"""
-        import PyPDF2
+    def _sync_extract_pypdf(file_path: str, max_pages: int) -> tuple[str, int]:
+        """同步 pypdf 提取"""
+        import pypdf
         text = ""
         total_pages = 0
         try:
             with open(file_path, 'rb') as f:
-                reader = PyPDF2.PdfReader(f)
+                reader = pypdf.PdfReader(f)
                 total_pages = len(reader.pages)
                 limit = min(total_pages, max_pages) if max_pages > 0 else total_pages
                 for i, page in enumerate(reader.pages[:limit]):
@@ -164,9 +164,9 @@ class PDFParser:
                         if page_text:
                             text += page_text + "\n"
                     except Exception as e:
-                        logger.debug(f"PyPDF2 第{i+1}页提取失败: {e}")
+                        logger.debug(f"pypdf 第{i+1}页提取失败: {e}")
         except Exception as e:
-            logger.warning(f"PyPDF2 解析失败: {e}")
+            logger.warning(f"pypdf 解析失败: {e}")
         return text, total_pages
 
     # ------------------------------------------------------------------
@@ -254,18 +254,18 @@ class PDFParser:
 
         if not HAS_PDFPLUMBER and not HAS_PYMUPDF:
             result.warnings.append("缺少 pdfplumber 和 PyMuPDF，无法执行 OCR 路径")
-            # 回退到 PyPDF2 原始文本
-            text, _ = await self._extract_pypdf2(file_path, 0)
+            # 回退到 pypdf 原始文本
+            text, _ = await self._extract_pypdf(file_path, 0)
             result.text = self._post_processor.process(text) if text else ""
-            result.strategy = "pypdf2"
+            result.strategy = "pypdf"
             result.ocr_used = False
             return result
 
         if not HAS_IMAGE:
             result.warnings.append("缺少 numpy/Pillow，无法渲染图像进行 OCR")
-            text, _ = await self._extract_pypdf2(file_path, 0)
+            text, _ = await self._extract_pypdf(file_path, 0)
             result.text = self._post_processor.process(text) if text else ""
-            result.strategy = "pypdf2"
+            result.strategy = "pypdf"
             result.ocr_used = False
             return result
 
