@@ -226,7 +226,7 @@ def test_ai_plugin_workspace_guard_blocks_write_file_to_workspace_draft(tmp_path
             )
         )
 
-    assert "不能写入当前工作区的 ai-plugins/" in str(exc.value)
+    assert "不能写入当前工作区的 ai-plugins/ 或 capability-packs/" in str(exc.value)
 
 
 def test_ai_plugin_workspace_guard_blocks_shell_command_to_workspace_draft(tmp_path: Path) -> None:
@@ -243,7 +243,7 @@ def test_ai_plugin_workspace_guard_blocks_shell_command_to_workspace_draft(tmp_p
             )
         )
 
-    assert "不能写入当前工作区的 ai-plugins/" in str(exc.value)
+    assert "不能写入当前工作区的 ai-plugins/ 或 capability-packs/" in str(exc.value)
 
 
 def test_disabled_plugin_blocks_submission(tmp_path: Path) -> None:

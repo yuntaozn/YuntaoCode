@@ -10,6 +10,12 @@ from runtime.core.automation import (
     can_trigger_automation,
 )
 from runtime.core.capability import CapabilityContract, PermissionSet, needs_user_confirmation
+from runtime.core.capability_pack import (
+    CapabilityPack,
+    CapabilityPackEntry,
+    CapabilityPackPermissions,
+    capability_pack_export_bundle,
+)
 from runtime.core.context import ContextRecord, ContextSnapshot, EvidenceRecord, select_records_for_phase
 from runtime.core.events import build_trace_event
 from runtime.core.experience import ExperienceDigest, experience_sample_from_runbook
@@ -187,6 +193,26 @@ def test_capability_contract_confirmation_rules() -> None:
     assert data["task_roles"] == ["deliverable"]
     assert data["verification_strength"] == "standard"
     assert needs_user_confirmation(contract)
+
+
+def test_capability_pack_defaults_to_method_skill_not_tool_plugin() -> None:
+    pack = CapabilityPack(
+        id="doc-method",
+        name="Document Method",
+        summary="Reusable document generation experience.",
+        instructions="Plan chunks, write artifacts, verify evidence.",
+        entry=CapabilityPackEntry(kind="instructions", main="SKILL.md"),
+        permissions=CapabilityPackPermissions(),
+    )
+
+    data = pack.to_dict()
+    bundle = capability_pack_export_bundle(pack, exported_at="2026-06-21T00:00:00Z")
+
+    assert data["schema_version"] == "capability_pack.v1"
+    assert data["kind"] == "method_skill"
+    assert data["entry"]["kind"] == "instructions"
+    assert data["permissions"]["shell"] == "false"
+    assert bundle["schema_version"] == "capability_pack_export.v1"
 
 
 def test_runtime_result_schema_is_core_owned() -> None:

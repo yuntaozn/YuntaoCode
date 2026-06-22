@@ -95,7 +95,7 @@ executed.
 
 - 写入文件、Shell、Git 写操作、导出、外部状态修改默认需要确认。
 - `full_local` 永远是高风险权限。
-- AI-built plugin draft 不能因为用户确认一次就进入主进程执行。
+- AI-built Capability Pack 或工具适配器草稿不能因为用户确认一次就进入主进程执行。
 - 能力启用不等于所有工具调用免确认。
 
 ## Capability, Tool, Plugin
@@ -162,7 +162,7 @@ Runtime 能力
   通用但偏重或带外部访问边界，可以启停，也应清楚展示依赖和风险。
 
 外部能力提供者
-  MCP services, future external plugins, AI-built plugin drafts
+  MCP services, future external plugins, Capability Packs, AI-built tool adapter drafts
   不应直接混入 `runtime/skills/`，需要独立生命周期和受控边界。
 ```
 
@@ -204,7 +204,7 @@ User Request
 当前 `docs/plugin-system.md` 仍是外部插件设计草案。Capability Runtime 是它的上层原则：
 
 - 内置工具属于内置 capability provider。
-- AI-built plugin draft 属于未加载 draft provider。
+- AI-built Capability Pack 属于未加载 pack asset；其中的 tool adapter 草稿仍是未加载 draft provider。
 - 外部插件未来属于本地或受控 provider。
 - MCP 工具属于外部 capability provider。
 所有 provider 都需要走同样的能力声明、权限、确认、Trace、RunResult。
@@ -218,7 +218,7 @@ User Request
 - `runtime/agent_strategy/capability_router.py`
   - 能力目录、路由提案和验证草案。
 - `runtime/capability_governance.py`
-  - AI-built plugin draft 边界治理。
+  - AI-built Capability Pack 与工具适配器草稿边界治理。
 - `runtime/api/plugins.py`
   - 当前插件/能力分组展示。
 - `runtime/core/capability.py`

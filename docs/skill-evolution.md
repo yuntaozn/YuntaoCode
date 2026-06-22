@@ -169,8 +169,8 @@ manifest versions.
 
 ## Relationship To Plugin Drafts
 
-AI-built plugin drafts remain isolated under a user-controlled local data
-directory. Skill Evolution can use plugin drafts as candidate artifacts in the
+AI-built Capability Packs remain isolated under a user-controlled local data
+directory. Skill Evolution can use method skills and tool adapter drafts as candidate artifacts in the
 future, but a candidate must still pass replay tests and manual promotion before
 it becomes enabled.
 

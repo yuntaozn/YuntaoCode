@@ -699,8 +699,8 @@ def test_ai_plugin_draft_guard_blocks_workspace_ai_plugins_write() -> None:
     )
 
     assert message
-    assert "不能写入当前工作区的 ai-plugins/" in message
-    assert r"C:\Users\wutao\AppData\Local\YuntaoCode\ai-plugins\<plugin-id>" in message
+    assert "不能写入当前工作区的 ai-plugins/ 或 capability-packs/" in message
+    assert r"C:\Users\wutao\AppData\Local\YuntaoCode\capability-packs\items\<pack-id>" in message
 
 
 def test_ai_plugin_draft_guard_blocks_apply_patch_to_workspace_ai_plugins() -> None:
@@ -721,7 +721,24 @@ def test_ai_plugin_draft_guard_blocks_apply_patch_to_workspace_ai_plugins() -> N
     )
 
     assert message
-    assert "不能写入当前工作区的 ai-plugins/" in message
+    assert "不能写入当前工作区的 ai-plugins/ 或 capability-packs/" in message
+
+
+def test_capability_pack_guard_blocks_workspace_capability_packs_write() -> None:
+    handler = _handler_with_contract()
+    handler.runtime = SimpleNamespace(settings=SimpleNamespace(data_dir=Path(r"C:\Users\wutao\AppData\Local\YuntaoCode")))
+
+    message = handler._ai_plugin_draft_workspace_guard(
+        "filesystem.write_file",
+        {
+            "path": r"D:\code\YuntaoCode\capability-packs\items\doc-method\SKILL.md",
+            "content": "# Method",
+        },
+        r"D:\code\YuntaoCode",
+    )
+
+    assert message
+    assert r"C:\Users\wutao\AppData\Local\YuntaoCode\capability-packs\items\<pack-id>" in message
 
 
 def test_ai_plugin_draft_guard_allows_normal_workspace_write() -> None:

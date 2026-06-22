@@ -17,7 +17,7 @@ The three execution-facing lines are:
 - **Context Runtime** owns context selection, compression, evidence, memory,
   source/trust boundaries, and context snapshots.
 - **Capability Runtime** owns tool capability contracts, permissions,
-  confirmations, plugin drafts, external providers, and local execution
+  confirmations, Capability Packs, external providers, and local execution
   boundaries.
 
 Above them is an evidence-learning layer:
@@ -250,7 +250,7 @@ under controlled runtime or model changes and produce evidence-based reports.
 Skill Evolution should only build on that evidence after replay proves a
 pattern is stable.
 
-Reusable task templates, plugin drafts, MCP capability bindings, and external
+Reusable task templates, Capability Packs, MCP capability bindings, and external
 extension contracts are supporting artifacts in this chain. They should not be
 described as the product's main roadmap by themselves, because that makes the
 project look like a traditional tool/plugin aggregation layer instead of an AI
@@ -575,7 +575,7 @@ Current runtime-level capability guards:
 
 Tool execution guards have a stable pre-confirmation order for a resolved tool:
 plugin enablement, service availability, capability fallback boundary, required
-input fields, AI-built plugin draft boundary, document contract boundary, and
+input fields, AI-built Capability Pack boundary, document contract boundary, and
 runtime verification method checks. A guard failure returns a deterministic
 reason and message before manual confirmation is requested.
 

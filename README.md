@@ -52,7 +52,7 @@ Context Runtime
   管理任务相关上下文、证据、摘要、记忆和有效性边界
 
 Capability Runtime
-  管理工具能力、权限、确认、插件草案和外部能力接入
+  管理工具能力、权限、确认、本机能力包和外部能力接入
 
 Experience Layer
   从任务记录中整理 Experience Sample、Digest 和 Replay Fixture，用于后续评测和能力升级
@@ -89,7 +89,7 @@ YuntaoCode 把一次请求看作一个可管理的任务，而不是一次普通
 * Web Access
 * Memory
 
-工具是任务执行的能力单元。支持通过插件扩展新的工具能力，但工具本身不是产品边界；它们需要通过 Capability Contract 接入任务运行时。
+工具是任务执行的能力单元。本机能力包优先沉淀方法型 Skill、任务模板和上下文包；只有确实需要新执行能力时，才进入更严格的工具适配器或插件边界。工具本身不是产品边界；它们需要通过 Capability Contract 接入任务运行时。
 
 ### 长期记忆（Memory）
 
@@ -310,15 +310,15 @@ def register_my_tools(registry: ToolRegistry):
 
 在 `runtime/api/` 下创建 Handler，并在 `runtime/app.py` 注册路由。
 
-### 插件与插件契约
+### 本机能力包与插件契约
 
 当前版本提供的是内置插件能力管理：系统会按工具 ID 前缀展示 `filesystem`、`code`、`shell`、`git`、`web` 等能力分组，并支持启停和依赖状态展示。
 
 这还不是插件市场，也不是远程更新系统。真正面向第三方扩展的插件 manifest、动态加载、权限声明和隔离机制仍属于后续基座工作。
 
-插件契约草案见 [docs/plugin-system.md](docs/plugin-system.md)。当前仓库不包含外部插件样板目录；能力扩展示例只保留在文档中，避免把实验产物误认为已内置功能。
+本机能力包见 [docs/capability-packs.md](docs/capability-packs.md)，插件契约草案见 [docs/plugin-system.md](docs/plugin-system.md)。当前仓库不包含外部插件样板目录；能力扩展示例只保留在文档中，避免把实验产物误认为已内置功能。
 
-AI 可以帮助创建插件草稿，但草稿必须写入隔离目录。完成后通过测试/依赖摘要和一次人工确认，再进入后续受控注册或启用流程。详见 [docs/capability-governance.md](docs/capability-governance.md)。
+AI 可以帮助创建本机能力包。默认应先沉淀为方法型 Skill（提示词、步骤、反例和验证清单），写入用户数据目录下的 `capability-packs/items/<pack-id>/`。工具适配器草稿必须保持隔离，完成后通过测试/依赖摘要和一次人工确认，再进入后续受控注册或启用流程。详见 [docs/capability-governance.md](docs/capability-governance.md)。
 
 ### MCP 服务目录
 
@@ -404,7 +404,7 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 
 * [ ] Experience Digest 到 Skill Candidate 的生成流程
 * [ ] Task Template Candidate：从成功任务和失败反例中沉淀可复用任务结构
-* [ ] AI 自建 Capability / Plugin Draft 隔离目录、测试摘要和启用边界
+* [ ] AI 自建 Capability Pack 隔离目录、导出、测试摘要和启用边界
 * [ ] Candidate Replay：候选能力必须通过选定 fixture 的回放评测
 * [ ] Manual Promotion：用户确认后才进入可启用能力列表
 * [ ] 能力版本、兼容性、回滚和废弃策略

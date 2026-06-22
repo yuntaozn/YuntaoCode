@@ -4,11 +4,11 @@ This document defines the early plugin direction for YuntaoCode as a Task Runtim
 
 The current release has a **Capabilities & Plugins** page. It groups built-in
 tools by tool ID prefix, such as `filesystem`, `code`, `shell`, `git`, and
-`web`, and may also show MCP-discovered capabilities and AI-built plugin
-drafts. These entries are capability provider views, not all third-party
-plugins. External plugin loading, remote indexes, auto-update, and marketplace
-distribution are intentionally out of scope until the Task Runtime contract is
-stable.
+`web`, and may also show MCP-discovered capabilities, local Capability Packs,
+and legacy AI-built plugin drafts. These entries are capability provider views,
+not all third-party plugins. External plugin loading, remote indexes,
+auto-update, and marketplace distribution are intentionally out of scope until
+the Task Runtime contract is stable.
 
 Plugins are capability providers for the Task Runtime. They can expose tools, dependencies, and permission needs, but task state, plan execution, trace, recovery, and audit remain runtime-level concerns.
 
@@ -27,8 +27,11 @@ and [capability-router.md](capability-router.md).
 - Built-in optional capabilities such as `document` and `web` may be enabled or disabled, and dependency or network boundaries should remain visible.
 - External plugin manifests are design-stage only.
 - Contract examples are documented in this file only; the repository does not ship external plugin sample directories at this stage.
-- AI-built plugin drafts belong under the local data directory `ai-plugins/` and are displayed as drafts only.
-- AI-built plugin drafts are not Python skill modules. They must not be imported through `runtime.skills.*` or registered by editing `runtime/skills/__init__.py`.
+- Local Capability Packs belong under the local data directory
+  `capability-packs/` and are displayed as pack assets only.
+- AI-built executable drafts are not Python skill modules. They must not be
+  imported through `runtime.skills.*` or registered by editing
+  `runtime/skills/__init__.py`.
 
 ## Goals
 
@@ -67,24 +70,69 @@ Runtime Feature
 
 A prompt-methodology package similar to a `SKILL.md` collection should not be
 registered as a local tool plugin only because it influences model behavior.
-It belongs closer to Skill Evolution, Replay, and evaluation evidence. A
-plugin should expose executable capabilities with explicit permissions,
-artifacts, and effects.
+It belongs in a Capability Pack, usually with `kind: method_skill`. A plugin
+should expose executable capabilities with explicit permissions, artifacts, and
+effects.
 
 ## Contract Shape
 
-AI-built plugin drafts should live under a user-controlled local data directory:
+Local Capability Packs should live under a user-controlled local data directory:
 
 ```text
-<YuntaoCode data dir>/ai-plugins/
-  example-draft/
-    plugin.json
+<YuntaoCode data dir>/capability-packs/
+  items/
+    example-method/
+      SKILL.md
+      examples/
+    example-tool-adapter/
+      plugin.json
+      README.md
+      src/
+      tests/
+```
+
+Legacy `ai-plugins/` draft scanning may remain for compatibility, but new
+AI-created capabilities should use Capability Packs.
+
+## Pack Manifest
+
+The current user-data-level schema is `capability_pack.v1`. See
+[capability-packs.md](capability-packs.md).
+
+The preferred default is a method skill:
+
+```json
+{
+  "schema_version": "capability_pack.v1",
+  "id": "long-document-method",
+  "name": "Long Document Method",
+  "kind": "method_skill",
+  "state": "draft",
+  "entry": {
+    "kind": "instructions",
+    "main": "SKILL.md"
+  },
+  "permissions": {
+    "filesystem": "none",
+    "shell": "false",
+    "network": "false",
+    "model": "false"
+  }
+}
+```
+
+Only when a new executable provider is truly needed should a pack become a
+`tool_adapter` draft:
+
+```text
+<YuntaoCode data dir>/capability-packs/items/example-tool-adapter/
+    capability.json
     README.md
     src/
     tests/
 ```
 
-## Draft Manifest
+## Tool Adapter Draft Manifest
 
 ```json
 {
@@ -139,15 +187,20 @@ Write tools, shell tools, Git commit tools, export tools, and tools that modify 
 
 ## AI-built Draft Flow
 
-AI can create plugin drafts, but the draft must stay isolated:
+AI can create Capability Pack drafts, but the draft must stay isolated:
 
-1. The user explicitly asks for a new plugin, skill, or reusable capability.
-2. AI creates a draft under `<YuntaoCode data dir>/ai-plugins/<plugin-id>/`.
-3. The draft declares permissions, dependencies, tools, tests, and generated artifacts.
-4. The plugin page may display the draft as an AI draft.
-5. The runtime does not load or register the draft.
-6. AI runs available tests or dependency checks and summarizes the result.
-7. The user confirms whether the draft should enter a future controlled promotion path, similar to command execution confirmation.
+1. The user explicitly asks for a new skill, reusable capability, plugin, or
+   tool adapter.
+2. AI creates a draft under
+   `<YuntaoCode data dir>/capability-packs/items/<pack-id>/`.
+3. AI starts with `kind: method_skill` unless the request truly needs a new
+   executable provider.
+4. A `tool_adapter` draft declares permissions, dependencies, tools, tests,
+   and generated artifacts.
+5. The capability page may display the pack as a local Capability Pack.
+6. The runtime does not load or register executable draft code.
+7. AI runs available tests or dependency checks and summarizes the result.
+8. The user confirms whether the draft should enter a future controlled promotion path, similar to command execution confirmation.
 
 At this stage, that confirmation must not be implemented by modifying `runtime/skills/`, `runtime/api/`, `runtime/app.py`, or built-in tool registration. In-process Python plugin loading remains out of scope until YuntaoCode has a controlled execution boundary.
 
@@ -155,19 +208,21 @@ See [capability-governance.md](capability-governance.md).
 
 ## Skill Evolution Boundary
 
-Plugin drafts and Skill Evolution are related but separate.
+Capability Packs and Skill Evolution are related but separate.
 
-- A plugin draft describes a possible capability provider.
+- A `method_skill` pack describes reusable model-facing task method.
+- A `tool_adapter` pack describes a possible executable capability provider.
 - A Skill Candidate describes a reusable task pattern backed by Runbook
   evidence.
 - Replay Fixtures and Skill Replay Results test whether the candidate works
   against historical task samples.
 - Skill Promotion is a manual enablement decision after replay evidence exists.
 
-Therefore an AI-built plugin draft should not become a trusted runtime skill
+Therefore an AI-built Capability Pack should not become trusted runtime code
 only because the user confirmed that the draft was created. It can become one
-candidate artifact in the Skill Evolution flow, but registration or enablement
-still requires a controlled boundary. See [skill-evolution.md](skill-evolution.md).
+candidate artifact in the Skill Evolution flow, but executable registration or
+enablement still requires a controlled boundary. See
+[skill-evolution.md](skill-evolution.md).
 
 ## Runtime Loading Flow
 

@@ -6,6 +6,12 @@ adapters can depend on them without pulling in model providers or local I/O.
 """
 
 from .capability import CapabilityContract, PermissionSet
+from .capability_pack import (
+    CapabilityPack,
+    CapabilityPackEntry,
+    CapabilityPackPermissions,
+    CapabilityPackProvenance,
+)
 from .automation import Automation, AutomationRun, AutomationTaskTemplate, AutomationTrigger
 from .context import ContextRecord, ContextSnapshot, EvidenceRecord
 from .events import TraceEvent, build_trace_event
@@ -16,6 +22,10 @@ from .task import ProductTask, TaskPlan, TaskStep
 
 __all__ = [
     "CapabilityContract",
+    "CapabilityPack",
+    "CapabilityPackEntry",
+    "CapabilityPackPermissions",
+    "CapabilityPackProvenance",
     "Automation",
     "AutomationRun",
     "AutomationTaskTemplate",

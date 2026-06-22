@@ -11,6 +11,7 @@ AI_PLUGIN_DRAFT_WRITE_TOOLS = {
     "code.edit_file",
     "code.replace_text",
 }
+WORKSPACE_DRAFT_ROOTS = {"ai-plugins", "capability-packs"}
 
 
 def ai_plugin_draft_workspace_guard_message(
@@ -60,8 +61,10 @@ def _path_is_workspace_ai_plugin_draft(raw_path: str, workspace_path: str) -> bo
         if not candidate.is_absolute():
             candidate = workspace_root / candidate
         candidate = candidate.resolve()
-        candidate.relative_to((workspace_root / "ai-plugins").resolve())
-        return True
+        return any(
+            _path_under(candidate, (workspace_root / root_name).resolve())
+            for root_name in WORKSPACE_DRAFT_ROOTS
+        )
     except (OSError, ValueError):
         return False
 
@@ -77,13 +80,22 @@ def _shell_mentions_workspace_ai_plugins(input_data: dict[str, Any], workspace_p
         if part is not None
     )
     lowered = command_text.lower().replace("/", "\\")
-    if "ai-plugins" not in lowered:
+    if not any(root_name in lowered for root_name in WORKSPACE_DRAFT_ROOTS):
         return False
     try:
         workspace_root = str(Path(workspace_path).resolve()).lower().replace("/", "\\")
     except OSError:
         workspace_root = str(workspace_path).lower().replace("/", "\\")
-    return "ai-plugins" in lowered and (workspace_root in lowered or not Path(command_text).is_absolute())
+    mentions_draft_root = any(root_name in lowered for root_name in WORKSPACE_DRAFT_ROOTS)
+    return mentions_draft_root and (workspace_root in lowered or not Path(command_text).is_absolute())
+
+
+def _path_under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 def _normalize_args(value: Any) -> list[str]:
@@ -97,13 +109,14 @@ def _normalize_args(value: Any) -> list[str]:
 def _ai_plugin_draft_message(data_dir: Path | str | None) -> str:
     data_dir_text = str(data_dir or "").strip()
     expected = (
-        f"{data_dir_text}\\ai-plugins\\<plugin-id>"
+        f"{data_dir_text}\\capability-packs\\items\\<pack-id>"
         if data_dir_text
-        else "<YuntaoCode data dir>\\ai-plugins\\<plugin-id>"
+        else "<YuntaoCode data dir>\\capability-packs\\items\\<pack-id>"
     )
     return (
-        "AI 自建插件草稿不能写入当前工作区的 ai-plugins/，因为当前工作区可能是开源仓库，"
+        "AI 自建能力包草稿不能写入当前工作区的 ai-plugins/ 或 capability-packs/，"
+        "因为当前工作区可能是开源仓库，"
         "会造成误提交和开发节奏污染。当前阶段请不要注册或启用该草稿；"
         f"只允许在受控草稿位置 {expected} 中创建候选内容，"
-        "或等待专用插件草稿创建/注册工具。"
+        "优先创建方法型 Skill 能力包；只有确实需要新执行能力时，才创建工具适配器草稿。"
     )

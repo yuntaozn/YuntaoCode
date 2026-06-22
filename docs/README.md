@@ -46,10 +46,12 @@ new architecture note belongs.
 ## Extensions And External Providers
 
 - [plugin-system.md](plugin-system.md) describes the early extension contract,
-  external plugin direction, AI-built plugin drafts, and plugin boundaries.
+  external plugin direction, Capability Packs, and plugin boundaries.
+- [capability-packs.md](capability-packs.md) describes global user-data-level
+  method skills, task templates, context packs, and tool adapter drafts.
 - [capability-governance.md](capability-governance.md) is the current focused
-  note for AI-built plugin draft governance. If it grows further, fold it into
-  `plugin-system.md`.
+  note for AI-built capability governance and the boundary between method
+  skills and executable tool adapters.
 - [mcp-services.md](mcp-services.md) describes MCP service lifecycle,
   connection/protocol state, probing, diagnostics, and capability exposure.
 - [document-draft-runtime.md](document-draft-runtime.md) describes the document

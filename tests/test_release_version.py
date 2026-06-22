@@ -25,6 +25,7 @@ def test_release_version_targets_exclude_independent_versions() -> None:
     assert "runtime/settings_store.py" not in targets
     assert not any(path.startswith("runtime/core/") for path in targets)
     assert not any(path.startswith("ai-plugins/") for path in targets)
+    assert not any(path.startswith("capability-packs/") for path in targets)
     assert not any(path.startswith("runtime/panel/") for path in targets)
 
 

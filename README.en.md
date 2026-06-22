@@ -52,7 +52,7 @@ Context Runtime
   Manages task context, evidence, summaries, memory, and validity boundaries
 
 Capability Runtime
-  Manages tool capabilities, permissions, confirmations, plugin drafts, and external integrations
+  Manages tool capabilities, permissions, confirmations, local Capability Packs, and external integrations
 
 Experience Layer
   Turns task records into Experience Samples, Digests, and Replay Fixtures for later evaluation and capability improvement
@@ -89,7 +89,7 @@ Built-in capabilities include:
 * Web Access
 * Memory
 
-Tools are capability units for task execution. Additional tools can be integrated through the plugin system, but tools themselves are not the product boundary; they should enter the runtime through Capability Contracts.
+Tools are capability units for task execution. Local Capability Packs should first capture method skills, task templates, and context packs; stricter tool adapters or plugins are needed only when a new execution capability is truly required. Tools themselves are not the product boundary; they should enter the runtime through Capability Contracts.
 
 ### Long-Term Memory
 
@@ -313,15 +313,15 @@ def register_my_tools(registry: ToolRegistry):
 
 Create a Handler under `runtime/api/` and register it in `runtime/app.py`.
 
-### Plugins and Plugin Contract
+### Capability Packs and Plugin Contract
 
 The current version provides built-in plugin capability management. It groups tools by ID prefix, such as `filesystem`, `code`, `shell`, `git`, and `web`, and displays enablement and dependency status.
 
 This is not a plugin marketplace or remote update system. The third-party manifest, dynamic loading, permission declarations, and isolation model remain future foundation work.
 
-See the extension contract draft in [docs/plugin-system.md](docs/plugin-system.md). The repository does not include external plugin sample directories at this stage; capability extension examples stay in documentation so experimental artifacts are not mistaken for built-in features.
+See [docs/capability-packs.md](docs/capability-packs.md) for local Capability Packs and the extension contract draft in [docs/plugin-system.md](docs/plugin-system.md). The repository does not include external plugin sample directories at this stage; capability extension examples stay in documentation so experimental artifacts are not mistaken for built-in features.
 
-AI may help create plugin drafts, but drafts must stay isolated. After completion, test/dependency summaries plus one manual confirmation can move the draft into a future controlled registration or enablement path. See [docs/capability-governance.md](docs/capability-governance.md).
+AI may help create local Capability Packs. By default, it should first distill method skills: prompts, steps, counterexamples, and verification checklists under `capability-packs/items/<pack-id>/` in the user data directory. Tool adapter drafts must stay isolated. After completion, test/dependency summaries plus one manual confirmation can move the draft into a future controlled registration or enablement path. See [docs/capability-governance.md](docs/capability-governance.md).
 
 ### MCP Services Directory
 

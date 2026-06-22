@@ -12,6 +12,7 @@ from .. import i18n
 RUNTIME_CAPABILITY_GROUPS = {"attachment", "memory"}
 FOUNDATION_CAPABILITY_GROUPS = {"filesystem", "code", "shell", "git"}
 OPTIONAL_CAPABILITY_GROUPS = {"document", "web"}
+CAPABILITY_PACK_SOURCE_TYPE = "capability_pack"
 
 
 class PluginsHandler(ApiHandler):
@@ -40,19 +41,24 @@ class PluginsHandler(ApiHandler):
                 "source_id": next(iter(source_ids)) if len(source_ids) == 1 else None,
                 "provider_kind": provider_kind,
                 "provider_label": i18n.t(f"plugins.kind.{provider_kind}", lang) or provider_kind,
-            "toggle_locked": provider_kind in {"runtime_capability", "mcp_capability"},
+                "toggle_locked": provider_kind in {"runtime_capability", "mcp_capability"},
                 "enabled": enabled,
                 "local_only": all(bool(tool.get("local_only", True)) for tool in tools),
                 "dependencies": dependency_status,
                 "tools": tools,
             })
-        ai_plugin_root = self.runtime.settings.data_dir / "ai-plugins"
-        plugins.extend(load_ai_plugin_drafts(ai_plugin_root, lang))
+        capability_pack_root = self.runtime.settings.data_dir / "capability-packs"
+        if hasattr(self.runtime, "capability_packs"):
+            capability_pack_root = self.runtime.capability_packs.root_path
+            plugins.extend(load_capability_pack_plugins(self.runtime.capability_packs.list(), lang))
+        legacy_ai_plugin_root = self.runtime.settings.data_dir / "ai-plugins"
+        plugins.extend(load_ai_plugin_drafts(legacy_ai_plugin_root, lang))
         self.finish_json({
             "success": True,
             "data": plugins,
             "meta": {
-                "ai_plugin_draft_root": str(ai_plugin_root),
+                "capability_pack_root": str(capability_pack_root),
+                "ai_plugin_draft_root": str(legacy_ai_plugin_root),
             },
         })
 
@@ -72,14 +78,19 @@ class PluginsHandler(ApiHandler):
             for tool in self.runtime.registry.list_specs()
             if tool["id"].split(".", 1)[0] in RUNTIME_CAPABILITY_GROUPS
         }
-        ai_plugin_root = self.runtime.settings.data_dir / "ai-plugins"
-        draft_ids = {draft["id"] for draft in load_ai_plugin_drafts(ai_plugin_root, lang)}
+        legacy_ai_plugin_root = self.runtime.settings.data_dir / "ai-plugins"
+        draft_ids = {draft["id"] for draft in load_ai_plugin_drafts(legacy_ai_plugin_root, lang)}
+        capability_pack_ids = {
+            pack.id
+            for pack in self.runtime.capability_packs.list(include_archived=True)
+        } if hasattr(self.runtime, "capability_packs") else set()
         policy_error = plugin_toggle_policy_error(
             plugin_id,
             registered_plugin_ids,
             draft_ids,
             managed_plugin_ids,
             runtime_managed_ids,
+            capability_pack_ids,
         )
         if policy_error:
             status, reason = policy_error
@@ -98,6 +109,8 @@ def plugin_id_to_name(plugin_id: str, lang: str = "") -> str:
 def plugin_provider_kind(plugin_id: str, source_type: str = "builtin") -> str:
     if source_type == "mcp":
         return "mcp_capability"
+    if source_type == CAPABILITY_PACK_SOURCE_TYPE:
+        return "capability_pack"
     if source_type == "ai_draft":
         return "ai_draft"
     if source_type not in {"builtin", "mixed"}:
@@ -119,6 +132,7 @@ def plugin_toggle_policy_error(
     draft_plugin_ids: set[str],
     managed_plugin_ids: set[str] | None = None,
     runtime_managed_ids: set[str] | None = None,
+    capability_pack_ids: set[str] | None = None,
 ) -> tuple[int, str] | None:
     if not plugin_id:
         return 400, "plugin_id is required"
@@ -128,9 +142,50 @@ def plugin_toggle_policy_error(
         return 403, "MCP capabilities are managed from the MCP services API"
     if plugin_id in (runtime_managed_ids or set()):
         return 403, "Runtime capabilities are managed by their own runtime settings"
+    if plugin_id in (capability_pack_ids or set()):
+        return 403, "Capability packs are managed from the capability pack API"
     if plugin_id not in registered_plugin_ids:
         return 404, f"unknown plugin: {plugin_id}"
     return None
+
+
+def load_capability_pack_plugins(packs: list[Any], lang: str = "") -> list[dict[str, Any]]:
+    return [capability_pack_to_public_dict(pack, lang) for pack in packs]
+
+
+def capability_pack_to_public_dict(pack: Any, lang: str = "") -> dict[str, Any]:
+    zh = lang.lower().startswith("zh")
+    kind_label_key = f"plugins.capability_pack_kind.{getattr(pack, 'kind', 'method_skill')}"
+    tools = [{
+        "id": f"capability_pack.{pack.id}",
+        "name": pack.name,
+        "description": pack.summary or pack.description,
+        "requires_confirmation": False,
+        "local_only": True,
+    }]
+    permissions = pack.permissions.to_dict() if hasattr(pack.permissions, "to_dict") else {}
+    return {
+        "id": pack.id,
+        "name": pack.name,
+        "description": pack.description or pack.summary or (
+            "本机能力包" if zh else "Local capability pack"
+        ),
+        "source_type": CAPABILITY_PACK_SOURCE_TYPE,
+        "provider_kind": "capability_pack",
+        "provider_label": i18n.t("plugins.kind.capability_pack", lang) or "Capability Packs",
+        "enabled": pack.state == "enabled",
+        "toggle_locked": True,
+        "capability_pack": True,
+        "pack_kind": pack.kind,
+        "pack_kind_label": i18n.t(kind_label_key, lang) or pack.kind,
+        "stage": pack.state,
+        "version": pack.version,
+        "local_only": True,
+        "dependencies": {},
+        "dependency_requirements": {},
+        "permissions": permissions,
+        "tools": tools,
+    }
 
 
 def load_ai_plugin_drafts(root: Path, lang: str = "") -> list[dict[str, Any]]:
