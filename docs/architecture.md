@@ -31,6 +31,8 @@ Tauri 是壳，真正的产品壁垒是本地技能运行时。先把 Python sid
 
 YuntaoCode 不应只按工具清单扩展。Filesystem、Shell、Git、文档解析、浏览器和 MCP 都是工具入口；真正需要沉淀的是本地 AI 任务运行基座。
 
+当前 0.1 的收口目标不是宣称稳定，也不是把所有未来场景都扩展完。它要先明确：YuntaoCode 是本地优先的 AI Task Runtime；Task、Context、Capability 和 Experience 是基础主线；MCP、CLI、内置工具、本机能力包和未来插件都是能力来源，不应各自变成一套独立产品架构。后续每次基础调整都应先判断：它是否让 0.1 更容易收口。
+
 当前基座应按三条执行主线加一条经验学习层理解：
 
 ```text

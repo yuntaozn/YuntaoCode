@@ -371,6 +371,18 @@ We believe that models will continue to change, but a stable, open, and extensib
 
 ## Roadmap
 
+### 0.1 Closeout Goal: Runtime Direction Release
+
+0.1 is not a stability release, and it does not claim that YuntaoCode can already absorb every scenario. Its goal is to make the direction, boundaries, and foundation explicit:
+
+* YuntaoCode is not a tool collection, chat shell, MCP/CLI client, or Skill manager.
+* Its core identity is a local-first AI Task Runtime.
+* 0.1 focuses on closing the Task, Context, Capability, and Experience runtime lines.
+* MCP, CLI, built-in tools, Capability Packs, and future plugins should enter Capability Runtime as providers instead of becoming separate execution systems.
+* Document work, coding, automation, evaluation, Skill Evolution, and self-iteration can continue on top of the foundation, but 0.1 does not try to finish all of them.
+
+For every near-term change, ask first: does this help 0.1 close out? If a change only follows a new concept or adds another scenario without clarifying direction, state, evidence, or capability boundaries, it should wait for a later phase.
+
 ### Phase 1: Runtime Foundation
 
 Goal: stabilize the Task, Context, Capability, and Evidence foundations. YuntaoCode's value is not the number of tools it ships with, but whether tasks can be executed, observed, recovered, verified, and reviewed.

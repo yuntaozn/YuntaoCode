@@ -369,6 +369,18 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 
 ## Roadmap
 
+### 0.1 收口目标：Runtime Direction Release
+
+0.1 不是稳定版，也不是“已经可以扩展所有场景”的完成版。它的目标是先把 YuntaoCode 的方向、边界和基础框架说清楚：
+
+* YuntaoCode 不是工具集合、聊天壳、MCP/CLI 客户端或 Skill 管理器。
+* 它的核心定位是本地优先的 AI Task Runtime。
+* 0.1 优先收束 Task / Context / Capability / Experience 四条主线。
+* MCP、CLI、内置工具、Capability Pack 和未来插件都应作为 Provider 接入 Capability Runtime，而不是各自形成一套执行体系。
+* 文档、代码、自动化、评测、Skill Evolution 和自我迭代都可以在基座上继续深化，但不压进 0.1 作为“必须完成的一切”。
+
+近期每一次调整都应先问一句：它是否帮助 0.1 收口？如果只是追逐新概念或新增场景，而不能让方向、状态、证据、能力边界更清楚，就应先放到后续阶段。
+
 ### Phase 1：Runtime Foundation
 
 目标：先把 Task / Context / Capability / Evidence 四条基础线打稳。YuntaoCode 的价值不来自工具数量，而来自任务能被执行、观察、恢复、验证和复盘。

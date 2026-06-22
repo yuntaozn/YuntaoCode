@@ -7,6 +7,26 @@ The goal is to keep the base architecture clear while the project is still in
 alpha. New features should build on these contracts instead of adding another
 hard-coded branch in the runner.
 
+## 0.1 Closeout Principle
+
+YuntaoCode 0.1 is a runtime direction release, not a stability promise and not
+a claim that every future scenario is already solved.
+
+The closeout goal is to make the foundation legible:
+
+- the project is a local-first AI Task Runtime, not a tool bundle, chat shell,
+  MCP/CLI client, or Skill manager;
+- Task, Context, Capability, and Experience are the main architecture lines;
+- providers such as built-in tools, CLI, MCP, Capability Packs, and future
+  plugins must enter the same Capability Runtime boundary;
+- evidence, state, permissions, verification, and recovery must remain more
+  important than adding another scenario;
+- every near-term change should answer whether it helps 0.1 close out.
+
+If a change does not clarify task state, context boundaries, capability
+contracts, evidence, recovery, audit, or the Experience path, it should be
+treated as post-0.1 unless there is a direct user-facing defect.
+
 ## Runtime Lines
 
 YuntaoCode should be read as a layered runtime, not as a growing tool list.
