@@ -41,7 +41,7 @@ class PluginsHandler(ApiHandler):
                 "source_id": next(iter(source_ids)) if len(source_ids) == 1 else None,
                 "provider_kind": provider_kind,
                 "provider_label": i18n.t(f"plugins.kind.{provider_kind}", lang) or provider_kind,
-                "toggle_locked": provider_kind in {"runtime_capability", "mcp_capability"},
+                "toggle_locked": provider_kind in {"runtime_capability", "mcp_capability", "cli_provider"},
                 "enabled": enabled,
                 "local_only": all(bool(tool.get("local_only", True)) for tool in tools),
                 "dependencies": dependency_status,
@@ -71,7 +71,7 @@ class PluginsHandler(ApiHandler):
         managed_plugin_ids = {
             tool["id"].split(".", 1)[0]
             for tool in self.runtime.registry.list_specs()
-            if tool.get("source_type") == "mcp"
+            if tool.get("source_type") in {"mcp", "cli"}
         }
         runtime_managed_ids = {
             tool["id"].split(".", 1)[0]
@@ -109,6 +109,8 @@ def plugin_id_to_name(plugin_id: str, lang: str = "") -> str:
 def plugin_provider_kind(plugin_id: str, source_type: str = "builtin") -> str:
     if source_type == "mcp":
         return "mcp_capability"
+    if source_type == "cli":
+        return "cli_provider"
     if source_type == CAPABILITY_PACK_SOURCE_TYPE:
         return "capability_pack"
     if source_type == "ai_draft":
@@ -139,7 +141,7 @@ def plugin_toggle_policy_error(
     if plugin_id in draft_plugin_ids:
         return 403, "AI plugin drafts are read-only and cannot be enabled from the plugin settings API"
     if plugin_id in (managed_plugin_ids or set()):
-        return 403, "MCP capabilities are managed from the MCP services API"
+        return 403, "MCP/CLI capabilities are managed from their provider APIs"
     if plugin_id in (runtime_managed_ids or set()):
         return 403, "Runtime capabilities are managed by their own runtime settings"
     if plugin_id in (capability_pack_ids or set()):

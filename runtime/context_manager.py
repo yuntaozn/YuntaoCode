@@ -6,6 +6,7 @@ into a compact digest when the total context exceeds the model's limit.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -61,6 +62,23 @@ def _get_encoding() -> tiktoken.Encoding:
     return _encoding
 
 
+def tokenizer_ready() -> bool:
+    return _encoding is not None
+
+
+async def warm_context_tokenizer() -> None:
+    """Warm the tokenizer off the request path.
+
+    tiktoken loads its encoding lazily. Doing this from the first conversation
+    detail request makes opening the first chat after startup feel slow, even
+    though token usage is only a UI hint at that moment.
+    """
+    try:
+        await asyncio.to_thread(_get_encoding)
+    except Exception:
+        logger.exception("Context tokenizer warmup failed")
+
+
 # ---------------------------------------------------------------------------
 # Token counting helpers
 # ---------------------------------------------------------------------------
@@ -98,6 +116,45 @@ def count_message_tokens(message: dict[str, Any]) -> int:
 def count_messages_tokens(messages: list[dict[str, Any]]) -> int:
     """Return the total token count for a list of messages."""
     return sum(count_message_tokens(m) for m in messages) + 3  # reply priming
+
+
+def estimate_messages_tokens_fast(messages: list[dict[str, Any]]) -> int:
+    """Cheap token estimate for UI display while the tokenizer is cold."""
+    return sum(_estimate_message_tokens_fast(message) for message in messages) + 3
+
+
+def _estimate_message_tokens_fast(message: dict[str, Any]) -> int:
+    overhead = 4
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return overhead + _estimate_text_tokens_fast(content)
+    if isinstance(content, list):
+        total = overhead
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "text":
+                total += _estimate_text_tokens_fast(str(part.get("text") or ""))
+            elif part.get("type") == "image_url":
+                total += 85
+        return total
+    return overhead
+
+
+def _estimate_text_tokens_fast(text: str) -> int:
+    if not text:
+        return 0
+    ascii_chars = 0
+    cjk_chars = 0
+    other_chars = 0
+    for char in text:
+        if "\u4e00" <= char <= "\u9fff":
+            cjk_chars += 1
+        elif ord(char) < 128:
+            ascii_chars += 1
+        else:
+            other_chars += 1
+    return max(1, (ascii_chars + 3) // 4 + cjk_chars + (other_chars + 1) // 2)
 
 
 # ---------------------------------------------------------------------------

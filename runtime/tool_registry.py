@@ -5,6 +5,7 @@ import io
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from .core.capability import CapabilityProvider, normalize_provider_kind
 from .tool_aliases import TOOL_ID_ALIASES, normalize_tool_id, normalize_tool_syntax
 
 
@@ -110,6 +111,9 @@ class ToolRegistry:
         *,
         source_type: str,
         source_id: str | None = None,
+        provider_kind: str | None = None,
+        display_name: str | None = None,
+        lifecycle: str | None = None,
     ) -> None:
         normalized_provider_id = str(provider_id or "").strip()
         normalized_source_type = str(source_type or "").strip()
@@ -120,6 +124,9 @@ class ToolRegistry:
         self._provider_metadata[normalized_provider_id] = {
             "source_type": normalized_source_type,
             "source_id": str(source_id or normalized_provider_id).strip(),
+            "provider_kind": normalize_provider_kind(provider_kind or normalized_source_type),
+            "display_name": str(display_name or normalized_provider_id).strip(),
+            "lifecycle": str(lifecycle or _default_provider_lifecycle(provider_kind or normalized_source_type)).strip(),
         }
 
     def resolve_id(self, tool_id: str) -> str:
@@ -140,8 +147,23 @@ class ToolRegistry:
         public = tool.spec.to_public_dict()
         provider_id = tool.spec.id.split(".", 1)[0]
         metadata = self._provider_metadata.get(provider_id, {})
-        public["source_type"] = metadata.get("source_type", "builtin")
-        public["source_id"] = metadata.get("source_id", provider_id)
+        source_type = metadata.get("source_type", "builtin")
+        source_id = metadata.get("source_id", provider_id)
+        provider_kind = normalize_provider_kind(metadata.get("provider_kind") or source_type)
+        provider = CapabilityProvider(
+            provider_id=provider_id,
+            kind=provider_kind,
+            source_type=source_type,
+            source_id=source_id,
+            display_name=metadata.get("display_name", provider_id),
+            lifecycle=metadata.get("lifecycle", _default_provider_lifecycle(provider_kind)),
+            local_only=bool(public.get("local_only", True)),
+        ).to_dict()
+        public["provider_id"] = provider_id
+        public["provider_kind"] = provider_kind
+        public["provider"] = provider
+        public["source_type"] = source_type
+        public["source_id"] = source_id
         return public
 
     def list_specs(self) -> list[dict[str, Any]]:
@@ -172,3 +194,16 @@ class ToolRegistry:
                     else:
                         result[dep] = result[dep] and available
         return result
+
+
+def _default_provider_lifecycle(provider_kind: str | None) -> str:
+    kind = normalize_provider_kind(provider_kind)
+    if kind == "mcp":
+        return "external_service"
+    if kind == "cli":
+        return "subprocess"
+    if kind in {"external_plugin", "ai_draft"}:
+        return "external_adapter"
+    if kind == "capability_pack":
+        return "asset"
+    return "in_process"

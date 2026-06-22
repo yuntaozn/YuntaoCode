@@ -7,9 +7,81 @@ from typing import Any, Literal
 
 
 CAPABILITY_CONTRACT_SCHEMA_VERSION = "capability_contract.v1"
+CAPABILITY_PROVIDER_SCHEMA_VERSION = "capability_provider.v1"
 
 FilesystemPermission = Literal["none", "workspace", "full_local"]
 ActionPermission = Literal["false", "confirm_each", "allow"]
+ProviderKind = Literal[
+    "builtin",
+    "cli",
+    "mcp",
+    "capability_pack",
+    "external_plugin",
+    "ai_draft",
+    "mixed",
+    "unknown",
+]
+
+PROVIDER_KINDS: frozenset[str] = frozenset(ProviderKind.__args__)  # type: ignore[attr-defined]
+PROVIDER_KIND_ALIASES: dict[str, str] = {
+    "": "builtin",
+    "builtin": "builtin",
+    "runtime": "builtin",
+    "local": "builtin",
+    "cli": "cli",
+    "command": "cli",
+    "local_command": "cli",
+    "mcp": "mcp",
+    "capability_pack": "capability_pack",
+    "skill_pack": "capability_pack",
+    "ai_draft": "ai_draft",
+    "plugin": "external_plugin",
+    "external_plugin": "external_plugin",
+    "external_adapter": "external_plugin",
+    "mixed": "mixed",
+}
+
+
+def normalize_provider_kind(value: str | None, *, fallback: str = "builtin") -> ProviderKind:
+    """Normalize provider implementation kind without exposing tool internals.
+
+    ``source_type`` remains a backwards-compatible origin label.  Provider kind
+    is the runtime-level implementation family used by Capability Runtime:
+    builtin, cli, mcp, capability_pack, external_plugin, ai_draft, mixed, or
+    unknown.
+    """
+    fallback_kind = PROVIDER_KIND_ALIASES.get(str(fallback or "").strip().lower(), "builtin")
+    text = str(value or "").strip().lower()
+    if not text:
+        text = str(fallback_kind or "").strip().lower()
+    normalized = PROVIDER_KIND_ALIASES.get(text, fallback_kind)
+    return normalized if normalized in PROVIDER_KINDS else "unknown"  # type: ignore[return-value]
+
+
+@dataclass(frozen=True)
+class CapabilityProvider:
+    provider_id: str
+    kind: ProviderKind = "builtin"
+    source_type: str = "builtin"
+    source_id: str = ""
+    display_name: str = ""
+    lifecycle: str = "in_process"
+    local_only: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        source_id = self.source_id or self.provider_id
+        return {
+            "schema_version": CAPABILITY_PROVIDER_SCHEMA_VERSION,
+            "provider_id": self.provider_id,
+            "provider_kind": self.kind,
+            "source_type": self.source_type or self.kind,
+            "source_id": source_id,
+            "display_name": self.display_name or self.provider_id,
+            "lifecycle": self.lifecycle,
+            "local_only": self.local_only,
+            "metadata": dict(self.metadata),
+        }
 
 
 @dataclass(frozen=True)

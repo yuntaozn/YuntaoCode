@@ -73,6 +73,19 @@ def test_list_specs_includes_public_metadata() -> None:
             "long_running": False,
             "retry_safe": False,
             "idempotent": True,
+            "provider_id": "demo",
+            "provider_kind": "builtin",
+            "provider": {
+                "schema_version": "capability_provider.v1",
+                "provider_id": "demo",
+                "provider_kind": "builtin",
+                "source_type": "builtin",
+                "source_id": "demo",
+                "display_name": "demo",
+                "lifecycle": "in_process",
+                "local_only": True,
+                "metadata": {},
+            },
             "source_type": "builtin",
             "source_id": "demo",
         }
@@ -100,7 +113,34 @@ def test_registry_exposes_provider_source_metadata() -> None:
 
     assert spec["source_type"] == "external_adapter"
     assert spec["source_id"] == "demo-adapter"
+    assert spec["provider_id"] == "demo"
+    assert spec["provider_kind"] == "external_plugin"
+    assert spec["provider"]["lifecycle"] == "external_adapter"
     assert registry.get_public_spec("demo.get_scene_info") == spec
+
+
+def test_registry_exposes_cli_provider_kind() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            id="pdf_cli.convert",
+            name="Convert PDF",
+            description="Convert PDF with a declared CLI provider",
+            input_schema={"type": "object"},
+        ),
+        _noop_handler,
+    )
+    registry.set_provider_metadata(
+        "pdf_cli",
+        source_type="cli",
+        source_id="pdf-tools",
+    )
+
+    spec = registry.list_specs()[0]
+
+    assert spec["provider_kind"] == "cli"
+    assert spec["provider"]["lifecycle"] == "subprocess"
+    assert spec["source_type"] == "cli"
 
 
 def test_registry_can_unbind_all_tools_from_a_dynamic_source() -> None:

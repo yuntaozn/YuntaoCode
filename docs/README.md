@@ -49,6 +49,9 @@ new architecture note belongs.
   external plugin direction, Capability Packs, and plugin boundaries.
 - [capability-packs.md](capability-packs.md) describes global user-data-level
   method skills, task templates, context packs, and tool adapter drafts.
+- [cli-providers.md](cli-providers.md) describes declarative local command
+  providers as controlled Capability Runtime providers rather than free-form
+  shell access.
 - [capability-governance.md](capability-governance.md) is the current focused
   note for AI-built capability governance and the boundary between method
   skills and executable tool adapters.

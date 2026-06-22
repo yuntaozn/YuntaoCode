@@ -54,6 +54,18 @@ def test_plugin_toggle_policy_rejects_mcp_managed_capability() -> None:
     assert "MCP" in reason
 
 
+def test_plugin_toggle_policy_rejects_cli_managed_capability() -> None:
+    status, reason = plugin_toggle_policy_error(
+        "cli_demo",
+        {"cli_demo"},
+        set(),
+        {"cli_demo"},
+    )
+
+    assert status == 403
+    assert "CLI" in reason
+
+
 def test_plugin_toggle_policy_rejects_runtime_managed_capability() -> None:
     status, reason = plugin_toggle_policy_error(
         "memory",
@@ -73,6 +85,7 @@ def test_plugin_provider_kind_classifies_builtin_boundaries() -> None:
     assert plugin_provider_kind("filesystem") == "builtin_foundation"
     assert plugin_provider_kind("document") == "builtin_optional"
     assert plugin_provider_kind("blender", "mcp") == "mcp_capability"
+    assert plugin_provider_kind("pdf-tools", "cli") == "cli_provider"
     assert plugin_provider_kind("doc-method", "capability_pack") == "capability_pack"
     assert plugin_provider_kind("demo", "ai_draft") == "ai_draft"
 

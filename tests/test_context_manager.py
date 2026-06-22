@@ -17,6 +17,19 @@ def _message(role: str, content: str) -> dict[str, str]:
     return {"role": role, "content": content}
 
 
+def test_fast_token_estimate_is_available_without_precise_tokenizer() -> None:
+    messages = [
+        _message("system", "You are helpful."),
+        _message("user", "请分析这个项目"),
+        {"role": "assistant", "content": [{"type": "text", "text": "好的"}, {"type": "image_url"}]},
+    ]
+
+    estimate = context_manager.estimate_messages_tokens_fast(messages)
+
+    assert estimate > 0
+    assert isinstance(context_manager.tokenizer_ready(), bool)
+
+
 @pytest.mark.asyncio
 async def test_compress_context_force_builds_real_compressed_messages(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[dict[str, Any]]] = []

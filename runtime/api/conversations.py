@@ -38,8 +38,10 @@ from runtime.terminal_profile import get_terminal_config
 from runtime.context_manager import (
     compress_context,
     count_messages_tokens,
+    estimate_messages_tokens_fast,
     get_context_limit,
     get_usable_limit,
+    tokenizer_ready,
 )
 from runtime.conversation_runner import ConversationRunExecutor
 from runtime.conversation_interactions import (
@@ -164,10 +166,16 @@ class ConversationDetailHandler(ApiHandler):
                     "role": role,
                     "content": _message_content_with_attachment_catalog(item.content, metadata),
                 })
-            data["context_tokens"] = count_messages_tokens(messages)
+            if tokenizer_ready():
+                data["context_tokens"] = count_messages_tokens(messages)
+                data["context_tokens_estimated"] = False
+            else:
+                data["context_tokens"] = estimate_messages_tokens_fast(messages)
+                data["context_tokens_estimated"] = True
             data["context_limit"] = get_context_limit(model, self.runtime.settings)
         else:
             data["context_tokens"] = 0
+            data["context_tokens_estimated"] = False
             data["context_limit"] = get_context_limit(model, self.runtime.settings)
 
         self.finish_json({"success": True, "data": data})
@@ -350,7 +358,10 @@ class ConversationMessagesHandler(ApiHandler):
             for spec in specs
             if (
                 _clf.is_state_changing_tool(str(spec.get("id") or ""))
-                or "external_state_change" in set(spec.get("effects") or [])
+                or bool(
+                    set(spec.get("effects") or [])
+                    & {"file_write", "file_delete", "local_state_change", "external_state_change"}
+                )
             )
         }
         capability_issues: list[dict[str, Any]] = []
@@ -360,6 +371,12 @@ class ConversationMessagesHandler(ApiHandler):
                 capability_issues = list(mcp_services.capability_issues())
             except Exception:
                 capability_issues = []
+        cli_providers = getattr(self.runtime, "cli_providers", None)
+        if cli_providers is not None and hasattr(cli_providers, "capability_issues"):
+            try:
+                capability_issues.extend(list(cli_providers.capability_issues()))
+            except Exception:
+                pass
         return _cap_preflight.build_capability_snapshot(
             specs,
             state_changing_tool_ids=state_changing_tool_ids,

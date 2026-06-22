@@ -2,12 +2,13 @@
 
 YuntaoCode 的工具不应只是“模型能调用的一组函数”。对于开源基座，工具需要被提升为能力契约：声明它能做什么、需要什么权限、会产生什么产物、是否长任务、是否可重试、如何验证。
 
-Capability Runtime 管理这些能力契约，并把工具、插件、MCP、AI-built draft 都放进同一条受控路径。
+Capability Runtime 管理这些能力契约，并把内置工具、CLI、MCP、外部插件、
+Capability Pack 和 AI-built draft 都放进同一条受控路径。
 
 ## Core Idea
 
 ```text
-Registered Tool / Plugin / MCP Server
+Registered Tool / Capability Provider
   -> Capability Contract
   -> Permission Check
   -> Confirmation Gate
@@ -98,7 +99,7 @@ executed.
 - AI-built Capability Pack 或工具适配器草稿不能因为用户确认一次就进入主进程执行。
 - 能力启用不等于所有工具调用免确认。
 
-## Capability, Tool, Plugin
+## Capability, Tool, Provider
 
 三者边界：
 
@@ -109,11 +110,56 @@ Capability
 Tool
   实际执行单元，例如 document.extract_pdf_to_docx。
 
-Plugin
-  能力提供者，可以暴露一个或多个 capability/tool。
+Provider
+  能力来源或实现方式，可以暴露一个或多个 capability/tool。
+  例如 builtin、cli、mcp、capability_pack、external_plugin、ai_draft。
 ```
 
-也就是说，插件不是产品边界，能力才是任务运行时的边界。未来 MCP 工具、外部插件、本地内置工具都应映射成 Capability Contract 后再被模型使用。
+也就是说，MCP、CLI、插件和自建能力包都不是任务层边界，能力才是任务运行时
+的边界。模型应优先理解 `document.pdf_to_docx`、`code.text_write`、
+`mcp.blender` 这类 capability；至于它由 Python 内置工具、受控 CLI、MCP
+服务还是外部插件实现，属于 provider 层事实。
+
+Provider 层需要被记录和审计，但不应让任务逻辑分裂成多套流程：
+
+```text
+Capability Runtime
+  capability_id: document.pdf_to_docx
+  tools:
+    - document.extract_pdf_to_docx
+    - pdf_cli.convert
+  providers:
+    - builtin
+    - cli
+```
+
+同一个 capability 未来可以有多个 provider 实现。Runtime 可以根据可用性、权限、
+平台、依赖、执行证据和模型判断来选择工具，但安全确认、PathGuard、Trace、
+RunResult 和验证证据仍走同一条路径。
+
+Provider kind 当前保持小集合：
+
+```text
+builtin
+  运行在主 Runtime 内的内置 Python 能力。
+
+cli
+  受控本地命令提供的能力。CLI 不等于任意 shell；它应有声明式 command/args、
+  输入输出、权限、超时和验证证据。
+
+mcp
+  具有独立服务生命周期和协议连接状态的外部能力提供者。MCP 工具进入
+  ToolRegistry 后仍是普通 capability tool。
+
+capability_pack
+  用户数据目录中的方法型 Skill、任务模板或上下文包。默认不执行代码。
+
+external_plugin
+  未来受控插件 provider。
+
+ai_draft
+  AI 生成的能力草稿或适配器描述，默认不进入可信运行时。
+```
 
 ## Relation To Tool Protocol
 
@@ -162,11 +208,11 @@ Runtime 能力
   通用但偏重或带外部访问边界，可以启停，也应清楚展示依赖和风险。
 
 外部能力提供者
-  MCP services, future external plugins, Capability Packs, AI-built tool adapter drafts
+  CLI providers, MCP services, future external plugins, Capability Packs, AI-built tool adapter drafts
   不应直接混入 `runtime/skills/`，需要独立生命周期和受控边界。
 ```
 
-不适合默认内置的能力包括视频生成、Blender/CAD 建模、RAG/向量库、重度浏览器自动化、特定办公流程、特定行业工具，以及纯提示词方法论 Skill Pack。这些应优先走 MCP、外部插件、AI 草稿或 Skill Evolution，而不是扩大主 Runtime。
+不适合默认内置的能力包括视频生成、Blender/CAD 建模、RAG/向量库、重度浏览器自动化、特定办公流程、特定行业工具，以及纯提示词方法论 Skill Pack。这些应优先走 CLI provider、MCP、外部插件、AI 草稿或 Skill Evolution，而不是扩大主 Runtime。
 
 ## Cross-platform Baseline
 
@@ -204,6 +250,7 @@ User Request
 当前 `docs/plugin-system.md` 仍是外部插件设计草案。Capability Runtime 是它的上层原则：
 
 - 内置工具属于内置 capability provider。
+- 受控 CLI 属于 `cli` provider，而不是裸 shell 能力。
 - AI-built Capability Pack 属于未加载 pack asset；其中的 tool adapter 草稿仍是未加载 draft provider。
 - 外部插件未来属于本地或受控 provider。
 - MCP 工具属于外部 capability provider。
@@ -222,11 +269,14 @@ User Request
 - `runtime/api/plugins.py`
   - 当前插件/能力分组展示。
 - `runtime/core/capability.py`
-  - CapabilityContract、PermissionSet，以及 artifact、effect、task role 初始 schema。
+  - CapabilityContract、CapabilityProvider、PermissionSet，以及 artifact、effect、task role 初始 schema。
 
 Additional runtime guards now exist in `runtime/agent_strategy/capability_preflight.py`:
 
 - `capability_snapshot` captures the per-run available capability boundary.
+- `capability_snapshot` records `provider_kind`, `provider_id`, and provider
+  summaries so diagnostics can distinguish "the capability is unavailable"
+  from "a specific MCP/CLI provider is unhealthy".
 - Model-declared `task_contract.capability_ids` are validated against that
   snapshot.
 - External-state tasks require an available capability with
@@ -269,7 +319,8 @@ Current built-in local file capability split:
 1. 将 ToolSpec 的 artifact、effect、role 和权限元数据逐步映射为 CapabilityContract。
 2. 在 task_contract 之后增加可选 RouteProposal 验证事件。
 3. 继续把 artifact、capability_id 和验证规则沉淀为可测试的 evidence schema。
-4. 前端插件页区分 built-in capability、AI draft、future external provider。
+4. 将 CLI provider 设计为声明式能力来源，而不是开放任意 shell。
+5. 前端插件页区分 built-in capability、CLI provider、MCP provider、AI draft、future external provider。
 
 中期建议：
 

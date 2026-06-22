@@ -49,6 +49,47 @@ def test_snapshot_groups_available_and_unavailable_capability_tools() -> None:
         "mcp_blender.get_scene_info": "weak",
     }
     assert snapshot["external_state_capability_ids"] == []
+    assert snapshot["provider_kinds"] == ["mcp"]
+    assert snapshot["tools_by_provider_kind"] == {
+        "mcp": [
+            "mcp_blender.execute_blender_code",
+            "mcp_blender.get_scene_info",
+        ],
+    }
+    assert snapshot["providers"][0]["provider_kind"] == "mcp"
+    assert snapshot["providers"][0]["available_tool_ids"] == ["mcp_blender.get_scene_info"]
+    assert capability["provider_kinds"] == ["mcp"]
+    assert capability["available_provider_kinds"] == ["mcp"]
+
+
+def test_snapshot_keeps_cli_and_mcp_as_provider_sources_not_capabilities() -> None:
+    snapshot = build_capability_snapshot([
+        {
+            "id": "pdf_cli.convert",
+            "capability": "document.pdf_to_docx",
+            "artifacts": ["docx"],
+            "available": True,
+            "source_type": "cli",
+            "source_id": "pdf-tools",
+        },
+        {
+            "id": "mcp_blender.execute_blender_code",
+            "capability": "mcp.blender",
+            "effects": ["external_state_change"],
+            "available": True,
+            "source_type": "mcp",
+            "source_id": "blender",
+        },
+    ])
+
+    assert snapshot["provider_kinds"] == ["cli", "mcp"]
+    assert snapshot["tools_by_provider_kind"] == {
+        "cli": ["pdf_cli.convert"],
+        "mcp": ["mcp_blender.execute_blender_code"],
+    }
+    capabilities = {item["id"]: item for item in snapshot["capabilities"]}
+    assert capabilities["document.pdf_to_docx"]["provider_kinds"] == ["cli"]
+    assert capabilities["mcp.blender"]["provider_kinds"] == ["mcp"]
 
 
 def test_preflight_advises_external_state_when_no_external_capability_available() -> None:

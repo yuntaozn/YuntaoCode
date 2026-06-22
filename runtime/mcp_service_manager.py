@@ -1233,7 +1233,14 @@ class McpServiceManager:
         if self.registry is None:
             return [f"{namespace}.{_normalize_tool_name(tool.name)}" for tool in tools]
         self.registry.unregister_source(source_type="mcp", source_id=service_id)
-        self.registry.set_provider_metadata(namespace, source_type="mcp", source_id=service_id)
+        self.registry.set_provider_metadata(
+            namespace,
+            source_type="mcp",
+            source_id=service_id,
+            provider_kind="mcp",
+            display_name=str(self.get_config(service_id).get("name") or service_id),
+            lifecycle="external_service",
+        )
         runtime = self._runtime_for(service_id)
         runtime.capability_bindings = []
         tool_ids: list[str] = []

@@ -12,10 +12,11 @@ The distinction is operational rather than semantic:
   through `ToolRegistry`, confirmations, trace, result audit, and capability
   contracts.
 
-`ToolRegistry` exposes provider origin as `source_type` and `source_id`.
-Current source types include `builtin`, `ai_draft`, and `mcp`. The generic MCP
-session registers discovered capabilities as `mcp` with the MCP service
-configuration ID as `source_id`.
+`ToolRegistry` exposes provider origin through a stable provider descriptor:
+`provider_kind`, `provider_id`, `source_type`, and `source_id`. The legacy
+`source_type/source_id` fields remain for compatibility. The generic MCP
+session registers discovered capabilities as `provider_kind=mcp` with the MCP
+service configuration ID as `source_id`.
 
 ## Why MCP Needs Separate Management
 
@@ -46,6 +47,9 @@ MCP Service
         |
 MCP Adapter
   discovery / schema normalization / result normalization
+        |
+Capability Runtime
+  capability contract / provider metadata / permission boundary
         |
 Task Runtime
   capability routing / confirmation / trace / result audit

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from runtime.core.capability import normalize_provider_kind
+
 from .capability_router import build_capability_catalog
 
 
@@ -44,6 +46,20 @@ def build_capability_snapshot(
             continue
         item = dict(spec)
         item["id"] = tool_id
+        provider_id = str(item.get("provider_id") or item.get("source_id") or tool_id.split(".", 1)[0]).strip()
+        provider_kind = normalize_provider_kind(
+            str(item.get("provider_kind") or ""),
+            fallback=str(item.get("source_type") or "builtin"),
+        )
+        item["provider_id"] = provider_id
+        item["provider_kind"] = provider_kind
+        if not isinstance(item.get("provider"), dict):
+            item["provider"] = {
+                "provider_id": provider_id,
+                "provider_kind": provider_kind,
+                "source_type": str(item.get("source_type") or provider_kind),
+                "source_id": str(item.get("source_id") or provider_id),
+            }
         item["available"] = bool(spec.get("available", True))
         normalized_specs.append(item)
 
@@ -89,6 +105,21 @@ def build_capability_snapshot(
             for spec in available_specs
             for item in _string_list(spec.get("roles"))
         })
+        data["provider_kinds"] = sorted({
+            str(spec.get("provider_kind") or "unknown")
+            for spec in [spec_by_id[tool_id] for tool_id in tool_ids]
+            if str(spec.get("provider_kind") or "").strip()
+        })
+        data["available_provider_kinds"] = sorted({
+            str(spec.get("provider_kind") or "unknown")
+            for spec in available_specs
+            if str(spec.get("provider_kind") or "").strip()
+        })
+        data["provider_ids"] = sorted({
+            str(spec.get("provider_id") or "")
+            for spec in [spec_by_id[tool_id] for tool_id in tool_ids]
+            if str(spec.get("provider_id") or "").strip()
+        })
         data["available_verification_strengths"] = sorted({
             str(spec.get("verification_strength") or "").strip()
             for spec in available_specs
@@ -115,6 +146,16 @@ def build_capability_snapshot(
         for tool_id, spec in spec_by_id.items()
         if _tool_health(spec) == "degraded"
     )
+    provider_kinds = sorted({
+        str(spec.get("provider_kind") or "unknown")
+        for spec in spec_by_id.values()
+        if str(spec.get("provider_kind") or "").strip()
+    })
+    available_provider_kinds = sorted({
+        str(spec.get("provider_kind") or "unknown")
+        for spec in spec_by_id.values()
+        if bool(spec.get("available", True)) and str(spec.get("provider_kind") or "").strip()
+    })
 
     return {
         "schema_version": CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
@@ -129,6 +170,10 @@ def build_capability_snapshot(
             for tool_id, spec in sorted(spec_by_id.items())
             if _tool_health(spec) != "available"
         },
+        "provider_kinds": provider_kinds,
+        "available_provider_kinds": available_provider_kinds,
+        "tools_by_provider_kind": _tools_by_provider_kind(spec_by_id),
+        "providers": _provider_summaries(spec_by_id),
         "tool_last_errors": {
             tool_id: str(spec.get("tool_last_error") or "").strip()
             for tool_id, spec in sorted(spec_by_id.items())
@@ -423,6 +468,52 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _tools_by_provider_kind(spec_by_id: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for tool_id, spec in sorted(spec_by_id.items()):
+        provider_kind = str(spec.get("provider_kind") or "unknown").strip() or "unknown"
+        grouped.setdefault(provider_kind, []).append(tool_id)
+    return grouped
+
+
+def _provider_summaries(spec_by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for tool_id, spec in sorted(spec_by_id.items()):
+        provider_kind = str(spec.get("provider_kind") or "unknown").strip() or "unknown"
+        provider_id = str(spec.get("provider_id") or spec.get("source_id") or tool_id.split(".", 1)[0]).strip()
+        key = (provider_kind, provider_id)
+        provider = spec.get("provider") if isinstance(spec.get("provider"), dict) else {}
+        bucket = grouped.setdefault(
+            key,
+            {
+                "provider_kind": provider_kind,
+                "provider_id": provider_id,
+                "source_type": str(provider.get("source_type") or spec.get("source_type") or provider_kind),
+                "source_id": str(provider.get("source_id") or spec.get("source_id") or provider_id),
+                "display_name": str(provider.get("display_name") or provider_id),
+                "lifecycle": str(provider.get("lifecycle") or ""),
+                "tool_ids": [],
+                "available_tool_ids": [],
+                "degraded_tool_ids": [],
+            },
+        )
+        bucket["tool_ids"].append(tool_id)
+        if bool(spec.get("available", True)):
+            bucket["available_tool_ids"].append(tool_id)
+        if _tool_health(spec) == "degraded":
+            bucket["degraded_tool_ids"].append(tool_id)
+    return [
+        {
+            **bucket,
+            "tool_ids": list(dict.fromkeys(bucket["tool_ids"])),
+            "available_tool_ids": list(dict.fromkeys(bucket["available_tool_ids"])),
+            "degraded_tool_ids": list(dict.fromkeys(bucket["degraded_tool_ids"])),
+            "available": bool(bucket["available_tool_ids"]),
+        }
+        for bucket in grouped.values()
+    ]
 
 
 def _string_set(value: Any) -> set[str]:

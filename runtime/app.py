@@ -20,6 +20,7 @@ from .api.capability_packs import (
     CapabilityPackDetailHandler,
     CapabilityPacksHandler,
 )
+from .api.cli_providers import CliProviderDetailHandler, CliProvidersHandler
 from .api.backups import BackupRestoreHandler, BackupsHandler
 from .api.conversations import (
     ConversationCompressHandler,
@@ -49,6 +50,8 @@ from .automation_store import AutomationStore
 from .backup_store import BackupStore
 from .attachment_store import AttachmentStore
 from .capability_pack_store import CapabilityPackStore
+from .cli_provider_manager import CliProviderManager
+from .context_manager import warm_context_tokenizer
 from .security import PathGuard
 from .settings_store import SettingsStore
 from .skills import register_builtin_tools
@@ -76,16 +79,27 @@ class RuntimeState:
     runs: RunStore
     run_events: RunEventHub
     mcp_services: McpServiceManager
+    cli_providers: CliProviderManager
     attachments: AttachmentStore
     automations: AutomationStore
     capability_packs: CapabilityPackStore
 
     def is_tool_available(self, spec: dict[str, Any]) -> bool:
         if spec.get("source_type") != "mcp":
+            if spec.get("source_type") == "cli" or spec.get("provider_kind") == "cli":
+                return self.cli_providers.is_tool_available(
+                    str(spec.get("id") or ""),
+                    source_id=str(spec.get("source_id") or ""),
+                )
             return True
         return self.mcp_services.is_connected(str(spec.get("source_id") or ""))
 
     def tool_runtime_metadata(self, spec: dict[str, Any]) -> dict[str, Any]:
+        if spec.get("source_type") == "cli" or spec.get("provider_kind") == "cli":
+            return self.cli_providers.tool_runtime_metadata(
+                str(spec.get("id") or ""),
+                source_id=str(spec.get("source_id") or ""),
+            )
         if spec.get("source_type") != "mcp":
             return {}
         return self.mcp_services.tool_runtime_metadata(
@@ -98,6 +112,7 @@ def build_runtime(config: RuntimeConfig) -> RuntimeState:
     registry = ToolRegistry()
     register_builtin_tools(registry)
     settings = SettingsStore()
+    cli_providers = CliProviderManager(settings.data_dir / "cli-providers.json", registry=registry)
     attachments = AttachmentStore(settings.data_dir / "attachments.db", settings.data_dir / "attachments")
     tool_tasks = TaskStore(settings.data_dir / "tool-tasks.json")
     path_guard = PathGuard(config.workspace_roots)
@@ -134,6 +149,7 @@ def build_runtime(config: RuntimeConfig) -> RuntimeState:
         runs=runs,
         run_events=run_events,
         mcp_services=mcp_services,
+        cli_providers=cli_providers,
         attachments=attachments,
         automations=automations,
         capability_packs=capability_packs,
@@ -159,6 +175,8 @@ def make_app(runtime: RuntimeState) -> tornado.web.Application:
         (r"/backups/([^/]+)/restore", BackupRestoreHandler, handler_kwargs),
         (r"/backups", BackupsHandler, handler_kwargs),
         (r"/plugins", PluginsHandler, handler_kwargs),
+        (r"/cli-providers/([^/]+)", CliProviderDetailHandler, handler_kwargs),
+        (r"/cli-providers", CliProvidersHandler, handler_kwargs),
         (r"/mcp-services/([^/]+)/actions", McpServiceActionHandler, handler_kwargs),
         (r"/mcp-services/([^/]+)", McpServiceDetailHandler, handler_kwargs),
         (r"/mcp-services", McpServicesHandler, handler_kwargs),
@@ -222,6 +240,7 @@ def main() -> None:
     app = make_app(runtime)
     app.listen(config.port, address=config.host)
     io_loop = tornado.ioloop.IOLoop.current()
+    io_loop.spawn_callback(warm_context_tokenizer)
     io_loop.spawn_callback(runtime.mcp_services.start_auto_services)
 
     print(json.dumps({

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from runtime.core.capability import normalize_provider_kind
+
 
 CAPABILITY_ROUTER_SCHEMA_VERSION = "0.1"
 
@@ -22,6 +24,8 @@ class CapabilityContract:
     retry_safe: bool = False
     idempotent: bool = False
     source: str = "builtin"
+    provider_kinds: tuple[str, ...] = ("builtin",)
+    provider_ids: tuple[str, ...] = ()
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -39,6 +43,8 @@ class CapabilityContract:
             "retry_safe": self.retry_safe,
             "idempotent": self.idempotent,
             "source": self.source,
+            "provider_kinds": list(self.provider_kinds),
+            "provider_ids": list(self.provider_ids),
         }
 
 
@@ -195,6 +201,11 @@ def infer_capability_metadata(tool_id: str) -> tuple[str, str, str]:
 
 def capability_from_tool_spec(spec: dict[str, Any]) -> CapabilityContract:
     tool_id = str(spec.get("id") or "")
+    provider_kind = normalize_provider_kind(
+        str(spec.get("provider_kind") or ""),
+        fallback=str(spec.get("source_type") or "builtin"),
+    )
+    provider_id = str(spec.get("provider_id") or spec.get("source_id") or tool_id.split(".", 1)[0]).strip()
     explicit_capability = str(spec.get("capability") or "").strip()
     if explicit_capability:
         inferred_id, inferred_name, inferred_description = infer_capability_metadata(tool_id)
@@ -220,7 +231,9 @@ def capability_from_tool_spec(spec: dict[str, Any]) -> CapabilityContract:
         long_running=bool(spec.get("long_running")),
         retry_safe=bool(spec.get("retry_safe")),
         idempotent=bool(spec.get("idempotent")),
-        source=str(spec.get("source_type") or "builtin"),
+        source=str(spec.get("source_type") or provider_kind),
+        provider_kinds=(provider_kind,),
+        provider_ids=(provider_id,) if provider_id else (),
     )
 
 
@@ -242,6 +255,8 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
                 "retry_safe": False,
                 "idempotent": True,
                 "source": item.source,
+                "provider_kinds": set(),
+                "provider_ids": [],
             },
         )
         bucket["tool_ids"].extend(item.tool_ids)
@@ -253,6 +268,10 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
         bucket["long_running"] = bool(bucket["long_running"] or item.long_running)
         bucket["retry_safe"] = bool(bucket["retry_safe"] or item.retry_safe)
         bucket["idempotent"] = bool(bucket["idempotent"] and item.idempotent)
+        bucket["provider_kinds"].update(item.provider_kinds)
+        bucket["provider_ids"].extend(item.provider_ids)
+        if bucket["source"] != item.source:
+            bucket["source"] = "mixed"
 
     return [
         CapabilityContract(
@@ -269,6 +288,8 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
             retry_safe=bool(bucket["retry_safe"]),
             idempotent=bool(bucket["idempotent"]),
             source=str(bucket["source"]),
+            provider_kinds=tuple(sorted(bucket["provider_kinds"])) or ("unknown",),
+            provider_ids=tuple(dict.fromkeys(bucket["provider_ids"])),
         )
         for capability_id, bucket in sorted(grouped.items())
     ]
@@ -305,6 +326,8 @@ def format_capability_catalog_for_prompt(catalog: list[CapabilityContract], *, m
             flags.append("retry_safe=true")
         if item.requires_confirmation:
             flags.append("confirm=true")
+        if item.provider_kinds:
+            flags.append(f"providers={','.join(item.provider_kinds)}")
         suffix = f" ({'; '.join(flags)})" if flags else ""
         lines.append(f"- {item.id}: {item.description}; tools={', '.join(item.tool_ids)}{suffix}")
     if len(catalog) > len(visible):

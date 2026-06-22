@@ -52,7 +52,11 @@ Experience Runtime
 
 ```text
 Plugin / Capability Catalog
-  展示任务可以使用的能力，以及能力来自内置、外部适配器或 MCP。
+  展示任务可以使用的能力，以及能力来自内置、CLI、外部适配器或 MCP。
+
+CLI Provider
+  将稳定的本地命令声明为受控能力来源，保留 command/args、依赖、权限、
+  超时、产物和验证证据；它不是开放任意 shell 的替代说法。
 
 MCP Service Manager
   管理 MCP 配置、进程、传输、连接状态、日志和权限。
@@ -93,6 +97,9 @@ Task
 - 让工具通过 Capability Contract 接入，而不是只暴露函数名。
 - 区分本地文件写入与更广义的可观察状态变更，让 MCP、CAD、数据库和浏览器
   自动化通过统一的 `effects / roles / artifacts` 事实进入任务验收。
+- 区分 Capability 与 Provider：任务层看能力，Runtime 层记录 provider kind
+  （builtin、cli、mcp、capability_pack、external_plugin、ai_draft）和 provider
+  健康状态，避免 MCP、CLI、插件各自形成独立执行体系。
 
 Task Model 草案见 [task-model.md](task-model.md)，Context Runtime 规划见 [context-runtime.md](context-runtime.md)，Capability Runtime 规划见 [capability-runtime.md](capability-runtime.md)，Experience Runtime 规划见 [experience-runtime.md](experience-runtime.md)，Document Draft Runtime 见 [document-draft-runtime.md](document-draft-runtime.md)，当前代码层基础契约见 [runtime-foundation.md](runtime-foundation.md)。
 

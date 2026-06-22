@@ -55,6 +55,7 @@ class TaskRunner:
         *DOCUMENT_WRITE_TOOLS,
         *WEB_WRITE_TOOLS,
     }
+    WRITE_EFFECTS = {"file_write", "file_delete", "local_state_change"}
 
     def __init__(
         self,
@@ -144,9 +145,10 @@ class TaskRunner:
             else:
                 path_guard = self.path_guard.with_full_access() if full_access else self.path_guard
             backup_settings = self.settings.get_backup_settings() if self.settings else {"enabled": False, "keep_rounds": 5}
+            tool_effects = set(tool.spec.effects or [])
             if (
                 self.backup_store
-                and task.tool in self.WRITE_TOOLS
+                and self._should_capture_backup(task.tool, tool_effects)
                 and backup_settings.get("enabled", True)
             ):
                 backup_session = self.backup_store.begin(
@@ -225,6 +227,10 @@ class TaskRunner:
                     f"command exited with code {exit_code}",
                 )
         return ""
+
+    @classmethod
+    def _should_capture_backup(cls, tool_id: str, tool_effects: set[str]) -> bool:
+        return tool_id in cls.WRITE_TOOLS or bool(tool_effects & cls.WRITE_EFFECTS)
 
     def _task_temp_dir(self, scope_id: str) -> Path:
         data_dir = getattr(self.settings, "data_dir", None)
