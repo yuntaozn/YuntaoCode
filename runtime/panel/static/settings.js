@@ -170,6 +170,7 @@ function renderProviders() {
             <div class="settings-form-row">
                 <label>${t('settings_js.provider_params')}</label>
                 <textarea data-provider-field="request_options" placeholder='{"temperature":0.2}'>${escapeHtml(JSON.stringify(provider.request_options || {}, null, 2))}</textarea>
+                <span class="hint-line">${t('settings_js.advanced_request_params_hint')}</span>
             </div>
         </div>
     `).join("") : `<div class="hint-line">${t('settings_js.no_providers')}</div>`;
@@ -247,7 +248,8 @@ function renderModels() {
             <span class="hint-line">${t('settings_js.allow_disable_thinking_hint')}</span>
             <div class="settings-form-row">
                 <label>${t('settings_js.model_params')}</label>
-                <textarea data-model-field="request_options" placeholder='{"temperature":0.2,"max_tokens":4096}'>${escapeHtml(JSON.stringify(model.request_options || {}, null, 2))}</textarea>
+                <textarea data-model-field="request_options" placeholder='{"temperature":0.2,"top_p":0.9}'>${escapeHtml(JSON.stringify(model.request_options || {}, null, 2))}</textarea>
+                <span class="hint-line">${t('settings_js.advanced_request_params_hint')}</span>
             </div>
         </div>
     `).join("") : `<div class="hint-line">${t('settings_js.no_models')}</div>`;

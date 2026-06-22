@@ -15,6 +15,7 @@ from .memory_service import (
     update_memory_settings,
 )
 from .memory_store import MemoryStore
+from .model_request_options import sanitize_request_options
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
@@ -329,7 +330,7 @@ class SettingsStore:
                 if "api_key_required" in incoming:
                     target["api_key_required"] = bool(incoming["api_key_required"])
                 if isinstance(incoming.get("request_options"), dict):
-                    target["request_options"] = incoming["request_options"]
+                    target["request_options"] = sanitize_request_options(incoming["request_options"])
                 if "api_key" in incoming and incoming["api_key"]:
                     target["api_key"] = str(incoming["api_key"]).strip()
                 if incoming.get("clear_api_key"):
@@ -411,6 +412,7 @@ class SettingsStore:
         configured = self._settings.get("providers", {}) if isinstance(self._settings.get("providers"), dict) else {}
         for provider_id, config in DEFAULT_SETTINGS.get("providers", {}).items():
             merged = merge_settings(config, configured.get(provider_id, {}) if isinstance(configured.get(provider_id), dict) else {})
+            merged["request_options"] = sanitize_request_options(merged.get("request_options"))
             if include_disabled or merged.get("enabled", True) is not False:
                 providers[provider_id] = merged
         for provider_id, config in configured.items():
@@ -419,6 +421,7 @@ class SettingsStore:
             if not isinstance(config, dict):
                 continue
             merged = merge_settings(default_provider_config(provider_id), config)
+            merged["request_options"] = sanitize_request_options(merged.get("request_options"))
             if include_disabled or merged.get("enabled", True) is not False:
                 providers[provider_id] = merged
         return providers
@@ -621,7 +624,7 @@ def normalize_model_config(value: dict[str, Any]) -> dict[str, Any]:
         "thinking_mode": str(value.get("thinking_mode") or "").strip(),
         "allow_disable_thinking": bool(value.get("allow_disable_thinking", False)),
         "supports_reasoning_effort": bool(value.get("supports_reasoning_effort", False)),
-        "request_options": value.get("request_options") if isinstance(value.get("request_options"), dict) else {},
+        "request_options": sanitize_request_options(value.get("request_options")),
         "enabled": bool(value.get("enabled", True)),
     }
     return model

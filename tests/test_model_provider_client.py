@@ -97,24 +97,43 @@ def test_build_request_body_does_not_guess_output_token_parameter() -> None:
     assert "max_output_tokens" not in body
 
 
-def test_low_level_request_options_override_declared_output_budget() -> None:
+def test_request_options_cannot_override_runtime_owned_fields() -> None:
     body = build_request_body(
         provider_id="custom",
-        provider={},
+        provider={
+            "request_options": {
+                "model": "wrong-model",
+                "tools": [],
+                "temperature": 0.2,
+            },
+        },
         model_config={
             "max_output_tokens": 32768,
             "output_token_param": "max_tokens",
-            "request_options": {"max_tokens": 8192},
+            "thinking_mode": "volcengine",
+            "supports_reasoning_effort": True,
+            "request_options": {
+                "max_tokens": 8192,
+                "reasoning_effort": "low",
+                "thinking": {"type": "disabled"},
+                "top_p": 0.9,
+            },
         },
         model="any-model",
         messages=[{"role": "user", "content": "edit"}],
         stream=True,
-        enable_thinking=False,
-        reasoning_effort="low",
-        tools=None,
+        enable_thinking=True,
+        reasoning_effort="high",
+        tools=[{"type": "function", "function": {"name": "demo", "description": "", "parameters": {}}}],
     )
 
-    assert body["max_tokens"] == 8192
+    assert body["model"] == "any-model"
+    assert body["max_tokens"] == 32768
+    assert body["reasoning_effort"] == "high"
+    assert body["thinking"] == {"type": "enabled"}
+    assert body["tools"]
+    assert body["temperature"] == 0.2
+    assert body["top_p"] == 0.9
 
 
 def test_build_request_body_uses_volcengine_thinking_adapter() -> None:

@@ -95,6 +95,39 @@ def test_invalid_output_token_parameter_is_not_sent(tmp_path: Path) -> None:
     assert model["output_token_param"] == ""
 
 
+def test_request_options_do_not_store_runtime_owned_fields(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / "settings.json")
+    public = store.update({
+        "providers": {
+            "custom": {
+                "name": "Custom",
+                "base_url": "http://127.0.0.1:9999/v1",
+                "request_options": {
+                    "temperature": 0.2,
+                    "model": "wrong",
+                    "messages": [],
+                    "tools": [],
+                },
+            },
+        },
+        "models": [
+            {
+                "id": "custom-model",
+                "provider": "custom",
+                "request_options": {
+                    "top_p": 0.9,
+                    "reasoning_effort": "high",
+                    "max_tokens": 8192,
+                    "enable_thinking": False,
+                },
+            },
+        ],
+    })
+
+    assert public["providers"]["custom"]["request_options"] == {"temperature": 0.2}
+    assert store.get_model_config("custom-model")["request_options"] == {"top_p": 0.9}
+
+
 def test_runtime_managed_capabilities_ignore_plugin_disable_setting(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / "settings.json")
     store.update_plugin_setting("memory", False)

@@ -128,8 +128,9 @@ Runtime 会先完整解析并验证补丁涉及的全部文件，再执行写入
 大。任意模型都可以声明 `max_output_tokens` 和该 Provider 接受的
 `output_token_param`（`max_tokens`、`max_completion_tokens` 或
 `max_output_tokens`）；未声明时 Runtime 不猜测参数，沿用 Provider 默认值。
-低层 `request_options` 可以覆盖声明值。即使提高预算，模型仍应优先发送小补丁，
-而不是反复尝试完整大文件写入。
+高级 `request_options` 只用于 Provider 特殊透传参数，不能覆盖 Runtime 拥有的
+`model`、`messages`、`tools`、`thinking`、`reasoning_effort` 或输出预算字段。
+即使提高预算，模型仍应优先发送小补丁，而不是反复尝试完整大文件写入。
 
 ## ToolTask 与 Task 的边界
 

@@ -7,6 +7,7 @@ from typing import Any, AsyncIterator
 import tornado.httpclient
 import tornado.web
 
+from runtime.model_request_options import sanitize_request_options
 from runtime.settings_store import SettingsStore
 
 async def generate_chat_completion(
@@ -228,9 +229,9 @@ def build_request_body(
 
     request_options: dict[str, Any] = {}
     if isinstance(provider.get("request_options"), dict):
-        request_options.update(provider["request_options"])
+        request_options.update(sanitize_request_options(provider["request_options"]))
     if isinstance(model_config.get("request_options"), dict):
-        request_options.update(model_config["request_options"])
+        request_options.update(sanitize_request_options(model_config["request_options"]))
     body.update(request_options)
     return body
 
