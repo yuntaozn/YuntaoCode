@@ -141,6 +141,7 @@ def _latest_result_status(events: list[dict[str, Any]]) -> str:
     for event in reversed(events):
         if event.get("event") == "result" and isinstance(event.get("result"), dict):
             return str(event["result"].get("status") or "")
+    for event in reversed(events):
         if event.get("event") == "done":
             return str(event.get("run_status") or "")
     return ""

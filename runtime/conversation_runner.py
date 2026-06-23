@@ -221,12 +221,11 @@ class ConversationRunExecutor:
         }
         execution_plan: dict[str, Any] | None = None
         change_baseline = await self._capture_git_status(workspace.path, mode_config)
-        task_intent = self._classify_task_intent(
-            content,
-            effective_mode,
-            conversation,
-        )
-        hard_no_write_lock = self._has_no_write_instruction(content)
+        user_no_write_hint = self._has_no_write_instruction(content)
+        # Keep the initial contract neutral. The model-side task contract owns
+        # semantic task classification; explicit user wording such as
+        # "only analyze" is passed as context, not used to pre-classify.
+        task_intent = "answer_only"
         expected_document_coverage = self._expects_full_document_output(content, conversation)
         expected_min_output_chars = self._expected_min_output_chars(content, conversation)
         task_contract = self._build_task_contract(
@@ -240,13 +239,13 @@ class ConversationRunExecutor:
         )
         inherited_contract = self._previous_task_contract_context(conversation, content)
         direct_contract_inheritance = _tc.looks_like_execute_contract_followup(content)
-        if inherited_contract and direct_contract_inheritance and not hard_no_write_lock:
+        if inherited_contract and direct_contract_inheritance and not user_no_write_hint:
             task_contract = _tc.inherit_task_contract_for_followup(inherited_contract, task_contract)
             metadata["inherited_task_contract"] = True
         elif self._should_use_model_task_contract(
             content,
             task_intent,
-            hard_no_write_lock,
+            user_no_write_hint,
             conversation,
         ):
             self.write_event({
@@ -261,7 +260,7 @@ class ConversationRunExecutor:
                 workspace_path=workspace.path,
                 user_content=content,
                 fallback_contract=task_contract,
-                hard_no_write_lock=hard_no_write_lock,
+                user_no_write_hint=user_no_write_hint,
                 expected_document_coverage=expected_document_coverage,
                 expected_min_output_chars=expected_min_output_chars,
                 previous_contract=inherited_contract,
@@ -390,13 +389,13 @@ class ConversationRunExecutor:
                 "role": "system",
                 "content": (
                     self._read_only_task_prompt(workspace.path)
-                    if hard_no_write_lock
+                    if user_no_write_hint
                     else self._analysis_first_task_prompt(workspace.path)
                 ),
             })
         metadata["task_intent"] = task_intent
         metadata["agent_profile"] = profile_to_public_dict(agent_profile)
-        metadata["hard_no_write_lock"] = hard_no_write_lock
+        metadata["user_no_write_hint"] = user_no_write_hint
         metadata["code_change_intent"] = code_change_intent
         metadata["state_change_intent"] = state_change_intent
         metadata["planning_policy"] = planning_policy
@@ -511,24 +510,6 @@ class ConversationRunExecutor:
                 metadata["execution_plan"] = execution_plan
                 self.write_event({"event": "plan", "plan": execution_plan})
                 await self.flush()
-                if self._plan_has_pending_write_step(execution_plan):
-                    if _tc.promote_task_contract_for_write_intent(
-                        task_contract,
-                        reason="planned_write_step",
-                        deliverable_kind="code",
-                        description="Execution plan includes a local write step",
-                    ):
-                        task_intent = str(task_contract.get("intent") or task_intent)
-                        code_change_intent = bool(task_contract.get("requires_write"))
-                        state_change_intent = bool(task_contract.get("requires_state_change"))
-                        metadata["task_contract"] = task_contract
-                        self._active_task_contract = task_contract
-                        self.write_event({"event": "task_contract", "contract": task_contract})
-                        messages.append({
-                            "role": "system",
-                            "content": self._task_contract_prompt(task_contract),
-                        })
-                        await self.flush()
                 messages.append({
                     "role": "assistant",
                     "content": self._format_execution_plan_for_context(execution_plan),
@@ -1203,11 +1184,7 @@ class ConversationRunExecutor:
                 for tool_call in tool_calls:
                     await self._wait_if_paused()
                     tool_id, arguments = self._tool_call_details(tool_call, tool_name_map)
-                    if (
-                        not hard_no_write_lock
-                        and self._is_write_tool(tool_id)
-                        and not bool(task_contract.get("requires_write"))
-                    ):
+                    if self._is_write_tool(tool_id) and not bool(task_contract.get("requires_write")):
                         write_path_hint = str(
                             arguments.get("path")
                             or arguments.get("output_path")
@@ -1271,19 +1248,6 @@ class ConversationRunExecutor:
                                 "message": "写入工具参数被截断，正在要求模型换成更小步的写入策略。",
                             })
                             await self.flush()
-                        continue
-                    if hard_no_write_lock and self._is_state_changing_tool(tool_id):
-                        tool_message, tool_event = self._skipped_tool_call(
-                            tool_call,
-                            tool_id,
-                            arguments,
-                            reason="hard_no_write_lock",
-                            message="用户已明确要求不要修改/只分析，执行层已拦截会改变本地状态的工具调用。",
-                        )
-                        tool_events.append(tool_event)
-                        self.write_event({"event": "tool", **tool_event})
-                        await self.flush()
-                        messages.append(tool_message)
                         continue
                     plan_step_index = self._mark_next_plan_step_running(
                         execution_plan,

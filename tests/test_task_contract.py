@@ -62,7 +62,7 @@ def test_model_contract_can_raise_write_requirement() -> None:
     assert "target_deliverable_success" in contract["success_conditions"]
 
 
-def test_hard_no_write_lock_overrides_model_contract() -> None:
+def test_no_write_hint_does_not_override_model_contract() -> None:
     contract = merge_model_task_contract(
         {
             "intent": "write_required",
@@ -70,15 +70,16 @@ def test_hard_no_write_lock_overrides_model_contract() -> None:
             "deliverables": [{"kind": "file", "path_hint": "demo.html"}],
         },
         _fallback("answer_only"),
-        hard_no_write_lock=True,
+        user_no_write_hint=True,
     )
 
-    assert contract["intent"] == "read_only_analysis"
-    assert contract["requires_write"] is False
-    assert contract["requires_state_change"] is False
-    assert contract["requires_verification"] is False
-    assert contract["deliverables"] == []
-    assert "hard_no_write_lock" in contract["system_overrides"]
+    assert contract["intent"] == "write_required"
+    assert contract["requires_write"] is True
+    assert contract["requires_state_change"] is True
+    assert contract["requires_verification"] is True
+    assert contract["deliverables"][0]["path_hint"] == "demo.html"
+    assert contract["user_no_write_hint"] is True
+    assert "user_no_write_hint" in contract["system_overrides"]
 
 
 def test_invalid_model_contract_falls_back_to_policy_contract() -> None:
@@ -244,6 +245,22 @@ def test_short_action_request_still_uses_model_contract() -> None:
 
 def test_obvious_chat_can_skip_model_contract_without_recent_task() -> None:
     assert not should_use_model_task_contract("你好", "answer_only", False)
+
+
+def test_no_write_hint_still_uses_model_contract_for_semantic_judgment() -> None:
+    assert should_use_model_task_contract(
+        "Only analyze the current issue; do not modify files yet.",
+        "answer_only",
+        True,
+    )
+
+
+def test_non_chat_recommendation_uses_model_contract_for_semantic_judgment() -> None:
+    assert should_use_model_task_contract(
+        "Compare several options for a low-cost programmable consumer device and recommend a concrete model.",
+        "answer_only",
+        False,
+    )
 
 
 def test_obvious_chat_uses_model_contract_when_it_may_be_task_follow_up() -> None:
@@ -654,9 +671,9 @@ def test_runtime_write_promotion_turns_answer_contract_into_verifiable_code_targ
 
     changed = promote_task_contract_for_write_intent(
         contract,
-        reason="planned_write_step",
+        reason="model_selected_write_tool",
         deliverable_kind="code",
-        description="Plan includes a code edit",
+        description="Model selected a write tool",
     )
 
     assert changed is True
@@ -666,7 +683,7 @@ def test_runtime_write_promotion_turns_answer_contract_into_verifiable_code_targ
     assert contract["requires_verification"] is True
     assert contract["deliverables"][0]["kind"] == "code"
     assert contract["deliverables"][0]["path_hint"] == "D:/workspace/app"
-    assert "planned_write_step" in contract["system_overrides"]
+    assert "model_selected_write_tool" in contract["system_overrides"]
     assert "target_deliverable_success" in contract["success_conditions"]
     assert "target_deliverable_verification" in contract["success_conditions"]
 
@@ -862,7 +879,7 @@ def test_continuity_does_not_override_current_document_size_requirement() -> Non
     assert contract["expected_min_output_chars"] == 50000
 
 
-def test_continuity_does_not_override_hard_no_write_lock() -> None:
+def test_continuity_preserves_model_contract_with_no_write_hint() -> None:
     previous = {
         "intent": "write_required",
         "goal": "Modify the project",
@@ -873,7 +890,7 @@ def test_continuity_does_not_override_hard_no_write_lock() -> None:
     locked = merge_model_task_contract(
         {"scope_relation": "revise", "requires_write": True},
         _fallback("write_required"),
-        hard_no_write_lock=True,
+        user_no_write_hint=True,
     )
 
     contract = apply_task_continuity(
@@ -882,9 +899,10 @@ def test_continuity_does_not_override_hard_no_write_lock() -> None:
         current_user_content="only analyze, do not modify",
     )
 
-    assert contract["requires_write"] is False
-    assert contract["requires_state_change"] is False
-    assert contract["deliverables"] == []
+    assert contract["requires_write"] is True
+    assert contract["requires_state_change"] is True
+    assert contract["deliverables"][0]["path_hint"] == "app.py"
+    assert contract["user_no_write_hint"] is True
 
 
 def test_deliverable_path_policy_defaults_to_hint_and_accepts_exact() -> None:

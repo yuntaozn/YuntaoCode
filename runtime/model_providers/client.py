@@ -90,6 +90,30 @@ async def stream_chat_completion(
     max_idle_timeout: float = 240.0,
 ) -> AsyncIterator[dict[str, Any]]:
     model_config, provider, provider_id = settings.resolve_model(model)
+    if model_config.get("supports_stream", True) is False:
+        try:
+            answer, metadata = await generate_chat_completion(
+                settings=settings,
+                model=model,
+                messages=messages,
+                enable_thinking=enable_thinking,
+                reasoning_effort=reasoning_effort,
+                tools=tools,
+                tool_choice=tool_choice,
+            )
+        except tornado.web.HTTPError as exc:
+            yield {"error": exc.reason or str(exc), "status": exc.status_code}
+            return
+        if metadata.get("reasoning"):
+            yield {"reasoning": metadata["reasoning"]}
+        if answer:
+            yield {"message": answer}
+        if metadata.get("usage"):
+            yield {"usage": metadata["usage"], "finish_reason": "stop"}
+        else:
+            yield {"finish_reason": "stop"}
+        return
+
     api_model = model_config.get("api_model") or model
     api_key = provider.get("api_key") or ""
     base_url = (provider.get("base_url") or "").rstrip("/")
@@ -335,12 +359,24 @@ def extract_stream_event(payload: dict[str, Any]) -> dict[str, Any]:
         return event
     choice = choices[0] or {}
     delta = choice.get("delta") or choice.get("message") or {}
-    message = normalize_text(delta.get("content") or delta.get("text") or "")
+    message = normalize_text(
+        delta.get("content")
+        or delta.get("text")
+        or choice.get("content")
+        or choice.get("text")
+        or ""
+    )
     reasoning = normalize_text(
         delta.get("reasoning_content")
         or delta.get("reasoning")
         or delta.get("reasoning_details")
         or delta.get("thinking")
+        or delta.get("thinking_content")
+        or choice.get("reasoning_content")
+        or choice.get("reasoning")
+        or choice.get("reasoning_details")
+        or choice.get("thinking")
+        or choice.get("thinking_content")
         or ""
     )
     event: dict[str, Any] = {}

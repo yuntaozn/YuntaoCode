@@ -731,14 +731,14 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         self,
         content: str,
         fallback_intent: str,
-        hard_no_write_lock: bool,
+        user_no_write_hint: bool,
         conversation: Any | None = None,
     ) -> bool:
         text = str(content or "").strip()
         return _tc.should_use_model_task_contract(
             text,
             fallback_intent,
-            hard_no_write_lock,
+            user_no_write_hint,
             has_recent_task_context=self._has_recent_task_context(conversation, text),
         )
 
@@ -750,7 +750,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         workspace_path: str,
         user_content: str,
         fallback_contract: dict[str, Any],
-        hard_no_write_lock: bool,
+        user_no_write_hint: bool,
         expected_document_coverage: bool,
         expected_min_output_chars: int,
         previous_contract: dict[str, Any] | None = None,
@@ -783,7 +783,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             contract = _tc.merge_model_task_contract(
                 parsed,
                 fallback_contract,
-                hard_no_write_lock=hard_no_write_lock,
+                user_no_write_hint=user_no_write_hint,
                 expected_document_coverage=expected_document_coverage,
                 expected_min_output_chars=expected_min_output_chars,
             )
@@ -796,7 +796,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             contract = _tc.merge_model_task_contract(
                 None,
                 fallback_contract,
-                hard_no_write_lock=hard_no_write_lock,
+                user_no_write_hint=user_no_write_hint,
                 expected_document_coverage=expected_document_coverage,
                 expected_min_output_chars=expected_min_output_chars,
             )
@@ -2236,7 +2236,9 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         content: str,
         conversation: Any | None = None,
     ) -> str:
-        return _task_ctx.effective_mode(requested_mode, content, conversation)
+        if requested_mode in {"coding", "paper", "document"}:
+            return requested_mode
+        return requested_mode or "terminal"
 
     def _looks_like_paper_task(self, content: str) -> bool:
         return _clf.looks_like_paper_task(content)

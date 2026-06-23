@@ -72,3 +72,32 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
     assert evidence["recovery"]["latest_checkpoint"]["id"] == "checkpoint-1"
     assert evidence["replay_seed"]["source_run_id"] == run.id
     assert evidence["replay_seed"]["boundary"] == "manual_start_required"
+
+
+def test_build_run_evidence_keeps_result_status_separate_from_done_status(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.json")
+    run = store.create(
+        conversation_id="conv_1",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="Analyze current project",
+        task_id="task-1",
+    )
+    store.record_event(run.id, {
+        "event": "result",
+        "result": {
+            "kind": "run_result",
+            "status": "no_tool_activity",
+            "risks": [],
+        },
+    })
+    store.record_event(run.id, {
+        "event": "done",
+        "run_status": "success",
+    })
+
+    current = store.get(run.id)
+    evidence = build_run_evidence(current)
+
+    assert evidence["trace"]["run_status"] == "success"
+    assert evidence["trace"]["result_status"] == "no_tool_activity"

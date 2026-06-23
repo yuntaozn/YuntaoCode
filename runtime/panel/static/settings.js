@@ -228,6 +228,10 @@ function renderModels() {
                     <span>${t('settings_js.support_tools')}</span>
                 </label>
                 <label class="checkbox-line compact">
+                    <input data-model-field="supports_stream" type="checkbox" ${model.supports_stream !== false ? "checked" : ""}>
+                    <span>${t('settings_js.support_stream')}</span>
+                </label>
+                <label class="checkbox-line compact">
                     <input data-model-field="supports_reasoning_effort" type="checkbox" ${model.supports_reasoning_effort ? "checked" : ""}>
                     <span>${t('settings_js.support_reasoning_effort')}</span>
                 </label>
@@ -437,6 +441,7 @@ function collectModels() {
             max_output_tokens: Number(item.querySelector('[data-model-field="max_output_tokens"]').value || 0),
             output_token_param: item.querySelector('[data-model-field="output_token_param"]').value,
             supports_tools: item.querySelector('[data-model-field="supports_tools"]').checked,
+            supports_stream: item.querySelector('[data-model-field="supports_stream"]')?.checked !== false,
             supports_reasoning_effort: item.querySelector('[data-model-field="supports_reasoning_effort"]').checked,
             thinking_mode: item.querySelector('[data-model-field="thinking_mode"]').value,
             allow_disable_thinking: item.querySelector('[data-model-field="allow_disable_thinking"]')?.checked || false,
@@ -638,6 +643,7 @@ async function addModelFromDialog() {
             max_output_tokens: 0,
             output_token_param: "",
             supports_tools: true,
+            supports_stream: true,
             supports_reasoning_effort: false,
             thinking_mode: $("add-model-thinking-mode-input").value,
             allow_disable_thinking: $("add-model-allow-disable-thinking-input").checked,

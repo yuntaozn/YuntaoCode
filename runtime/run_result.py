@@ -190,8 +190,26 @@ def build_run_result(
         tool_events,
         task_contract=task_contract,
     )
+    unobserved_requested_capabilities = [
+        str(item)
+        for item in (capability_evidence.get("unobserved_requested_capability_ids") or [])
+        if str(item or "").strip()
+    ]
+    requested_capability_not_observed = bool(
+        unobserved_requested_capabilities and not tool_events
+    )
 
     risks: list[str] = []
+    if requested_capability_not_observed:
+        failures.append({
+            "tool": "capability.evidence",
+            "path": "",
+            "error": (
+                "requested capability not observed: "
+                + ", ".join(unobserved_requested_capabilities)
+            )[:500],
+        })
+        risks.append("requested_capability_not_observed")
     failure_reasons = {
         str((event.get("output") or {}).get("reason") or "").strip()
         for event in tool_events
@@ -364,6 +382,13 @@ def build_run_result(
             "role": "model",
             "impact": "degraded" if observed_state_change or tool_events else "blocking",
         })
+    if requested_capability_not_observed:
+        failure_details.append({
+            "tool": "capability.evidence",
+            "path": "",
+            "role": "capability",
+            "impact": "blocking",
+        })
     blocking_failures = [item for item in failure_details if item["impact"] == "blocking"]
     degraded_failures = [item for item in failure_details if item["impact"] == "degraded"]
     incidental_failures = [item for item in failure_details if item["impact"] == "incidental"]
@@ -451,6 +476,7 @@ def build_run_result(
             "unverified_optional_write": unverified_optional_write,
             "model_provider_error": bool(model_error_text),
             "invalid_final_answer": bool(final_answer_error_text),
+            "requested_capability_not_observed": requested_capability_not_observed,
         },
     }
 

@@ -812,6 +812,7 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
                 },
                 "required": ["path"],
             },
+            capability="filesystem.local_files",
         ),
         scan_folder,
     )
@@ -829,6 +830,7 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
                 },
                 "required": ["path"],
             },
+            capability="filesystem.local_files",
         ),
         read_text_preview,
     )
@@ -846,6 +848,7 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
                 },
                 "required": ["path"],
             },
+            capability="filesystem.local_files",
         ),
         read_file,
     )

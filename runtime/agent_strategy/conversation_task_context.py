@@ -54,9 +54,6 @@ def previous_write_context(conversation: Any | None, current_content: str) -> bo
         execution_notice = metadata.get("execution_notice")
         if isinstance(execution_notice, dict) and execution_notice.get("reason") in WRITE_NOTICE_REASONS:
             return True
-        execution_plan = metadata.get("execution_plan")
-        if _clf.plan_has_pending_write_step(execution_plan):
-            return True
         content_hint = previous_content.lower()
         if "继续" in content_hint and any(
             term in content_hint

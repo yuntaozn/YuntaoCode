@@ -526,7 +526,7 @@ async def test_model_task_contract_receives_recent_conversation_context(monkeypa
             confirmation_policy="auto",
             workspace_path=r"D:\ifctool",
         ),
-        hard_no_write_lock=False,
+        user_no_write_hint=False,
         expected_document_coverage=False,
         expected_min_output_chars=0,
     )
@@ -584,7 +584,7 @@ async def test_model_task_contract_revision_keeps_previous_semantic_target(
             confirmation_policy="auto",
             workspace_path=r"D:\blender",
         ),
-        hard_no_write_lock=False,
+        user_no_write_hint=False,
         expected_document_coverage=False,
         expected_min_output_chars=0,
         previous_contract=previous,

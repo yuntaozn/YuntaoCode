@@ -93,6 +93,38 @@ def test_follow_up_inherits_previous_write_context_for_mode_and_intent() -> None
     assert code_change_intent("继续加选择构件功能", "coding", conversation)
 
 
+def test_plan_with_write_step_alone_does_not_create_previous_write_context() -> None:
+    conversation = SimpleNamespace(messages=[
+        _message("user", "\u5206\u6790\u5e76\u63a8\u8350\u4e00\u6b3e\u4f4e\u4ef7\u65e0\u4eba\u673a"),
+        _message(
+            "assistant",
+            "\u5efa\u8bae\u8c03\u7814\u4ea7\u54c1\u53c2\u6570",
+            {
+                "execution_plan": {
+                    "steps": [
+                        {
+                            "title": "\u6267\u884c\u4ee3\u7801\u53d8\u66f4",
+                            "status": "pending",
+                            "tool_hint": "code.edit_file",
+                        }
+                    ]
+                },
+                "task_contract": {
+                    "intent": "read_only_analysis",
+                    "requires_write": False,
+                    "requires_state_change": False,
+                    "deliverables": [{"kind": "answer"}],
+                },
+            },
+        ),
+    ])
+
+    follow_up = "\u518d\u63a8\u8350\u4e00\u6b3e\u5177\u4f53\u578b\u53f7"
+
+    assert not previous_write_context(conversation, follow_up)
+    assert effective_mode(None, follow_up, conversation) == "terminal"
+
+
 def test_expected_min_output_chars_uses_current_request_before_history() -> None:
     conversation = SimpleNamespace(messages=[
         _message("user", "写一篇 50000 字报告"),

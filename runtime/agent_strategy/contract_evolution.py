@@ -37,10 +37,6 @@ def apply_task_continuity(
 ) -> dict[str, Any]:
     """Apply a continuation relationship to a task contract."""
     result = dict(contract)
-    if "hard_no_write_lock" in set(result.get("system_overrides") or []):
-        result["scope_relation"] = normalize_scope_relation(result.get("scope_relation"))
-        result.setdefault("revision_request", "")
-        return result
     if not isinstance(previous_contract, dict):
         result["scope_relation"] = normalize_scope_relation(result.get("scope_relation"))
         result.setdefault("revision_request", "")
@@ -238,9 +234,6 @@ def promote_task_contract_for_write_intent(
     """Promote a contract when runtime facts show a write is now intended."""
     if not isinstance(contract, dict):
         return False
-    if "hard_no_write_lock" in set(contract.get("system_overrides") or []):
-        return False
-
     before = json.dumps(contract, ensure_ascii=False, sort_keys=True, default=str)
     kind = _normalize_deliverable_kind(deliverable_kind, path_hint=path_hint)
     _promote_deliverables_for_write(

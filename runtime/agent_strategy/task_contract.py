@@ -130,7 +130,7 @@ def merge_model_task_contract(
     raw_contract: dict[str, Any] | None,
     fallback_contract: dict[str, Any],
     *,
-    hard_no_write_lock: bool = False,
+    user_no_write_hint: bool = False,
     expected_document_coverage: bool = False,
     expected_min_output_chars: int = 0,
 ) -> dict[str, Any]:
@@ -220,18 +220,9 @@ def merge_model_task_contract(
     )
 
     overrides = list(contract.get("system_overrides") or [])
-    if hard_no_write_lock:
-        contract.update({
-            "intent": "read_only_analysis",
-            "requires_write": False,
-            "requires_state_change": False,
-            "requires_verification": False,
-            "required_verification_modalities": [],
-            "capability_ids": [],
-            "deliverables": [],
-            "first_action": "read",
-        })
-        overrides.append("hard_no_write_lock")
+    if user_no_write_hint:
+        contract["user_no_write_hint"] = True
+        overrides.append("user_no_write_hint")
 
     if contract.get("expected_document_coverage"):
         overrides.append("expected_document_coverage")
@@ -382,7 +373,7 @@ def task_contract_context_messages(
 def should_use_model_task_contract(
     content: str,
     fallback_intent: str,
-    hard_no_write_lock: bool,
+    user_no_write_hint: bool,
     *,
     has_recent_task_context: bool = False,
 ) -> bool:
@@ -393,8 +384,6 @@ def should_use_model_task_contract(
     not use message length or scenario keywords to decide whether a request is
     actionable; that semantic judgment belongs to the model-side contract.
     """
-    if hard_no_write_lock:
-        return False
     text = str(content or "").strip()
     if not text:
         return False

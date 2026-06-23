@@ -785,6 +785,7 @@ def register_code_tools(registry: ToolRegistry) -> None:
                 },
                 "required": ["path", "query"],
             },
+            capability="code.local_project",
         ),
         search_text,
     )
@@ -803,6 +804,7 @@ def register_code_tools(registry: ToolRegistry) -> None:
                 },
                 "required": ["path"],
             },
+            capability="code.local_project",
         ),
         list_project_files,
     )

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
+from runtime.model_providers import client as provider_client
 from runtime.model_providers.client import (
     build_request_body,
     extract_direct_stream_event,
     extract_stream_event,
+    stream_chat_completion,
 )
 
 
@@ -40,6 +44,22 @@ def test_extract_stream_event_preserves_finish_reason() -> None:
     })
 
     assert event["finish_reason"] == "length"
+
+
+def test_extract_stream_event_accepts_choice_level_content_and_reasoning() -> None:
+    event = extract_stream_event({
+        "choices": [
+            {
+                "content": "hello",
+                "reasoning": "thinking",
+                "finish_reason": "stop",
+            }
+        ],
+    })
+
+    assert event["message"] == "hello"
+    assert event["reasoning"] == "thinking"
+    assert event["finish_reason"] == "stop"
 
 
 def test_extract_direct_stream_event_accepts_legacy_function_call() -> None:
@@ -216,3 +236,37 @@ def test_build_request_body_disables_qwen_thinking_when_allowed() -> None:
     )
 
     assert body["enable_thinking"] is False
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_completion_uses_non_stream_when_model_disables_stream(monkeypatch) -> None:
+    class FakeSettings:
+        def resolve_model(self, model: str):
+            return (
+                {"api_model": model, "supports_stream": False},
+                {"base_url": "http://127.0.0.1:8080", "api_key_required": False},
+                "local",
+            )
+
+    async def fake_generate_chat_completion(**kwargs):
+        return "hello", {
+            "reasoning": "thinking",
+            "usage": {"total_tokens": 3},
+        }
+
+    monkeypatch.setattr(provider_client, "generate_chat_completion", fake_generate_chat_completion)
+
+    events = [
+        event
+        async for event in stream_chat_completion(
+            settings=FakeSettings(),
+            model="local-model",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+    ]
+
+    assert events == [
+        {"reasoning": "thinking"},
+        {"message": "hello"},
+        {"usage": {"total_tokens": 3}, "finish_reason": "stop"},
+    ]

@@ -1264,6 +1264,45 @@ def test_build_run_result_includes_capability_evidence_summary() -> None:
     assert evidence["artifacts"] == ["external_state"]
 
 
+def test_build_run_result_fails_when_requested_capability_has_no_tool_evidence() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        tool_events=[],
+        change_summary=None,
+        mode="terminal",
+        task_contract={
+            "intent": "read_only_analysis",
+            "requires_write": False,
+            "requires_state_change": False,
+            "capability_ids": ["code.local_project"],
+            "deliverables": [{"kind": "answer"}],
+            "first_action": "read",
+        },
+    )
+
+    assert result["status"] == "failure"
+    assert result["capability_evidence"]["requested_capability_ids"] == ["code.local_project"]
+    assert result["capability_evidence"]["unobserved_requested_capability_ids"] == ["code.local_project"]
+    assert result["failures"] == [
+        {
+            "tool": "capability.evidence",
+            "path": "",
+            "error": "requested capability not observed: code.local_project",
+        }
+    ]
+    assert result["failure_details"] == [
+        {
+            "tool": "capability.evidence",
+            "path": "",
+            "role": "capability",
+            "impact": "blocking",
+        }
+    ]
+    assert result["counts"]["blocking_failures"] == 1
+    assert result["flags"]["requested_capability_not_observed"] is True
+    assert "requested_capability_not_observed" in result["risks"]
+
+
 def test_build_run_result_marks_unverified_optional_write_partial() -> None:
     result = build_run_result(
         workspace_path="D:/workspace",
