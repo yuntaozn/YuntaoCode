@@ -5,8 +5,13 @@ import pytest
 from runtime.model_providers import client as provider_client
 from runtime.model_providers.client import (
     build_request_body,
+    context_limit_from_models,
+    context_limit_from_props,
+    estimate_request_tokens,
     extract_direct_stream_event,
     extract_stream_event,
+    fit_request_body_to_context,
+    provider_root_url,
     stream_chat_completion,
 )
 
@@ -236,6 +241,76 @@ def test_build_request_body_disables_qwen_thinking_when_allowed() -> None:
     )
 
     assert body["enable_thinking"] is False
+
+
+def test_context_limit_from_llamacpp_props() -> None:
+    assert context_limit_from_props({
+        "default_generation_settings": {
+            "n_ctx": 8192,
+        }
+    }) == 8192
+
+
+def test_context_limit_from_openai_models_meta() -> None:
+    assert context_limit_from_models({
+        "data": [
+            {"id": "other", "meta": {"n_ctx": 4096}},
+            {"id": "gemma-4-12B", "meta": {"n_ctx": 8192}},
+        ]
+    }, "gemma-4-12B") == 8192
+
+
+def test_provider_root_url_strips_openai_v1_suffix() -> None:
+    assert provider_root_url({"base_url": "http://127.0.0.1:8080/v1"}) == "http://127.0.0.1:8080"
+
+
+def test_fit_request_body_to_context_prunes_tools_by_request_budget() -> None:
+    def tool(name: str, description: str = "") -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                },
+            },
+        }
+
+    essential = tool("filesystem__read_file", "Read a file.")
+    oversized = tool("custom__very_large_optional_tool", "x" * 12000)
+    body = {
+        "model": "local",
+        "messages": [{"role": "user", "content": "read the file"}],
+        "stream": True,
+        "tools": [oversized, essential],
+        "tool_choice": "auto",
+    }
+    essential_only = dict(body)
+    essential_only["tools"] = [essential]
+    context_limit = estimate_request_tokens(essential_only) + 300
+
+    fitted, info = fit_request_body_to_context(body, context_limit=context_limit)
+
+    names = [item["function"]["name"] for item in fitted.get("tools", [])]
+    assert "filesystem__read_file" in names
+    assert "custom__very_large_optional_tool" not in names
+    assert info["tools_pruned"] == 1
+    assert not info.get("blocked")
+
+
+def test_fit_request_body_to_context_blocks_oversized_request_without_tools() -> None:
+    body = {
+        "model": "local",
+        "messages": [{"role": "user", "content": "x" * 20000}],
+        "stream": True,
+    }
+
+    _, info = fit_request_body_to_context(body, context_limit=1024)
+
+    assert info["blocked"] is True
+    assert "1024" in info["message"]
 
 
 @pytest.mark.asyncio

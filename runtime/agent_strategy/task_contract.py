@@ -341,8 +341,8 @@ def task_contract_context_messages(
     messages: list[dict[str, Any]],
     current_user_content: str,
     *,
-    max_messages: int = 6,
-    max_chars: int = 1200,
+    max_messages: int = 4,
+    max_chars: int = 600,
 ) -> list[dict[str, str]]:
     """Return a compact recent conversation for model-side contract judgment."""
     current = str(current_user_content or "").strip()

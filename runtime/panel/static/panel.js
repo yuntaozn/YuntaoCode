@@ -1940,6 +1940,29 @@ async function sendMessage(event) {
                         renderStreamMessages();
                     }
                 }
+                if (eventData.event === "request_budget") {
+                    const metadata = streamingMessages[assistantIndex].metadata || {};
+                    const budget = eventData.budget || {};
+                    metadata.request_budget = budget;
+                    metadata.pending = true;
+                    if (budget.context_limit && state.currentConversationId === conversationId) {
+                        state.contextLimit = Number(budget.context_limit || 0);
+                        renderContextBar();
+                        renderCurrentWorkspace();
+                    }
+                    if (budget.tools_pruned) {
+                        const budgetText = t('status.request_budget_adjusted', {
+                            count: budget.tools_pruned,
+                            limit: budget.context_limit || "",
+                        });
+                        metadata.statusText = budgetText;
+                        touchProgress(budgetText);
+                        updateActiveStreamState("running", "request_budget", budgetText);
+                        showStatusBar(budgetText);
+                    }
+                    streamingMessages[assistantIndex].metadata = metadata;
+                    renderStreamMessages();
+                }
                 if (eventData.event === "reasoning") {
                     touchProgress(t('status.reasoning'));
                     const metadata = streamingMessages[assistantIndex].metadata || {};

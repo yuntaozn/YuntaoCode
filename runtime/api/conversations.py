@@ -330,7 +330,7 @@ class ConversationMessagesHandler(ApiHandler):
             for spec in self._capability_tool_specs(mode_config)
             if bool(spec.get("available"))
         ]
-        return format_capability_catalog_for_prompt(build_capability_catalog(specs))
+        return format_capability_catalog_for_prompt(build_capability_catalog(specs), compact=True)
 
     def _capability_tool_specs(self, mode_config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         allowed_tools: set[str] | None = None

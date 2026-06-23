@@ -2,13 +2,46 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any, AsyncIterator
+from urllib.parse import urlparse, urlunparse
 
 import tornado.httpclient
 import tornado.web
+import tiktoken
 
 from runtime.model_request_options import sanitize_request_options
 from runtime.settings_store import SettingsStore
+
+LOCAL_CONTEXT_CACHE_TTL_SECONDS = 60.0
+REQUEST_TOKEN_MARGIN = 256
+_context_limit_cache: dict[str, tuple[float, int]] = {}
+_encoding: tiktoken.Encoding | None = None
+
+
+ESSENTIAL_TOOL_ORDER: tuple[str, ...] = (
+    "filesystem__scan_folder",
+    "filesystem__read_file",
+    "filesystem__read_text_preview",
+    "code__search_text",
+    "code__list_project_files",
+    "git__status",
+    "git__diff",
+    "filesystem__write_file",
+    "filesystem__apply_changes",
+    "code__apply_patch",
+    "code__edit_file",
+    "code__replace_text",
+    "shell__run_command",
+    "filesystem__create_text_draft",
+    "filesystem__append_text_chunk",
+    "filesystem__finalize_text_file",
+    "web__fetch_url",
+    "web__extract_text",
+    "memory__recall",
+)
+ESSENTIAL_TOOL_RANK = {name: index for index, name in enumerate(ESSENTIAL_TOOL_ORDER)}
+
 
 async def generate_chat_completion(
     *,
@@ -44,6 +77,15 @@ async def generate_chat_completion(
         tools=tools,
         tool_choice=tool_choice,
     )
+    context_limit = await resolve_provider_context_limit(
+        provider=provider,
+        model_config=model_config,
+        api_model=api_model,
+        api_key=api_key,
+    )
+    body, budget_info = fit_request_body_to_context(body, context_limit=context_limit)
+    if budget_info.get("blocked"):
+        raise tornado.web.HTTPError(400, reason=str(budget_info.get("message") or "model request exceeds context"))
 
     request = tornado.httpclient.HTTPRequest(
         url=chat_completion_url(provider),
@@ -71,6 +113,8 @@ async def generate_chat_completion(
         "api_model": api_model,
         "usage": data.get("usage"),
     }
+    if budget_info:
+        metadata["request_budget"] = budget_info
     if reasoning:
         metadata["reasoning"] = reasoning
     return answer, metadata
@@ -137,6 +181,18 @@ async def stream_chat_completion(
         tools=tools,
         tool_choice=tool_choice,
     )
+    context_limit = await resolve_provider_context_limit(
+        provider=provider,
+        model_config=model_config,
+        api_model=api_model,
+        api_key=api_key,
+    )
+    body, budget_info = fit_request_body_to_context(body, context_limit=context_limit)
+    if budget_info.get("blocked"):
+        yield {"error": str(budget_info.get("message") or "model request exceeds context"), "status": 400}
+        return
+    if budget_info:
+        yield {"request_budget": budget_info}
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     parser = StreamingParser(queue)
     request = tornado.httpclient.HTTPRequest(
@@ -258,6 +314,237 @@ def build_request_body(
         request_options.update(sanitize_request_options(model_config["request_options"]))
     body.update(request_options)
     return body
+
+
+async def resolve_provider_context_limit(
+    *,
+    provider: dict[str, Any],
+    model_config: dict[str, Any],
+    api_model: str,
+    api_key: str,
+) -> int:
+    configured = _safe_positive_int(model_config.get("context_limit"))
+    discovered = await discover_provider_context_limit(provider=provider, api_model=api_model, api_key=api_key)
+    if configured and discovered:
+        return min(configured, discovered)
+    return configured or discovered or 0
+
+
+async def discover_provider_context_limit(
+    *,
+    provider: dict[str, Any],
+    api_model: str,
+    api_key: str = "",
+) -> int:
+    base_url = str(provider.get("base_url") or "").rstrip("/")
+    if not base_url or not _is_local_base_url(base_url):
+        return 0
+    cache_key = f"{base_url}|{api_model}"
+    cached = _context_limit_cache.get(cache_key)
+    now = time.monotonic()
+    if cached and now - cached[0] <= LOCAL_CONTEXT_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    limit = await _fetch_llamacpp_props_context_limit(provider, api_key)
+    if not limit:
+        limit = await _fetch_models_context_limit(provider, api_model, api_key)
+    _context_limit_cache[cache_key] = (now, limit)
+    return limit
+
+
+async def _fetch_llamacpp_props_context_limit(provider: dict[str, Any], api_key: str) -> int:
+    root = provider_root_url(provider)
+    if not root:
+        return 0
+    data = await _fetch_json(f"{root}/props", api_key=api_key, timeout=2.0)
+    return context_limit_from_props(data)
+
+
+async def _fetch_models_context_limit(provider: dict[str, Any], api_model: str, api_key: str) -> int:
+    data = await _fetch_json(f"{str(provider.get('base_url') or '').rstrip('/')}/models", api_key=api_key, timeout=2.0)
+    return context_limit_from_models(data, api_model)
+
+
+async def _fetch_json(url: str, *, api_key: str, timeout: float) -> dict[str, Any]:
+    try:
+        response = await tornado.httpclient.AsyncHTTPClient().fetch(
+            tornado.httpclient.HTTPRequest(
+                url=url,
+                method="GET",
+                headers=request_headers(api_key),
+                request_timeout=timeout,
+            ),
+            raise_error=False,
+        )
+    except Exception:
+        return {}
+    if response.code >= 400:
+        return {}
+    return decode_json_response(response.body)
+
+
+def context_limit_from_props(data: dict[str, Any]) -> int:
+    if not isinstance(data, dict):
+        return 0
+    candidates = [
+        data.get("n_ctx"),
+        (data.get("default_generation_settings") or {}).get("n_ctx")
+        if isinstance(data.get("default_generation_settings"), dict)
+        else None,
+        ((data.get("default_generation_settings") or {}).get("params") or {}).get("n_ctx")
+        if isinstance((data.get("default_generation_settings") or {}).get("params"), dict)
+        else None,
+    ]
+    return _first_positive_int(candidates)
+
+
+def context_limit_from_models(data: dict[str, Any], api_model: str = "") -> int:
+    if not isinstance(data, dict):
+        return 0
+    items = data.get("data")
+    if isinstance(items, dict):
+        items = [items]
+    if not isinstance(items, list):
+        items = [data]
+    normalized_target = str(api_model or "").strip()
+    ordered = sorted(
+        [item for item in items if isinstance(item, dict)],
+        key=lambda item: 0 if str(item.get("id") or "") == normalized_target else 1,
+    )
+    for item in ordered:
+        meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+        limit = _first_positive_int([
+            item.get("n_ctx"),
+            item.get("context_length"),
+            item.get("context_limit"),
+            meta.get("n_ctx"),
+            meta.get("context_length"),
+            meta.get("context_limit"),
+        ])
+        if limit:
+            return limit
+    return 0
+
+
+def fit_request_body_to_context(
+    body: dict[str, Any],
+    *,
+    context_limit: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if context_limit <= 0:
+        return body, {}
+    estimated = estimate_request_tokens(body)
+    usable = max(context_limit - REQUEST_TOKEN_MARGIN, 1)
+    if estimated <= usable:
+        return body, {
+            "context_limit": context_limit,
+            "estimated_request_tokens": estimated,
+            "tool_count": len(body.get("tools") or []),
+        }
+
+    tools = body.get("tools")
+    if not isinstance(tools, list) or not tools:
+        return body, {
+            "context_limit": context_limit,
+            "estimated_request_tokens": estimated,
+            "blocked": True,
+            "message": (
+                f"模型请求约 {estimated} tokens，超过当前模型服务上下文 {context_limit} tokens。"
+                "请调低模型上下文配置、清理对话历史，或用更大的 llama-server --ctx-size 启动。"
+            ),
+        }
+
+    fitted = dict(body)
+    ranked_tools = sorted(
+        tools,
+        key=lambda tool: _tool_rank(tool),
+    )
+    kept: list[dict[str, Any]] = []
+    for tool in ranked_tools:
+        trial = dict(fitted)
+        trial["tools"] = [*kept, tool]
+        trial["tool_choice"] = fitted.get("tool_choice") or "auto"
+        if estimate_request_tokens(trial) <= usable:
+            kept.append(tool)
+    if kept:
+        fitted["tools"] = kept
+        fitted["tool_choice"] = fitted.get("tool_choice") or "auto"
+    else:
+        fitted.pop("tools", None)
+        fitted.pop("tool_choice", None)
+
+    fitted_estimate = estimate_request_tokens(fitted)
+    info = {
+        "context_limit": context_limit,
+        "estimated_request_tokens": fitted_estimate,
+        "original_estimated_request_tokens": estimated,
+        "tool_count": len(kept),
+        "original_tool_count": len(tools),
+        "tools_pruned": max(0, len(tools) - len(kept)),
+    }
+    if fitted_estimate > usable:
+        info.update({
+            "blocked": True,
+            "message": (
+                f"模型请求约 {fitted_estimate} tokens，超过当前模型服务上下文 {context_limit} tokens；"
+                "已尝试裁剪工具目录但仍不足。请清理对话历史或用更大的 --ctx-size 启动本地模型。"
+            ),
+        })
+    return fitted, info
+
+
+def estimate_request_tokens(body: dict[str, Any]) -> int:
+    text = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    try:
+        return len(_get_encoding().encode(text))
+    except Exception:
+        return max(1, len(text) // 3)
+
+
+def provider_root_url(provider: dict[str, Any]) -> str:
+    base_url = str(provider.get("base_url") or "").rstrip("/")
+    if not base_url:
+        return ""
+    parsed = urlparse(base_url)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/v1"):
+        path = path[:-3] or ""
+    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", "")).rstrip("/")
+
+
+def _is_local_base_url(base_url: str) -> bool:
+    parsed = urlparse(base_url)
+    host = (parsed.hostname or "").lower()
+    return host in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
+
+
+def _tool_rank(tool: dict[str, Any]) -> tuple[int, str]:
+    fn = tool.get("function") if isinstance(tool.get("function"), dict) else {}
+    name = str(fn.get("name") or "")
+    return (ESSENTIAL_TOOL_RANK.get(name, 10_000), name)
+
+
+def _safe_positive_int(value: Any) -> int:
+    try:
+        number = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return number if number > 0 else 0
+
+
+def _first_positive_int(values: list[Any]) -> int:
+    for value in values:
+        number = _safe_positive_int(value)
+        if number:
+            return number
+    return 0
+
+
+def _get_encoding() -> tiktoken.Encoding:
+    global _encoding
+    if _encoding is None:
+        _encoding = tiktoken.get_encoding("cl100k_base")
+    return _encoding
 
 
 def qwen_enable_thinking(

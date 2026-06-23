@@ -710,6 +710,24 @@ class ConversationRunExecutor:
                     tools=round_tools or None,
                     tool_choice=round_tool_choice,
                 ):
+                    if event.get("request_budget"):
+                        budget_info = event["request_budget"] if isinstance(event["request_budget"], dict) else {}
+                        metadata["request_budget"] = budget_info
+                        if budget_info.get("context_limit"):
+                            metadata["effective_context_limit"] = budget_info.get("context_limit")
+                        self.write_event({"event": "request_budget", "budget": budget_info})
+                        if budget_info.get("tools_pruned"):
+                            self.write_event({
+                                "event": "status",
+                                "status": "request_budget_adjusted",
+                                "message": (
+                                    f"本地模型上下文为 {budget_info.get('context_limit')} tokens，"
+                                    f"已裁剪 {budget_info.get('tools_pruned')} 个工具说明以适配请求。"
+                                ),
+                                "request_budget": budget_info,
+                            })
+                        await self.flush()
+                        continue
                     if event.get("heartbeat"):
                         self.write_event({
                             "event": "heartbeat",
@@ -2027,7 +2045,7 @@ class ConversationRunExecutor:
             "conversation": conversation.to_public_dict(include_messages=True),
             "assistant": assistant_message.to_public_dict(),
             "context_tokens": context_tokens,
-            "context_limit": get_context_limit(model, self.runtime.settings),
+            "context_limit": metadata.get("effective_context_limit") or get_context_limit(model, self.runtime.settings),
         }
         if metadata.get("usage"):
             done_event["usage"] = metadata["usage"]

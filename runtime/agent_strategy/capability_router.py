@@ -299,8 +299,34 @@ def build_capability_catalog(tool_specs: list[dict[str, Any]]) -> list[Capabilit
     return merge_capability_contracts([capability_from_tool_spec(spec) for spec in tool_specs])
 
 
-def format_capability_catalog_for_prompt(catalog: list[CapabilityContract], *, max_items: int = 16) -> str:
+def format_capability_catalog_for_prompt(
+    catalog: list[CapabilityContract],
+    *,
+    max_items: int = 16,
+    compact: bool = False,
+) -> str:
     visible = catalog[:max_items]
+    if compact:
+        lines = [
+            "",
+            "## Available Runtime Capabilities",
+            "<available_capabilities>",
+        ]
+        for item in visible:
+            labels: list[str] = []
+            if item.artifacts:
+                labels.append(f"artifacts={','.join(item.artifacts[:3])}")
+            if item.effects:
+                labels.append(f"effects={','.join(item.effects[:3])}")
+            if item.provider_kinds:
+                labels.append(f"providers={','.join(item.provider_kinds[:3])}")
+            suffix = f" ({'; '.join(labels)})" if labels else ""
+            lines.append(f"- {item.id}: tools={', '.join(item.tool_ids[:8])}{suffix}")
+        if len(catalog) > len(visible):
+            lines.append(f"- ... {len(catalog) - len(visible)} more capabilities omitted")
+        lines.append("</available_capabilities>")
+        return "\n".join(lines)
+
     lines = [
         "",
         "## Capability Router",
