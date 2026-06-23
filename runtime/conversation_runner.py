@@ -282,6 +282,7 @@ class ConversationRunExecutor:
             effective_mode,
             code_change_intent=code_change_intent,
             state_change_intent=state_change_intent,
+            first_action=str(task_contract.get("first_action") or ""),
         )
         plan_gate = deterministic_plan_gate(
             content,
@@ -708,11 +709,6 @@ class ConversationRunExecutor:
                         round_tool_choice = None
                     round_enable_thinking = False
                     round_reasoning_effort = "low"
-                if agent_profile.id == "chat" and not plan_execution:
-                    round_tools = None
-                    round_tool_choice = None
-                    round_enable_thinking = enable_thinking
-                    round_reasoning_effort = reasoning_effort
                 self.write_event({"event": "status", "status": "thinking", "message": "正在连接模型"})
                 await self.flush()
                 tool_call_chunks: list[dict[str, Any]] = []

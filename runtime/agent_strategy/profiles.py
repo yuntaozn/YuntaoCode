@@ -73,6 +73,7 @@ def profile_for_task_intent(
     *,
     code_change_intent: bool = False,
     state_change_intent: bool = False,
+    first_action: str | None = None,
 ) -> AgentProfile:
     """Resolve the internal profile for a classified task intent."""
     if task_intent == "document_export":
@@ -88,6 +89,8 @@ def profile_for_task_intent(
             return PAPER_PROFILE
         return CODING_PROFILE
     if task_intent == "answer_only":
+        if str(first_action or "").strip() in {"read", "search", "use_tool", "verify"}:
+            return ANALYSIS_PROFILE
         return CHAT_PROFILE
     if mode == "paper":
         return PAPER_PROFILE

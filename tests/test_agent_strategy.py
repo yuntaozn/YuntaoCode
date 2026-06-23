@@ -388,6 +388,13 @@ class TestAgentProfiles:
     def test_answer_only_overrides_legacy_mode(self):
         assert profile_for_task_intent("answer_only", "coding").id == "chat"
 
+    def test_answer_deliverable_can_still_use_analysis_profile_for_evidence(self):
+        assert profile_for_task_intent(
+            "answer_only",
+            "terminal",
+            first_action="read",
+        ).id == "analysis"
+
     def test_legacy_document_mode_routes_to_document(self):
         assert profile_for_task_intent("", "document").id == "document"
 
