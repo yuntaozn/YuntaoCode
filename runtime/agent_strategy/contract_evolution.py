@@ -72,7 +72,15 @@ def apply_task_continuity(
     preserve_external_state_target = _preserve_external_state_target(anchor, result)
     retargets_local_file_state = _retargets_local_file_state(result)
     retargets_read_only_answer = _retargets_read_only_answer(result)
-    preserve_anchor_target = not (retargets_local_file_state or retargets_read_only_answer)
+    retargets_read_only_anchor_to_state_change = _retargets_read_only_anchor_to_state_change(
+        anchor,
+        result,
+    )
+    preserve_anchor_target = not (
+        retargets_local_file_state
+        or retargets_read_only_answer
+        or retargets_read_only_anchor_to_state_change
+    )
 
     if "goal" in anchor and preserve_anchor_target:
         result["goal"] = deepcopy(anchor["goal"])
@@ -92,7 +100,7 @@ def apply_task_continuity(
     elif anchored_deliverables:
         result["deliverables"] = deepcopy(anchored_deliverables)
 
-    if retargets_local_file_state:
+    if retargets_local_file_state or retargets_read_only_anchor_to_state_change:
         result["requires_write"] = bool(result.get("requires_write")) or bool(result.get("requires_state_change"))
     elif retargets_read_only_answer:
         result["requires_write"] = False
@@ -100,7 +108,7 @@ def apply_task_continuity(
         result["requires_write"] = bool(anchor.get("requires_write"))
     else:
         result["requires_write"] = bool(anchor.get("requires_write")) or bool(result.get("requires_write"))
-    if retargets_local_file_state:
+    if retargets_local_file_state or retargets_read_only_anchor_to_state_change:
         result["requires_state_change"] = bool(result.get("requires_state_change")) or bool(result.get("requires_write"))
     elif retargets_read_only_answer:
         result["requires_state_change"] = False
@@ -112,7 +120,7 @@ def apply_task_continuity(
         )
     if result.get("requires_write"):
         result["requires_state_change"] = True
-    if retargets_local_file_state:
+    if retargets_local_file_state or retargets_read_only_anchor_to_state_change:
         result["requires_verification"] = bool(result.get("requires_verification")) or bool(result.get("requires_state_change"))
         result["intent"] = _continuity_intent(
             None,
@@ -135,13 +143,15 @@ def apply_task_continuity(
         )
     result["required_verification_modalities"] = _merge_verification_modalities(
         result.get("required_verification_modalities")
-        if retargets_read_only_answer
+        if retargets_read_only_answer or retargets_read_only_anchor_to_state_change
         else anchor.get("required_verification_modalities"),
         result.get("required_verification_modalities"),
     )
     result["continuity_anchor"] = (
         task_continuity_anchor(result)
-        if retargets_local_file_state or retargets_read_only_answer
+        if retargets_local_file_state
+        or retargets_read_only_answer
+        or retargets_read_only_anchor_to_state_change
         else anchor
     )
     result["revision_request"] = _clean_text(current_user_content, 500)
@@ -548,6 +558,24 @@ def _retargets_read_only_answer(proposed: dict[str, Any]) -> bool:
         return False
     deliverables = proposed.get("deliverables") if isinstance(proposed.get("deliverables"), list) else []
     return _deliverables_are_answer_only(deliverables)
+
+
+def _retargets_read_only_anchor_to_state_change(
+    anchor: dict[str, Any],
+    proposed: dict[str, Any],
+) -> bool:
+    """Return whether current model judgment should replace a read-only anchor."""
+    if _anchor_has_state_target(anchor):
+        return False
+    anchor_deliverables = anchor.get("deliverables") if isinstance(anchor.get("deliverables"), list) else []
+    if anchor_deliverables and not _deliverables_are_answer_only(anchor_deliverables):
+        return False
+    if not (bool(proposed.get("requires_write")) or bool(proposed.get("requires_state_change"))):
+        return False
+    proposed_deliverables = proposed.get("deliverables") if isinstance(proposed.get("deliverables"), list) else []
+    if proposed_deliverables and _deliverables_are_answer_only(proposed_deliverables):
+        return False
+    return True
 
 
 def _continuity_intent(

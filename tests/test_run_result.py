@@ -61,7 +61,7 @@ def test_build_run_result_succeeds_when_code_write_has_real_test_verification() 
             {
                 "tool": "shell.run_command",
                 "status": "success",
-                "input": {"command": "node --check src/app.js"},
+                "input": {"command": "npm test"},
                 "output": {"exit_code": 0},
             },
         ],
@@ -73,6 +73,50 @@ def test_build_run_result_succeeds_when_code_write_has_real_test_verification() 
     assert result["counts"]["test_successes"] == 1
     assert "write_not_verified" not in result["risks"]
     assert "test_not_observed" not in result["risks"]
+
+
+def test_build_run_result_does_not_treat_py_compile_as_behavioral_api_verification() -> None:
+    contract = {
+        "intent": "write_required",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["behavioral"],
+        "deliverables": [
+            {"kind": "code", "path_hint": "D:/workspace/backend/main.py"}
+        ],
+    }
+
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary={"files": [{"path": "backend/main.py"}]},
+        requires_code_write=True,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/backend/main.py"},
+                "output": {"path": "D:/workspace/backend/main.py"},
+            },
+            {
+                "tool": "shell.run_command",
+                "status": "success",
+                "input": {"command": "python -m py_compile main.py"},
+                "output": {"exit_code": 0},
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["counts"]["verification_successes"] == 1
+    assert result["counts"]["test_successes"] == 0
+    assert result["verification_evidence"][0]["strength"] == "standard"
+    assert result["verification_evidence"][0]["modalities"] == ["structural"]
+    assert result["missing_verification_modalities"] == ["behavioral"]
+    assert "verification_modality_missing" in result["risks"]
+    assert "test_not_observed" in result["risks"]
 
 
 def test_build_run_result_marks_model_error_after_write_as_partial() -> None:

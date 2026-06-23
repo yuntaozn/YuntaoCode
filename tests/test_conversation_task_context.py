@@ -4,8 +4,10 @@ from types import SimpleNamespace
 
 from runtime.agent_strategy.conversation_task_context import (
     code_change_intent,
+    classify_task_intent,
     effective_mode,
     expected_min_output_chars,
+    has_recent_task_context,
     previous_task_contract_context,
     previous_write_context,
 )
@@ -138,3 +140,48 @@ def test_expected_min_output_chars_does_not_inherit_from_code_contract() -> None
     ])
 
     assert expected_min_output_chars("try again", conversation) == 0
+
+
+def test_diagnostic_feedback_uses_recent_write_context_without_forcing_write() -> None:
+    conversation = SimpleNamespace(messages=[
+        _message("user", "where is the frontend API base URL?"),
+        _message(
+            "assistant",
+            "It is in web/home.js",
+            {
+                "task_contract": {
+                    "intent": "read_only_analysis",
+                    "goal": "Find frontend API base URL",
+                    "requires_write": False,
+                    "deliverables": [{"kind": "answer"}],
+                }
+            },
+        ),
+        _message("user", "change home.js to use the FastAPI backend"),
+        _message(
+            "assistant",
+            "updated home.js",
+            {
+                "task_contract": {
+                    "intent": "write_required",
+                    "goal": "Modify web/home.js to call the FastAPI backend",
+                    "requires_write": True,
+                    "requires_state_change": True,
+                    "requires_verification": True,
+                    "deliverables": [{"kind": "code", "path_hint": "web/home.js"}],
+                }
+            },
+        ),
+    ])
+    log = (
+        "home.js:1 Uncaught TypeError: Cannot set properties of null "
+        "(setting 'onclick')\n"
+        "Failed to load resource: the server responded with a status of "
+        "405 (Method Not Allowed)"
+    )
+
+    assert has_recent_task_context(conversation, log)
+    assert previous_write_context(conversation, log)
+    assert classify_task_intent(log, "terminal", conversation) == "read_only_analysis"
+    assert effective_mode(None, log, conversation) == "coding"
+    assert previous_task_contract_context(conversation, log)["goal"].startswith("Modify web/home.js")

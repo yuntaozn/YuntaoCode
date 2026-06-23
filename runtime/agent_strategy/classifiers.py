@@ -418,6 +418,66 @@ def looks_like_follow_up_execution(content: str) -> bool:
     return any(term in text for term in terms)
 
 
+def looks_like_diagnostic_feedback(content: str) -> bool:
+    """Return whether the user pasted runtime evidence from a recent task.
+
+    This does not decide that a repair is required. It only tells the context
+    layer that the message is likely evidence about something that just ran, so
+    the model-side task contract should see the previous task anchor.
+    """
+    text = str(content or "").strip().lower()
+    if len(text) < 8:
+        return False
+    direct_markers = (
+        "traceback (most recent call last)",
+        "uncaught ",
+        "typeerror",
+        "referenceerror",
+        "syntaxerror",
+        "module not found",
+        "modulenotfounderror",
+        "importerror",
+        "valueerror",
+        "keyerror",
+        "attributeerror",
+        "winerror",
+        "failed to load resource",
+        "method not allowed",
+        "unexpected end of json",
+        "cannot set properties of null",
+        "cannot read properties of null",
+        "command exited with code",
+        "failed to execute command",
+        "tool call failed",
+        "unknown tool",
+        "missing required argument",
+        "工具调用缺少必填参数",
+        "失败原因",
+    )
+    if any(marker in text for marker in direct_markers):
+        return True
+    broad_failure_terms = ("调用失败", "执行失败", "报错", "错误", "异常")
+    structural_failure_hints = (
+        "traceback",
+        "failed",
+        "error:",
+        "exception",
+        "winerror",
+        "失败原因",
+    )
+    if any(term in text for term in broad_failure_terms) and any(
+        hint in text for hint in structural_failure_hints
+    ):
+        return True
+    if re.search(r"\bat\s+[\w./\\-]+\.(?:js|ts|tsx|jsx|py|html|css):\d+(?::\d+)?", text):
+        return True
+    if re.search(r"\b(?:4\d\d|5\d\d)\b.*(?:error|failed|not found|method not allowed|server)", text):
+        return True
+    if re.search(r"(?:error|exception|failed).*?(?:line\s+\d+|\.js:\d+|\.py:\d+|\b4\d\d\b|\b5\d\d\b)", text, re.DOTALL):
+        return True
+    return False
+
+
 def looks_like_code_change_request(content: str) -> bool:
     text = content.lower()
     if not text:
@@ -1288,12 +1348,31 @@ def is_meaningful_verification_event(
 
 
 def is_test_verification_event(event: dict[str, Any]) -> bool:
-    """Return True for successful commands that look like tests/build/checks."""
+    """Return True for successful commands that exercise behavior.
+
+    Syntax-only and static checks such as ``python -m py_compile`` or
+    ``node --check`` are meaningful verification evidence, but they are
+    structural checks. They should not satisfy task contracts that explicitly
+    require behavioral verification, such as generated web/API services.
+    """
     if canonical_tool_id(str(event.get("tool") or "")) != "shell.run_command":
         return False
     if str(event.get("status") or "") != "success":
         return False
-    return _shell_command_verifies_behavior(event, require_test_marker=True)
+    return _shell_command_verifies_behavior(
+        event,
+        require_test_marker=True,
+        structural_checks_are_tests=False,
+    )
+
+
+def is_structural_verification_event(event: dict[str, Any]) -> bool:
+    """Return True for successful syntax, type, lint, or build checks."""
+    if canonical_tool_id(str(event.get("tool") or "")) != "shell.run_command":
+        return False
+    if str(event.get("status") or "") != "success":
+        return False
+    return _shell_command_has_structural_check_marker(event)
 
 
 def _successful_written_path_hints(tool_events: list[dict[str, Any]]) -> set[str]:
@@ -1356,6 +1435,7 @@ def _shell_command_verifies_behavior(
     event: dict[str, Any],
     *,
     require_test_marker: bool = False,
+    structural_checks_are_tests: bool = True,
 ) -> bool:
     event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
@@ -1391,36 +1471,72 @@ def _shell_command_verifies_behavior(
     if command in {"dir", "ls", "gci", "get-childitem", "get-item"}:
         return False
 
-    test_markers = (
+    behavioral_markers = (
         "pytest",
         "unittest",
-        "py_compile",
-        "node --check",
         "npm test",
         "npm run test",
-        "npm run build",
-        "npm run lint",
         "pnpm test",
-        "pnpm build",
         "yarn test",
-        "yarn build",
-        "cargo check",
         "cargo test",
         "go test",
+        "dotnet test",
+        "mvn test",
+        "gradle test",
+        "curl ",
+        "invoke-webrequest",
+        "invoke-restmethod",
+        "requests.get",
+        "httpx.get",
+        "urllib.request",
+        "testclient",
+    )
+    has_test_marker = any(marker in combined for marker in behavioral_markers)
+    if structural_checks_are_tests:
+        has_test_marker = has_test_marker or _shell_command_has_structural_check_marker(event)
+    if require_test_marker:
+        return has_test_marker
+    return has_test_marker or command not in {"python", "python3", "py", "node", "npm", "pnpm", "yarn"}
+
+
+def _shell_command_has_structural_check_marker(event: dict[str, Any]) -> bool:
+    event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    if is_long_running_service_command(event_input):
+        return False
+    if output.get("timed_out") is True:
+        return False
+    try:
+        exit_code = int(output.get("exit_code", 0) or 0)
+    except (TypeError, ValueError):
+        exit_code = 0
+    if exit_code != 0:
+        return False
+    command = str(event_input.get("command") or "").strip().lower()
+    args = event_input.get("args") if isinstance(event_input.get("args"), list) else []
+    arg_text = " ".join(str(item).lower() for item in args)
+    combined = f"{command} {arg_text}".strip()
+    if not combined:
+        return False
+    structural_markers = (
+        "py_compile",
+        "compileall",
+        "node --check",
+        "npm run build",
+        "npm run lint",
+        "pnpm build",
+        "yarn build",
+        "cargo check",
         "tsc",
         "eslint",
         "ruff",
         "mypy",
         "javac",
-        "dotnet test",
         "dotnet build",
-        "mvn test",
-        "gradle test",
+        "mvn package",
+        "gradle build",
     )
-    has_test_marker = any(marker in combined for marker in test_markers)
-    if require_test_marker:
-        return has_test_marker
-    return has_test_marker or command not in {"python", "python3", "py", "node", "npm", "pnpm", "yarn"}
+    return any(marker in combined for marker in structural_markers)
 
 
 def is_recoverable_write_failure(tool_id: str, event: dict[str, Any]) -> bool:

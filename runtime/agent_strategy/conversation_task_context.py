@@ -71,16 +71,25 @@ def has_recent_task_context(conversation: Any | None, current_content: str) -> b
     if conversation is None:
         return False
     current = current_content.strip()
+    diagnostic_feedback = _clf.looks_like_diagnostic_feedback(current)
     for message in reversed(getattr(conversation, "messages", [])[-12:]):
         if is_runtime_guidance_message(message):
             continue
         role = str(getattr(message, "role", "") or "")
         previous_content = str(getattr(message, "content", "") or "").strip()
+        metadata = getattr(message, "metadata", {}) or {}
+        if diagnostic_feedback and role == "assistant" and isinstance(metadata, dict):
+            contract = metadata.get("task_contract")
+            if isinstance(contract, dict) and (
+                contract.get("goal")
+                or contract.get("intent") not in {None, "", "answer_only"}
+                or contract.get("raw_model_contract")
+            ):
+                return True
         if role == "user" and previous_content and previous_content != current:
             return True
         if role != "assistant":
             continue
-        metadata = getattr(message, "metadata", {}) or {}
         if not isinstance(metadata, dict):
             continue
         contract = metadata.get("task_contract")
@@ -260,6 +269,8 @@ def classify_task_intent(
 ) -> str:
     if _clf.has_no_write_instruction(content):
         return "read_only_analysis"
+    if _clf.looks_like_diagnostic_feedback(content) and previous_write_context(conversation, content):
+        return "read_only_analysis"
     if _clf.looks_like_follow_up_execution(content) and previous_document_export_context(conversation, content):
         return "document_export"
     if _clf.looks_like_follow_up_execution(content) and previous_write_context(conversation, content):
@@ -305,6 +316,8 @@ def effective_mode(
         return "paper"
     if _clf.looks_like_follow_up_execution(content) and previous_document_export_context(conversation, content):
         return "document"
+    if _clf.looks_like_diagnostic_feedback(content) and previous_write_context(conversation, content):
+        return "coding"
     if _clf.looks_like_follow_up_execution(content) and previous_write_context(conversation, content):
         return "coding"
     if _clf.user_requests_code_change(content, "coding"):

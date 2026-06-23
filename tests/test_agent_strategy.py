@@ -23,6 +23,7 @@ from runtime.agent_strategy.classifiers import (
     has_no_write_instruction,
     looks_like_code_change_request,
     looks_like_dangling_action,
+    looks_like_diagnostic_feedback,
     looks_like_document_export_request,
     looks_like_follow_up_execution,
     looks_like_full_document_output_request,
@@ -41,6 +42,7 @@ from runtime.agent_strategy.classifiers import (
     is_invalid_verification_method_event,
     is_long_running_service_command,
     is_meaningful_verification_event,
+    is_structural_verification_event,
     is_state_changing_tool,
     is_test_verification_event,
     is_verification_tool,
@@ -86,6 +88,7 @@ from runtime.agent_strategy.prompts import (
     repeated_failure_strategy_prompt,
     read_only_task_prompt,
     recon_budget_prompt,
+    result_synthesis_prompt,
     runtime_intervention_prompt,
     stage_prompt,
     stage_status_message,
@@ -233,6 +236,29 @@ class TestLooksLikeFollowUpExecution:
         # Messages > 40 chars are NOT follow-ups
         long_msg = "继续执行之前的任务，我需要你帮我完成整个项目的重构和优化工作，包括前端、后端、数据库迁移以及所有单元测试的编写和部署流程的配置更新"
         assert not looks_like_follow_up_execution(long_msg)
+
+
+class TestLooksLikeDiagnosticFeedback:
+    def test_browser_runtime_log(self):
+        log = (
+            "home.js:1 Uncaught TypeError: Cannot set properties of null "
+            "(setting 'onclick')\n"
+            "Failed to load resource: the server responded with a status of "
+            "405 (Method Not Allowed)\n"
+            "SyntaxError: Failed to execute 'json' on 'Response': "
+            "Unexpected end of JSON input"
+        )
+
+        assert looks_like_diagnostic_feedback(log)
+
+    def test_python_traceback(self):
+        log = (
+            "Traceback (most recent call last):\n"
+            "  File \"app.py\", line 12, in <module>\n"
+            "ModuleNotFoundError: No module named 'runtime.skills.video'"
+        )
+
+        assert looks_like_diagnostic_feedback(log)
 
 
 class TestLooksLikeCodeChangeRequest:
@@ -1162,6 +1188,19 @@ class TestHasSuccessfulVerification:
 
         assert is_meaningful_verification_event(event, "terminal")
         assert is_test_verification_event(event)
+        assert not is_structural_verification_event(event)
+
+    def test_py_compile_counts_as_structural_not_behavioral_verification(self):
+        event = {
+            "tool": "shell.run_command",
+            "status": "success",
+            "input": {"command": "python -m py_compile main.py"},
+            "output": {"exit_code": 0},
+        }
+
+        assert is_meaningful_verification_event(event, "terminal")
+        assert is_structural_verification_event(event)
+        assert not is_test_verification_event(event)
 
     def test_timed_out_shell_command_is_not_verification(self):
         event = {
@@ -1355,7 +1394,8 @@ class TestPrompts:
 
         prompt = repeated_failure_strategy_prompt("/tmp", "editor", events)
 
-        assert "实质不同的策略" in prompt
+        assert "Repeated failure recovery advisory" in prompt
+        assert "runtime is not choosing the next strategy" in prompt
         assert "filesystem.write_file" in prompt
         assert "missing required" in prompt
 
@@ -1436,11 +1476,31 @@ class TestPrompts:
             },
         )
 
-        assert "完成度自审" in prompt
+        assert "Completion self-review from runtime facts" in prompt
+        assert "Runtime fact package" in prompt
         assert "viewer/index.html" in prompt
         assert "test_not_observed" in prompt
-        assert "继续调用最合适的工具" in prompt
-        assert "可以直接输出最终总结" in prompt
+        assert "Decide whether the task is actually complete" in prompt
+        assert "Do not claim completion beyond the observed deliverables" in prompt
+
+    def test_result_synthesis_prompt_uses_runtime_facts_instead_of_fixed_template(self):
+        prompt = result_synthesis_prompt(
+            "/tmp",
+            {"goal": "create an interactive viewer"},
+            {
+                "status": "partial",
+                "changed_paths": ["viewer/index.html"],
+                "risks": ["test_not_observed"],
+                "counts": {"tool_events": 2, "failures": 1},
+            },
+            previous_answer="Done.",
+        )
+
+        assert "Write the final user-facing answer for this run from runtime facts" in prompt
+        assert "Runtime fact package" in prompt
+        assert "viewer/index.html" in prompt
+        assert "test_not_observed" in prompt
+        assert "Previous assistant draft" in prompt
 
     def test_repeated_failure_strategy_prompt_suggests_draft_route_after_truncation(self):
         prompt = repeated_failure_strategy_prompt(
@@ -1456,7 +1516,7 @@ class TestPrompts:
             ],
         )
 
-        assert "当前写入负载过大" in prompt
+        assert "draft route is available" in prompt
         assert "filesystem.create_text_draft" in prompt
         assert "filesystem.append_text_chunk" in prompt
         assert "filesystem.finalize_text_file" in prompt
@@ -1473,7 +1533,8 @@ class TestPrompts:
             "/tmp/project",
         )
 
-        assert "达到输出上限" in prompt
+        assert "Write failure recovery advisory" in prompt
+        assert "draft route" in prompt
         assert "filesystem.create_text_draft" in prompt
         assert "filesystem.append_text_chunk" in prompt
         assert "filesystem.finalize_text_file" in prompt

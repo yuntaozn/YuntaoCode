@@ -7,7 +7,7 @@ def test_raw_toolcall_text_triggers_synthesized_final_answer() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
 
     assert handler._needs_synthesized_final_answer(
-        '已完成。<toolcall>filesystem__write_file({"path":"demo.html","content":"x"})</toolcall>',
+        'done <toolcall>filesystem__write_file({"path":"demo.html","content":"x"})</toolcall>',
         [{"tool": "filesystem.write_file", "status": "success"}],
     )
 
@@ -19,7 +19,7 @@ def test_answer_only_dangling_text_without_tools_is_invalid_final_answer() -> No
         "requires_write": False,
         "requires_state_change": False,
     }
-    content = "我来帮你了解 Blender MCP 的安装方法。首先让我查看一下当前项目目录的情况。"
+    content = "I will first check the current project directory."
 
     assert handler._answer_only_final_answer_error(content, [], contract)
     assert handler._needs_synthesized_final_answer(content, [], task_contract=contract)

@@ -255,6 +255,15 @@ def test_obvious_chat_uses_model_contract_when_it_may_be_task_follow_up() -> Non
     )
 
 
+def test_diagnostic_feedback_uses_model_contract_even_if_fallback_is_chat() -> None:
+    assert should_use_model_task_contract(
+        "home.js:1 Uncaught TypeError: Cannot set properties of null "
+        "(setting 'onclick')",
+        "answer_only",
+        False,
+    )
+
+
 def test_execute_followup_inherits_external_state_contract_without_file_write() -> None:
     previous = {
         "intent": "write_required",
@@ -615,13 +624,14 @@ def test_revision_followup_promotes_current_write_requirement_over_read_only_anc
     )
 
     assert contract["scope_relation"] == "revise"
-    assert contract["goal"] == previous["goal"]
+    assert contract["goal"] == "Compare sibling projects and fix the CSS2D label"
     assert contract["requires_write"] is True
     assert contract["requires_state_change"] is True
     assert contract["requires_verification"] is True
     assert contract["intent"] == "write_required"
     assert contract["deliverables"][0]["kind"] == "code"
     assert contract["capability_ids"] == ["filesystem.local_files", "code.local_project"]
+    assert contract["continuity_anchor"]["goal"] == "Compare sibling projects and fix the CSS2D label"
     assert "target_deliverable_success" in contract["success_conditions"]
     assert "target_deliverable_verification" in contract["success_conditions"]
 
@@ -659,6 +669,48 @@ def test_runtime_write_promotion_turns_answer_contract_into_verifiable_code_targ
     assert "planned_write_step" in contract["system_overrides"]
     assert "target_deliverable_success" in contract["success_conditions"]
     assert "target_deliverable_verification" in contract["success_conditions"]
+
+
+def test_write_followup_keeps_model_target_over_old_read_only_anchor() -> None:
+    previous = {
+        "intent": "read_only_analysis",
+        "goal": "Find the frontend API address configuration",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": False,
+        "capability_ids": ["code.local_project"],
+        "deliverables": [{"kind": "answer", "description": "API address location"}],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "continue",
+            "intent": "write_required",
+            "goal": "Modify web/home.js to call the local FastAPI backend",
+            "requires_write": True,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "capability_ids": ["code.local_project", "code.text_write"],
+            "deliverables": [
+                {
+                    "kind": "code",
+                    "path_hint": "web/home.js",
+                    "description": "Update request URL handling",
+                }
+            ],
+        },
+        _fallback("answer_only"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content="change home.js to use the FastAPI backend",
+    )
+
+    assert contract["goal"] == "Modify web/home.js to call the local FastAPI backend"
+    assert contract["requires_write"] is True
+    assert contract["deliverables"][0]["path_hint"] == "web/home.js"
+    assert contract["continuity_anchor"]["goal"] == "Modify web/home.js to call the local FastAPI backend"
 
 
 def test_model_selected_write_tool_can_promote_analysis_contract_without_scenario_rule() -> None:

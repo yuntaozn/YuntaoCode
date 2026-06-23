@@ -357,6 +357,18 @@ def test_declared_tool_output_counts_as_standard_verification() -> None:
     assert verification_evidence_modalities(event) == ("structural",)
 
 
+def test_py_compile_is_structural_verification_not_behavioral() -> None:
+    event = {
+        "tool": "shell.run_command",
+        "status": "success",
+        "input": {"command": "python -m py_compile main.py"},
+        "output": {"exit_code": 0},
+    }
+
+    assert verification_evidence_strength(event) == "standard"
+    assert verification_evidence_modalities(event) == ("structural",)
+
+
 def test_visual_requirement_needs_visual_verification_modality() -> None:
     contract = {
         "requires_write": False,

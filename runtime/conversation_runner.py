@@ -1971,35 +1971,71 @@ class ConversationRunExecutor:
             })
             await self.flush()
         run_result_status = str(run_result.get("status") or "")
-        if run_result_status == "failure" and not (
-            max_rounds_exceeded or tool_contract_failed
-        ):
-            assistant_content = self._synthesize_failure_answer(
-                workspace.path,
+        needs_fact_based_answer = (
+            run_result_status in {"failure", "partial", "stopped"}
+            or self._needs_synthesized_final_answer(
+                assistant_content,
                 tool_events,
-                run_result,
+                task_contract=task_contract,
             )
-            metadata["synthesized_final_answer"] = True
-        elif run_result_status == "partial":
-            assistant_content = self._synthesize_partial_answer(
-                workspace.path,
+        )
+        model_synthesized_answer = False
+        if needs_fact_based_answer and not model_provider_error:
+            try:
+                synthesized_answer, synthesis_metadata = await self._generate_result_synthesis_answer(
+                    model=model,
+                    workspace_path=workspace.path,
+                    user_content=content,
+                    task_contract=task_contract,
+                    run_result=run_result,
+                    previous_answer=assistant_content,
+                )
+                if synthesized_answer:
+                    assistant_content = synthesized_answer
+                    model_synthesized_answer = True
+                    metadata["synthesized_final_answer"] = True
+                    metadata["synthesized_final_answer_source"] = "model_from_runtime_facts"
+                    if synthesis_metadata:
+                        metadata["result_synthesis"] = {
+                            key: value
+                            for key, value in synthesis_metadata.items()
+                            if key not in {"reasoning"}
+                        }
+            except Exception as exc:
+                metadata["result_synthesis_error"] = str(exc)[:500]
+        if not model_synthesized_answer:
+            if run_result_status == "failure" and not (
+                max_rounds_exceeded or tool_contract_failed
+            ):
+                assistant_content = self._synthesize_failure_answer(
+                    workspace.path,
+                    tool_events,
+                    run_result,
+                )
+                metadata["synthesized_final_answer"] = True
+                metadata["synthesized_final_answer_source"] = "runtime_fallback"
+            elif run_result_status == "partial":
+                assistant_content = self._synthesize_partial_answer(
+                    workspace.path,
+                    tool_events,
+                    run_result,
+                )
+                metadata["synthesized_final_answer"] = True
+                metadata["synthesized_final_answer_source"] = "runtime_fallback"
+            elif self._needs_synthesized_final_answer(
+                assistant_content,
                 tool_events,
-                run_result,
-            )
-            metadata["synthesized_final_answer"] = True
-        elif self._needs_synthesized_final_answer(
-            assistant_content,
-            tool_events,
-            task_contract=task_contract,
-        ):
-            assistant_content = self._synthesize_final_answer(
-                workspace.path,
-                tool_events,
-                change_summary,
-                effective_mode,
-                task_contract,
-            )
-            metadata["synthesized_final_answer"] = True
+                task_contract=task_contract,
+            ):
+                assistant_content = self._synthesize_final_answer(
+                    workspace.path,
+                    tool_events,
+                    change_summary,
+                    effective_mode,
+                    task_contract,
+                )
+                metadata["synthesized_final_answer"] = True
+                metadata["synthesized_final_answer_source"] = "runtime_fallback"
         execution_notice = self._build_execution_notice(
             effective_mode,
             assistant_content,

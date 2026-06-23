@@ -996,6 +996,40 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _heuristic_plan_execution(self, content: str, mode: str | None) -> bool:
         return _pol.heuristic_plan_execution(content, mode)
 
+    async def _generate_result_synthesis_answer(
+        self,
+        *,
+        model: str,
+        workspace_path: str,
+        user_content: str,
+        task_contract: dict[str, Any] | None,
+        run_result: dict[str, Any],
+        previous_answer: str,
+    ) -> tuple[str, dict[str, Any]]:
+        prompt = self._result_synthesis_prompt(
+            workspace_path,
+            task_contract,
+            run_result,
+            previous_answer=previous_answer,
+        )
+        synthesis_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": prompt},
+        ]
+        if user_content:
+            synthesis_messages.append({
+                "role": "user",
+                "content": str(user_content)[-4000:],
+            })
+        answer, metadata = await generate_chat_completion(
+            settings=self.runtime.settings,
+            model=model,
+            messages=synthesis_messages,
+            enable_thinking=False,
+            reasoning_effort="low",
+            tools=None,
+        )
+        return answer.strip(), metadata
+
     async def _generate_execution_plan(
         self,
         *,
@@ -2391,6 +2425,21 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
 
     def _final_answer_prompt(self, workspace_path: str) -> str:
         return _prp.final_answer_prompt(workspace_path)
+
+    def _result_synthesis_prompt(
+        self,
+        workspace_path: str,
+        task_contract: dict[str, Any] | None,
+        run_result: dict[str, Any],
+        *,
+        previous_answer: str = "",
+    ) -> str:
+        return _prp.result_synthesis_prompt(
+            workspace_path,
+            task_contract,
+            run_result,
+            previous_answer=previous_answer,
+        )
 
     def _oversized_tool_arguments_prompt(
         self,

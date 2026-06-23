@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from runtime.agent_strategy import tool_event_roles as _event_roles
+from runtime.run_fact_summary import build_run_fact_summary
 
 
 ToolEventPredicate = Callable[[dict[str, Any]], bool]
@@ -27,7 +28,7 @@ RISK_MESSAGES_ZH: dict[str, str] = {
     "deliverable_path_hint_changed": "最终产物路径与任务中的路径提示不一致，请确认是否符合预期。",
     "execution_contract_failed": "执行结果没有满足本轮任务契约。",
     "max_rounds_exceeded": "执行达到轮次上限。",
-    "repeated_tool_failure": "同一类工具调用反复失败，需要换策略或人工检查环境。",
+    "repeated_tool_failure": "同一类工具调用反复失败，需要换策略或检查环境。",
     "capability_preflight_blocked": "能力预检未通过，当前环境可能缺少完成任务所需的工具或服务。",
     "model_provider_error": "模型服务返回错误或中断。",
     "invalid_tool_call_protocol": "模型输出了无效工具调用格式，系统没有执行这次调用。",
@@ -35,11 +36,11 @@ RISK_MESSAGES_ZH: dict[str, str] = {
     "model_output_truncated": "模型输出被截断，结果可能不完整。",
     "recovered_tool_failure": "过程中有工具失败，但后续步骤曾尝试恢复。",
     "incidental_tool_failure": "存在非关键工具失败，请结合产物和验证结果判断影响。",
-    "degraded_verification_failure": "验证工具失败，但可能不影响已生成产物本身。",
+    "degraded_verification_failure": "验证工具失败，可能不影响已生成产物本身，但会降低完成可信度。",
     "required_verification_not_satisfied": "没有满足任务要求的验证强度。",
     "verification_evidence_weak": "验证证据偏弱，不能充分证明任务已完成。",
-    "visual_verification_not_observed": "任务需要视觉效果验证，但没有观察到截图、渲染图或页面捕获等视觉证据。",
-    "verification_modality_missing": "已有验证证据，但验证形态不满足任务要求。",
+    "visual_verification_not_observed": "任务需要视觉效果验证，但没有观察到截图、渲染图或页面捕获等证据。",
+    "verification_modality_missing": "已有验证证据，但验证形式不满足任务要求。",
     "document_output_coverage_low": "文档输出覆盖率过低：目标文件已生成，但内容明显少于源文档。",
     "document_output_too_short": "文档已导出，但实际内容字数少于用户要求。",
     "document_output_length_unknown": "无法确认文档输出长度，不能仅凭模型总结判断已完成。",
@@ -64,40 +65,41 @@ def synthesize_failure_answer(
     tool_event_failure_message: ToolEventMessage,
     tool_event_display_path: ToolEventPath,
 ) -> str:
-    failures = run_result.get("failures") if isinstance(run_result, dict) else []
+    summary = build_run_fact_summary(
+        workspace_path=workspace_path,
+        tool_events=tool_events,
+        run_result=run_result,
+    )
+    failures = summary.get("failures") if isinstance(summary.get("failures"), list) else []
     lines = [
-        "未完成：本轮有工具执行失败，系统已按实际执行结果标记为失败。",
+        "未完成：本轮有阻断性失败，系统已按真实工具记录标记为失败。",
         "",
-        "失败记录：",
+        "失败事实：",
     ]
-    if isinstance(failures, list) and failures:
-        for item in failures[:6]:
+    if failures:
+        for item in failures[:8]:
             if not isinstance(item, dict):
                 continue
-            tool = str(item.get("tool") or "unknown")
-            path = str(item.get("path") or "").strip()
-            error = str(item.get("error") or "工具执行失败").strip()
-            label = f"{tool}（{path}）" if path else tool
-            lines.append(f"- {label}: {error[:240]}")
+            label = _label_with_path(item.get("tool"), item.get("path"))
+            error = str(item.get("error") or item.get("reason") or "工具执行失败").strip()
+            impact = str(item.get("impact") or "").strip()
+            suffix = f"（影响：{impact}）" if impact else ""
+            lines.append(f"- {label}{suffix}: {_short(error, 240)}")
     else:
         for event in tool_events:
             if not tool_event_failed(event):
                 continue
-            tool = str(event.get("tool") or "unknown")
-            error = tool_event_failure_message(event)
-            path = tool_event_display_path(workspace_path, event)
-            label = f"{tool}（{path}）" if path else tool
-            lines.append(f"- {label}: {error[:240]}")
+            label = _label_with_path(
+                event.get("tool"),
+                tool_event_display_path(workspace_path, event),
+            )
+            lines.append(f"- {label}: {_short(tool_event_failure_message(event), 240)}")
     if len(lines) == 3:
         lines.append("- 工具返回失败，但没有提供详细错误信息。")
-
-    risks = run_result.get("risks") if isinstance(run_result, dict) else []
-    if isinstance(risks, list) and risks:
-        lines.extend(["", "未满足条件/风险："])
-        lines.extend(f"- {risk_message_zh(risk)}" for risk in risks[:8])
+    _append_risks(lines, summary.get("risks"))
     lines.extend([
         "",
-        "请根据上面的失败原因继续修正后再执行；不要以模型原始总结作为完成依据。",
+        "结论：不能把本轮视为目标已完成。请根据失败事实换策略、补参数、修正环境，或在确实无法继续时如实说明边界。",
     ])
     return "\n".join(lines)
 
@@ -107,35 +109,42 @@ def synthesize_partial_answer(
     tool_events: list[dict[str, Any]],
     run_result: dict[str, Any],
 ) -> str:
-    del workspace_path, tool_events
-    changed_paths = run_result.get("changed_paths") if isinstance(run_result, dict) else []
-    failures = run_result.get("failures") if isinstance(run_result, dict) else []
-    risks = run_result.get("risks") if isinstance(run_result, dict) else []
-    counts = run_result.get("counts") if isinstance(run_result, dict) else {}
+    summary = build_run_fact_summary(
+        workspace_path=workspace_path,
+        tool_events=tool_events,
+        run_result=run_result,
+    )
     lines = [
-        "未完整完成：本轮已有部分操作成功，但系统检测到失败项或缺少可靠验证。",
+        "未完整完成：本轮已有部分进展，但运行事实不足以证明目标已全部完成。",
     ]
-    if isinstance(changed_paths, list) and changed_paths:
-        lines.extend(["", "已变更文件："])
-        lines.extend(f"- {path}" for path in changed_paths[:12])
-    if isinstance(failures, list) and failures:
-        lines.extend(["", "失败记录："])
-        for item in failures[:6]:
+    _append_list(lines, "已观察到的产物/变更", summary.get("written_paths") or summary.get("changed_paths"))
+    verification = summary.get("verification")
+    if isinstance(verification, list) and verification:
+        lines.append("")
+        lines.append("已观察到的验证：")
+        for item in verification[:8]:
             if not isinstance(item, dict):
                 continue
-            tool = str(item.get("tool") or "unknown")
-            path = str(item.get("path") or "").strip()
-            error = str(item.get("error") or "工具执行失败").strip()
-            label = f"{tool}（{path}）" if path else tool
-            lines.append(f"- {label}: {error[:240]}")
-    if isinstance(risks, list) and risks:
-        lines.extend(["", "仍需处理："])
-        lines.extend(f"- {risk_message_zh(risk)}" for risk in risks[:8])
-    if isinstance(counts, dict) and int(counts.get("test_successes") or 0) == 0:
-        lines.extend([
-            "",
-            "结论：不能把本轮视为目标已完成；请基于现有变更继续修复并执行实际验证。",
-        ])
+            modalities = ", ".join(str(v) for v in item.get("modalities") or [] if v)
+            suffix = f"（{modalities}）" if modalities else ""
+            lines.append(f"- {item.get('tool') or 'unknown'}{suffix}")
+    failures = summary.get("failures")
+    if isinstance(failures, list) and failures:
+        lines.append("")
+        lines.append("失败事实：")
+        for item in failures[:8]:
+            if not isinstance(item, dict):
+                continue
+            label = _label_with_path(item.get("tool"), item.get("path"))
+            error = str(item.get("error") or item.get("reason") or "工具执行失败").strip()
+            impact = str(item.get("impact") or "").strip()
+            suffix = f"（影响：{impact}）" if impact else ""
+            lines.append(f"- {label}{suffix}: {_short(error, 240)}")
+    _append_risks(lines, summary.get("risks"))
+    lines.extend([
+        "",
+        "结论：不能把本轮视为目标已完成；下一轮应基于这些事实继续修正或补充验证，而不是复述模型原始总结。",
+    ])
     return "\n".join(lines)
 
 
@@ -207,7 +216,7 @@ def synthesize_final_answer(
             external_deliverable_lines.append(tool_id)
         if tool_event_failed(event):
             error = tool_event_failure_message(event)
-            failure_lines.append(f"{tool_id}: {error[:160] if error else '失败'}")
+            failure_lines.append(f"{tool_id}: {_short(error or '失败', 160)}")
 
     changed_paths = _changed_paths_from_summary(change_summary)
     if not changed_paths:
@@ -250,6 +259,26 @@ def synthesize_final_answer(
     return "\n".join(lines)
 
 
+def _append_risks(lines: list[str], risks: Any) -> None:
+    items = [risk_message_zh(item) for item in risks or [] if str(item or "").strip()]
+    _append_list(lines, "仍需注意", items)
+
+
+def _append_list(lines: list[str], title: str, values: Any) -> None:
+    items = [str(item).strip() for item in values or [] if str(item or "").strip()]
+    if not items:
+        return
+    lines.append("")
+    lines.append(f"{title}：")
+    lines.extend(f"- {_short(item, 260)}" for item in items[:12])
+
+
+def _label_with_path(tool: Any, path: Any) -> str:
+    tool_text = str(tool or "unknown").strip()
+    path_text = str(path or "").strip()
+    return f"{tool_text}（{path_text}）" if path_text else tool_text
+
+
 def _changed_paths_from_summary(change_summary: dict[str, Any] | None) -> list[str]:
     if not isinstance(change_summary, dict):
         return []
@@ -258,3 +287,10 @@ def _changed_paths_from_summary(change_summary: dict[str, Any] | None) -> list[s
         if isinstance(item, dict) and item.get("path"):
             changed_paths.append(str(item["path"]))
     return changed_paths
+
+
+def _short(text: str, limit: int) -> str:
+    clean = " ".join(str(text or "").split())
+    if len(clean) <= limit:
+        return clean
+    return clean[: max(0, limit - 1)].rstrip() + "…"

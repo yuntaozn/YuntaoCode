@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from runtime.agent_strategy import classifiers as _clf
 from runtime.agent_strategy import contract_evolution as _contract_evolution
 
 
@@ -319,8 +320,10 @@ def task_contract_prompt(
         "execution_advisories 只是给执行阶段的非硬约束提醒，不能替代 requires_write/requires_state_change。\n"
         "Verification modality rule: use required_verification_modalities=[] for ordinary structural checks. "
         "Include visual when the user cares about appearance, layout, UI rendering, screenshots, rendered images, "
-        "model quality, whether something looks right, or any visual artifact. Use behavioral for tests/build/runtime "
-        "behavior and content for text/document content checks.\n"
+        "model quality, whether something looks right, or any visual artifact. Use behavioral for real tests, "
+        "runtime/API probes, service startup checks, database checks, or UI interactions; do not use behavioral "
+        "for syntax-only checks such as python -m py_compile or node --check. Use content for text/document "
+        "content checks.\n"
         "JSON 字段：\n"
         "{\n"
         '  "goal": "用户真实目标的简短描述",\n'
@@ -397,6 +400,8 @@ def should_use_model_task_contract(
         return False
     intent = _intent_or_default(fallback_intent)
     if intent != "answer_only":
+        return True
+    if _clf.looks_like_diagnostic_feedback(text):
         return True
     if has_recent_task_context:
         return True

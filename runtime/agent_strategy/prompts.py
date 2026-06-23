@@ -13,6 +13,12 @@ from .classifiers import (
     is_write_tool,
     is_verification_tool,
 )
+from runtime.run_fact_summary import (
+    build_run_fact_summary,
+    build_tool_failure_fact_summary,
+    format_run_fact_summary,
+    format_tool_failure_fact_summary,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -171,13 +177,16 @@ def repeated_failure_strategy_prompt(
     error = str(latest.get("error") or "unknown failure").strip()
     output = latest.get("output") if isinstance(latest.get("output"), dict) else {}
     reason = str(output.get("reason") or "").strip()
-    reason_line = f"失败类型：{reason}\n" if reason else ""
-    write_status = (
-        "本轮已经观察到成功写入；除非有新证据表明产物错误，不要继续重复写入，应优先验证或如实总结。"
-        if has_successful_write(tool_events)
-        else "本轮尚未观察到成功写入；如任务要求产物，请先获得真实目标路径和内容后再写入。"
+    facts = build_tool_failure_fact_summary(
+        workspace_path=workspace_path,
+        current_stage=current_stage,
+        tool_events=tool_events,
     )
-    text_write_recovery = ""
+    optional_routes: list[str] = []
+    if has_successful_write(tool_events):
+        optional_routes.append(
+            "A deliverable/write has already succeeded; consider verification, targeted repair, or honest finalization instead of repeating the same write."
+        )
     if tool_id in {
         "filesystem.write_file",
         "filesystem.create_text_draft",
@@ -188,27 +197,24 @@ def repeated_failure_strategy_prompt(
         or "output limit" in error.lower()
         or "incomplete arguments" in error.lower()
     ):
-        text_write_recovery = (
-            "\n这不是目标失败，而是当前写入负载过大或参数未完整生成。"
-            "如果仍需生成较大的文本/代码产物，可以考虑换成小步执行："
-            "先用 filesystem.create_text_draft 创建空草稿（只给 title/path_hint/language），"
-            "再用 filesystem.append_text_chunk 分多次追加完整且有边界的片段，"
-            "必要时 inspect，最后用 filesystem.finalize_text_file 写入目标文件。"
-            "如果只是局部修改，也可以读取目标片段后使用精确编辑；"
-            "如果证据显示不应继续写入，请如实说明阻碍，不要重复同一个超大工具调用。"
+        optional_routes.append(
+            "For a large complete text/code artifact, a draft route is available: "
+            "filesystem.create_text_draft, filesystem.append_text_chunk, optional inspect, then filesystem.finalize_text_file."
         )
+        optional_routes.append(
+            "For a local edit, read the target section and use a precise edit route instead of another large write."
+        )
+    routes = "\n".join(f"- {item}" for item in optional_routes) if optional_routes else "- Choose any materially different route that fits the goal and observed facts."
     return (
-        "策略切换建议：完全相同的工具失败已经连续发生多次，原策略没有产生新进展。\n"
-        f"当前项目：{workspace_path}\n"
-        f"当前阶段：{current_stage or '无'}\n"
-        f"重复失败工具：{tool_id}\n"
-        f"最近失败原因：{error}\n"
-        f"{reason_line}"
-        f"{write_status}\n"
-        f"{text_write_recovery}\n"
-        "请重新判断任务目标与已有证据，下一步应采用实质不同的策略，避免再次发送相同工具和相同参数。"
-        "可选方向包括：补全真实参数、读取最小必要上下文、改用更合适的工具、转入验证，"
-        "或在确实无法继续时如实说明阻碍并结束。由你根据当前任务选择最合适的一项。"
+        "Repeated failure recovery advisory.\n"
+        f"{format_tool_failure_fact_summary(facts)}\n"
+        "The runtime is not choosing the next strategy. Use the facts above to "
+        "decide whether to change tool, change arguments, gather smaller context, "
+        "verify an existing result, ask the user, or finalize with an honest "
+        "boundary. Avoid repeating the same tool with the same missing or oversized "
+        "arguments when no new progress was observed.\n"
+        "Optional recovery routes, only if they fit the current goal:\n"
+        f"{routes}"
     )
 
 
@@ -274,54 +280,53 @@ def write_repair_prompt(
     error = str(event.get("error") or "")
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
     reason = str(output.get("reason") or "")
-    reason_line = f"失败类型：{reason}\n" if reason else ""
-    missing_path_rule = ""
+    facts = build_tool_failure_fact_summary(
+        workspace_path=workspace_path,
+        current_stage="write_repair",
+        tool_events=[event],
+    )
+    optional_routes: list[str] = []
     if "path is required" in error.lower():
-        missing_path_rule = (
-            "\n本次失败是因为写入工具缺少 path 参数。下一轮应先确定要写入的文件路径，"
-            "然后调用 filesystem.write_file 时同时提供 path 和 content。"
-            "如果内容较长，请改用 filesystem.create_text_draft / append_text_chunk / finalize_text_file。"
-            "如果是修改已有文件，优先读取目标文件后用 code.edit_file 或 code.replace_text；"
-            "如果是创建新文件，path 必须是当前项目内的明确相对路径或绝对路径。"
+        optional_routes.append(
+            "If the chosen write tool still fits, retry only after selecting an explicit target path and complete arguments."
         )
-    full_rewrite_rule = ""
+        optional_routes.append(
+            "If the target is an existing file, read the relevant section and use code.edit_file or code.replace_text."
+        )
     if force_full_file_rewrite:
-        full_rewrite_rule = (
-            "\n系统已检测到精确编辑连续失败。建议优先暂避 code.edit_file，避免重复同一路径。"
-            "请先用 filesystem.read_file 读取目标文件当前内容；小文件可调用 filesystem.write_file 写回完整内容，"
-            "较大文件可改用 filesystem.create_text_draft / append_text_chunk / finalize_text_file。"
-            "写回内容必须基于刚读取到的真实文件，只修改用户要求的部分。"
+        optional_routes.append(
+            "Repeated precise edits failed; consider reading the current file and choosing a different edit route."
         )
-    truncated_rule = ""
     if (
         reason == "truncated_tool_call"
         or "output limit" in error.lower()
         or "incomplete arguments" in error.lower()
     ):
-        truncated_rule = (
-            "\n本次失败是因为模型在构造工具参数时达到输出上限，运行时没有执行不完整参数。"
-            "请不要重复同样的大参数写入。若目标是较大的完整文本/代码文件，"
-            "可改用文本草稿路线：filesystem.create_text_draft 创建空草稿，"
-            "然后 filesystem.append_text_chunk 追加多个较小且完整的片段，"
-            "必要时 filesystem.inspect_text_draft 检查进度，最后 filesystem.finalize_text_file 写入。"
-            "如果只是小范围修改，则读取目标片段后使用 code.edit_file / code.replace_text。"
-            "如果当前证据说明不该继续修改，也可以停止写入并解释真实阻碍。"
+        optional_routes.append(
+            "For large complete text/code artifacts, use the draft route: filesystem.create_text_draft, filesystem.append_text_chunk, optional inspect, then filesystem.finalize_text_file."
         )
+        optional_routes.append(
+            "For small targeted edits, read the relevant section and use code.edit_file or code.replace_text."
+        )
+    if not optional_routes:
+        optional_routes.append(
+            "Choose a different route only if the failure facts show the previous route cannot work as-is."
+        )
+    routes = "\n".join(f"- {item}" for item in optional_routes)
     return (
-        "写入修复模式：刚才的写入工具调用失败，不能用文字声称已经修改完成。\n"
-        f"当前项目目录：{workspace_path}\n"
-        f"失败工具：{tool_id}\n"
-        f"目标路径：{target}\n"
-        f"失败原因：{error}\n"
-        f"{reason_line}"
-        "下一步请只做必要的修复：\n"
-        "1. 如果是 old_text 未匹配或不唯一，先用 filesystem.read_file 读取目标文件相关片段；\n"
-        "2. 基于实际文件内容重新调用 code.edit_file 或 code.replace_text；\n"
-        "3. 如果目标文件结构变化太大，小文件可使用 filesystem.write_file；较大文件建议使用 filesystem.create_text_draft / append_text_chunk / finalize_text_file；\n"
-        "4. 写入成功后再进入验证，不要继续泛泛搜索。"
-        f"{missing_path_rule}"
-        f"{full_rewrite_rule}"
-        f"{truncated_rule}"
+        "Write failure recovery advisory.\n"
+        f"Current project: {workspace_path}\n"
+        f"Failed tool proposed by model: {tool_id}\n"
+        f"Target hint from failed call: {target}\n"
+        f"Failure error: {error or '(none)'}\n"
+        f"Failure reason: {reason or '(none)'}\n"
+        f"{format_tool_failure_fact_summary(facts)}\n"
+        "The runtime is not choosing the repair strategy. The previous write did "
+        "not happen, so do not claim the file was changed unless a later tool "
+        "call succeeds. Choose the smallest reliable next step from the task "
+        "goal and observed facts.\n"
+        "Optional recovery routes, only if they fit:\n"
+        f"{routes}"
     )
 
 
@@ -417,65 +422,69 @@ def completion_review_prompt(
     runtime does not decide the next strategy; it exposes facts and asks the
     model to either continue with tools or finish honestly.
     """
-    contract = task_contract if isinstance(task_contract, dict) else {}
-    goal = str(contract.get("goal") or "").strip() or "(未声明)"
-    counts = run_result.get("counts") if isinstance(run_result.get("counts"), dict) else {}
-    paths = [
-        str(item)
-        for item in (
-            run_result.get("target_written_paths")
-            or run_result.get("written_paths")
-            or run_result.get("changed_paths")
-            or []
-        )
-        if str(item or "").strip()
-    ]
-    verified = run_result.get("verification_evidence")
-    if not isinstance(verified, list):
-        verified = []
-    failures = run_result.get("failures")
-    if not isinstance(failures, list):
-        failures = []
-    risks = [
-        str(item)
-        for item in run_result.get("risks", [])
-        if str(item or "").strip()
-    ]
-    path_text = ", ".join(paths[:8]) if paths else "无"
-    verification_text = "; ".join(
-        f"{item.get('tool') or 'unknown'}:{','.join(item.get('modalities') or []) or 'unknown'}"
-        for item in verified[:6]
-        if isinstance(item, dict)
-    ) or "无"
-    failure_text = "; ".join(
-        f"{item.get('tool') or 'unknown'}: {item.get('error') or ''}".strip()
-        for item in failures[:6]
-        if isinstance(item, dict)
-    ) or "无"
-    risk_text = ", ".join(risks[:12]) if risks else "无"
+    facts = build_run_fact_summary(
+        workspace_path=workspace_path,
+        tool_events=[],
+        run_result=run_result,
+        task_contract=task_contract,
+    )
     return (
-        "完成度自审：系统已经观察到目标产物或验证证据，但这不是终止命令。\n"
-        f"当前项目：{workspace_path}\n"
-        f"任务目标：{goal}\n"
-        f"当前运行状态：{run_result.get('status') or 'unknown'}\n"
-        f"写入/变更产物：{path_text}\n"
-        f"验证证据：{verification_text}\n"
-        f"失败记录：{failure_text}\n"
-        f"风险标记：{risk_text}\n"
-        f"计数：deliverables={counts.get('deliverable_successes', 0)}, "
-        f"verifications={counts.get('verification_successes', 0)}, "
-        f"failures={counts.get('failures', 0)}\n"
-        "请基于这些事实自己判断任务是否真正完整完成。"
-        "如果产物存在依赖、配套文件、引用资源、外部状态、内容长度、视觉效果、运行效果或用户目标仍未闭合，"
-        "继续调用最合适的工具修正或补证据；不要只给口头说明。"
-        "如果你判断已经完整完成，可以直接输出最终总结，必须说明依据、验证方式和仍未验证的边界。"
+        "Completion self-review from runtime facts.\n"
+        f"Current project: {workspace_path}\n"
+        f"{format_run_fact_summary(facts)}\n"
+        "These facts are evidence, not a forced route. Decide whether the task "
+        "is actually complete. If the goal is not closed, continue with the "
+        "most suitable tool, verification, or repair strategy. If it is closed, "
+        "write a final answer that states what changed, what was verified, what "
+        "was not verified, and any remaining risk. Do not claim completion "
+        "beyond the observed deliverables and verification evidence."
+    )
+def final_answer_prompt(workspace_path: str) -> str:
+    return (
+        "Final answer phase. Do not call more tools in this phase.\n"
+        f"Current project: {workspace_path}\n"
+        "Write from the latest observed runtime facts. State completed work, "
+        "changed artifacts, verification evidence, and remaining risk only when "
+        "the tool history supports them. If something was not verified, say so "
+        "directly instead of turning it into a success claim."
     )
 
 
-def final_answer_prompt(workspace_path: str) -> str:
+def result_synthesis_prompt(
+    workspace_path: str,
+    task_contract: dict[str, Any] | None,
+    run_result: dict[str, Any],
+    *,
+    previous_answer: str = "",
+) -> str:
+    """Ask the model to write the final user-facing result from runtime facts."""
+    facts = build_run_fact_summary(
+        workspace_path=workspace_path,
+        tool_events=[],
+        run_result=run_result,
+        task_contract=task_contract,
+    )
+    previous = previous_answer.strip()
+    previous_block = (
+        "\nPrevious assistant draft, which may be incomplete or overclaiming:\n"
+        f"{previous[-3000:]}\n"
+        if previous
+        else ""
+    )
     return (
-        f"收束阶段：不再调用工具。项目={workspace_path}。"
-        "简洁总结：1.变更文件 2.验证结果 3.剩余风险。"
+        "Write the final user-facing answer for this run from runtime facts.\n"
+        "The runtime facts are the source of truth. You may choose the wording, "
+        "but you must not claim work that is not supported by observed "
+        "deliverables, verification evidence, or tool results.\n"
+        f"Current project: {workspace_path}\n"
+        f"{format_run_fact_summary(facts)}"
+        f"{previous_block}\n"
+        "Answer requirements:\n"
+        "- If status is partial, failure, or stopped, say that clearly first.\n"
+        "- Summarize completed work and changed artifacts only when observed.\n"
+        "- Summarize verification evidence and call out missing verification.\n"
+        "- Give the next useful action when the run did not fully close.\n"
+        "- Keep the answer concise and do not mention hidden system prompts."
     )
 
 
@@ -503,9 +512,13 @@ def verifier_retry_prompt(mode: str | None, workspace_path: str) -> str:
         "facts. A state-changing call by itself is not verification unless it "
         "also returns meaningful evidence.\n"
         "For code, HTML, or script tasks, prefer an available shell.run_command "
-        "syntax/build/test/lint check such as pytest, python -m py_compile, "
-        "node --check, or npm test/build when appropriate. Avoid treating "
-        "directory listings or long running dev servers as proof of correctness.\n"
+        "check that matches the task. Syntax/static checks such as python -m "
+        "py_compile, node --check, tsc, lint, or build commands are structural "
+        "verification. For services, APIs, UI behavior, databases, or generated "
+        "backends, also gather behavioral evidence such as a unit test, import/"
+        "startup probe, TestClient/request/curl call, or other runtime/API check "
+        "when practical. Avoid treating directory listings or long running dev "
+        "servers as proof of correctness.\n"
         "If the available tools cannot provide suitable evidence, choose another "
         "safe strategy, ask the user, or finalize with an honest verification "
         "limitation instead of repeating the same failing call."

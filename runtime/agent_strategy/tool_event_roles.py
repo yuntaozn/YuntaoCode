@@ -14,6 +14,7 @@ from typing import Any
 from .classifiers import (
     canonical_tool_id,
     is_meaningful_verification_event,
+    is_structural_verification_event,
     is_test_verification_event,
     is_write_tool,
 )
@@ -295,6 +296,8 @@ def verification_evidence_strength(
         ):
             return "standard"
         return explicit
+    if is_structural_verification_event(event):
+        return "standard"
     if is_test_verification_event(event):
         return "strong"
     if _event_has_visual_artifact(event):
@@ -319,6 +322,8 @@ def verification_evidence_modalities(
         modalities.append("visual")
     if is_test_verification_event(event):
         modalities.append("behavioral")
+    elif is_structural_verification_event(event):
+        modalities.append("structural")
     if _is_structured_external_state_verification(event, task_contract=task_contract):
         modalities.append("structural")
     if _event_has_content_artifact(event):

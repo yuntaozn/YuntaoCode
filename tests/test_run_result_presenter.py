@@ -35,6 +35,7 @@ def test_partial_answer_maps_risks_to_user_facing_messages() -> None:
     assert "draft.docx" in answer
     assert "document_output_length_unknown" not in answer
     assert "无法确认文档输出长度" in answer
+    assert answer.startswith("未完整完成")
 
 
 def test_final_answer_summarizes_changed_paths_and_verification() -> None:
