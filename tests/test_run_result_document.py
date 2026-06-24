@@ -36,7 +36,8 @@ def test_build_run_result_ignores_document_min_chars_for_code_contract() -> None
         ],
     )
 
-    assert result["status"] == "success"
+    assert result["status"] == "partial"
+    assert "test_not_observed" in result["risks"]
     assert "document_output_too_short" not in result["risks"]
 
 

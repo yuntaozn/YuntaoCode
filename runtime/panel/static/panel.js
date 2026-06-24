@@ -142,9 +142,10 @@ function activeRunsForConversation(conversationId) {
     if (!conversationId) return [];
     const runs = state.activeRuns.filter((run) => isRunActive(run) && run.conversation_id === conversationId);
     const activeStream = state.activeStreams.get(conversationId);
-    if (activeStream && !runs.some((run) => run.id === `stream:${conversationId}`)) {
+    const streamRunId = activeStream?.runId || `stream:${conversationId}`;
+    if (activeStream && isRunActive(activeStream) && !runs.some((run) => run.id === streamRunId)) {
         runs.push({
-            id: `stream:${conversationId}`,
+            id: streamRunId,
             conversation_id: conversationId,
             workspace_id: activeStream.workspaceId || "",
             status: activeStream.status || "running",
@@ -163,9 +164,10 @@ function activeRunsForWorkspace(workspaceId) {
     for (const [conversationId, activeStream] of state.activeStreams) {
         const conversation = state.conversations.find((item) => item.id === conversationId);
         const streamWorkspaceId = activeStream?.workspaceId || conversation?.workspace_id || "";
-        if (streamWorkspaceId === workspaceId && !seen.has(`stream:${conversationId}`)) {
+        const streamRunId = activeStream?.runId || `stream:${conversationId}`;
+        if (streamWorkspaceId === workspaceId && isRunActive(activeStream) && !seen.has(streamRunId)) {
             runs.push({
-                id: `stream:${conversationId}`,
+                id: streamRunId,
                 conversation_id: conversationId,
                 workspace_id: workspaceId,
                 status: activeStream?.status || "running",
@@ -1963,6 +1965,30 @@ async function sendMessage(event) {
                     streamingMessages[assistantIndex].metadata = metadata;
                     renderStreamMessages();
                 }
+                if (eventData.event === "run") {
+                    const run = eventData.run || {};
+                    const activeStream = state.activeStreams.get(conversationId);
+                    if (activeStream && run.id) {
+                        activeStream.runId = run.id;
+                        activeStream.workspaceId = run.workspace_id || activeStream.workspaceId || workspaceId;
+                        activeStream.status = run.status || activeStream.status || "running";
+                        activeStream.stage = run.stage || activeStream.stage || "created";
+                        activeStream.message = run.message || activeStream.message || t('status.executing');
+                        activeStream.updatedAt = run.updated_at || new Date().toISOString();
+                    }
+                    if (run.id) {
+                        const existingIndex = state.activeRuns.findIndex((item) => item.id === run.id);
+                        if (existingIndex >= 0) {
+                            state.activeRuns[existingIndex] = { ...state.activeRuns[existingIndex], ...run };
+                        } else {
+                            state.activeRuns.push(run);
+                        }
+                    }
+                    renderWorkspaces();
+                    renderConversations();
+                    renderCurrentWorkspace();
+                    refreshComposerState();
+                }
                 if (eventData.event === "reasoning") {
                     touchProgress(t('status.reasoning'));
                     const metadata = streamingMessages[assistantIndex].metadata || {};
@@ -2240,10 +2266,52 @@ function setSendButtonState(sending) {
     }
 }
 
-function stopGeneration() {
-    const activeStream = state.activeStreams.get(state.currentConversationId);
-    if (activeStream?.abortController) {
-        activeStream.abortController.abort();
+async function stopGeneration() {
+    const conversationId = state.currentConversationId;
+    if (!conversationId) return;
+    const activeStream = state.activeStreams.get(conversationId);
+    const activeRun = latestActiveRunForConversation(conversationId);
+    let runId = activeStream?.runId || activeRun?.id || "";
+    if (!runId && activeStream) {
+        await refreshActiveRuns();
+        runId = latestActiveRunForConversation(conversationId)?.id || "";
+    }
+    const canStopPersistedRun = runId && !String(runId).startsWith("stream:");
+    if (activeStream) {
+        activeStream.status = "stopped";
+        activeStream.stage = "stopped";
+        activeStream.message = t('status.stopped');
+        activeStream.updatedAt = new Date().toISOString();
+        const pendingAssistant = [...(activeStream.messages || [])]
+            .reverse()
+            .find((message) => message?.role === "assistant" && message?.metadata?.pending);
+        if (pendingAssistant?.metadata) {
+            pendingAssistant.metadata.pending = false;
+            pendingAssistant.metadata.waitingConfirmation = false;
+            pendingAssistant.metadata.statusText = t('status.stopped');
+            pendingAssistant.metadata.baseStatusText = t('status.stopped');
+        }
+    }
+    if (runId) {
+        state.activeRuns = state.activeRuns.filter((run) => run.id !== runId);
+    }
+    renderConversations();
+    renderWorkspaces();
+    renderCurrentWorkspace();
+    refreshComposerState();
+    try {
+        if (canStopPersistedRun) {
+            await api(`/runs/${encodeURIComponent(runId)}`, {
+                method: "POST",
+                body: JSON.stringify({ action: "stop", reason: "user stopped generation" }),
+            });
+        }
+    } finally {
+        if (activeStream?.abortController) {
+            activeStream.abortController.abort();
+        } else {
+            await refreshActiveRuns();
+        }
     }
 }
 
@@ -3055,7 +3123,7 @@ on("send-btn", "click", (event) => {
                 .catch((error) => showToast(error.message));
             return;
         }
-        stopGeneration();
+        stopGeneration().catch((error) => showToast(error.message));
     }
 });
 on("message-input", "keydown", (event) => {

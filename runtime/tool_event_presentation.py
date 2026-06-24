@@ -191,6 +191,7 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
             "file_count": output.get("file_count"),
             "operation_count": output.get("operation_count"),
             "hunk_count": output.get("hunk_count"),
+            "encoding_risks": output.get("encoding_risks"),
             "backup": output.get("_backup"),
         }
     elif tool_id == "code.edit_file":
@@ -198,6 +199,8 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
             "type": "diff",
             "path": output.get("path"),
             "diff_preview": str(output.get("diff_preview") or "")[:4000],
+            "encoding": output.get("encoding"),
+            "encoding_risks": output.get("encoding_risks"),
             "backup": output.get("_backup"),
         }
     elif tool_id == "code.replace_text":
@@ -220,7 +223,9 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
             "path": output.get("path"),
             "created": bool(output.get("created")),
             "size": output.get("size"),
+            "encoding": output.get("encoding"),
             "integrity": output.get("integrity"),
+            "encoding_risks": output.get("encoding_risks"),
             "backup": output.get("_backup"),
         }
     elif tool_id == "filesystem.apply_changes":
@@ -236,6 +241,7 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
             "effects": list(output.get("effects") or [])[:12],
             "roles": list(output.get("roles") or [])[:12],
             "verification_strength": output.get("verification_strength"),
+            "encoding_risks": output.get("encoding_risks"),
             "backup": output.get("_backup"),
         }
     elif tool_id == "filesystem.transform_text":
@@ -246,8 +252,10 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
             "changed": bool(output.get("changed")),
             "before_size": output.get("before_size"),
             "after_size": output.get("after_size"),
+            "encoding": output.get("encoding"),
             "integrity_before": output.get("integrity_before"),
             "integrity": output.get("integrity"),
+            "encoding_risks": output.get("encoding_risks"),
             "backup": output.get("_backup"),
         }
     elif tool_id == "filesystem.delete_file":
@@ -273,6 +281,8 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
             "draft_stats": output.get("draft_stats"),
             "validation": output.get("validation"),
             "artifact_kind": output.get("artifact_kind"),
+            "encoding": output.get("encoding"),
+            "encoding_risks": output.get("encoding_risks"),
             "backup": output.get("_backup"),
         }
     elif tool_id == "document.extract_pdf_to_docx":
@@ -377,15 +387,19 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
             "remaining_lines": output.get("remaining_lines"),
             "next_start_line": output.get("next_start_line"),
             "next_end_line": output.get("next_end_line"),
+            "encoding": output.get("encoding"),
             "integrity": output.get("integrity"),
+            "encoding_risks": output.get("encoding_risks"),
         }
     elif tool_id == "filesystem.read_text_preview":
         preview = {
             "type": "file_preview",
             "path": output.get("path"),
             "size": output.get("size"),
+            "encoding": output.get("encoding"),
             "truncated": bool(output.get("truncated")),
             "integrity": output.get("integrity"),
+            "encoding_risks": output.get("encoding_risks"),
         }
     elif tool_id == "attachment.extract_text":
         preview = {
@@ -533,6 +547,7 @@ def summarize_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "raw_content_truncated_for_context": raw_truncated,
             "usage_hint": output.get("usage_hint"),
             "integrity": output.get("integrity"),
+            "encoding_risks": output.get("encoding_risks"),
         }
         compacted["output"] = compact_output
     elif tool_id == "shell.run_command":

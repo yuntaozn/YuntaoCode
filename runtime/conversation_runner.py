@@ -16,7 +16,6 @@ from runtime.conversation_interactions import (
     runtime_guidance as _runtime_guidance,
 )
 from runtime.model_providers.client import stream_chat_completion
-from runtime.agent_strategy import capability_preflight as _cap_preflight
 from runtime.agent_strategy.capability_grounding import ground_task_contract_with_capabilities
 from runtime.agent_strategy import task_contract as _tc
 from runtime.agent_strategy import tool_event_roles as _event_roles
@@ -334,53 +333,6 @@ class ConversationRunExecutor:
             "preflight": capability_preflight,
         })
         await self.flush()
-        if _cap_preflight.preflight_should_stop(capability_preflight):
-            blocker_messages = _cap_preflight.preflight_blocker_messages(capability_preflight)
-            self.write_event({
-                "event": "status",
-                "status": "capability_preflight_blocked",
-                "message": blocker_messages[0] if blocker_messages else "Capability preflight blocked this run before model/tool execution.",
-            })
-            run_result = build_run_result(
-                workspace_path=workspace.path,
-                tool_events=[],
-                change_summary=None,
-                mode=effective_mode,
-                requires_code_write=code_change_intent,
-                expected_document_coverage=bool(task_contract.get("expected_document_coverage")),
-                expected_min_output_chars=int(task_contract.get("expected_min_output_chars") or 0),
-                task_contract=task_contract,
-                contract_failed=True,
-                preflight_blockers=capability_preflight.get("blockers") or [],
-            )
-            metadata["run_result"] = run_result
-            metadata["synthesized_final_answer"] = True
-            assistant_content = self._capability_preflight_failure_message(capability_preflight)
-            self.write_event({"event": "result", "result": run_result})
-            await self.flush()
-            assistant_message = self.runtime.conversations.add_message(
-                conversation_id,
-                "assistant",
-                assistant_content,
-                metadata,
-            )
-            done_event = {
-                "event": "done",
-                "conversation": conversation.to_public_dict(include_messages=True),
-                "assistant": assistant_message.to_public_dict(),
-                "context_tokens": context_tokens,
-                "context_limit": get_context_limit(model, self.runtime.settings),
-                "run_status": self._run_status_from_result(run_result),
-            }
-            self.write_event(done_event)
-            await self.flush()
-            return
-        allowed_tool_ids = capability_preflight.get("allowed_tool_ids")
-        if isinstance(allowed_tool_ids, list) and bool(capability_preflight.get("enforce_allowed_tools")):
-            tools, tool_name_map = self._build_model_tools(
-                mode_config,
-                allowed_tool_ids={str(item) for item in allowed_tool_ids},
-            )
         capability_prompt = self._capability_boundary_prompt(capability_preflight)
         if capability_prompt:
             messages.append({"role": "system", "content": capability_prompt})
@@ -444,8 +396,8 @@ class ConversationRunExecutor:
         last_progress_key = ""
         convergence_stopped = False
         strategy_change_intervened = False
-        tool_argument_stream_limit = 24_000
-        oversized_tool_argument_interrupts = 0
+        tool_argument_stream_observation_threshold = 24_000
+        large_tool_argument_observations = 0
         runtime_intervention_pending = False
         runtime_intervention_count = 0
         staged_execution = False
@@ -470,7 +422,10 @@ class ConversationRunExecutor:
                 })
                 return True
 
-            if task_contract.get("source") == "model" and planning_policy == "auto":
+            if (
+                str(task_contract.get("source") or "").startswith("model")
+                and planning_policy == "auto"
+            ):
                 plan_execution = bool(task_contract.get("requires_plan"))
                 plan_decision = {
                     "mode": planning_policy,
@@ -698,7 +653,7 @@ class ConversationRunExecutor:
                 retry_round_without_required_tool_choice = False
                 interrupted_by_guidance = False
                 round_finish_reason = ""
-                tool_argument_stream_interrupted = False
+                tool_argument_stream_large_reported = False
                 tool_argument_stream_size = 0
 
                 async for event in stream_chat_completion(
@@ -762,8 +717,10 @@ class ConversationRunExecutor:
                             messages.append({
                                 "role": "system",
                                 "content": (
-                                    "模型服务未接受 required 工具选择参数。下一轮仍提供执行相关工具，"
-                                    "请先读取必要上下文，再调用 code.edit_file、code.replace_text；较大完整文件请使用 filesystem 文本草稿工具最终写入。"
+                                    "Runtime observation only. The model service did not accept "
+                                    "the required tool-choice parameter. The next round still "
+                                    "provides the available tools; choose the next step from the "
+                                    "task goal and observed facts."
                                 ),
                             })
                             self.write_event({
@@ -790,19 +747,21 @@ class ConversationRunExecutor:
                         consecutive_idle_timeouts = 0
                         self._merge_tool_call_chunks(tool_call_chunks, event["tool_calls"])
                         tool_argument_stream_size = self._tool_call_arguments_size(tool_call_chunks)
-                        if tool_argument_stream_size > tool_argument_stream_limit:
-                            tool_argument_stream_interrupted = True
-                            oversized_tool_argument_interrupts += 1
+                        if (
+                            tool_argument_stream_size > tool_argument_stream_observation_threshold
+                            and not tool_argument_stream_large_reported
+                        ):
+                            tool_argument_stream_large_reported = True
+                            large_tool_argument_observations += 1
                             self.write_event({
                                 "event": "status",
-                                "status": "tool_argument_stream_guard",
-                                "message": "工具参数过大，已中断本轮输出并要求模型改用更小粒度的写入策略。",
+                                "status": "tool_argument_stream_observed_large",
+                                "message": "检测到工具参数较大，运行时继续等待模型完成；若最终参数不完整，将作为事实反馈给模型自行修正。",
                                 "argument_chars": tool_argument_stream_size,
-                                "limit_chars": tool_argument_stream_limit,
-                                "interrupt_count": oversized_tool_argument_interrupts,
+                                "observation_threshold_chars": tool_argument_stream_observation_threshold,
+                                "observation_count": large_tool_argument_observations,
                             })
                             await self.flush()
-                            break
                     if event.get("usage"):
                         metadata["usage"] = event["usage"]
                     if event.get("finish_reason") is not None:
@@ -863,28 +822,6 @@ class ConversationRunExecutor:
                     continue
 
                 if retry_round_without_required_tool_choice:
-                    continue
-
-                if tool_argument_stream_interrupted:
-                    if round_content_parts or round_reasoning_parts:
-                        self._discard_parts(content_parts, round_content_parts)
-                        self._discard_parts(reasoning_parts, round_reasoning_parts)
-                        self.write_event({
-                            "event": "message_replace",
-                            "message": "".join(content_parts),
-                            "clear_reasoning": True,
-                        })
-                        await self.flush()
-                    messages.append({
-                        "role": "system",
-                        "content": self._oversized_tool_arguments_prompt(
-                            workspace.path,
-                            tool_argument_stream_size,
-                            tool_argument_stream_limit,
-                        ),
-                    })
-                    write_repair_mode = True
-                    write_only_mode = False
                     continue
 
                 tool_calls = self._complete_tool_calls(tool_call_chunks, round_index)
@@ -1060,20 +997,20 @@ class ConversationRunExecutor:
                         elif current_stage == "editor":
                             if missing_write_retries < 2:
                                 missing_write_retries += 1
-                                if code_change_intent and not write_repair_mode:
-                                    write_only_mode = True
-                                    write_only_prompt_added = False
                                 messages.append({
                                     "role": "system",
-                                    "content": self._tool_contract_correction_prompt(
+                                    "content": self._progress_observer_prompt(
                                         workspace.path,
-                                        write_only=write_only_mode and not write_repair_mode,
+                                        current_stage,
+                                        tool_events,
+                                        code_change_intent,
+                                        "editor_no_target_evidence",
                                     ),
                                 })
                                 self.write_event({
                                     "event": "status",
-                                    "status": "tool_contract_retry",
-                                    "message": "执行者阶段没有调用写入工具，正在继续要求模型执行真实修改。",
+                                    "status": "progress_observer",
+                                    "message": "执行者阶段缺少目标产物证据，已记录事实供模型继续判断。",
                                 })
                                 await self.flush()
                                 continue
@@ -1102,6 +1039,25 @@ class ConversationRunExecutor:
                             "message": "".join(content_parts),
                             "clear_reasoning": True,
                         })
+                        if missing_write_retries < 2:
+                            missing_write_retries += 1
+                            self.write_event({
+                                "event": "status",
+                                "status": "progress_observer",
+                                "message": "本轮未观察到目标产物证据，已把事实反馈给模型继续判断。",
+                            })
+                            await self.flush()
+                            messages.append({
+                                "role": "system",
+                                "content": self._progress_observer_prompt(
+                                    workspace.path,
+                                    current_stage,
+                                    tool_events,
+                                    code_change_intent,
+                                    "missing_target_evidence",
+                                ),
+                            })
+                            continue
                         self.write_event({
                             "event": "status",
                             "status": "tool_contract_failed",
@@ -1109,42 +1065,6 @@ class ConversationRunExecutor:
                         })
                         await self.flush()
                         break
-                        if missing_write_retries < 1:
-                            missing_write_retries += 1
-                            if not write_repair_mode:
-                                write_only_mode = True
-                                write_only_prompt_added = False
-                            self.write_event({
-                                "event": "status",
-                                "status": "tool_contract_retry",
-                                "message": "模型没有调用本地写入工具，正在重新要求它执行真实修改",
-                            })
-                            await self.flush()
-                            messages.append({
-                                "role": "system",
-                                "content": self._tool_contract_correction_prompt(
-                                    workspace.path,
-                                    write_only=write_only_mode,
-                                ),
-                            })
-                            continue
-                        self.write_event({
-                            "event": "status",
-                            "status": "progress_observer",
-                            "message": "模型仍未调用本地写入工具，正在进行进度纠偏。",
-                        })
-                        await self.flush()
-                        messages.append({
-                            "role": "system",
-                            "content": self._progress_observer_prompt(
-                                workspace.path,
-                                current_stage,
-                                tool_events,
-                                code_change_intent,
-                                "missing_write_tool_after_retry",
-                            ),
-                        })
-                        continue
                     if (
                         task_contract.get("requires_verification")
                         and self._has_successful_target_deliverable(
@@ -1315,10 +1235,10 @@ class ConversationRunExecutor:
                                 duplicate_hint = {
                                     "role": "system",
                                     "content": (
-                                        "提示：本次读取与之前的同名同范围读取重复。"
-                                        "如已掌握目标文件内容，请尽快调用 "
-                                        "code.edit_file / code.replace_text 进入写入；较大完整文件请使用 filesystem.finalize_text_file。"
-                                        "如需查看不同范围，请改变 start_line / end_line 参数。"
+                                        "Runtime observation only. The latest read/search repeats "
+                                        "the same tool and range as an earlier call. Decide whether "
+                                        "that evidence is already enough, whether a different range "
+                                        "is needed, or whether the task should move to another step."
                                     ),
                                 }
                                 messages.append(duplicate_hint)
@@ -1508,9 +1428,12 @@ class ConversationRunExecutor:
                             if write_repair_mode and write_repair_rounds <= 3:
                                 messages.append({
                                     "role": "system",
-                                    "content": (
-                                        "写入修复仍未完成。请基于刚才读取到的真实文件片段，"
-                                        "立即再次调用 code.edit_file、code.replace_text；较大完整文件请使用 filesystem 文本草稿工具。"
+                                    "content": self._progress_observer_prompt(
+                                        workspace.path,
+                                        current_stage,
+                                        tool_events,
+                                        code_change_intent,
+                                        "write_repair_no_target_evidence",
                                     ),
                                 })
                                 self.write_event({

@@ -12,6 +12,9 @@ from typing import Any
 
 from runtime.agent_strategy import classifiers as _clf
 from runtime.agent_strategy import contract_evolution as _contract_evolution
+from runtime.agent_strategy.document_completion import (
+    contract_expects_text_output as _document_contract_expects_text_output,
+)
 
 
 VALID_INTENTS: frozenset[str] = frozenset({
@@ -747,18 +750,7 @@ def _looks_like_local_file_delete_contract(contract: dict[str, Any]) -> bool:
 
 
 def _contract_expects_text_output(contract: dict[str, Any]) -> bool:
-    if str(contract.get("intent") or "") in {"document_export", "paper_workflow"}:
-        return True
-    if contract.get("expected_document_coverage"):
-        return True
-    deliverables = contract.get("deliverables") if isinstance(contract.get("deliverables"), list) else []
-    for item in deliverables:
-        if not isinstance(item, dict):
-            continue
-        kind = str(item.get("kind") or "").strip().lower()
-        if kind in {"document", "markdown", "docx", "paper", "report", "article"}:
-            return True
-    return False
+    return _document_contract_expects_text_output(contract)
 
 
 def _contract_text(contract: dict[str, Any]) -> str:

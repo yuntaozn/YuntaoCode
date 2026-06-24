@@ -12,6 +12,10 @@ import json
 from copy import deepcopy
 from typing import Any
 
+from runtime.agent_strategy.document_completion import (
+    contract_expects_text_output as _document_contract_expects_text_output,
+)
+
 
 VALID_INTENTS: frozenset[str] = frozenset({
     "answer_only",
@@ -143,6 +147,15 @@ def apply_task_continuity(
         else anchor.get("required_verification_modalities"),
         result.get("required_verification_modalities"),
     )
+    if preserve_anchor_target and not retargets_read_only_answer:
+        result["expected_document_coverage"] = (
+            bool(anchor.get("expected_document_coverage"))
+            or bool(result.get("expected_document_coverage"))
+        )
+        result["expected_min_output_chars"] = max(
+            _safe_int(anchor.get("expected_min_output_chars")),
+            _safe_int(result.get("expected_min_output_chars")),
+        )
     result["continuity_anchor"] = (
         task_continuity_anchor(result)
         if retargets_local_file_state
@@ -169,6 +182,8 @@ def task_continuity_anchor(contract: dict[str, Any]) -> dict[str, Any]:
             "requires_state_change",
             "requires_verification",
             "required_verification_modalities",
+            "expected_document_coverage",
+            "expected_min_output_chars",
             "capability_ids",
             "deliverables",
         )
@@ -694,17 +709,7 @@ def _has_delete_term(text: str) -> bool:
 
 
 def _contract_expects_document_output(contract: dict[str, Any]) -> bool:
-    if str(contract.get("intent") or "") in {"document_export", "paper_workflow"}:
-        return True
-    if contract.get("expected_document_coverage"):
-        return True
-    deliverables = contract.get("deliverables") if isinstance(contract.get("deliverables"), list) else []
-    for item in deliverables:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("kind") or "").strip().lower() in {"document", "markdown", "docx"}:
-            return True
-    return False
+    return _document_contract_expects_text_output(contract)
 
 
 def _intent_or_default(value: Any, default: Any = "answer_only") -> str:

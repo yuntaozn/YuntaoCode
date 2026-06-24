@@ -369,6 +369,29 @@ def test_py_compile_is_structural_verification_not_behavioral() -> None:
     assert verification_evidence_modalities(event) == ("structural",)
 
 
+def test_shell_success_with_exception_stderr_is_not_clean_verification() -> None:
+    event = {
+        "tool": "shell.run_command",
+        "status": "success",
+        "input": {"command": "powershell -File serve.ps1"},
+        "output": {
+            "exit_code": 0,
+            "stderr": "HttpListenerException: 参数错误。",
+        },
+        "runtime_risks": [
+            {"code": "shell_stderr_warning", "blocking": False}
+        ],
+    }
+
+    assert verification_evidence_strength(event) == "none"
+    assert verification_evidence_modalities(event) == ()
+    assert classify_tool_event_role(
+        event,
+        task_contract={"requires_verification": True},
+        workspace_path="D:/workspace",
+    ) != VERIFICATION
+
+
 def test_visual_requirement_needs_visual_verification_modality() -> None:
     contract = {
         "requires_write": False,

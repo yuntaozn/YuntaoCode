@@ -10,6 +10,7 @@ from runtime.api.plugins import (
     plugin_toggle_policy_error,
 )
 from runtime.core.capability_pack import CapabilityPack
+from runtime import i18n
 
 
 def test_plugin_toggle_policy_allows_registered_plugin() -> None:
@@ -88,6 +89,12 @@ def test_plugin_provider_kind_classifies_builtin_boundaries() -> None:
     assert plugin_provider_kind("pdf-tools", "cli") == "cli_provider"
     assert plugin_provider_kind("doc-method", "capability_pack") == "capability_pack"
     assert plugin_provider_kind("demo", "ai_draft") == "ai_draft"
+
+
+def test_spreadsheet_plugin_has_user_facing_name() -> None:
+    assert i18n.t("plugin.name.spreadsheet", "zh-CN") == "表格处理"
+    assert i18n.t("plugin.name.spreadsheet", "en") == "Spreadsheet Processing"
+    assert i18n.t("plugin.name.spreadsheet", "zh-CN") != "plugin.name.spreadsheet"
 
 
 def test_capability_pack_exposes_read_only_provider() -> None:

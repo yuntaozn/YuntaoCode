@@ -26,6 +26,7 @@ from runtime.agent_strategy.tool_event_roles import (
     verification_evidence_strength,
     verification_strength_meets,
 )
+from runtime.agent_strategy.tool_result_risks import assess_tool_result_risks
 from runtime.capability_evidence import build_capability_evidence_summary
 from runtime.core.result import RUN_RESULT_SCHEMA_VERSION
 
@@ -220,7 +221,15 @@ def build_run_result(
     if failure_reasons & {"malformed_tool_arguments", "non_object_tool_arguments"}:
         risks.append("invalid_tool_call_protocol")
     for event in tool_events:
-        for runtime_risk in event.get("runtime_risks") or []:
+        event_risks = event.get("runtime_risks")
+        if not isinstance(event_risks, list) or not event_risks:
+            event_risks = assess_tool_result_risks(
+                str(event.get("tool") or ""),
+                str(event.get("status") or ""),
+                event.get("output"),
+                error=event.get("error"),
+            )
+        for runtime_risk in event_risks or []:
             if isinstance(runtime_risk, dict) and runtime_risk.get("code"):
                 risks.append(str(runtime_risk["code"]))
     if requires_code_write and not write_successes:

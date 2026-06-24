@@ -174,6 +174,27 @@ def test_run_store_pause_resists_status_noise_until_resume(tmp_path) -> None:
     assert resumed.stage == "resumed"
 
 
+def test_run_store_marks_user_stopped_status_as_terminal(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.json")
+    run = store.create(
+        conversation_id="conv_1",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="hello",
+    )
+
+    stopped = store.record_event(run.id, {
+        "event": "status",
+        "status": "stopped",
+        "message": "user stopped generation",
+    })
+
+    assert stopped is not None
+    assert stopped.status == "stopped"
+    assert stopped.stage == "stopped"
+    assert stopped.message == "user stopped generation"
+
+
 def test_sqlite_run_store_persists_events_and_supports_indexed_filters(tmp_path) -> None:
     database_path = tmp_path / "runtime.db"
     store = RunStore.sqlite(database_path)

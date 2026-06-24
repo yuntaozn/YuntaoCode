@@ -9,6 +9,14 @@ from typing import Any
 class ToolExecutionGuardDecision:
     reason: str
     message: str
+    blocking: bool = True
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "reason": self.reason,
+            "message": self.message,
+            "blocking": self.blocking,
+        }
 
 
 @dataclass(frozen=True)
@@ -46,13 +54,6 @@ def evaluate_tool_execution_guard(
             message=f"能力服务尚未连接，不能调用工具：{tool_id}",
         )
 
-    guard_message = checks.capability_fallback_message(tool_id)
-    if guard_message:
-        return ToolExecutionGuardDecision(
-            reason="capability_fallback_blocked",
-            message=guard_message,
-        )
-
     missing_fields = list(checks.missing_required_input_fields(tool_id, arguments))
     if missing_fields:
         return ToolExecutionGuardDecision(
@@ -61,6 +62,14 @@ def evaluate_tool_execution_guard(
                 f"工具调用缺少必填参数：{', '.join(missing_fields)}。"
                 "请补全参数后重新发送结构化工具调用；无效调用不会进入人工确认。"
             ),
+        )
+
+    guard_message = checks.capability_fallback_message(tool_id)
+    if guard_message:
+        return ToolExecutionGuardDecision(
+            reason="capability_fallback_advisory",
+            message=guard_message,
+            blocking=False,
         )
 
     guard_message = checks.ai_plugin_draft_workspace_message(tool_id, arguments, workspace_path)
@@ -73,15 +82,17 @@ def evaluate_tool_execution_guard(
     guard_message = checks.document_contract_message(tool_id, arguments)
     if guard_message:
         return ToolExecutionGuardDecision(
-            reason="document_contract_guard",
+            reason="document_contract_advisory",
             message=guard_message,
+            blocking=False,
         )
 
     guard_message = checks.verification_runtime_message(tool_id, arguments)
     if guard_message:
         return ToolExecutionGuardDecision(
-            reason="invalid_verification_method",
+            reason="verification_runtime_advisory",
             message=guard_message,
+            blocking=False,
         )
 
     return None

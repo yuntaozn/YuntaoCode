@@ -127,8 +127,20 @@ PREFIX_CAPABILITIES: dict[str, tuple[str, str, str]] = {
 TEXT_WRITE_CAPABILITY = (
     "code.text_write",
     "Text Write",
-    "Create or modify text/code files through one unified write route: precise edits or patches for existing files, direct writes for small complete files, and draft chunks only for large complete artifacts.",
+    "Create or modify text/code files through one unified write route. For long prose, complete pages, multi-file rewrites, or non-trivial full artifacts, default to draft chunk writing: create_text_draft, repeated append_text_chunk, inspect when useful, then finalize_text_file. Use precise edits for small existing-file changes and direct write only for tiny complete files.",
 )
+
+TEXT_WRITE_TOOL_PROMPT_ORDER: dict[str, int] = {
+    "filesystem.create_text_draft": 0,
+    "filesystem.append_text_chunk": 1,
+    "filesystem.inspect_text_draft": 2,
+    "filesystem.finalize_text_file": 3,
+    "code.edit_file": 10,
+    "code.replace_text": 11,
+    "code.apply_patch": 12,
+    "filesystem.apply_changes": 13,
+    "filesystem.write_file": 20,
+}
 
 TEMP_ARTIFACT_CAPABILITY = (
     "filesystem.temp_artifact",
@@ -278,7 +290,7 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
             id=capability_id,
             name=str(bucket["name"]),
             description=str(bucket["description"]),
-            tool_ids=tuple(dict.fromkeys(bucket["tool_ids"])),
+            tool_ids=_ordered_tool_ids(capability_id, bucket["tool_ids"]),
             artifacts=tuple(sorted(bucket["artifacts"])),
             effects=tuple(sorted(bucket["effects"])),
             roles=tuple(sorted(bucket["roles"])),
@@ -297,6 +309,45 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
 
 def build_capability_catalog(tool_specs: list[dict[str, Any]]) -> list[CapabilityContract]:
     return merge_capability_contracts([capability_from_tool_spec(spec) for spec in tool_specs])
+
+
+def _ordered_tool_ids(capability_id: str, tool_ids: list[str]) -> tuple[str, ...]:
+    unique = tuple(dict.fromkeys(tool_ids))
+    if capability_id != "code.text_write":
+        return unique
+    return tuple(
+        sorted(
+            unique,
+            key=lambda tool_id: (
+                TEXT_WRITE_TOOL_PROMPT_ORDER.get(tool_id, 100),
+                unique.index(tool_id),
+            ),
+        )
+    )
+
+
+def order_tool_specs_for_model_prompt(tool_specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    indexed = list(enumerate(tool_specs))
+    text_write_indexes = [
+        index for index, spec in indexed
+        if str(spec.get("id") or "") in TEXT_WRITE_TOOL_PROMPT_ORDER
+    ]
+    if not text_write_indexes:
+        return list(tool_specs)
+    first_text_write_index = min(text_write_indexes)
+
+    def sort_key(item: tuple[int, dict[str, Any]]) -> tuple[int, int, int]:
+        index, spec = item
+        tool_id = str(spec.get("id") or "")
+        if tool_id in TEXT_WRITE_TOOL_PROMPT_ORDER:
+            return (
+                first_text_write_index,
+                TEXT_WRITE_TOOL_PROMPT_ORDER[tool_id],
+                index,
+            )
+        return (index, 0, index)
+
+    return [spec for _, spec in sorted(indexed, key=sort_key)]
 
 
 def format_capability_catalog_for_prompt(

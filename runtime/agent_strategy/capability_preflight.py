@@ -428,12 +428,8 @@ def tool_allowed_by_preflight(preflight: dict[str, Any] | None, tool_id: str) ->
 
 
 def preflight_should_stop(preflight: dict[str, Any] | None) -> bool:
-    """Return whether preflight is explicitly allowed to stop a run."""
-    if not isinstance(preflight, dict):
-        return False
-    if bool(preflight.get("ok", True)):
-        return False
-    return bool(preflight.get("enforce_stop"))
+    """Preflight is advisory and must not terminate a run before model repair."""
+    return False
 
 
 def preflight_blocker_messages(preflight: dict[str, Any] | None) -> list[str]:

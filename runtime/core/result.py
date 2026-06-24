@@ -41,6 +41,7 @@ RISK_CODES: frozenset[str] = frozenset({
     "invalid_verification_method",
     "runtime_verification_not_observed",
     "artifact_integrity_invalid",
+    "shell_stderr_warning",
 })
 
 

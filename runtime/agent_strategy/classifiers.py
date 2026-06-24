@@ -19,6 +19,7 @@ from .profiles import (
     round_limit_for_profile,
     stage_sequence_for_profile,
 )
+from .tool_result_risks import shell_success_has_stderr_warning
 
 
 # ---------------------------------------------------------------------------
@@ -1449,6 +1450,8 @@ def _shell_command_verifies_behavior(
         exit_code = 0
     if exit_code != 0:
         return False
+    if shell_success_has_stderr_warning(output):
+        return False
     command = str(event_input.get("command") or "").strip().lower()
     args = event_input.get("args") if isinstance(event_input.get("args"), list) else []
     arg_text = " ".join(str(item).lower() for item in args)
@@ -1511,6 +1514,8 @@ def _shell_command_has_structural_check_marker(event: dict[str, Any]) -> bool:
     except (TypeError, ValueError):
         exit_code = 0
     if exit_code != 0:
+        return False
+    if shell_success_has_stderr_warning(output):
         return False
     command = str(event_input.get("command") or "").strip().lower()
     args = event_input.get("args") if isinstance(event_input.get("args"), list) else []

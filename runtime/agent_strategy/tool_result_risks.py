@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 
+SHELL_STDERR_WARNING_CODE = "shell_stderr_warning"
+
+
 def assess_tool_result_risks(
     tool_id: str,
     status: str,
@@ -22,6 +25,38 @@ def assess_tool_result_risks(
         return []
 
     risks: list[dict[str, Any]] = []
+    if str(tool_id or "").strip() == "shell.run_command" and shell_success_has_stderr_warning(output):
+        risks.append({
+            "code": SHELL_STDERR_WARNING_CODE,
+            "severity": "warning",
+            "source": tool_id,
+            "detail": _stderr_detail(output),
+            "action": "treat_as_degraded_verification_evidence",
+            "blocking": False,
+            "message": (
+                "The command exited with code 0, but stderr contains an error-like "
+                "or exception-like signal. Treat this as degraded evidence: inspect "
+                "the stderr, choose a stronger verification route, or report the "
+                "uncertainty honestly instead of counting it as clean verification."
+            ),
+        })
+    for risk in _encoding_risk_records(output):
+        risks.append({
+            "code": "text_encoding_risk",
+            "severity": "warning",
+            "source": tool_id,
+            "path": risk.get("path") or str(output.get("path") or ""),
+            "encoding": risk.get("encoding") or output.get("encoding") or "",
+            "risk_code": risk.get("code") or "",
+            "detail": risk.get("message") or "",
+            "action": "verify_rendered_text_encoding",
+            "blocking": False,
+            "message": (
+                "The tool result includes text encoding evidence that may affect rendered output. "
+                "Treat it as advisory evidence: inspect the affected file or rendered page, add an "
+                "explicit charset/encoding fix when appropriate, or report the uncertainty."
+            ),
+        })
     integrity = output.get("integrity")
     if isinstance(integrity, dict) and integrity.get("checked") is True and integrity.get("valid") is not True:
         issues = [
@@ -46,6 +81,45 @@ def assess_tool_result_risks(
             ),
         })
     return risks
+
+
+def _encoding_risk_records(output: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = output.get("encoding_risks")
+    records: list[dict[str, Any]] = []
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            nested = item.get("risks")
+            if isinstance(nested, list):
+                for risk in nested:
+                    if isinstance(risk, dict):
+                        records.append({
+                            "path": item.get("path"),
+                            "encoding": item.get("encoding"),
+                            "code": risk.get("code"),
+                            "message": risk.get("message"),
+                        })
+                continue
+            records.append(item)
+    return records[:8]
+
+
+def shell_success_has_stderr_warning(output: Any) -> bool:
+    if not isinstance(output, dict):
+        return False
+    if output.get("timed_out") is True:
+        return False
+    try:
+        exit_code = int(output.get("exit_code", 0) or 0)
+    except (TypeError, ValueError):
+        exit_code = 0
+    if exit_code != 0:
+        return False
+    stderr = str(output.get("stderr") or "").strip()
+    if not stderr:
+        return False
+    return _looks_like_stderr_error(stderr)
 
 
 def attach_tool_result_risks(payload: dict[str, Any]) -> dict[str, Any]:
@@ -127,5 +201,37 @@ def _looks_like_unsupported_capability_tool(text: str) -> bool:
         "method not found",
         "no such tool",
         "unrecognized command",
+    )
+    return any(term in lowered for term in terms)
+
+
+def _stderr_detail(output: dict[str, Any]) -> str:
+    stderr = str(output.get("stderr") or "").strip()
+    return " ".join(stderr.split())[:800]
+
+
+def _looks_like_stderr_error(text: str) -> bool:
+    lowered = str(text or "").lower()
+    terms = (
+        "traceback (most recent call last)",
+        "exception",
+        "httplistenerexception",
+        "modulenotfounderror",
+        "syntaxerror",
+        "typeerror",
+        "referenceerror",
+        "commandnotfoundexception",
+        "cannot find module",
+        "module_not_found",
+        "failed to",
+        "fatal:",
+        "error:",
+        " error:",
+        "send_error",
+        "系统找不到指定的文件",
+        "系统找不到指定的路径",
+        "找不到指定的文件",
+        "无法运行此命令",
+        "出现以下错误",
     )
     return any(term in lowered for term in terms)

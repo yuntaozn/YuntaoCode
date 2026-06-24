@@ -9,6 +9,7 @@ from runtime.agent_strategy.task_contract import (
     merge_model_task_contract,
     promote_task_contract_for_write_intent,
     should_use_model_task_contract,
+    task_continuity_anchor,
     task_contract_context_messages,
     task_contract_prompt,
 )
@@ -788,6 +789,37 @@ def test_model_code_contract_clears_fallback_text_length_goal() -> None:
     assert "cleared_non_text_min_output_chars" in contract["system_overrides"]
 
 
+def test_text_file_contract_preserves_declared_min_output_chars() -> None:
+    fallback = default_task_contract(
+        task_intent="write_required",
+        mode="terminal",
+        planning_policy="auto",
+        confirmation_policy="auto",
+        workspace_path=r"D:\code\demo",
+        access_scope="workspace",
+    )
+
+    contract = merge_model_task_contract(
+        {
+            "intent": "write_required",
+            "requires_write": True,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "expected_min_output_chars": 50000,
+            "deliverables": [
+                {"kind": "file", "path_hint": "novel.txt"}
+            ],
+        },
+        fallback,
+        expected_min_output_chars=50000,
+    )
+
+    assert contract_expects_text_output(contract) is True
+    assert contract["expected_min_output_chars"] == 50000
+    assert "document_min_output_chars" in contract["success_conditions"]
+    assert "cleared_non_text_min_output_chars" not in contract["system_overrides"]
+
+
 def test_model_can_explicitly_replace_previous_task_target() -> None:
     previous = {
         "intent": "write_required",
@@ -877,6 +909,38 @@ def test_continuity_does_not_override_current_document_size_requirement() -> Non
     )
 
     assert contract["expected_min_output_chars"] == 50000
+
+
+def test_continuity_preserves_text_file_size_target() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "Write a novel to novel.txt",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "expected_min_output_chars": 50000,
+        "deliverables": [{"kind": "file", "path_hint": "novel.txt"}],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "continue",
+            "intent": "write_required",
+            "requires_write": True,
+            "expected_min_output_chars": 0,
+            "deliverables": [{"kind": "file", "path_hint": "novel.txt"}],
+        },
+        _fallback("write_required"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content="再试一次",
+    )
+
+    assert contract_expects_text_output(contract) is True
+    assert contract["expected_min_output_chars"] == 50000
+    assert task_continuity_anchor(contract)["expected_min_output_chars"] == 50000
 
 
 def test_continuity_preserves_model_contract_with_no_write_hint() -> None:

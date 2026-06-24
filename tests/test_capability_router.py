@@ -2,6 +2,7 @@ from runtime.agent_strategy.capability_router import (
     build_capability_catalog,
     capability_from_tool_spec,
     format_capability_catalog_for_prompt,
+    order_tool_specs_for_model_prompt,
     parse_task_route_proposal,
     validate_task_route_proposal,
 )
@@ -61,17 +62,41 @@ def test_capability_catalog_groups_all_text_code_write_routes() -> None:
 
     assert capability.id == "code.text_write"
     assert capability.tool_ids == (
-        "code.apply_patch",
-        "code.edit_file",
-        "code.replace_text",
-        "filesystem.write_file",
         "filesystem.create_text_draft",
         "filesystem.append_text_chunk",
         "filesystem.inspect_text_draft",
         "filesystem.finalize_text_file",
+        "code.edit_file",
+        "code.replace_text",
+        "code.apply_patch",
+        "filesystem.write_file",
     )
     assert capability.requires_confirmation is True
     assert capability.artifacts == ("file", "text_draft")
+
+
+def test_text_write_tools_are_ordered_for_chunk_first_model_prompting() -> None:
+    specs = [
+        {"id": "filesystem.scan_folder"},
+        {"id": "filesystem.write_file"},
+        {"id": "filesystem.apply_changes"},
+        {"id": "filesystem.create_text_draft"},
+        {"id": "filesystem.append_text_chunk"},
+        {"id": "filesystem.finalize_text_file"},
+        {"id": "git.status"},
+    ]
+
+    ordered = [item["id"] for item in order_tool_specs_for_model_prompt(specs)]
+
+    assert ordered == [
+        "filesystem.scan_folder",
+        "filesystem.create_text_draft",
+        "filesystem.append_text_chunk",
+        "filesystem.finalize_text_file",
+        "filesystem.apply_changes",
+        "filesystem.write_file",
+        "git.status",
+    ]
 
 
 def test_capability_catalog_keeps_local_file_state_separate_from_text_write() -> None:

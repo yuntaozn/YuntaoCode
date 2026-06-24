@@ -48,6 +48,7 @@ RISK_MESSAGES_ZH: dict[str, str] = {
     "invalid_verification_method": "使用了无效的验证方式。",
     "runtime_verification_not_observed": "没有观察到可退出的运行时验证。",
     "artifact_integrity_invalid": "产物完整性检查未通过。",
+    "shell_stderr_warning": "命令退出码为 0，但 stderr 出现异常或错误迹象，不能把它当作干净验证。",
 }
 
 

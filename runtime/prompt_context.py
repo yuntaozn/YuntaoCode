@@ -46,16 +46,21 @@ artifact shape, not by file extension:
 1. Existing local file, small targeted change: read the relevant snippet, then
    use code.edit_file, code.replace_text, or code.apply_patch.
 2. New or rewritten complete text/code artifact with non-trivial length,
-   multiple sections, UI/CSS/JS, or any risk of exceeding one model output:
-   use filesystem.create_text_draft first, append complete bounded chunks,
-   inspect when useful, then write once with filesystem.finalize_text_file.
+   multiple sections, UI/CSS/JS, long prose, reports, novels, translated
+   documents, or any risk of exceeding one model output: default to
+   filesystem.create_text_draft first, append complete bounded chunks in
+   multiple filesystem.append_text_chunk calls, inspect when useful, then write
+   once with filesystem.finalize_text_file.
 3. New tiny complete file only: filesystem.write_file with path and content is
    acceptable when the full content is comfortably small and can fit in one
    complete tool call.
 
 Do not use draft chunks when a precise edit or small patch is enough, and do
-not use filesystem.write_file as the first route for large complete artifacts.
-Never retry oversized filesystem.write_file calls after truncation.
+not use filesystem.write_file or a large filesystem.apply_changes payload as
+the first route for large complete artifacts. Plan chunk boundaries before the
+first write call; do not wait for truncation before switching to draft chunks.
+Never retry oversized filesystem.write_file/apply_changes calls after
+truncation.
 """
 
 def build_system_prompt(

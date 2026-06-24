@@ -132,7 +132,7 @@ async def test_fake_write_failure_is_recoverable_and_retry_can_succeed() -> None
         "D:/workspace",
     )
     assert "old_text" in repair_prompt
-    assert "不能用文字声称已经修改完成" in repair_prompt
+    assert "do not claim the file was changed" in repair_prompt
 
 
 @pytest.mark.asyncio
@@ -153,9 +153,9 @@ async def test_fake_recon_loop_produces_progress_signal_without_write() -> None:
         True,
         "recon-loop",
     )
-    assert "尚未写入" in nudge
+    assert "observed_write_evidence=missing" in nudge
     assert "recon-loop" in nudge
-    assert "4 次" in recon_budget_prompt(4, "D:/workspace")
+    assert "Recon reads/searches observed: 4" in recon_budget_prompt(4, "D:/workspace")
 
 
 @pytest.mark.asyncio

@@ -64,6 +64,22 @@ def test_result_event_is_recorded_as_runtime_result() -> None:
     }
 
 
+def test_done_event_preserves_final_answer_preview() -> None:
+    event = compact_run_event({
+        "event": "done",
+        "run_status": "partial",
+        "assistant": {
+            "content": "未完整完成：已写入文件，但只观察到结构验证，缺少行为验证。"
+        },
+        "context_tokens": 120,
+        "context_limit": 4096,
+    })
+
+    assert event["event_name"] == "run.completed"
+    assert event["run_status"] == "partial"
+    assert event["final_answer_preview"] == "未完整完成：已写入文件，但只观察到结构验证，缺少行为验证。"
+
+
 def test_confirm_event_preserves_tool_and_decision_summary() -> None:
     event = compact_run_event({
         "event": "confirm",

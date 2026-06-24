@@ -49,6 +49,45 @@ def test_valid_integrity_does_not_add_risk() -> None:
     assert "runtime_risks" not in payload
 
 
+def test_shell_success_with_exception_stderr_becomes_degraded_evidence_risk() -> None:
+    risks = assess_tool_result_risks(
+        "shell.run_command",
+        "success",
+        {
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "HttpListenerException: 参数错误。",
+        },
+    )
+
+    assert risks[0]["code"] == "shell_stderr_warning"
+    assert risks[0]["blocking"] is False
+    assert risks[0]["action"] == "treat_as_degraded_verification_evidence"
+    assert "HttpListenerException" in risks[0]["detail"]
+
+
+def test_encoding_warning_becomes_non_blocking_model_facing_risk() -> None:
+    risks = assess_tool_result_risks(
+        "filesystem.write_file",
+        "success",
+        {
+            "path": "viewer.html",
+            "encoding": "utf-8",
+            "encoding_risks": [
+                {
+                    "code": "html_charset_missing",
+                    "message": "HTML 包含非 ASCII 文本但前部未声明 charset。",
+                }
+            ],
+        },
+    )
+
+    assert risks[0]["code"] == "text_encoding_risk"
+    assert risks[0]["risk_code"] == "html_charset_missing"
+    assert risks[0]["blocking"] is False
+    assert risks[0]["action"] == "verify_rendered_text_encoding"
+
+
 def test_failed_external_capability_tool_becomes_model_facing_risk() -> None:
     risks = assess_tool_result_risks(
         "mcp_blender.get_viewport_screenshot",
@@ -81,6 +120,12 @@ def test_compact_read_payload_keeps_integrity_and_runtime_risks() -> None:
             "path": "viewer.html",
             "content": "1| &lt;html&gt;",
             "raw_content": "&lt;html&gt;",
+            "encoding_risks": [
+                {
+                    "code": "html_charset_missing",
+                    "message": "HTML 包含非 ASCII 文本但前部未声明 charset。",
+                }
+            ],
             "integrity": {
                 "checked": True,
                 "valid": False,
@@ -92,7 +137,10 @@ def test_compact_read_payload_keeps_integrity_and_runtime_risks() -> None:
     compact = handler._summarize_tool_payload(payload)
 
     assert compact["output"]["integrity"]["valid"] is False
-    assert compact["runtime_risks"][0]["code"] == "artifact_integrity_invalid"
+    assert compact["output"]["encoding_risks"][0]["code"] == "html_charset_missing"
+    risk_codes = {risk["code"] for risk in compact["runtime_risks"]}
+    assert "artifact_integrity_invalid" in risk_codes
+    assert "text_encoding_risk" in risk_codes
 
 
 def test_compact_tool_message_keeps_risk_before_large_output_truncation() -> None:

@@ -104,6 +104,9 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
         }
         if payload.get("usage"):
             result["usage"] = payload.get("usage")
+        preview = _final_answer_preview(payload)
+        if preview:
+            result["final_answer_preview"] = preview
         return result
     if event_type == "tool":
         return {
@@ -263,3 +266,19 @@ def canonical_run_event_name(payload: dict[str, Any]) -> str:
     if event_type == "done":
         return "run.completed"
     return event_type or "run.event"
+
+
+def _final_answer_preview(payload: dict[str, Any], *, limit: int = 1200) -> str:
+    assistant = payload.get("assistant") if isinstance(payload.get("assistant"), dict) else {}
+    content = str(
+        assistant.get("content")
+        or payload.get("assistant_content")
+        or payload.get("final_answer")
+        or ""
+    ).strip()
+    if not content:
+        return ""
+    clean = " ".join(content.split())
+    if len(clean) <= limit:
+        return clean
+    return clean[: max(0, limit - 1)].rstrip() + "…"

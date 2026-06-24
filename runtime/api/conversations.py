@@ -14,6 +14,7 @@ from runtime.capability_governance import ai_plugin_draft_workspace_guard_messag
 from runtime.agent_strategy.capability_router import (
     build_capability_catalog,
     format_capability_catalog_for_prompt,
+    order_tool_specs_for_model_prompt,
 )
 from runtime.agent_strategy import classifiers as _clf
 from runtime.agent_strategy import capability_preflight as _cap_preflight
@@ -45,6 +46,8 @@ from runtime.context_manager import (
 )
 from runtime.conversation_runner import ConversationRunExecutor
 from runtime.conversation_interactions import (
+    active_run_tasks as _active_run_tasks,
+    active_stream_conversation_runs as _active_stream_conversation_runs,
     confirm_responses as _confirm_responses,
     pending_confirms as _pending_confirms,
     runtime_guidance as _runtime_guidance,
@@ -59,7 +62,6 @@ from runtime.task_runner import ToolContext
 from runtime import tool_event_presentation as _tool_present
 
 
-_active_stream_conversation_runs: dict[str, str] = {}
 _ACTIVE_CONVERSATION_RUN_STATUSES = {"running", "waiting_confirmation", "paused"}
 
 
@@ -657,6 +659,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 })
 
         task = asyncio.create_task(execute_run())
+        _active_run_tasks[run.id] = task
         try:
             while True:
                 if getattr(self, "_client_stream_closed", False):
@@ -688,6 +691,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                     break
         finally:
             self.runtime.run_events.unsubscribe(run.id, event_queue)
+            if _active_run_tasks.get(run.id) is task:
+                _active_run_tasks.pop(run.id, None)
             if _active_stream_conversation_runs.get(conversation_id) in {run.id, "pending"}:
                 _active_stream_conversation_runs.pop(conversation_id, None)
 
@@ -1180,7 +1185,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             allowed_tools = set(mode_config["tools"])
         tools: list[dict[str, Any]] = []
         name_map: dict[str, str] = {}
-        for spec in self._capability_tool_specs(mode_config):
+        for spec in order_tool_specs_for_model_prompt(self._capability_tool_specs(mode_config)):
             if allowed_tools is not None and spec["id"] not in allowed_tools:
                 continue
             if allowed_tool_ids is not None and spec["id"] not in allowed_tool_ids:
@@ -1836,7 +1841,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             )
 
         guard_decision = self._tool_execution_guard_decision(tool_id, arguments, workspace_path)
-        if guard_decision:
+        runtime_advisories = []
+        if guard_decision and getattr(guard_decision, "blocking", True):
             return self._skipped_tool_call(
                 tool_call,
                 tool_id,
@@ -1844,6 +1850,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 reason=guard_decision.reason,
                 message=guard_decision.message,
             )
+        if guard_decision:
+            runtime_advisories.append(guard_decision.to_public_dict())
 
         confirmation_decision = self._runtime_confirmation_decision(tool_id)
         if confirmation_decision.requires_confirmation:
@@ -1955,12 +1963,15 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "declared_roles": list(tool_spec.roles or []),
             "declared_verification_strength": tool_spec.verification_strength,
         }
+        if runtime_advisories:
+            event["runtime_advisories"] = runtime_advisories
         tool_payload = _tool_risks.attach_tool_result_risks({
             "tool": tool_id,
             "input": arguments,
             "status": task.status,
             "output": task.output,
             "error": task_error,
+            "runtime_advisories": runtime_advisories,
         })
         if tool_payload.get("runtime_risks"):
             event["runtime_risks"] = tool_payload["runtime_risks"]
@@ -2404,9 +2415,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
 
     def _verifier_retry_prompt(self, mode: str | None, workspace_path: str) -> str:
         return _prp.verifier_retry_prompt(mode, workspace_path)
-
-    def _tool_contract_correction_prompt(self, workspace_path: str, write_only: bool = False) -> str:
-        return _prp.tool_contract_correction_prompt(workspace_path, write_only)
 
     def _read_only_task_prompt(self, workspace_path: str) -> str:
         return _prp.read_only_task_prompt(workspace_path)

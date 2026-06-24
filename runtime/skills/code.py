@@ -4,6 +4,12 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+from runtime.text_encoding import (
+    detect_text_encoding,
+    read_text_with_encoding,
+    text_encoding_risks,
+    write_text_with_encoding,
+)
 from runtime.tool_registry import ToolRegistry, ToolSpec
 
 
@@ -28,31 +34,15 @@ DEFAULT_EXCLUDE_DIRS = {
 
 
 def _detect_encoding(raw: bytes) -> str:
-    """Detect file encoding by trying common encodings in order."""
-    for enc in ("utf-8", "gbk", "latin-1"):
-        try:
-            raw.decode(enc)
-            return enc
-        except (UnicodeDecodeError, ValueError):
-            continue
-    return "utf-8"
+    return detect_text_encoding(raw)
 
 
 def _read_text_with_encoding(path: Path) -> tuple[str, str]:
-    """Read file with auto-detected encoding. Returns (text, encoding)."""
-    raw = path.read_bytes()
-    encoding = _detect_encoding(raw[:8192])
-    text = raw.decode(encoding, errors="replace")
-    return text, encoding
+    return read_text_with_encoding(path)
 
 
 def _write_text_with_encoding(path: Path, text: str, encoding: str) -> None:
-    """Write text back using the original encoding, with UTF-8 fallback."""
-    try:
-        path.write_text(text, encoding=encoding)
-    except (UnicodeEncodeError, LookupError):
-        # 原编码无法表示新内容（如模型输出了 GBK 无法表示的字符），回退 UTF-8
-        path.write_text(text, encoding="utf-8")
+    write_text_with_encoding(path, text, encoding)
 
 
 def normalize_extensions(value: Any) -> set[str]:
@@ -132,7 +122,7 @@ def search_text_sync(
         ):
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text, _encoding = _read_text_with_encoding(path)
         except OSError:
             continue
         for line_number, line in enumerate(text.splitlines(), 1):
@@ -603,6 +593,8 @@ def edit_file_sync(path: Path, edits: list[dict[str, Any]], context: Any) -> dic
     return {
         "path": str(path),
         "edit_count": applied,
+        "encoding": encoding,
+        "encoding_risks": text_encoding_risks(path, text, encoding),
         "diff_preview": "\n".join(diff_parts),
     }
 
@@ -666,12 +658,22 @@ def apply_patch_sync(patch: str, context: Any) -> dict[str, Any]:
         _write_text_with_encoding(path, item["text"], item["encoding"])
         context.log("info", f"patch {item['kind']}: {path}")
 
+    encoding_risks = [
+        {
+            "path": str(item["path"]),
+            "encoding": str(item["encoding"]),
+            "risks": text_encoding_risks(item["path"], str(item["text"]), str(item["encoding"])),
+        }
+        for item in planned
+    ]
+
     return {
         "path": str(planned[0]["path"]) if len(planned) == 1 else "",
         "paths": [str(item["path"]) for item in planned],
         "file_count": len(planned),
         "operation_count": len(operations),
         "hunk_count": sum(int(item.get("hunk_count") or 0) for item in planned),
+        "encoding_risks": encoding_risks,
     }
 
 

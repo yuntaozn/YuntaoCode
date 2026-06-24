@@ -15,9 +15,16 @@ from runtime.text_artifacts import (
     text_draft_content,
     text_draft_stats,
 )
+from runtime.text_encoding import (
+    detect_text_encoding,
+    read_text_with_encoding,
+    text_encoding_risks,
+    write_text_with_encoding,
+)
 from runtime.tool_registry import ToolRegistry, ToolSpec
 
 MAX_READ_LINES = 500
+TEXT_WRITE_CHUNK_MAX_CHARS = 8000
 TEXT_TRANSFORMS = frozenset({
     "html_unescape",
 })
@@ -81,28 +88,26 @@ async def read_text_preview(input_data: dict[str, Any], context: Any) -> dict[st
         raise ValueError(f"file not found: {path}")
 
     max_bytes = int(input_data.get("max_bytes", 12000))
-    return await asyncio.to_thread(
-        read_text_preview_sync,
-        path,
-        max_bytes,
-        input_data.get("encoding") or "utf-8",
-    )
+    return await asyncio.to_thread(read_text_preview_sync, path, max_bytes, input_data.get("encoding"))
 
 
-def read_text_preview_sync(path: Path, max_bytes: int, encoding: str) -> dict[str, Any]:
+def read_text_preview_sync(path: Path, max_bytes: int, encoding: str | None) -> dict[str, Any]:
     all_bytes = path.read_bytes()
     raw = all_bytes[:max_bytes]
-    text = raw.decode(encoding, errors="replace")
+    detected_encoding = str(encoding or detect_text_encoding(all_bytes))
+    text = raw.decode(detected_encoding, errors="replace")
     try:
-        full_text = all_bytes.decode(encoding, errors="replace")
+        full_text = all_bytes.decode(detected_encoding, errors="replace")
     except (LookupError, ValueError):
         full_text = text
     return {
         "path": str(path),
         "size": len(all_bytes),
+        "encoding": detected_encoding,
         "truncated": len(all_bytes) > max_bytes,
         "text": text,
         "integrity": inspect_text_artifact_integrity(path, full_text),
+        "encoding_risks": text_encoding_risks(path, full_text, detected_encoding),
     }
 
 
@@ -120,13 +125,7 @@ async def read_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
 
 
 def _detect_encoding(raw: bytes) -> str:
-    for enc in ("utf-8", "gbk", "latin-1"):
-        try:
-            raw.decode(enc)
-            return enc
-        except (UnicodeDecodeError, ValueError):
-            continue
-    return "utf-8"
+    return detect_text_encoding(raw)
 
 
 def read_file_sync(
@@ -134,9 +133,7 @@ def read_file_sync(
     start_line: int | None = None,
     end_line: int | None = None,
 ) -> dict[str, Any]:
-    raw = path.read_bytes()
-    encoding = _detect_encoding(raw[:8192])
-    text = raw.decode(encoding, errors="replace")
+    text, encoding = read_text_with_encoding(path)
     all_lines = text.splitlines(keepends=True)
     total_lines = len(all_lines)
 
@@ -180,6 +177,7 @@ def read_file_sync(
         "content": numbered,
         "raw_content": raw_content,
         "integrity": integrity,
+        "encoding_risks": text_encoding_risks(path, text, encoding),
         "usage_hint": (
             "content 字段带行号前缀，仅用于显示参考。"
             "构造 code.edit_file 的 old_text / new_text 时，请基于 raw_content（不含行号前缀）的文本。"
@@ -203,8 +201,9 @@ async def write_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]
     content = input_data.get("content")
     if content is None:
         raise ValueError("content is required")
+    content_text = str(content)
     create_dirs = input_data.get("create_dirs", True)
-    return await asyncio.to_thread(write_file_sync, path, str(content), bool(create_dirs), context)
+    return await asyncio.to_thread(write_file_sync, path, content_text, bool(create_dirs), context)
 
 
 async def delete_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -289,9 +288,10 @@ async def append_text_chunk(input_data: dict[str, Any], context: Any) -> dict[st
     record = load_text_draft(data_dir, str(input_data.get("draft_id") or ""))
     sequence_value = input_data.get("sequence")
     sequence = int(sequence_value) if sequence_value is not None else None
+    content = str(input_data.get("content") or "")
     chunk = append_text_chunk_record(
         record,
-        content=str(input_data.get("content") or ""),
+        content=content,
         label=str(input_data.get("label") or ""),
         sequence=sequence,
         metadata=input_data.get("metadata") if isinstance(input_data.get("metadata"), dict) else {},
@@ -345,8 +345,7 @@ async def finalize_text_file(input_data: dict[str, Any], context: Any) -> dict[s
 
 def transform_text_sync(path: Path, transform: str, context: Any) -> dict[str, Any]:
     raw = path.read_bytes()
-    encoding = _detect_encoding(raw[:8192])
-    original = raw.decode(encoding, errors="replace")
+    original, encoding = read_text_with_encoding(path)
     before_integrity = inspect_text_artifact_integrity(path, original)
 
     if transform == "html_unescape":
@@ -363,7 +362,7 @@ def transform_text_sync(path: Path, transform: str, context: Any) -> dict[str, A
     if changed:
         if callable(getattr(context, "backup_file", None)):
             context.backup_file(path)
-        path.write_text(transformed, encoding=encoding)
+        encoding = write_text_with_encoding(path, transformed, encoding)
     context.log("info", f"text transform {transform} {'changed' if changed else 'made no changes'}: {path}")
     return {
         "path": str(path),
@@ -374,11 +373,18 @@ def transform_text_sync(path: Path, transform: str, context: Any) -> dict[str, A
         "after_size": len(transformed.encode(encoding, errors="replace")),
         "integrity_before": before_integrity,
         "integrity": after_integrity,
+        "encoding_risks": text_encoding_risks(path, transformed, encoding),
     }
 
 
 def write_file_sync(path: Path, content: str, create_dirs: bool, context: Any) -> dict[str, Any]:
     created = not path.exists()
+    original_encoding = "utf-8"
+    if path.exists() and path.is_file():
+        try:
+            original_encoding = detect_text_encoding(path.read_bytes())
+        except OSError:
+            original_encoding = "utf-8"
     integrity = inspect_text_artifact_integrity(path, content)
     if integrity.get("checked") and not integrity.get("valid"):
         issues = ", ".join(str(item) for item in integrity.get("issues") or [])
@@ -393,13 +399,15 @@ def write_file_sync(path: Path, content: str, create_dirs: bool, context: Any) -
     if create_dirs:
         path.parent.mkdir(parents=True, exist_ok=True)
 
-    path.write_text(content, encoding="utf-8")
+    encoding = write_text_with_encoding(path, content, "utf-8" if created else original_encoding)
     context.log("info", f"{'created' if created else 'overwritten'}: {path}")
     return {
         "path": str(path),
         "size": path.stat().st_size,
         "created": created,
+        "encoding": encoding,
         "integrity": integrity,
+        "encoding_risks": text_encoding_risks(path, content, encoding),
     }
 
 
@@ -553,6 +561,7 @@ def apply_changes_sync(operations: Any, create_dirs: bool, reason: str, context:
     created_paths: list[str] = []
     updated_paths: list[str] = []
     deleted_paths: list[str] = []
+    encoding_risks: list[dict[str, Any]] = []
 
     for path, state in states.items():
         original_exists = bool(state["original_exists"])
@@ -564,7 +573,10 @@ def apply_changes_sync(operations: Any, create_dirs: bool, reason: str, context:
                 context.backup_file(path)
             if create_dirs:
                 path.parent.mkdir(parents=True, exist_ok=True)
-            _write_text_preserving_encoding(path, final_text, str(state.get("encoding") or "utf-8"))
+            encoding = _write_text_preserving_encoding(path, final_text, str(state.get("encoding") or "utf-8"))
+            risks = text_encoding_risks(path, final_text, encoding)
+            if risks:
+                encoding_risks.append({"path": str(path), "encoding": encoding, "risks": risks})
             changed_paths.append(str(path))
             if original_exists:
                 updated_paths.append(str(path))
@@ -599,6 +611,7 @@ def apply_changes_sync(operations: Any, create_dirs: bool, reason: str, context:
         "roles": ["deliverable", "verification"],
         "verification_strength": "standard",
         "artifact_kind": "file_change_set",
+        "encoding_risks": encoding_risks,
     }
 
 
@@ -647,9 +660,7 @@ def _load_change_file_state(path: Path) -> dict[str, Any]:
         }
     if not path.is_file():
         raise ValueError(f"path is not a file: {path}")
-    raw = path.read_bytes()
-    encoding = _detect_encoding(raw[:8192])
-    text = raw.decode(encoding, errors="replace")
+    text, encoding = read_text_with_encoding(path)
     return {
         "original_exists": True,
         "final_exists": True,
@@ -670,11 +681,8 @@ def _validate_text_artifact_integrity(path: Path, content: str) -> None:
         )
 
 
-def _write_text_preserving_encoding(path: Path, text: str, encoding: str) -> None:
-    try:
-        path.write_text(text, encoding=encoding)
-    except (LookupError, UnicodeEncodeError):
-        path.write_text(text, encoding="utf-8")
+def _write_text_preserving_encoding(path: Path, text: str, encoding: str) -> str:
+    return write_text_with_encoding(path, text, encoding)
 
 
 def inspect_text_artifact_integrity(path: Path, content: str) -> dict[str, Any]:
@@ -866,7 +874,15 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "文件路径"},
-                    "content": {"type": "string", "description": "文件内容"},
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "Small complete file content only. For non-trivial "
+                            "HTML/CSS/JS/Python/Markdown/JSON or any content "
+                            "near the model output limit, use the text draft "
+                            "chunk protocol instead."
+                        ),
+                    },
                     "create_dirs": {"type": "boolean", "default": True, "description": "是否自动创建中间目录"},
                 },
                 "required": ["path", "content"],
@@ -906,9 +922,22 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
                                     ],
                                 },
                                 "path": {"type": "string"},
-                                "content": {"type": "string"},
+                                "content": {
+                                    "type": "string",
+                                    "description": (
+                                        "Bounded create/overwrite content. For a "
+                                        "large complete artifact, create a text "
+                                        "draft and append chunks instead."
+                                    ),
+                                },
                                 "old_text": {"type": "string"},
-                                "new_text": {"type": "string"},
+                                "new_text": {
+                                    "type": "string",
+                                    "description": (
+                                        "Bounded replacement content. For large "
+                                        "rewrites, use the text draft chunk protocol."
+                                    ),
+                                },
                                 "replace_all": {"type": "boolean", "default": False},
                                 "expected_replacements": {"type": "integer"},
                                 "missing_ok": {"type": "boolean", "default": False},
@@ -1048,7 +1077,14 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
                 "type": "object",
                 "properties": {
                     "draft_id": {"type": "string"},
-                    "content": {"type": "string"},
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "One complete bounded chunk. Keep each chunk under "
+                            f"{TEXT_WRITE_CHUNK_MAX_CHARS} characters and call "
+                            "append_text_chunk multiple times for long files."
+                        ),
+                    },
                     "label": {"type": "string"},
                     "sequence": {"type": "integer"},
                     "metadata": {"type": "object"},

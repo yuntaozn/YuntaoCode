@@ -152,17 +152,22 @@ def progress_observer_prompt(
     code_change_intent: bool,
     reason: str,
 ) -> str:
-    action_rule = ""
-    if code_change_intent and not has_successful_write(tool_events):
-        action_rule = (
-            "需要真实修改文件但尚未写入。可优先调用 code.edit_file / code.replace_text，"
-            "若需要完整生成较大文本/代码文件，可使用 filesystem.create_text_draft / append_text_chunk / finalize_text_file，"
-            "或只读取一个最小必要文件后写入。"
+    observations: list[str] = []
+    if code_change_intent:
+        observations.append(
+            "observed_write_evidence="
+            + ("present" if has_successful_write(tool_events) else "missing")
         )
+    observations.append(f"observed_tool_events={len(tool_events)}")
+    observation_text = "; ".join(observations)
     return (
-        f"进度纠偏（{reason}）：项目={workspace_path}，阶段={current_stage or '无'}。"
-        f"{action_rule}"
-        "所有工具仍可用，请根据最新上下文推进。"
+        "Runtime observation only. The runtime is not choosing a strategy.\n"
+        f"Workspace: {workspace_path}\n"
+        f"Stage: {current_stage or 'none'}\n"
+        f"Reason: {reason}\n"
+        f"Observed facts: {observation_text}\n"
+        "Decide the next step from the task goal and observed facts. Do not "
+        "claim completion beyond evidence produced by tools or explicit user input."
     )
 
 
@@ -182,29 +187,6 @@ def repeated_failure_strategy_prompt(
         current_stage=current_stage,
         tool_events=tool_events,
     )
-    optional_routes: list[str] = []
-    if has_successful_write(tool_events):
-        optional_routes.append(
-            "A deliverable/write has already succeeded; consider verification, targeted repair, or honest finalization instead of repeating the same write."
-        )
-    if tool_id in {
-        "filesystem.write_file",
-        "filesystem.create_text_draft",
-        "filesystem.append_text_chunk",
-        "filesystem.finalize_text_file",
-    } and (
-        reason == "truncated_tool_call"
-        or "output limit" in error.lower()
-        or "incomplete arguments" in error.lower()
-    ):
-        optional_routes.append(
-            "For a large complete text/code artifact, a draft route is available: "
-            "filesystem.create_text_draft, filesystem.append_text_chunk, optional inspect, then filesystem.finalize_text_file."
-        )
-        optional_routes.append(
-            "For a local edit, read the target section and use a precise edit route instead of another large write."
-        )
-    routes = "\n".join(f"- {item}" for item in optional_routes) if optional_routes else "- Choose any materially different route that fits the goal and observed facts."
     return (
         "Repeated failure recovery advisory.\n"
         f"{format_tool_failure_fact_summary(facts)}\n"
@@ -212,18 +194,18 @@ def repeated_failure_strategy_prompt(
         "decide whether to change tool, change arguments, gather smaller context, "
         "verify an existing result, ask the user, or finalize with an honest "
         "boundary. Avoid repeating the same tool with the same missing or oversized "
-        "arguments when no new progress was observed.\n"
-        "Optional recovery routes, only if they fit the current goal:\n"
-        f"{routes}"
+        "arguments when no new progress was observed."
     )
 
 
 def recon_budget_prompt(budget: int, workspace_path: str) -> str:
     return (
-        f"侦察预算已用完（{budget} 次读取/搜索）。项目={workspace_path}。"
-        "当前证据提示应停止泛泛侦察并推进任务：可读取最小必要片段后调用 code.edit_file / code.replace_text；"
-        "若是较大完整文件生成，可改用 filesystem.create_text_draft / append_text_chunk / finalize_text_file，"
-        "或明确说明缺少什么信息导致无法修改。不要用文字声称已修改。"
+        "Runtime observation only. Reconnaissance budget has been reached.\n"
+        f"Workspace: {workspace_path}\n"
+        f"Recon reads/searches observed: {budget}\n"
+        "Decide whether the available evidence is enough to act, whether a "
+        "different evidence source is needed, or whether the task should be "
+        "finalized with an honest boundary."
     )
 
 
@@ -285,34 +267,6 @@ def write_repair_prompt(
         current_stage="write_repair",
         tool_events=[event],
     )
-    optional_routes: list[str] = []
-    if "path is required" in error.lower():
-        optional_routes.append(
-            "If the chosen write tool still fits, retry only after selecting an explicit target path and complete arguments."
-        )
-        optional_routes.append(
-            "If the target is an existing file, read the relevant section and use code.edit_file or code.replace_text."
-        )
-    if force_full_file_rewrite:
-        optional_routes.append(
-            "Repeated precise edits failed; consider reading the current file and choosing a different edit route."
-        )
-    if (
-        reason == "truncated_tool_call"
-        or "output limit" in error.lower()
-        or "incomplete arguments" in error.lower()
-    ):
-        optional_routes.append(
-            "For large complete text/code artifacts, use the draft route: filesystem.create_text_draft, filesystem.append_text_chunk, optional inspect, then filesystem.finalize_text_file."
-        )
-        optional_routes.append(
-            "For small targeted edits, read the relevant section and use code.edit_file or code.replace_text."
-        )
-    if not optional_routes:
-        optional_routes.append(
-            "Choose a different route only if the failure facts show the previous route cannot work as-is."
-        )
-    routes = "\n".join(f"- {item}" for item in optional_routes)
     return (
         "Write failure recovery advisory.\n"
         f"Current project: {workspace_path}\n"
@@ -324,9 +278,7 @@ def write_repair_prompt(
         "The runtime is not choosing the repair strategy. The previous write did "
         "not happen, so do not claim the file was changed unless a later tool "
         "call succeeds. Choose the smallest reliable next step from the task "
-        "goal and observed facts.\n"
-        "Optional recovery routes, only if they fit:\n"
-        f"{routes}"
+        "goal and observed facts."
     )
 
 
@@ -342,11 +294,8 @@ def oversized_tool_arguments_prompt(
         f"Accumulated tool argument characters: {accumulated_chars}\n"
         f"Runtime guard limit: {limit_chars}\n"
         "This is not a task failure and not a permission denial. Choose the next "
-        "execution strategy yourself, but do not repeat one huge tool call. For "
-        "large complete text or code artifacts, create an empty text draft first, "
-        "append smaller complete chunks, inspect progress when useful, and then "
-        "finalize the draft to the target file. For small targeted edits, read "
-        "the relevant file section and use a precise edit tool."
+        "execution strategy yourself from the task goal and observed facts. Do "
+        "not repeat one oversized tool call unless new evidence shows it can fit."
     )
 
 
@@ -368,8 +317,7 @@ def execute_plan_prompt(plan: dict[str, Any], mode: str | None) -> str:
     code_rule = ""
     if mode == "coding":
         code_rule = (
-            "如果任务涉及代码变更，只有观察到成功生成或更新任务契约中的目标产物后，才能声称已经修改完成；"
-            "可按产物形态选择 code.edit_file、code.replace_text、filesystem.write_file 或 filesystem.finalize_text_file。"
+            "如果任务涉及代码变更，只有观察到成功生成或更新任务契约中的目标产物后，才能声称已经修改完成。"
         )
     return (
         "计划执行模式已开启。上面的计划是参考路线，不是固定轨道；"
@@ -522,20 +470,6 @@ def verifier_retry_prompt(mode: str | None, workspace_path: str) -> str:
         "If the available tools cannot provide suitable evidence, choose another "
         "safe strategy, ask the user, or finalize with an honest verification "
         "limitation instead of repeating the same failing call."
-    )
-
-
-def tool_contract_correction_prompt(workspace_path: str, write_only: bool = False) -> str:
-    if write_only:
-        return (
-            f"执行契约（压力模式）：项目={workspace_path}。"
-            "读取最小上下文后立即生成或更新目标产物；较小改动可用 code.edit_file / code.replace_text，"
-            "较大完整文件可用 filesystem.finalize_text_file，或说明缺少什么导致无法完成。不要用文字声称已修改。"
-        )
-    return (
-        f"执行契约：项目={workspace_path}。你还没有成功生成或更新任务目标产物。"
-        "请先用 filesystem.read_file 定位必要内容，再按产物形态选择 code.edit_file / code.replace_text；较大完整文件使用 filesystem 文本草稿工具最终写入。"
-        "无法修改时必须说明原因。"
     )
 
 

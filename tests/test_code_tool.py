@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from runtime.security import PathGuard
-from runtime.skills.code import apply_patch
+from runtime.skills.code import apply_patch, edit_file
 
 
 @dataclass
@@ -121,3 +121,31 @@ async def test_apply_patch_validates_all_files_before_writing(tmp_path: Path) ->
 
     assert first.read_text(encoding="utf-8") == "const first = 1;\n"
     assert context.backups == []
+
+
+@pytest.mark.asyncio
+async def test_edit_file_preserves_gb18030_when_non_ascii_appears_after_probe_window(tmp_path: Path) -> None:
+    path = tmp_path / "app.js"
+    prefix = "const filler = '" + ("a" * 9000) + "';\n"
+    original = prefix + "const label = '正在加载施工机械模型.';\n"
+    path.write_bytes(original.encode("gb18030"))
+    context = FakeContext(PathGuard([tmp_path]))
+
+    result = await edit_file(
+        {
+            "path": str(path),
+            "edits": [
+                {
+                    "old_text": "const label = '正在加载施工机械模型.';",
+                    "new_text": "const label = '施工机械模型已加载.';",
+                }
+            ],
+        },
+        context,
+    )
+
+    raw = path.read_bytes()
+    assert "施工机械模型已加载" in raw.decode("gb18030")
+    with pytest.raises(UnicodeDecodeError):
+        raw.decode("utf-8")
+    assert result["encoding"] == "gb18030"

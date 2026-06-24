@@ -29,6 +29,11 @@ Example:
 }
 ```
 
+Another common case is a shell command that exits with code `0` while stderr
+contains exception-like output. The command result is still recorded exactly as
+the tool returned it, but the runtime adds `shell_stderr_warning` so the model
+does not treat that command as clean verification evidence.
+
 Risks are advisory by default. The model may repair the artifact, continue with
 an explicit assumption, or stop and report the issue. Safety and permission
 guards remain separate hard boundaries.

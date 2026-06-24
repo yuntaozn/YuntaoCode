@@ -13,6 +13,7 @@ def test_known_run_result_risks_have_schema_codes() -> None:
     assert "target_deliverable_not_observed" in RISK_CODES
     assert "invalid_tool_call_protocol" in RISK_CODES
     assert "artifact_integrity_invalid" in RISK_CODES
+    assert "shell_stderr_warning" in RISK_CODES
 
 
 def test_risk_presenter_uses_user_facing_message() -> None:

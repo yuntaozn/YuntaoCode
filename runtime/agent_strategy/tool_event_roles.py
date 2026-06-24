@@ -18,6 +18,10 @@ from .classifiers import (
     is_test_verification_event,
     is_write_tool,
 )
+from .tool_result_risks import (
+    SHELL_STDERR_WARNING_CODE,
+    shell_success_has_stderr_warning,
+)
 
 
 DELIVERABLE = "deliverable"
@@ -278,6 +282,8 @@ def verification_evidence_strength(
     compatibility; providers should declare ``weak`` for coarse inspection.
     """
     if not _status_is_success_or_partial(event):
+        return "none"
+    if _event_has_degraded_shell_stderr(event):
         return "none"
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
     explicit = str(
@@ -712,6 +718,8 @@ def _is_verification_event(
     *,
     written_paths: set[str],
 ) -> bool:
+    if _event_has_degraded_shell_stderr(event):
+        return False
     if (
         VERIFICATION in event_declared_roles(event)
         and _status_is_success_or_partial(event)
@@ -727,6 +735,16 @@ def _status_is_success_or_partial(event: dict[str, Any]) -> bool:
     if output.get("error") is True:
         return False
     return str(event.get("status") or "") in {"success", "partial"}
+
+
+def _event_has_degraded_shell_stderr(event: dict[str, Any]) -> bool:
+    if canonical_tool_id(str(event.get("tool") or "")) != "shell.run_command":
+        return False
+    for risk in event.get("runtime_risks") or []:
+        if isinstance(risk, dict) and risk.get("code") == SHELL_STDERR_WARNING_CODE:
+            return True
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    return shell_success_has_stderr_warning(output)
 
 
 def _normalize_path_hint(value: Any) -> str:

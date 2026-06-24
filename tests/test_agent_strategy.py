@@ -92,7 +92,6 @@ from runtime.agent_strategy.prompts import (
     runtime_intervention_prompt,
     stage_prompt,
     stage_status_message,
-    tool_contract_correction_prompt,
     verifier_retry_prompt,
     write_only_stage_prompt,
     write_repair_prompt,
@@ -1381,7 +1380,8 @@ class TestPrompts:
         events = [{"tool": "filesystem.read_file", "status": "success"}]
         prompt = progress_observer_prompt("/tmp", "explorer", events, True, "stagnation")
         assert "stagnation" in prompt
-        assert "尚未写入" in prompt  # code_change_intent=True, no write yet
+        assert "observed_write_evidence=missing" in prompt
+        assert "not choosing a strategy" in prompt
 
     def test_repeated_failure_strategy_prompt_requires_different_route(self):
         events = [
@@ -1424,7 +1424,7 @@ class TestPrompts:
 
         assert "not a permission denial" in prompt
         assert "Choose the next execution strategy yourself" in prompt
-        assert "append smaller complete chunks" in prompt
+        assert "Do not repeat one oversized tool call" in prompt
 
     def test_format_execution_plan(self):
         plan = {
@@ -1509,7 +1509,7 @@ class TestPrompts:
         assert "test_not_observed" in prompt
         assert "Previous assistant draft" in prompt
 
-    def test_repeated_failure_strategy_prompt_suggests_draft_route_after_truncation(self):
+    def test_repeated_failure_strategy_prompt_stays_strategy_neutral_after_truncation(self):
         prompt = repeated_failure_strategy_prompt(
             "/tmp/project",
             "editor",
@@ -1523,12 +1523,13 @@ class TestPrompts:
             ],
         )
 
-        assert "draft route is available" in prompt
-        assert "filesystem.create_text_draft" in prompt
-        assert "filesystem.append_text_chunk" in prompt
-        assert "filesystem.finalize_text_file" in prompt
+        assert "Repeated failure recovery advisory" in prompt
+        assert "runtime is not choosing the next strategy" in prompt
+        assert "truncated_tool_call" in prompt
+        assert "draft route is available" not in prompt
+        assert "filesystem.create_text_draft" not in prompt
 
-    def test_write_repair_prompt_suggests_draft_route_after_truncation(self):
+    def test_write_repair_prompt_stays_strategy_neutral_after_truncation(self):
         prompt = write_repair_prompt(
             "filesystem.write_file",
             {"path": "viewer/index.html"},
@@ -1541,7 +1542,7 @@ class TestPrompts:
         )
 
         assert "Write failure recovery advisory" in prompt
-        assert "draft route" in prompt
-        assert "filesystem.create_text_draft" in prompt
-        assert "filesystem.append_text_chunk" in prompt
-        assert "filesystem.finalize_text_file" in prompt
+        assert "runtime is not choosing the repair strategy" in prompt
+        assert "truncated_tool_call" in prompt
+        assert "draft route" not in prompt
+        assert "filesystem.create_text_draft" not in prompt

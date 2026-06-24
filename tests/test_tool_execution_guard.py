@@ -78,15 +78,15 @@ def test_tool_execution_guard_allows_clean_tool_call() -> None:
     assert calls == [
         "enabled",
         "available",
-        "capability",
         "missing",
+        "capability",
         "ai_draft",
         "document",
         "verification",
     ]
 
 
-def test_tool_execution_guard_stops_before_schema_when_capability_blocks() -> None:
+def test_tool_execution_guard_reports_capability_boundary_as_advisory_after_schema() -> None:
     calls: list[str] = []
 
     decision = evaluate_tool_execution_guard(
@@ -95,15 +95,15 @@ def test_tool_execution_guard_stops_before_schema_when_capability_blocks() -> No
         ".",
         _checks(
             capability_message="outside capability boundary",
-            missing_fields=["path"],
             calls=calls,
         ),
     )
 
     assert decision is not None
-    assert decision.reason == "capability_fallback_blocked"
+    assert decision.reason == "capability_fallback_advisory"
+    assert decision.blocking is False
     assert decision.message == "outside capability boundary"
-    assert calls == ["enabled", "available", "capability"]
+    assert calls == ["enabled", "available", "missing", "capability"]
 
 
 def test_tool_execution_guard_reports_missing_required_fields() -> None:
@@ -135,6 +135,8 @@ def test_tool_execution_guard_reports_document_and_verification_messages() -> No
     )
 
     assert document_decision is not None
-    assert document_decision.reason == "document_contract_guard"
+    assert document_decision.reason == "document_contract_advisory"
+    assert document_decision.blocking is False
     assert verification_decision is not None
-    assert verification_decision.reason == "invalid_verification_method"
+    assert verification_decision.reason == "verification_runtime_advisory"
+    assert verification_decision.blocking is False

@@ -7,7 +7,13 @@ import tornado.iostream
 import tornado.web
 
 from .base import ApiHandler
-from runtime.conversation_interactions import paused_runs as _paused_runs
+from runtime.conversation_interactions import (
+    active_run_tasks as _active_run_tasks,
+    active_stream_conversation_runs as _active_stream_conversation_runs,
+    confirm_responses as _confirm_responses,
+    pending_confirms as _pending_confirms,
+    paused_runs as _paused_runs,
+)
 from runtime.diagnostic_export import build_diagnostic_export
 from runtime.evaluation.fixtures import build_evaluation_fixture_export
 from runtime.evaluation.reports import build_evaluation_report
@@ -54,6 +60,9 @@ class RunActionHandler(ApiHandler):
         if action == "pause":
             self._pause(run_id, reason)
             return
+        if action in {"stop", "cancel"}:
+            self._stop(run_id, reason)
+            return
         if action == "resume":
             self._resume(run_id, reason)
             return
@@ -87,7 +96,7 @@ class RunActionHandler(ApiHandler):
         raise tornado.web.HTTPError(
             400,
             reason=(
-                "action must be pause, resume, evidence, runbook, export_diagnostic, "
+                "action must be pause, stop, resume, evidence, runbook, export_diagnostic, "
                 "export_fixture, export_evaluation_fixture, evaluate_fixture, or replay"
             ),
         )
@@ -116,6 +125,36 @@ class RunActionHandler(ApiHandler):
                 context_snapshot_id=latest_snapshots[0]["id"] if latest_snapshots else "",
                 data={"reason": reason or "run paused by user", "stage": run.stage},
             )
+        updated = self.runtime.runs.get(run_id) or run
+        self.finish_json({"success": True, "data": updated.to_public_dict()})
+
+    def _stop(self, run_id: str, reason: str) -> None:
+        run = self.runtime.runs.get(run_id)
+        if not run:
+            raise tornado.web.HTTPError(404, reason="run not found")
+        if run.status in {"success", "failure", "stopped", "partial", "cancelled"}:
+            self.finish_json({"success": True, "data": run.to_public_dict()})
+            return
+        self.runtime.run_events.emit(run_id, {
+            "event": "status",
+            "status": "stopped",
+            "message": reason or "run stopped by user",
+        })
+        pause_event = _paused_runs.pop(run_id, None)
+        if pause_event:
+            pause_event.set()
+        if run.conversation_id:
+            confirm_event = _pending_confirms.get(run.conversation_id)
+            if confirm_event:
+                _confirm_responses[run.conversation_id] = "cancel"
+                confirm_event.set()
+            else:
+                _confirm_responses.pop(run.conversation_id, None)
+            if _active_stream_conversation_runs.get(run.conversation_id) == run_id:
+                _active_stream_conversation_runs.pop(run.conversation_id, None)
+        task = _active_run_tasks.pop(run_id, None)
+        if task and not task.done():
+            task.cancel()
         updated = self.runtime.runs.get(run_id) or run
         self.finish_json({"success": True, "data": updated.to_public_dict()})
 

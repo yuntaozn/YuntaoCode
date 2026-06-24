@@ -119,7 +119,7 @@ def test_preflight_advises_external_state_when_no_external_capability_available(
     assert preflight_should_stop(result) is False
 
 
-def test_preflight_only_stops_when_explicitly_enforced() -> None:
+def test_preflight_does_not_stop_even_when_explicitly_enforced() -> None:
     advisory_preflight = {
         "ok": False,
         "blockers": [{"message": "Capability unavailable"}],
@@ -132,7 +132,7 @@ def test_preflight_only_stops_when_explicitly_enforced() -> None:
     }
 
     assert preflight_should_stop(advisory_preflight) is False
-    assert preflight_should_stop(enforced_preflight) is True
+    assert preflight_should_stop(enforced_preflight) is False
 
 
 def test_preflight_reports_mcp_protocol_issue_for_external_state_target() -> None:

@@ -65,6 +65,61 @@ async def test_write_and_read_file_report_valid_full_html_integrity(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_read_file_detects_gb18030_beyond_initial_ascii_prefix(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    path = workspace / "app.js"
+    content = "const filler = '" + ("a" * 9000) + "';\nconst label = '正在加载施工机械模型.';\n"
+    path.write_bytes(content.encode("gb18030"))
+    context = FakeContext(PathGuard([workspace]), tmp_path / "task")
+
+    result = await read_file({"path": str(path)}, context)
+
+    assert result["encoding"] == "gb18030"
+    assert "正在加载施工机械模型" in result["raw_content"]
+    assert "�" not in result["raw_content"]
+
+
+@pytest.mark.asyncio
+async def test_write_file_preserves_existing_gb18030_encoding(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    path = workspace / "app.js"
+    path.write_bytes("const label = '正在加载施工机械模型.';\n".encode("gb18030"))
+    context = FakeContext(PathGuard([workspace]), tmp_path / "task")
+
+    result = await write_file(
+        {"path": str(path), "content": "const label = '施工机械模型已加载.';\n"},
+        context,
+    )
+
+    raw = path.read_bytes()
+    assert result["encoding"] == "gb18030"
+    assert "施工机械模型已加载" in raw.decode("gb18030")
+    with pytest.raises(UnicodeDecodeError):
+        raw.decode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_write_file_reports_html_charset_risk_without_blocking(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    path = workspace / "viewer.html"
+    context = FakeContext(PathGuard([workspace]), tmp_path / "task")
+
+    result = await write_file(
+        {
+            "path": str(path),
+            "content": "<!doctype html><html><body>正在加载施工机械模型.</body></html>",
+        },
+        context,
+    )
+
+    risk_codes = {risk["code"] for risk in result["encoding_risks"]}
+    assert "html_charset_missing" in risk_codes
+
+
+@pytest.mark.asyncio
 async def test_delete_file_removes_file_with_structured_evidence(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()

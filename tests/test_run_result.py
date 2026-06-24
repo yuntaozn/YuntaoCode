@@ -415,6 +415,39 @@ def test_build_run_result_treats_shell_nonzero_exit_as_failure() -> None:
     ]
 
 
+def test_build_run_result_degrades_shell_zero_exit_with_exception_stderr() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="coding",
+        change_summary={"files": [{"path": "src/app.js"}]},
+        requires_code_write=True,
+        tool_events=[
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/src/app.js"},
+                "output": {"path": "D:/workspace/src/app.js"},
+            },
+            {
+                "tool": "shell.run_command",
+                "status": "success",
+                "input": {"command": "npm run build"},
+                "output": {
+                    "exit_code": 0,
+                    "stdout": "",
+                    "stderr": "HttpListenerException: 参数错误。",
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["counts"]["verification_successes"] == 0
+    assert "shell_stderr_warning" in result["risks"]
+    assert "write_not_verified" in result["risks"]
+    assert "test_not_observed" in result["risks"]
+
+
 def test_build_run_result_reports_shell_timeout_before_exit_code() -> None:
     result = build_run_result(
         workspace_path="D:/workspace",
