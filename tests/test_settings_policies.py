@@ -76,6 +76,52 @@ def test_any_model_can_declare_output_token_capability(tmp_path: Path) -> None:
     assert model["output_token_param"] == "max_tokens"
 
 
+def test_default_settings_include_volcengine_agent_plan_provider(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / "settings.json")
+
+    provider = store.get_provider("volcengine_agent_plan")
+    model = store.get_model_config("ark-code-latest")
+
+    assert provider["base_url"] == "https://ark.cn-beijing.volces.com/api/plan/v3"
+    assert provider["chat_path"] == "/responses"
+    assert provider["kind"] == "openai"
+    assert provider["wire_api"] == "responses"
+    assert provider["api_key_required"] is True
+    assert model["provider"] == "volcengine_agent_plan"
+    assert model["api_model"] == "ark-code-latest"
+    assert model["context_limit"] == 256000
+    assert model["thinking_mode"] == ""
+
+
+def test_agent_plan_provider_migrates_from_chat_to_responses(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({
+            "settings_version": 10,
+            "providers": {
+                "volcengine_agent_plan": {
+                    "name": "火山 Agent Plan / OpenAI Compatible",
+                    "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+                    "api_key": "secret",
+                    "api_key_required": True,
+                    "chat_path": "/chat/completions",
+                    "kind": "openai",
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    store = SettingsStore(settings_path)
+    provider = store.get_provider("volcengine_agent_plan")
+    saved = json.loads(settings_path.read_text(encoding="utf-8"))
+
+    assert provider["chat_path"] == "/responses"
+    assert provider["wire_api"] == "responses"
+    assert saved["settings_version"] == 11
+    assert saved["providers"]["volcengine_agent_plan"]["api_key"] == "secret"
+
+
 def test_invalid_output_token_parameter_is_not_sent(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / "settings.json")
     store.update({

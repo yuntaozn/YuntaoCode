@@ -5,6 +5,8 @@ from typing import Any
 
 RUNTIME_OWNED_REQUEST_KEYS = frozenset({
     "model",
+    "input",
+    "instructions",
     "messages",
     "stream",
     "stream_options",

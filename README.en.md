@@ -106,6 +106,7 @@ Compatible with OpenAI-style APIs:
 * Ollama
 * Qwen
 * Volcano Ark
+* Volcano Agent Plan (OpenAI Compatible)
 * Other OpenAI-compatible providers
 
 ### Recoverable Execution

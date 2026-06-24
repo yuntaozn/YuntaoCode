@@ -87,8 +87,9 @@ async def generate_chat_completion(
     if budget_info.get("blocked"):
         raise tornado.web.HTTPError(400, reason=str(budget_info.get("message") or "model request exceeds context"))
 
+    request_url = chat_completion_url(provider)
     request = tornado.httpclient.HTTPRequest(
-        url=chat_completion_url(provider),
+        url=request_url,
         method="POST",
         headers=request_headers(api_key),
         body=json.dumps(body, ensure_ascii=False),
@@ -101,7 +102,7 @@ async def generate_chat_completion(
 
     data = decode_json_response(response.body)
     if response.code >= 400:
-        message = format_provider_error(data, response.code, base_url)
+        message = format_provider_error(data, response.code, request_url, api_model=api_model)
         raise tornado.web.HTTPError(response.code, reason=message)
 
     answer, reasoning = extract_message_parts(data)
@@ -195,8 +196,9 @@ async def stream_chat_completion(
         yield {"request_budget": budget_info}
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     parser = StreamingParser(queue)
+    request_url = chat_completion_url(provider)
     request = tornado.httpclient.HTTPRequest(
-        url=chat_completion_url(provider),
+        url=request_url,
         method="POST",
         headers=request_headers(api_key),
         body=json.dumps(body, ensure_ascii=False),
@@ -210,7 +212,7 @@ async def stream_chat_completion(
             parser.flush()
             if response.code >= 400:
                 data = decode_json_response(response.body)
-                message = format_provider_error(data, response.code, base_url)
+                message = format_provider_error(data, response.code, request_url, api_model=api_model)
                 queue.put_nowait({"error": message, "status": response.code})
         except OSError as exc:
             queue.put_nowait({"error": f"无法连接模型服务：{base_url}", "detail": str(exc)})
@@ -269,6 +271,17 @@ def build_request_body(
     tools: list[dict[str, Any]] | None = None,
     tool_choice: Any | None = None,
 ) -> dict[str, Any]:
+    if provider_wire_api(provider) == "responses":
+        return build_responses_request_body(
+            provider=provider,
+            model_config=model_config,
+            model=model,
+            messages=messages,
+            stream=stream,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
+
     body: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -314,6 +327,130 @@ def build_request_body(
         request_options.update(sanitize_request_options(model_config["request_options"]))
     body.update(request_options)
     return body
+
+
+def build_responses_request_body(
+    *,
+    provider: dict[str, Any],
+    model_config: dict[str, Any],
+    model: str,
+    messages: list[dict[str, Any]],
+    stream: bool,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: Any | None = None,
+) -> dict[str, Any]:
+    input_items, instructions = convert_messages_to_responses_input(messages)
+    body: dict[str, Any] = {
+        "model": model,
+        "input": input_items,
+        "stream": stream,
+    }
+    if instructions:
+        body["instructions"] = instructions
+    if tools and model_config.get("supports_tools", True) is not False:
+        body["tools"] = convert_tools_to_responses(tools)
+        body["tool_choice"] = convert_tool_choice_to_responses(tool_choice)
+
+    try:
+        max_output_tokens = int(model_config.get("max_output_tokens") or 0)
+    except (TypeError, ValueError):
+        max_output_tokens = 0
+    if max_output_tokens > 0:
+        body["max_output_tokens"] = max_output_tokens
+
+    request_options: dict[str, Any] = {}
+    if isinstance(provider.get("request_options"), dict):
+        request_options.update(sanitize_request_options(provider["request_options"]))
+    if isinstance(model_config.get("request_options"), dict):
+        request_options.update(sanitize_request_options(model_config["request_options"]))
+    body.update(request_options)
+    return body
+
+
+def convert_messages_to_responses_input(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
+    instructions: list[str] = []
+    input_items: list[dict[str, Any]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "user").strip().lower()
+        content = normalize_text(message.get("content") or "")
+        if role in {"system", "developer"}:
+            if content:
+                instructions.append(content)
+            continue
+        if role == "tool":
+            call_id = str(message.get("tool_call_id") or "").strip()
+            if call_id:
+                input_items.append({
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": content,
+                })
+            elif content:
+                input_items.append({
+                    "role": "user",
+                    "content": f"Tool result:\n{content}",
+                })
+            continue
+        if role == "assistant":
+            for tool_call in message.get("tool_calls") or []:
+                item = convert_tool_call_message_to_responses_item(tool_call)
+                if item:
+                    input_items.append(item)
+            if content:
+                input_items.append({"role": "assistant", "content": content})
+            continue
+        input_items.append({"role": "user", "content": content})
+    if not input_items:
+        input_items.append({"role": "user", "content": ""})
+    return input_items, "\n\n".join(part for part in instructions if part)
+
+
+def convert_tool_call_message_to_responses_item(tool_call: Any) -> dict[str, Any] | None:
+    if not isinstance(tool_call, dict):
+        return None
+    function = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+    name = str(function.get("name") or tool_call.get("name") or "").strip()
+    if not name:
+        return None
+    return {
+        "type": "function_call",
+        "call_id": str(tool_call.get("id") or tool_call.get("call_id") or ""),
+        "name": name,
+        "arguments": normalize_text(function.get("arguments") or tool_call.get("arguments") or "{}"),
+    }
+
+
+def convert_tools_to_responses(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    converted: list[dict[str, Any]] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function") if isinstance(tool.get("function"), dict) else {}
+        name = str(function.get("name") or "").strip()
+        if not name:
+            continue
+        converted.append({
+            "type": "function",
+            "name": name,
+            "description": str(function.get("description") or ""),
+            "parameters": function.get("parameters") if isinstance(function.get("parameters"), dict) else {"type": "object"},
+        })
+    return converted
+
+
+def convert_tool_choice_to_responses(tool_choice: Any) -> Any:
+    if not tool_choice:
+        return "auto"
+    if isinstance(tool_choice, str):
+        return tool_choice
+    if isinstance(tool_choice, dict):
+        function = tool_choice.get("function") if isinstance(tool_choice.get("function"), dict) else {}
+        name = str(function.get("name") or tool_choice.get("name") or "").strip()
+        if name:
+            return {"type": "function", "name": name}
+    return "auto"
 
 
 async def resolve_provider_context_limit(
@@ -520,7 +657,7 @@ def _is_local_base_url(base_url: str) -> bool:
 
 def _tool_rank(tool: dict[str, Any]) -> tuple[int, str]:
     fn = tool.get("function") if isinstance(tool.get("function"), dict) else {}
-    name = str(fn.get("name") or "")
+    name = str(fn.get("name") or tool.get("name") or "")
     return (ESSENTIAL_TOOL_RANK.get(name, 10_000), name)
 
 
@@ -560,6 +697,11 @@ def qwen_enable_thinking(
     return True
 
 
+def provider_wire_api(provider: dict[str, Any]) -> str:
+    value = str(provider.get("wire_api") or "chat_completions").strip().lower().replace("-", "_")
+    return value if value in {"chat_completions", "responses"} else "chat_completions"
+
+
 def chat_completion_url(provider: dict[str, Any]) -> str:
     base_url = str(provider.get("base_url") or "").rstrip("/")
     chat_path = str(provider.get("chat_path") or "/chat/completions").strip()
@@ -588,9 +730,12 @@ def decode_json_response(body: bytes) -> dict[str, Any]:
     return value if isinstance(value, dict) else {"data": value}
 
 
-def format_provider_error(data: dict[str, Any], status: int, base_url: str) -> str:
+def format_provider_error(data: dict[str, Any], status: int, endpoint_url: str, *, api_model: str = "") -> str:
+    target = endpoint_url
+    if api_model:
+        target = f"{endpoint_url}，模型：{api_model}"
     if not data:
-        return f"模型服务返回 HTTP {status}，但响应体为空（{base_url}）。可能是请求参数不被当前模型服务接受。"
+        return f"模型服务返回 HTTP {status}，但响应体为空（{target}）。可能是路径、模型名或请求参数不被当前模型服务接受。"
     value: Any = data.get("message") or data.get("error") or data.get("detail")
     if isinstance(value, dict):
         value = value.get("message") or value.get("msg") or json.dumps(value, ensure_ascii=False)
@@ -600,7 +745,7 @@ def format_provider_error(data: dict[str, Any], status: int, base_url: str) -> s
         value = json.dumps(data, ensure_ascii=False)
     text = str(value)
     if text.strip() == "{}":
-        return f"模型服务返回 HTTP {status}，错误体为空对象（{base_url}）。可能是工具调用参数或消息格式不兼容。"
+        return f"模型服务返回 HTTP {status}，错误体为空对象（{target}）。可能是路径、模型名、工具调用参数或消息格式不兼容。"
     return text
 
 
@@ -637,6 +782,10 @@ class StreamingParser:
 
 
 def extract_stream_event(payload: dict[str, Any]) -> dict[str, Any]:
+    responses_event = extract_responses_stream_event(payload)
+    if responses_event:
+        return responses_event
+
     choices = payload.get("choices") or []
     usage = payload.get("usage")
     if not choices:
@@ -680,6 +829,62 @@ def extract_stream_event(payload: dict[str, Any]) -> dict[str, Any]:
     if usage:
         event["usage"] = usage
     return event
+
+
+def extract_responses_stream_event(payload: dict[str, Any]) -> dict[str, Any]:
+    event_type = str(payload.get("type") or "").strip()
+    event: dict[str, Any] = {}
+    if event_type in {"response.output_text.delta", "response.refusal.delta"}:
+        delta = normalize_text(payload.get("delta") or "")
+        if delta:
+            event["message"] = delta
+        return event
+    if event_type in {
+        "response.reasoning_text.delta",
+        "response.reasoning_summary_text.delta",
+        "response.reasoning.delta",
+    }:
+        delta = normalize_text(payload.get("delta") or "")
+        if delta:
+            event["reasoning"] = delta
+        return event
+    if event_type == "response.output_item.done":
+        tool_call = responses_output_item_to_tool_call(payload.get("item"))
+        if tool_call:
+            event["tool_calls"] = [tool_call]
+        return event
+    if event_type in {"response.completed", "response.incomplete"}:
+        response = payload.get("response") if isinstance(payload.get("response"), dict) else {}
+        usage = response.get("usage") if isinstance(response.get("usage"), dict) else payload.get("usage")
+        if usage:
+            event["usage"] = usage
+        event["finish_reason"] = "length" if event_type == "response.incomplete" else "stop"
+        return event
+    if event_type == "response.failed":
+        response = payload.get("response") if isinstance(payload.get("response"), dict) else {}
+        error = response.get("error") if isinstance(response.get("error"), dict) else payload.get("error")
+        event["error"] = format_response_error(error or payload)
+        return event
+    return {}
+
+
+def responses_output_item_to_tool_call(item: Any) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    if str(item.get("type") or "") != "function_call":
+        return None
+    name = str(item.get("name") or "").strip()
+    if not name:
+        return None
+    return {
+        "index": item.get("output_index", 0),
+        "id": item.get("call_id") or item.get("id"),
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": normalize_text(item.get("arguments") or ""),
+        },
+    }
 
 
 def extract_direct_stream_event(payload: dict[str, Any]) -> dict[str, Any]:
@@ -745,6 +950,10 @@ def normalize_tool_call_chunks(raw_tool_calls: Any) -> list[dict[str, Any]]:
 
 
 def extract_message_parts(data: dict[str, Any]) -> tuple[str, str]:
+    responses_answer = extract_responses_message_parts(data)
+    if responses_answer != ("", ""):
+        return responses_answer
+
     choices = data.get("choices") or []
     if not choices:
         return json.dumps(data, ensure_ascii=False), ""
@@ -761,6 +970,47 @@ def extract_message_parts(data: dict[str, Any]) -> tuple[str, str]:
     if reasoning:
         return "模型返回了思考过程，但没有返回最终回答。", reasoning
     return json.dumps(message or data, ensure_ascii=False), ""
+
+
+def extract_responses_message_parts(data: dict[str, Any]) -> tuple[str, str]:
+    output_text = normalize_text(data.get("output_text") or "")
+    reasoning_parts: list[str] = []
+    message_parts: list[str] = [output_text] if output_text else []
+    output = data.get("output")
+    if isinstance(output, list):
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("type") or "")
+            if item_type == "message":
+                message_parts.extend(extract_responses_content_text(item.get("content")))
+            elif item_type == "reasoning":
+                reasoning_parts.extend(extract_responses_content_text(item.get("summary") or item.get("content")))
+    answer = "\n".join(part for part in message_parts if part).strip()
+    reasoning = "\n".join(part for part in reasoning_parts if part).strip()
+    return answer, reasoning
+
+
+def extract_responses_content_text(content: Any) -> list[str]:
+    if isinstance(content, str):
+        return [content] if content else []
+    if not isinstance(content, list):
+        return []
+    parts: list[str] = []
+    for item in content:
+        if isinstance(item, dict):
+            text = normalize_text(item.get("text") or item.get("content") or "")
+            if text:
+                parts.append(text)
+        elif item:
+            parts.append(str(item))
+    return parts
+
+
+def format_response_error(error: Any) -> str:
+    if isinstance(error, dict):
+        return str(error.get("message") or error.get("code") or json.dumps(error, ensure_ascii=False))
+    return normalize_text(error) or "Responses API returned an error"
 
 
 def normalize_text(value: Any) -> str:

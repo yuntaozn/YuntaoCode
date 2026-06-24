@@ -106,6 +106,7 @@ YuntaoCode 把一次请求看作一个可管理的任务，而不是一次普通
 * Ollama
 * 通义千问
 * 火山方舟
+* 火山 Agent Plan（OpenAI Compatible）
 * 其它兼容 OpenAI API 的模型服务
 
 ### 可恢复执行（Recoverable Execution）

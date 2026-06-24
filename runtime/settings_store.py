@@ -19,7 +19,7 @@ from .model_request_options import sanitize_request_options
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "settings_version": 10,
+    "settings_version": 11,
     "backend_url": "http://127.0.0.1:8088",
     "default_model": "doubao-seed-2-0-pro-260215",
     "access_scope": "project_only",
@@ -38,6 +38,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "api_key_required": True,
             "chat_path": "/chat/completions",
             "kind": "openai",
+        },
+        "volcengine_agent_plan": {
+            "name": "火山 Agent Plan / OpenAI Compatible",
+            "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+            "api_key": "",
+            "api_key_required": True,
+            "chat_path": "/responses",
+            "kind": "openai",
+            "wire_api": "responses",
         },
         "qwen": {
             "name": "通义千问 / OpenAI Compatible",
@@ -102,6 +111,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "context_limit": 128000,
             "supports_tools": True,
             "thinking_mode": "volcengine",
+        },
+        {
+            "id": "ark-code-latest",
+            "name": "火山 Agent Plan ark-code-latest",
+            "provider": "volcengine_agent_plan",
+            "api_model": "ark-code-latest",
+            "context_limit": 256000,
+            "supports_tools": True,
+            "thinking_mode": "",
         },
         {
             "id": "deepseek-v4-flash",
@@ -204,6 +222,7 @@ class SettingsStore:
                 "base_url": config.get("base_url", ""),
                 "chat_path": config.get("chat_path", "/chat/completions"),
                 "kind": config.get("kind", "openai"),
+                "wire_api": config.get("wire_api", "chat_completions"),
                 "api_key_required": bool(config.get("api_key_required", True)),
                 "request_options": config.get("request_options") if isinstance(config.get("request_options"), dict) else {},
                 "has_api_key": bool(api_key),
@@ -271,6 +290,13 @@ class SettingsStore:
         if version < 10:
             # One-shot cleanup for the removed user-facing assistant mode setting.
             self._settings.pop("assistant_mode", None)
+        if version < 11:
+            providers = self._settings.setdefault("providers", {})
+            agent_plan = providers.get("volcengine_agent_plan")
+            if isinstance(agent_plan, dict):
+                if normalize_chat_path(agent_plan.get("chat_path")) == "/chat/completions":
+                    agent_plan["chat_path"] = "/responses"
+                agent_plan["wire_api"] = "responses"
         if version < DEFAULT_SETTINGS["settings_version"]:
             self._settings["settings_version"] = DEFAULT_SETTINGS["settings_version"]
             self._save()
@@ -327,6 +353,8 @@ class SettingsStore:
                     target["chat_path"] = normalize_chat_path(incoming.get("chat_path"))
                 if "kind" in incoming:
                     target["kind"] = str(incoming.get("kind") or "openai").strip() or "openai"
+                if "wire_api" in incoming:
+                    target["wire_api"] = normalize_wire_api(incoming.get("wire_api"))
                 if "api_key_required" in incoming:
                     target["api_key_required"] = bool(incoming["api_key_required"])
                 if isinstance(incoming.get("request_options"), dict):
@@ -583,6 +611,11 @@ def normalize_chat_path(value: Any) -> str:
     return path if path.startswith("/") else f"/{path}"
 
 
+def normalize_wire_api(value: Any) -> str:
+    normalized = str(value or "chat_completions").strip().lower().replace("-", "_")
+    return normalized if normalized in {"chat_completions", "responses"} else "chat_completions"
+
+
 def default_provider_config(provider_id: str) -> dict[str, Any]:
     return {
         "name": provider_id,
@@ -591,6 +624,7 @@ def default_provider_config(provider_id: str) -> dict[str, Any]:
         "api_key_required": True,
         "chat_path": "/chat/completions",
         "kind": "openai",
+        "wire_api": "chat_completions",
         "request_options": {},
         "enabled": True,
     }

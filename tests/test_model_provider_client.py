@@ -9,8 +9,10 @@ from runtime.model_providers.client import (
     context_limit_from_props,
     estimate_request_tokens,
     extract_direct_stream_event,
+    extract_message_parts,
     extract_stream_event,
     fit_request_body_to_context,
+    format_provider_error,
     provider_root_url,
     stream_chat_completion,
 )
@@ -120,6 +122,90 @@ def test_build_request_body_does_not_guess_output_token_parameter() -> None:
     assert "max_tokens" not in body
     assert "max_completion_tokens" not in body
     assert "max_output_tokens" not in body
+
+
+def test_agent_plan_openai_provider_uses_responses_body() -> None:
+    body = build_request_body(
+        provider_id="volcengine_agent_plan",
+        provider={"kind": "openai", "wire_api": "responses"},
+        model_config={"thinking_mode": "", "supports_tools": True},
+        model="ark-code-latest",
+        messages=[{"role": "user", "content": "hi"}],
+        stream=True,
+        enable_thinking=True,
+        reasoning_effort="high",
+        tools=[{"type": "function", "function": {"name": "demo", "description": "", "parameters": {}}}],
+    )
+
+    assert body["model"] == "ark-code-latest"
+    assert body["input"] == [{"role": "user", "content": "hi"}]
+    assert body["stream"] is True
+    assert body["tools"] == [{
+        "type": "function",
+        "name": "demo",
+        "description": "",
+        "parameters": {},
+    }]
+    assert "thinking" not in body
+    assert "reasoning_effort" not in body
+    assert "messages" not in body
+
+
+def test_extract_stream_event_accepts_responses_text_delta() -> None:
+    event = extract_stream_event({
+        "type": "response.output_text.delta",
+        "delta": "hello",
+    })
+
+    assert event == {"message": "hello"}
+
+
+def test_extract_stream_event_accepts_responses_function_call() -> None:
+    event = extract_stream_event({
+        "type": "response.output_item.done",
+        "item": {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "filesystem__read_file",
+            "arguments": "{\"path\":\"README.md\"}",
+        },
+    })
+
+    assert event["tool_calls"] == [{
+        "index": 0,
+        "id": "call_1",
+        "type": "function",
+        "function": {
+            "name": "filesystem__read_file",
+            "arguments": "{\"path\":\"README.md\"}",
+        },
+    }]
+
+
+def test_extract_message_parts_accepts_responses_output_text() -> None:
+    answer, reasoning = extract_message_parts({
+        "output": [
+            {
+                "type": "message",
+                "content": [{"type": "output_text", "text": "done"}],
+            }
+        ]
+    })
+
+    assert answer == "done"
+    assert reasoning == ""
+
+
+def test_provider_error_includes_request_url_and_model_for_empty_body() -> None:
+    message = format_provider_error(
+        {},
+        404,
+        "https://ark.cn-beijing.volces.com/api/plan/v3/responses",
+        api_model="auto",
+    )
+
+    assert "https://ark.cn-beijing.volces.com/api/plan/v3/responses" in message
+    assert "模型：auto" in message
 
 
 def test_request_options_cannot_override_runtime_owned_fields() -> None:
