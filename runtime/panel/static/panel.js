@@ -33,6 +33,7 @@ const state = {
     currentConversationId: localStorage.getItem("lit_conversation_id") || "",
     currentMessages: [],
     activeStreams: new Map(),
+    locallyStoppedRunIds: new Set(),
     pendingComposerSubmits: new Set(),
     submitSeq: 0,
     isSending: false,
@@ -229,7 +230,8 @@ async function refreshActiveRuns() {
             api("/runs?status=waiting_confirmation"),
             api("/runs?status=paused"),
         ]);
-        const merged = [...(running || []), ...(waiting || []), ...(paused || [])];
+        const merged = [...(running || []), ...(waiting || []), ...(paused || [])]
+            .filter((run) => !state.locallyStoppedRunIds.has(run?.id || ""));
         const byId = new Map();
         for (const run of merged) {
             if (run?.id) byId.set(run.id, run);
@@ -351,7 +353,7 @@ function renderTaskHistory() {
         const runRows = runs.map((run) => {
             const status = String(run.status || "");
             const canPause = ["running", "waiting_confirmation"].includes(status);
-            const canResume = ["paused", "stopped", "failure", "partial"].includes(status);
+            const canResume = status === "paused";
             const canStart = status === "created";
             return `
                 <div class="task-run-row">
@@ -361,7 +363,7 @@ function renderTaskHistory() {
                     </div>
                     <div class="task-run-actions">
                         ${canPause ? `<button type="button" data-run-action="pause" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.pause'))}</button>` : ""}
-                        ${canResume ? `<button type="button" data-run-action="resume" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.resume'))}</button>` : ""}
+                        ${canResume ? `<button type="button" data-run-action="resume" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.resume_paused'))}</button>` : ""}
                         ${canStart ? `<button type="button" data-run-action="start" data-run-id="${escapeHtml(run.id)}" data-task-id="${escapeHtml(task.id)}" data-conversation-id="${escapeHtml(run.conversation_id || task.conversation_id || "")}" data-goal="${escapeHtml(task.goal || run.user_content || "")}">${escapeHtml(t('tasks.start'))}</button>` : ""}
                         <button type="button" data-run-action="export_fixture" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.export_fixture'))}</button>
                         <button type="button" data-run-action="replay" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.replay'))}</button>
@@ -1874,6 +1876,9 @@ async function sendMessage(event) {
             `/conversations/${conversationId}/messages/stream`,
             body,
             (eventData) => {
+                if (state.activeStreams.get(conversationId)?.locallyStopped) {
+                    return;
+                }
                 if (eventData.event === "error") {
                     if (eventData.terminal === false || eventData.recoverable === true) {
                         const metadata = streamingMessages[assistantIndex].metadata || {};
@@ -2277,10 +2282,14 @@ async function stopGeneration() {
         runId = latestActiveRunForConversation(conversationId)?.id || "";
     }
     const canStopPersistedRun = runId && !String(runId).startsWith("stream:");
+    if (runId) {
+        state.locallyStoppedRunIds.add(runId);
+    }
     if (activeStream) {
         activeStream.status = "stopped";
         activeStream.stage = "stopped";
         activeStream.message = t('status.stopped');
+        activeStream.locallyStopped = true;
         activeStream.updatedAt = new Date().toISOString();
         const pendingAssistant = [...(activeStream.messages || [])]
             .reverse()
@@ -2299,19 +2308,24 @@ async function stopGeneration() {
     renderWorkspaces();
     renderCurrentWorkspace();
     refreshComposerState();
+    const stopRequest = canStopPersistedRun
+        ? api(`/runs/${encodeURIComponent(runId)}/actions`, {
+            method: "POST",
+            body: JSON.stringify({ action: "stop", reason: "user stopped generation" }),
+        })
+        : Promise.resolve(null);
+    if (activeStream?.abortController) {
+        activeStream.abortController.abort();
+    }
     try {
-        if (canStopPersistedRun) {
-            await api(`/runs/${encodeURIComponent(runId)}`, {
-                method: "POST",
-                body: JSON.stringify({ action: "stop", reason: "user stopped generation" }),
-            });
-        }
-    } finally {
-        if (activeStream?.abortController) {
-            activeStream.abortController.abort();
-        } else {
-            await refreshActiveRuns();
-        }
+        await stopRequest;
+    } catch (error) {
+        if (runId) state.locallyStoppedRunIds.delete(runId);
+        await refreshActiveRuns();
+        throw error;
+    }
+    if (!activeStream) {
+        await refreshActiveRuns();
     }
 }
 

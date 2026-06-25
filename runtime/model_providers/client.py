@@ -734,6 +734,8 @@ def format_provider_error(data: dict[str, Any], status: int, endpoint_url: str, 
     target = endpoint_url
     if api_model:
         target = f"{endpoint_url}，模型：{api_model}"
+    if status in {401, 403} and not data:
+        return f"模型服务返回 HTTP {status}，但响应体为空（{target}）。{_provider_auth_error_hint(status)}"
     if not data:
         return f"模型服务返回 HTTP {status}，但响应体为空（{target}）。可能是路径、模型名或请求参数不被当前模型服务接受。"
     value: Any = data.get("message") or data.get("error") or data.get("detail")
@@ -745,8 +747,16 @@ def format_provider_error(data: dict[str, Any], status: int, endpoint_url: str, 
         value = json.dumps(data, ensure_ascii=False)
     text = str(value)
     if text.strip() == "{}":
+        if status in {401, 403}:
+            return f"模型服务返回 HTTP {status}，错误体为空对象（{target}）。{_provider_auth_error_hint(status)}"
         return f"模型服务返回 HTTP {status}，错误体为空对象（{target}）。可能是路径、模型名、工具调用参数或消息格式不兼容。"
     return text
+
+
+def _provider_auth_error_hint(status: int) -> str:
+    if status == 401:
+        return "认证失败：请检查当前接口的 API Key 是否填写正确、是否过期，以及该 Key 是否属于这个 Base URL。"
+    return "权限不足：请检查当前 API Key 是否已开通该模型、Agent Plan 或对应服务权限。"
 
 
 class StreamingParser:

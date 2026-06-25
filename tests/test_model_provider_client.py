@@ -208,6 +208,33 @@ def test_provider_error_includes_request_url_and_model_for_empty_body() -> None:
     assert "模型：auto" in message
 
 
+def test_provider_error_classifies_401_as_api_key_issue() -> None:
+    message = format_provider_error(
+        {},
+        401,
+        "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
+        api_model="doubao-seed-2.0-code",
+    )
+
+    assert "HTTP 401" in message
+    assert "API Key" in message
+    assert "认证失败" in message
+    assert "路径、模型名或请求参数" not in message
+
+
+def test_provider_error_classifies_403_as_permission_issue() -> None:
+    message = format_provider_error(
+        {},
+        403,
+        "https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions",
+        api_model="doubao-seed-2.0-code",
+    )
+
+    assert "HTTP 403" in message
+    assert "权限不足" in message
+    assert "Agent Plan" in message
+
+
 def test_request_options_cannot_override_runtime_owned_fields() -> None:
     body = build_request_body(
         provider_id="custom",
