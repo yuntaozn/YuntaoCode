@@ -83,9 +83,9 @@ def test_default_settings_include_volcengine_agent_plan_provider(tmp_path: Path)
     model = store.get_model_config("ark-code-latest")
 
     assert provider["base_url"] == "https://ark.cn-beijing.volces.com/api/plan/v3"
-    assert provider["chat_path"] == "/responses"
+    assert provider["chat_path"] == "/chat/completions"
     assert provider["kind"] == "openai"
-    assert provider["wire_api"] == "responses"
+    assert provider["wire_api"] == "chat_completions"
     assert provider["api_key_required"] is True
     assert model["provider"] == "volcengine_agent_plan"
     assert model["api_model"] == "ark-code-latest"
@@ -93,7 +93,7 @@ def test_default_settings_include_volcengine_agent_plan_provider(tmp_path: Path)
     assert model["thinking_mode"] == ""
 
 
-def test_agent_plan_provider_migrates_from_chat_to_responses(tmp_path: Path) -> None:
+def test_agent_plan_provider_keeps_openai_compatible_chat_completions(tmp_path: Path) -> None:
     settings_path = tmp_path / "settings.json"
     settings_path.write_text(
         json.dumps({
@@ -116,10 +116,37 @@ def test_agent_plan_provider_migrates_from_chat_to_responses(tmp_path: Path) -> 
     provider = store.get_provider("volcengine_agent_plan")
     saved = json.loads(settings_path.read_text(encoding="utf-8"))
 
-    assert provider["chat_path"] == "/responses"
-    assert provider["wire_api"] == "responses"
-    assert saved["settings_version"] == 11
+    assert provider["chat_path"] == "/chat/completions"
+    assert provider["wire_api"] == "chat_completions"
+    assert saved["settings_version"] == 12
     assert saved["providers"]["volcengine_agent_plan"]["api_key"] == "secret"
+
+
+def test_agent_plan_provider_migrates_default_responses_profile_back_to_chat_completions(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({
+            "settings_version": 11,
+            "providers": {
+                "volcengine_agent_plan": {
+                    "name": "火山 Agent Plan / OpenAI Compatible",
+                    "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+                    "api_key": "secret",
+                    "api_key_required": True,
+                    "chat_path": "/responses",
+                    "kind": "openai",
+                    "wire_api": "responses",
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    store = SettingsStore(settings_path)
+    provider = store.get_provider("volcengine_agent_plan")
+
+    assert provider["chat_path"] == "/chat/completions"
+    assert provider["wire_api"] == "chat_completions"
 
 
 def test_invalid_output_token_parameter_is_not_sent(tmp_path: Path) -> None:

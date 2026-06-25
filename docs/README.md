@@ -9,6 +9,9 @@ new architecture note belongs.
   contract. It summarizes the runtime lines, run events, task contract,
   convergence, RunEvidence, RunResult, context, capability, temporary
   artifacts, and next foundation work.
+- [runtime-profiles.md](runtime-profiles.md) describes `full` and `lite`
+  backend assembly profiles and the boundary between the core Task Runtime and
+  optional product/provider surfaces.
 - [architecture.md](architecture.md) is the higher-level architecture sketch
   for the sidecar, desktop shell, unified terminal, and agent strategy layer.
 - [versioning.md](versioning.md) defines the product release version and

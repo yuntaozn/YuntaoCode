@@ -19,7 +19,7 @@ from .model_request_options import sanitize_request_options
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "settings_version": 11,
+    "settings_version": 12,
     "backend_url": "http://127.0.0.1:8088",
     "default_model": "doubao-seed-2-0-pro-260215",
     "access_scope": "project_only",
@@ -44,9 +44,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
             "api_key": "",
             "api_key_required": True,
-            "chat_path": "/responses",
+            "chat_path": "/chat/completions",
             "kind": "openai",
-            "wire_api": "responses",
+            "wire_api": "chat_completions",
         },
         "qwen": {
             "name": "通义千问 / OpenAI Compatible",
@@ -294,9 +294,19 @@ class SettingsStore:
             providers = self._settings.setdefault("providers", {})
             agent_plan = providers.get("volcengine_agent_plan")
             if isinstance(agent_plan, dict):
-                if normalize_chat_path(agent_plan.get("chat_path")) == "/chat/completions":
-                    agent_plan["chat_path"] = "/responses"
-                agent_plan["wire_api"] = "responses"
+                agent_plan.setdefault("chat_path", "/chat/completions")
+                agent_plan.setdefault("wire_api", "chat_completions")
+        if version < 12:
+            providers = self._settings.setdefault("providers", {})
+            agent_plan = providers.get("volcengine_agent_plan")
+            if isinstance(agent_plan, dict):
+                base_url = str(agent_plan.get("base_url") or "").rstrip("/")
+                if (
+                    base_url == "https://ark.cn-beijing.volces.com/api/plan/v3"
+                    and normalize_chat_path(agent_plan.get("chat_path")) == "/responses"
+                ):
+                    agent_plan["chat_path"] = "/chat/completions"
+                    agent_plan["wire_api"] = "chat_completions"
         if version < DEFAULT_SETTINGS["settings_version"]:
             self._settings["settings_version"] = DEFAULT_SETTINGS["settings_version"]
             self._save()

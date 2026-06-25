@@ -655,6 +655,7 @@ class ConversationRunExecutor:
                 round_finish_reason = ""
                 tool_argument_stream_large_reported = False
                 tool_argument_stream_size = 0
+                round_model_error = ""
 
                 async for event in stream_chat_completion(
                     settings=self.runtime.settings,
@@ -730,9 +731,19 @@ class ConversationRunExecutor:
                             })
                             await self.flush()
                             break
-                        self.write_event({"event": "error", "error": event["error"]})
+                        round_model_error = str(event["error"] or "")
+                        model_provider_error = round_model_error
+                        can_continue_with_runtime_facts = bool(tool_events)
+                        self.write_event({
+                            "event": "error",
+                            "error": round_model_error,
+                            "terminal": not can_continue_with_runtime_facts,
+                            "recoverable": can_continue_with_runtime_facts,
+                        })
                         await self.flush()
-                        return
+                        if not can_continue_with_runtime_facts:
+                            return
+                        break
                     if event.get("message"):
                         consecutive_idle_timeouts = 0
                         content_parts.append(event["message"])
@@ -778,6 +789,8 @@ class ConversationRunExecutor:
                         await self.flush()
                         break
 
+                if round_model_error:
+                    break
                 late_guidance_prompt, late_guidance_text = self._pop_runtime_guidance(conversation_id)
                 if late_guidance_prompt:
                     if self._apply_guidance_contract_updates(task_contract, late_guidance_text):

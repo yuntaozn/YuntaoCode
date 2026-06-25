@@ -48,9 +48,10 @@ class PluginsHandler(ApiHandler):
                 "tools": tools,
             })
         capability_pack_root = self.runtime.settings.data_dir / "capability-packs"
-        if hasattr(self.runtime, "capability_packs"):
-            capability_pack_root = self.runtime.capability_packs.root_path
-            plugins.extend(load_capability_pack_plugins(self.runtime.capability_packs.list(), lang))
+        capability_packs = getattr(self.runtime, "capability_packs", None)
+        if capability_packs is not None:
+            capability_pack_root = capability_packs.root_path
+            plugins.extend(load_capability_pack_plugins(capability_packs.list(), lang))
         legacy_ai_plugin_root = self.runtime.settings.data_dir / "ai-plugins"
         plugins.extend(load_ai_plugin_drafts(legacy_ai_plugin_root, lang))
         self.finish_json({
@@ -80,10 +81,11 @@ class PluginsHandler(ApiHandler):
         }
         legacy_ai_plugin_root = self.runtime.settings.data_dir / "ai-plugins"
         draft_ids = {draft["id"] for draft in load_ai_plugin_drafts(legacy_ai_plugin_root, lang)}
+        capability_packs = getattr(self.runtime, "capability_packs", None)
         capability_pack_ids = {
             pack.id
-            for pack in self.runtime.capability_packs.list(include_archived=True)
-        } if hasattr(self.runtime, "capability_packs") else set()
+            for pack in capability_packs.list(include_archived=True)
+        } if capability_packs is not None else set()
         policy_error = plugin_toggle_policy_error(
             plugin_id,
             registered_plugin_ids,
