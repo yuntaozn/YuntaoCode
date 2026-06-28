@@ -249,6 +249,9 @@ class RunStore:
         elif event_type == "checkpoint":
             run.stage = "checkpoint"
             run.message = "checkpoint created"
+        elif event_type == "context_pack":
+            run.stage = "context_pack"
+            run.message = "context pack recorded"
         elif event_type == "workspace_snapshot":
             run.stage = "workspace_snapshot"
             run.message = "workspace snapshot recorded"

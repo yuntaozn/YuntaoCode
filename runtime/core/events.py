@@ -24,6 +24,7 @@ CANONICAL_EVENT_NAMES: frozenset[str] = frozenset({
     "plan.generated",
     "plan.step.updated",
     "context.hygiene",
+    "context.pack",
     "context.workspace_snapshot",
     "capability.snapshot",
     "model.reasoning",

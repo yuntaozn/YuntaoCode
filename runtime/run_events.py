@@ -14,6 +14,7 @@ RECORDED_EVENT_TYPES = {
     "status",
     "tool",
     "context_hygiene",
+    "context_pack",
     "workspace_snapshot",
     "capability_snapshot",
     "task_contract",
@@ -150,6 +151,13 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
             "event_name": event_name,
             "report": payload.get("report"),
         }
+    if event_type == "context_pack":
+        return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
+            "event": "context_pack",
+            "event_name": event_name,
+            "pack": payload.get("pack"),
+        }
     if event_type == "workspace_snapshot":
         return {
             "schema_version": RUN_EVENT_SCHEMA_VERSION,
@@ -252,6 +260,8 @@ def canonical_run_event_name(payload: dict[str, Any]) -> str:
         return "task.contract"
     if event_type == "context_hygiene":
         return "context.hygiene"
+    if event_type == "context_pack":
+        return "context.pack"
     if event_type == "workspace_snapshot":
         return "context.workspace_snapshot"
     if event_type == "capability_snapshot":

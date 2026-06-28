@@ -25,10 +25,15 @@ from runtime.agent_strategy.classifiers import (
 )
 from runtime.agent_strategy.policy import deterministic_plan_gate, resolve_profile
 from runtime.agent_strategy.profiles import profile_to_public_dict
+from runtime.context_pack import (
+    build_context_pack,
+    format_context_pack_for_prompt,
+    is_context_pack_prompt_for_phase,
+)
 from runtime.run_completion import build_completion_decision
 from runtime.run_result import build_run_result
 from runtime.run_recovery import build_result_context_snapshot, format_recovery_context
-from runtime.workspace_snapshot import build_workspace_snapshot, format_workspace_snapshot_for_prompt
+from runtime.workspace_snapshot import build_workspace_snapshot
 from runtime import i18n
 
 
@@ -208,7 +213,6 @@ class ConversationRunExecutor:
         _lang = i18n.get_lang(self._helper.request) if hasattr(self._helper, "request") else ""
         mode_config = get_terminal_config(_lang)
         workspace_snapshot = build_workspace_snapshot(workspace.path)
-        workspace_context = format_workspace_snapshot_for_prompt(workspace_snapshot)
         metadata["workspace_snapshot"] = workspace_snapshot
         self.write_event({
             "event": "workspace_snapshot",
@@ -246,6 +250,21 @@ class ConversationRunExecutor:
             expected_min_output_chars=expected_min_output_chars,
         )
         inherited_contract = self._previous_task_contract_context(conversation, content)
+        context_pack = build_context_pack(
+            phase="task_contract",
+            user_content=content,
+            workspace_snapshot=workspace_snapshot,
+            previous_contract=inherited_contract,
+            context_hygiene_report=context_hygiene_report,
+            task_id=str(getattr(run, "task_id", "") or ""),
+        )
+        context_pack_prompt = format_context_pack_for_prompt(context_pack)
+        metadata["context_pack"] = context_pack
+        metadata.setdefault("context_packs", []).append(context_pack)
+        self.write_event({
+            "event": "context_pack",
+            "pack": context_pack,
+        })
         direct_contract_inheritance = _tc.looks_like_execute_contract_followup(content)
         if inherited_contract and direct_contract_inheritance and not user_no_write_hint:
             task_contract = _tc.inherit_task_contract_for_followup(inherited_contract, task_contract)
@@ -272,7 +291,7 @@ class ConversationRunExecutor:
                 expected_document_coverage=expected_document_coverage,
                 expected_min_output_chars=expected_min_output_chars,
                 previous_contract=inherited_contract,
-                workspace_context=workspace_context,
+                workspace_context=context_pack_prompt,
             )
         capability_snapshot = self._build_capability_snapshot(mode_config)
         if ground_task_contract_with_capabilities(
@@ -332,10 +351,32 @@ class ConversationRunExecutor:
         self._active_capability_preflight = capability_preflight
         metadata["capability_snapshot"] = capability_snapshot
         metadata["capability_preflight"] = capability_preflight
+        planning_context_pack = build_context_pack(
+            phase="planning",
+            user_content=content,
+            workspace_snapshot=workspace_snapshot,
+            task_contract=task_contract,
+            capability_snapshot=capability_snapshot,
+            capability_preflight=capability_preflight,
+            context_hygiene_report=context_hygiene_report,
+            task_id=str(getattr(run, "task_id", "") or ""),
+        )
+        metadata["context_pack"] = planning_context_pack
+        metadata.setdefault("context_packs", []).append(planning_context_pack)
+        self.write_event({
+            "event": "context_pack",
+            "pack": planning_context_pack,
+        })
         messages.append({
             "role": "system",
             "content": self._task_contract_prompt(task_contract),
         })
+        planning_context_prompt = format_context_pack_for_prompt(planning_context_pack)
+        if planning_context_prompt:
+            messages.append({
+                "role": "system",
+                "content": planning_context_prompt,
+            })
         self.write_event({"event": "task_contract", "contract": task_contract})
         self.write_event({
             "event": "capability_snapshot",
@@ -1388,6 +1429,44 @@ class ConversationRunExecutor:
                         await self.flush()
                     messages.append(tool_message)
                 round_events = tool_events[round_start_event_count:]
+                if round_events:
+                    execution_context_pack = build_context_pack(
+                        phase="execution",
+                        user_content=content,
+                        task_contract=task_contract,
+                        capability_snapshot=capability_snapshot,
+                        capability_preflight=capability_preflight,
+                        tool_events=tool_events,
+                        execution_plan=execution_plan,
+                        current_stage=current_stage,
+                        round_index=round_index,
+                        context_hygiene_report=context_hygiene_report,
+                        task_id=str(getattr(run, "task_id", "") or ""),
+                    )
+                    metadata["context_pack"] = execution_context_pack
+                    metadata.setdefault("context_packs", []).append(execution_context_pack)
+                    self.write_event({
+                        "event": "context_pack",
+                        "pack": execution_context_pack,
+                    })
+                    execution_context_prompt = format_context_pack_for_prompt(execution_context_pack)
+                    if execution_context_prompt:
+                        messages = [
+                            message
+                            for message in messages
+                            if not (
+                                message.get("role") == "system"
+                                and is_context_pack_prompt_for_phase(
+                                    message.get("content"),
+                                    "execution",
+                                )
+                            )
+                        ]
+                        messages.append({
+                            "role": "system",
+                            "content": execution_context_prompt,
+                        })
+                    await self.flush()
                 repeated_failure_count = self._consecutive_repeated_failure_count(tool_events)
                 failure_route_attempt_count = self._failure_route_attempt_count_since_progress(tool_events)
                 repeated_failure_action = self._repeated_failure_action(
@@ -1894,6 +1973,23 @@ class ConversationRunExecutor:
             final_answer_error=final_answer_error,
         )
         metadata["run_result"] = run_result
+        verification_context_pack = build_context_pack(
+            phase="verification",
+            user_content=content,
+            workspace_snapshot=workspace_snapshot,
+            task_contract=task_contract,
+            capability_snapshot=capability_snapshot,
+            capability_preflight=capability_preflight,
+            run_result=run_result,
+            context_hygiene_report=context_hygiene_report,
+            task_id=str(getattr(run, "task_id", "") or ""),
+        )
+        metadata["context_pack"] = verification_context_pack
+        metadata.setdefault("context_packs", []).append(verification_context_pack)
+        self.write_event({
+            "event": "context_pack",
+            "pack": verification_context_pack,
+        })
         self.write_event({"event": "result", "result": run_result})
         await self.flush()
         task_id = str(getattr(run, "task_id", "") or "")
@@ -2005,6 +2101,22 @@ class ConversationRunExecutor:
         )
         if execution_notice:
             metadata["execution_notice"] = execution_notice
+        summary_context_pack = build_context_pack(
+            phase="summary",
+            user_content=content,
+            workspace_snapshot=workspace_snapshot,
+            task_contract=task_contract,
+            run_result=run_result,
+            assistant_content=assistant_content,
+            context_hygiene_report=context_hygiene_report,
+            task_id=str(getattr(run, "task_id", "") or ""),
+        )
+        metadata["context_pack"] = summary_context_pack
+        metadata.setdefault("context_packs", []).append(summary_context_pack)
+        self.write_event({
+            "event": "context_pack",
+            "pack": summary_context_pack,
+        })
         assistant_message = self.runtime.conversations.add_message(
             conversation_id,
             "assistant",

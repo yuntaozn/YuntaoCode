@@ -25,6 +25,26 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
         },
     })
     store.record_event(run.id, {
+        "event": "context_pack",
+        "pack": {
+            "schema_version": "context_pack.v1",
+            "kind": "context_pack",
+            "phase": "task_contract",
+            "records": [
+                {"kind": "user_intent", "content": "Create viewer.html"},
+                {"kind": "workspace_summary", "content": "Workspace demo"},
+            ],
+            "ledger": {
+                "schema_version": "context_ledger.v1",
+                "record_count": 2,
+                "records": [
+                    {"kind": "user_intent", "source_type": "user_message"},
+                    {"kind": "workspace_summary", "source_type": "runtime_event"},
+                ],
+            },
+        },
+    })
+    store.record_event(run.id, {
         "event": "task_contract",
         "contract": {
             "requires_write": True,
@@ -37,6 +57,28 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
         "event": "capability_snapshot",
         "snapshot": {"available_tool_ids": ["filesystem.write_file"], "unavailable_tool_ids": []},
         "preflight": {"ok": True, "target_capability_ids": ["code.text_write"]},
+    })
+    store.record_event(run.id, {
+        "event": "context_pack",
+        "pack": {
+            "schema_version": "context_pack.v1",
+            "kind": "context_pack",
+            "phase": "planning",
+            "records": [
+                {"kind": "user_intent", "content": "Create viewer.html"},
+                {"kind": "task_contract", "content": "Current task contract"},
+                {"kind": "capability", "content": "Capability boundary facts"},
+            ],
+            "ledger": {
+                "schema_version": "context_ledger.v1",
+                "record_count": 3,
+                "records": [
+                    {"kind": "user_intent", "source_type": "user_message"},
+                    {"kind": "task_contract", "source_type": "runtime_event"},
+                    {"kind": "capability", "source_type": "runtime_event"},
+                ],
+            },
+        },
     })
     store.record_event(run.id, {
         "event": "tool",
@@ -54,6 +96,30 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
         },
     })
     store.record_event(run.id, {
+        "event": "context_pack",
+        "pack": {
+            "schema_version": "context_pack.v1",
+            "kind": "context_pack",
+            "phase": "execution",
+            "records": [
+                {"kind": "task_contract", "content": "Current task contract"},
+                {"kind": "capability", "content": "Capability boundary facts"},
+                {"kind": "tool_result", "content": "Recent tool result facts"},
+                {"kind": "recovery", "content": "Execution state facts"},
+            ],
+            "ledger": {
+                "schema_version": "context_ledger.v1",
+                "record_count": 4,
+                "records": [
+                    {"kind": "task_contract", "source_type": "runtime_event"},
+                    {"kind": "capability", "source_type": "runtime_event"},
+                    {"kind": "tool_result", "source_type": "run_event"},
+                    {"kind": "recovery", "source_type": "runtime_event"},
+                ],
+            },
+        },
+    })
+    store.record_event(run.id, {
         "event": "checkpoint",
         "checkpoint": {"id": "checkpoint-1", "state": "partial"},
     })
@@ -64,6 +130,52 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
             "status": "partial",
             "risks": ["write_not_verified"],
             "verification_evidence": [],
+        },
+    })
+    store.record_event(run.id, {
+        "event": "context_pack",
+        "pack": {
+            "schema_version": "context_pack.v1",
+            "kind": "context_pack",
+            "phase": "verification",
+            "records": [
+                {"kind": "task_contract", "content": "Current task contract"},
+                {"kind": "capability", "content": "Capability boundary facts"},
+                {"kind": "tool_result", "content": "Run result facts"},
+            ],
+            "ledger": {
+                "schema_version": "context_ledger.v1",
+                "record_count": 3,
+                "records": [
+                    {"kind": "task_contract", "source_type": "runtime_event"},
+                    {"kind": "capability", "source_type": "runtime_event"},
+                    {"kind": "tool_result", "source_type": "run_result"},
+                ],
+            },
+        },
+    })
+    store.record_event(run.id, {
+        "event": "context_pack",
+        "pack": {
+            "schema_version": "context_pack.v1",
+            "kind": "context_pack",
+            "phase": "summary",
+            "records": [
+                {"kind": "user_intent", "content": "Create viewer.html"},
+                {"kind": "task_contract", "content": "Current task contract"},
+                {"kind": "tool_result", "content": "Run result facts"},
+                {"kind": "tool_result", "content": "Final answer candidate preview"},
+            ],
+            "ledger": {
+                "schema_version": "context_ledger.v1",
+                "record_count": 4,
+                "records": [
+                    {"kind": "user_intent", "source_type": "user_message"},
+                    {"kind": "task_contract", "source_type": "runtime_event"},
+                    {"kind": "tool_result", "source_type": "run_result"},
+                    {"kind": "tool_result", "source_type": "assistant_message"},
+                ],
+            },
         },
     })
     store.record_event(run.id, {
@@ -82,6 +194,20 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
     assert evidence["kind"] == "run_evidence"
     assert evidence["run"]["id"] == run.id
     assert evidence["run"]["task_id"] == "task-1"
+    assert evidence["context_pack"]["phase"] == "summary"
+    assert evidence["context_pack"]["record_kinds"] == [
+        "user_intent",
+        "task_contract",
+        "tool_result",
+        "tool_result",
+    ]
+    assert [item["phase"] for item in evidence["context_packs"]] == [
+        "task_contract",
+        "planning",
+        "execution",
+        "verification",
+        "summary",
+    ]
     assert evidence["workspace_snapshot"]["name"] == "demo"
     assert evidence["workspace_snapshot"]["extension_counts"][".html"] == 1
     assert evidence["task_contract"]["capability_ids"] == ["code.text_write"]
@@ -125,3 +251,57 @@ def test_build_run_evidence_keeps_result_status_separate_from_done_status(tmp_pa
 
     assert evidence["trace"]["run_status"] == "success"
     assert evidence["trace"]["result_status"] == "no_tool_activity"
+
+
+def test_run_evidence_keeps_representative_context_packs_for_long_runs(tmp_path) -> None:
+    store = RunStore(tmp_path / "runs.json")
+    run = store.create(
+        conversation_id="conv_1",
+        workspace_id="workspace_1",
+        mode="terminal",
+        user_content="Long task",
+        task_id="task-1",
+    )
+    for phase in ("task_contract", "planning"):
+        store.record_event(run.id, {
+            "event": "context_pack",
+            "pack": {
+                "schema_version": "context_pack.v1",
+                "kind": "context_pack",
+                "phase": phase,
+                "records": [{"kind": "task_contract", "content": phase}],
+                "ledger": {"schema_version": "context_ledger.v1", "records": []},
+            },
+        })
+    for index in range(12):
+        store.record_event(run.id, {
+            "event": "context_pack",
+            "pack": {
+                "schema_version": "context_pack.v1",
+                "kind": "context_pack",
+                "phase": "execution",
+                "records": [{"kind": "tool_result", "content": f"round {index}"}],
+                "ledger": {"schema_version": "context_ledger.v1", "records": []},
+            },
+        })
+    for phase in ("verification", "summary"):
+        store.record_event(run.id, {
+            "event": "context_pack",
+            "pack": {
+                "schema_version": "context_pack.v1",
+                "kind": "context_pack",
+                "phase": phase,
+                "records": [{"kind": "tool_result", "content": phase}],
+                "ledger": {"schema_version": "context_ledger.v1", "records": []},
+            },
+        })
+
+    evidence = build_run_evidence(store.get(run.id))
+
+    phases = [item["phase"] for item in evidence["context_packs"]]
+    assert "task_contract" in phases
+    assert "planning" in phases
+    assert "execution" in phases
+    assert "verification" in phases
+    assert "summary" in phases
+    assert len(phases) <= 8

@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from runtime.capability_evidence import build_capability_evidence_summary
+from runtime.context_pack import context_pack_summary
 from runtime.run_trace import build_run_trace_summary
 from runtime.workspace_snapshot import workspace_snapshot_summary
 
@@ -29,6 +30,12 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
     plan = _latest_event_value(events, "plan", "plan")
     capability = _latest_event_value(events, "capability_snapshot", "snapshot")
     preflight = _latest_event_value(events, "capability_snapshot", "preflight")
+    context_packs = [
+        event.get("pack")
+        for event in events
+        if event.get("event") == "context_pack" and isinstance(event.get("pack"), dict)
+    ]
+    context_pack = context_packs[-1] if context_packs else None
     workspace_snapshot = _latest_event_value(events, "workspace_snapshot", "snapshot")
     tool_events = [event for event in events if event.get("event") == "tool"]
     status_events = [event for event in events if event.get("event") == "status"]
@@ -55,6 +62,8 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
         "run": run_info,
         "task_contract": contract,
         "trace": build_run_trace_summary(run, events=events),
+        "context_pack": context_pack_summary(context_pack),
+        "context_packs": _selected_context_pack_summaries(context_packs, limit=8),
         "workspace_snapshot": workspace_snapshot_summary(workspace_snapshot),
         "capability_evidence": build_capability_evidence_summary(
             tool_events,
@@ -114,6 +123,40 @@ def _latest_event_value(events: list[dict[str, Any]], event_type: str, key: str)
         if event.get("event") == event_type:
             return event.get(key)
     return None
+
+
+def _selected_context_pack_summaries(
+    context_packs: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    indexed = [
+        (index, pack)
+        for index, pack in enumerate(context_packs)
+        if isinstance(pack, dict)
+    ]
+    selected: set[int] = set()
+    canonical_phases = [
+        "task_contract",
+        "planning",
+        "execution",
+        "verification",
+        "summary",
+    ]
+    for phase in canonical_phases:
+        for index, pack in reversed(indexed):
+            if str(pack.get("phase") or "") == phase:
+                selected.add(index)
+                break
+    for index, _pack in reversed(indexed):
+        if len(selected) >= limit:
+            break
+        selected.add(index)
+    return [
+        context_pack_summary(pack)
+        for index, pack in indexed
+        if index in selected
+    ]
 
 
 def _capability_summary(capability: Any, preflight: Any) -> dict[str, Any]:

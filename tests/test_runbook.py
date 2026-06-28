@@ -11,6 +11,16 @@ def test_build_runbook_summarizes_trace_and_result(tmp_path) -> None:
         user_content="Create viewer.html",
     )
     store.record_event(run.id, {
+        "event": "context_pack",
+        "pack": {
+            "schema_version": "context_pack.v1",
+            "kind": "context_pack",
+            "phase": "task_contract",
+            "records": [{"kind": "user_intent", "content": "Create viewer.html"}],
+            "ledger": {"schema_version": "context_ledger.v1", "record_count": 1, "records": []},
+        },
+    })
+    store.record_event(run.id, {
         "event": "task_contract",
         "contract": {
             "goal": "Create viewer.html",
@@ -68,6 +78,7 @@ def test_build_runbook_summarizes_trace_and_result(tmp_path) -> None:
     assert runbook["schema_version"] == "runbook.v1"
     assert runbook["run"]["goal"] == "Create viewer.html"
     assert runbook["task_contract"]["requires_write"] is True
+    assert runbook["context_pack"]["phase"] == "task_contract"
     assert runbook["trace"]["schema_version"] == "run_trace_summary.v1"
     assert runbook["trace"]["event_name_counts"]["tool.completed"] == 1
     assert runbook["trace"]["result_status"] == "partial"

@@ -134,6 +134,11 @@ def _event_summary(event: dict[str, Any]) -> str:
         report = event.get("report") if isinstance(event.get("report"), dict) else {}
         changed = report.get("changed")
         return "context hygiene changed" if changed else "context hygiene checked"
+    if event_type == "context_pack":
+        pack = event.get("pack") if isinstance(event.get("pack"), dict) else {}
+        phase = str(pack.get("phase") or "")
+        record_count = int(pack.get("record_count") or 0)
+        return _truncate(f"context pack: {phase}, records={record_count}", 500)
     if event_type == "workspace_snapshot":
         snapshot = event.get("snapshot") if isinstance(event.get("snapshot"), dict) else {}
         name = str(snapshot.get("name") or "workspace")

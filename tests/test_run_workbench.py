@@ -24,6 +24,26 @@ def test_build_run_workbench_presents_artifacts_risks_and_timeline(tmp_path) -> 
         },
     })
     store.record_event(run.id, {
+        "event": "context_pack",
+        "pack": {
+            "schema_version": "context_pack.v1",
+            "kind": "context_pack",
+            "phase": "task_contract",
+            "records": [
+                {"kind": "user_intent", "content": "Create a 3D model viewer"},
+                {"kind": "workspace_summary", "content": "Workspace viewer-demo"},
+            ],
+            "ledger": {
+                "schema_version": "context_ledger.v1",
+                "record_count": 2,
+                "records": [
+                    {"kind": "user_intent", "source_type": "user_message", "trust": "user_provided"},
+                    {"kind": "workspace_summary", "source_type": "runtime_event", "trust": "runtime_fact"},
+                ],
+            },
+        },
+    })
+    store.record_event(run.id, {
         "event": "task_contract",
         "contract": {
             "goal": "Create a 3D model viewer",
@@ -100,6 +120,8 @@ def test_build_run_workbench_presents_artifacts_risks_and_timeline(tmp_path) -> 
     assert workbench["schema_version"] == "run_workbench.v1"
     assert workbench["kind"] == "run_workbench"
     assert workbench["run"]["id"] == run.id
+    assert workbench["context_pack"]["phase"] == "task_contract"
+    assert workbench["context_pack"]["ledger"]["record_count"] == 2
     assert workbench["workspace"]["name"] == "viewer-demo"
     assert workbench["workspace"]["extension_counts"][".glb"] == 1
     assert workbench["task"]["goal"] == "Create a 3D model viewer"

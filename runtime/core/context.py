@@ -18,6 +18,7 @@ ContextKind = Literal[
     "user_intent",
     "task_contract",
     "workspace_summary",
+    "capability",
     "evidence",
     "tool_result",
     "memory",
@@ -37,10 +38,11 @@ TrustLevel = Literal[
 
 PHASE_CONTEXT_KINDS: dict[str, frozenset[str]] = {
     "understanding": frozenset({"user_intent", "memory", "task_contract", "risk"}),
-    "planning": frozenset({"user_intent", "task_contract", "workspace_summary", "memory", "risk"}),
-    "execution": frozenset({"task_contract", "evidence", "tool_result", "recovery", "risk"}),
-    "verification": frozenset({"task_contract", "evidence", "tool_result", "risk"}),
-    "summary": frozenset({"task_contract", "tool_result", "evidence", "recovery", "risk"}),
+    "task_contract": frozenset({"user_intent", "workspace_summary", "task_contract", "memory", "recovery", "risk"}),
+    "planning": frozenset({"user_intent", "task_contract", "workspace_summary", "capability", "memory", "risk"}),
+    "execution": frozenset({"task_contract", "capability", "evidence", "tool_result", "recovery", "risk"}),
+    "verification": frozenset({"task_contract", "capability", "evidence", "tool_result", "risk"}),
+    "summary": frozenset({"user_intent", "task_contract", "tool_result", "evidence", "recovery", "risk"}),
 }
 
 

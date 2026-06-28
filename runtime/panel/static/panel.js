@@ -453,6 +453,7 @@ function renderRunWorkbench(workbench) {
     const failures = Array.isArray(workbench?.failures) ? workbench.failures : [];
     const plan = workbench?.plan || {};
     const workspace = workbench?.workspace || {};
+    const contextPack = workbench?.context_pack || {};
     const completionDecisions = Array.isArray(workbench?.completion_decisions) ? workbench.completion_decisions : [];
     const timeline = Array.isArray(workbench?.timeline) ? workbench.timeline : [];
     const chips = [
@@ -472,6 +473,7 @@ function renderRunWorkbench(workbench) {
         </div>
         <div class="task-workbench-grid">
             ${renderWorkbenchSection(t('tasks.workspace_snapshot'), renderWorkbenchWorkspace(workspace))}
+            ${renderWorkbenchSection(t('tasks.context_pack'), renderWorkbenchContextPack(contextPack))}
             ${renderWorkbenchSection(t('tasks.artifacts'), renderWorkbenchArtifacts(artifacts))}
             ${renderWorkbenchSection(t('tasks.verification'), renderWorkbenchVerification(verification))}
             ${renderWorkbenchSection(t('tasks.risks'), renderWorkbenchRisks(risks))}
@@ -532,6 +534,26 @@ function renderWorkbenchWorkspace(snapshot) {
         ${extensions ? `<li><strong>${escapeHtml(t('tasks.file_types'))}</strong><span>${escapeHtml(extensions)}</span></li>` : ""}
         ${patterns ? `<li><strong>${escapeHtml(t('tasks.observed_patterns'))}</strong><span>${escapeHtml(patterns)}</span></li>` : ""}
     </ul>`;
+}
+
+function renderWorkbenchContextPack(pack) {
+    const ledger = pack?.ledger || {};
+    const records = Array.isArray(ledger.records) ? ledger.records : [];
+    if (!records.length) return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    const phase = pack.phase || ledger.phase || "";
+    return `${phase ? `<div class="task-workbench-empty">${escapeHtml(t('tasks.context_phase'))}：${escapeHtml(phase)}</div>` : ""}
+    <ul class="task-workbench-list">${records.slice(0, 12).map((item) => `
+        <li>
+            <strong>${escapeHtml(item.kind || t('tasks.context_record'))}</strong>
+            <span>${escapeHtml([
+                item.source_type || "",
+                item.trust || "",
+                item.freshness || "",
+                item.token_estimate != null ? `${Number(item.token_estimate || 0)} tokens` : "",
+            ].filter(Boolean).join(" · "))}</span>
+            ${item.content_preview ? `<code>${escapeHtml(item.content_preview)}</code>` : ""}
+        </li>
+    `).join("")}</ul>`;
 }
 
 function renderWorkbenchVerification(items) {

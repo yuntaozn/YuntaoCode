@@ -178,6 +178,11 @@ Memory 是 Context Runtime 的一部分，但不能和任务事实混淆。
 - `runtime/workspace_snapshot.py`
   - 在不读取文件内容的前提下生成轻量项目事实快照，包括顶层目录、浅层文件类型、明显产物路径和观察线索。
   - 快照以 `context.workspace_snapshot` 事件进入 RunEvidence/Runbook/诊断包，并作为任务契约判断的事实上下文，而不是路由规则。
+- `runtime/context_pack.py`
+  - 将本轮用户意图、Workspace Snapshot、相关上一任务契约、当前任务契约、能力边界和上下文卫生风险组合成阶段化 Context Pack。
+  - 生成 Context Ledger，记录每条上下文的 kind、source、trust、freshness、token 估算和内容 hash，便于诊断模型当时看到了哪些事实。
+  - `task_contract` 阶段记录模型理解任务前的事实；`planning` 阶段记录任务契约和能力边界形成后的事实；`execution` 阶段记录最新工具结果、当前执行状态和恢复线索；`verification` / `summary` 阶段记录 RunResult、验证、风险和最终答复依据。
+  - Context Pack 以 `context.pack` 事件进入 RunEvidence/Runbook/诊断包；它是可审计事实包，不是任务路由器。
 - `runtime/prompt_context.py`
   - 系统 prompt 中注入工作区、记忆和执行习惯。
 - `runtime/run_recovery.py`
@@ -197,7 +202,8 @@ Memory 是 Context Runtime 的一部分，但不能和任务事实混淆。
 2. 将 `task_contract`、`run_result`、失败风险写入 ContextSnapshot。
 3. 让 Workspace Snapshot 支持按用户当前表达提取相关候选路径，但仍保持事实层，不替模型判断任务。
 4. 为已读取文件建立轻量 EvidenceRecord，记录路径、摘要、范围和 hash。
-5. 前端展示“上下文事实/未验证项”，避免用户只看到模型总结。
+5. 将关键 Context Pack 汇总写入 ContextSnapshot，支持暂停/恢复/回放时复用。
+6. 前端展示“上下文事实/未验证项”，避免用户只看到模型总结。
 
 中期建议：
 
