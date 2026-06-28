@@ -22,6 +22,7 @@ RECORDED_EVENT_TYPES = {
     "changes",
     "confirm",
     "guidance",
+    "completion_decision",
     "error",
     "result",
     "checkpoint",
@@ -257,6 +258,8 @@ def canonical_run_event_name(payload: dict[str, Any]) -> str:
         return "confirmation.requested"
     if event_type == "guidance":
         return "run.guidance"
+    if event_type == "completion_decision":
+        return "run.completion_decision"
     if event_type == "error":
         return "run.failed"
     if event_type == "result":

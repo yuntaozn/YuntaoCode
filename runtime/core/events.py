@@ -12,6 +12,7 @@ CANONICAL_EVENT_NAMES: frozenset[str] = frozenset({
     "run.status",
     "run.event",
     "run.guidance",
+    "run.completion_decision",
     "task.created",
     "task.contract",
     "task.completed",

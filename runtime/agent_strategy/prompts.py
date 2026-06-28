@@ -385,7 +385,9 @@ def completion_review_prompt(
         "most suitable tool, verification, or repair strategy. If it is closed, "
         "write a final answer that states what changed, what was verified, what "
         "was not verified, and any remaining risk. Do not claim completion "
-        "beyond the observed deliverables and verification evidence."
+        "beyond the observed deliverables and verification evidence. The runtime "
+        "will record your observable choice as completion-loop evidence; this "
+        "record is for audit and replay, not a hard constraint on your strategy."
     )
 def final_answer_prompt(workspace_path: str) -> str:
     return (

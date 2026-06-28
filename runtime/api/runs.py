@@ -18,6 +18,7 @@ from runtime.diagnostic_export import build_diagnostic_export
 from runtime.evaluation.fixtures import build_evaluation_fixture_export
 from runtime.evaluation.reports import build_evaluation_report
 from runtime.run_evidence import build_run_evidence
+from runtime.run_workbench import build_run_workbench
 from runtime.runbook import build_replay_request, build_runbook
 from runtime.skill_sample_export import build_skill_sample_export
 
@@ -69,6 +70,9 @@ class RunActionHandler(ApiHandler):
         if action == "runbook":
             self.finish_json({"success": True, "data": build_runbook(run)})
             return
+        if action == "workbench":
+            self.finish_json({"success": True, "data": build_run_workbench(run)})
+            return
         if action == "evidence":
             self.finish_json({"success": True, "data": build_run_evidence(run)})
             return
@@ -97,7 +101,7 @@ class RunActionHandler(ApiHandler):
             400,
             reason=(
                 "action must be pause, stop, resume, evidence, runbook, export_diagnostic, "
-                "export_fixture, export_evaluation_fixture, evaluate_fixture, or replay"
+                "workbench, export_fixture, export_evaluation_fixture, evaluate_fixture, or replay"
             ),
         )
 

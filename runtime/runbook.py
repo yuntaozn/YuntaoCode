@@ -33,6 +33,7 @@ def build_runbook_from_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
         "plan": evidence.get("plan") if isinstance(evidence.get("plan"), dict) else {},
         "tool_steps": list(evidence.get("tool_steps") or []),
         "status_timeline": list(evidence.get("status_timeline") or []),
+        "completion_decisions": list(evidence.get("completion_decisions") or []),
         "result": evidence.get("result") if isinstance(evidence.get("result"), dict) else {},
         "risks": list(evidence.get("risks") or []),
         "failures": list(evidence.get("failures") or []),

@@ -25,6 +25,7 @@ from runtime.agent_strategy.classifiers import (
 )
 from runtime.agent_strategy.policy import deterministic_plan_gate, resolve_profile
 from runtime.agent_strategy.profiles import profile_to_public_dict
+from runtime.run_completion import build_completion_decision
 from runtime.run_result import build_run_result
 from runtime.run_recovery import build_result_context_snapshot, format_recovery_context
 from runtime import i18n
@@ -386,6 +387,8 @@ class ConversationRunExecutor:
         round_had_post_deliverable_verification = False
         completion_review_event_count = -1
         completion_review_count = 0
+        completion_review_pending = False
+        latest_completion_review_result: dict[str, Any] = {}
         consecutive_idle_timeouts = 0
         final_answer_mode = False
         verifier_retry_prompted = False
@@ -506,6 +509,8 @@ class ConversationRunExecutor:
                     runtime_intervention_pending = True
                     runtime_intervention_count += 1
                     final_answer_mode = False
+                    completion_review_pending = False
+                    latest_completion_review_result = {}
                     stage_prompted.clear()
                     if execution_plan:
                         self._interrupt_execution_plan(execution_plan)
@@ -800,6 +805,8 @@ class ConversationRunExecutor:
                     runtime_intervention_pending = True
                     runtime_intervention_count += 1
                     final_answer_mode = False
+                    completion_review_pending = False
+                    latest_completion_review_result = {}
                     stage_prompted.clear()
                     if round_content_parts:
                         self._discard_parts(content_parts, round_content_parts)
@@ -861,11 +868,37 @@ class ConversationRunExecutor:
                             "message": "检测到模型原始工具调用，正在转为本地工具执行。",
                         })
                         await self.flush()
+                round_text = "".join(round_content_parts).strip()
+                raw_round_text = (
+                    "".join(round_content_parts) + "\n" + "".join(round_reasoning_parts)
+                ).strip()
+                if completion_review_pending:
+                    decision_reason = ""
+                    if (
+                        not tool_calls
+                        and raw_round_text
+                        and self._has_unresolved_tool_call_markup(raw_round_text)
+                    ):
+                        decision_reason = "malformed_tool_call"
+                    elif (
+                        not tool_calls
+                        and round_text
+                        and self._looks_like_dangling_action(round_text)
+                    ):
+                        decision_reason = "dangling_action"
+                    decision = build_completion_decision(
+                        review_count=completion_review_count,
+                        run_result=latest_completion_review_result,
+                        tool_calls=tool_calls,
+                        content=round_text,
+                        finish_reason=round_finish_reason,
+                        reason=decision_reason,
+                    )
+                    metadata.setdefault("completion_decisions", []).append(decision)
+                    self.write_event({"event": "completion_decision", "decision": decision})
+                    await self.flush()
+                    completion_review_pending = False
                 if not tool_calls:
-                    round_text = "".join(round_content_parts).strip()
-                    raw_round_text = (
-                        "".join(round_content_parts) + "\n" + "".join(round_reasoning_parts)
-                    ).strip()
                     if (
                         raw_round_text
                         and self._has_unresolved_tool_call_markup(raw_round_text)
@@ -1538,6 +1571,8 @@ class ConversationRunExecutor:
                             )
                             completion_review_event_count = len(tool_events)
                             completion_review_count += 1
+                            completion_review_pending = True
+                            latest_completion_review_result = provisional_result
                             post_deliverable_mode = True
                             messages.append({
                                 "role": "system",

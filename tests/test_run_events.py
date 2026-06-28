@@ -64,6 +64,26 @@ def test_result_event_is_recorded_as_runtime_result() -> None:
     }
 
 
+def test_completion_decision_event_is_recorded_as_runtime_fact() -> None:
+    event = compact_run_event({
+        "event": "completion_decision",
+        "decision": {
+            "schema_version": "completion_decision.v1",
+            "action": "continue_with_tools",
+        },
+    })
+
+    assert event == {
+        "schema_version": "0.1",
+        "event": "completion_decision",
+        "event_name": "run.completion_decision",
+        "decision": {
+            "schema_version": "completion_decision.v1",
+            "action": "continue_with_tools",
+        },
+    }
+
+
 def test_done_event_preserves_final_answer_preview() -> None:
     event = compact_run_event({
         "event": "done",
@@ -119,4 +139,5 @@ def test_canonical_run_event_name_maps_runtime_events() -> None:
     assert canonical_run_event_name({"event": "tool", "status": "running"}) == "tool.started"
     assert canonical_run_event_name({"event": "tool", "status": "partial"}) == "tool.partial"
     assert canonical_run_event_name({"event": "tool", "status": "failure"}) == "tool.failed"
+    assert canonical_run_event_name({"event": "completion_decision"}) == "run.completion_decision"
     assert canonical_run_event_name({"event": "done"}) == "run.completed"

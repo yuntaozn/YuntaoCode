@@ -539,6 +539,106 @@ button {
     white-space: pre-wrap;
 }
 
+.task-workbench {
+    overflow: auto;
+    max-height: min(520px, calc(100vh - 230px));
+    margin-top: 10px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.78);
+}
+
+.task-workbench-head {
+    display: grid;
+    gap: 6px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line);
+}
+
+.task-workbench-head h3 {
+    margin: 0;
+    font-size: 15px;
+}
+
+.task-workbench-meta,
+.task-workbench-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.task-workbench-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 3px 7px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--muted);
+    background: var(--panel);
+    font-size: 12px;
+}
+
+.task-workbench-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.task-workbench-section {
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(248, 249, 247, 0.72);
+}
+
+.task-workbench-section.full {
+    grid-column: 1 / -1;
+}
+
+.task-workbench-section h4 {
+    margin: 0 0 8px;
+    font-size: 13px;
+}
+
+.task-workbench-list {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.task-workbench-list li {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    padding: 7px;
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.72);
+}
+
+.task-workbench-list strong,
+.task-workbench-list span,
+.task-workbench-list code {
+    overflow-wrap: anywhere;
+}
+
+.task-workbench-list span,
+.task-workbench-empty {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.task-workbench-list code {
+    color: var(--text);
+    font-size: 12px;
+}
+
 @media (max-width: 760px) {
     .task-history-controls {
         grid-template-columns: 1fr;
@@ -557,6 +657,10 @@ button {
 
     .task-run-actions {
         justify-content: flex-start;
+    }
+
+    .task-workbench-grid {
+        grid-template-columns: 1fr;
     }
 }
 

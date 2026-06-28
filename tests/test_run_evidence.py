@@ -53,6 +53,14 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
             "verification_evidence": [],
         },
     })
+    store.record_event(run.id, {
+        "event": "completion_decision",
+        "decision": {
+            "schema_version": "completion_decision.v1",
+            "action": "final_answer_candidate",
+            "source": "model_observed_behavior",
+        },
+    })
 
     current = store.get(run.id)
     evidence = build_run_evidence(current)
@@ -67,6 +75,7 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
     assert evidence["capability_evidence"]["observed_capability_ids"] == ["code.text_write"]
     assert evidence["capability_snapshot"]["target_capability_ids"] == ["code.text_write"]
     assert evidence["tool_steps"][0]["declared_capability"] == "code.text_write"
+    assert evidence["completion_decisions"][0]["action"] == "final_answer_candidate"
     assert evidence["risks"] == ["write_not_verified"]
     assert evidence["recovery"]["checkpoint_count"] == 1
     assert evidence["recovery"]["latest_checkpoint"]["id"] == "checkpoint-1"

@@ -30,6 +30,11 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
     preflight = _latest_event_value(events, "capability_snapshot", "preflight")
     tool_events = [event for event in events if event.get("event") == "tool"]
     status_events = [event for event in events if event.get("event") == "status"]
+    completion_decisions = [
+        event.get("decision")
+        for event in events
+        if event.get("event") == "completion_decision" and isinstance(event.get("decision"), dict)
+    ]
     failures = [
         event for event in tool_events
         if str(event.get("status") or "") == "failure"
@@ -56,6 +61,7 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
         "plan": _plan_summary(plan),
         "tool_steps": [_tool_step(event) for event in tool_events],
         "status_timeline": [_status_step(event) for event in status_events[-24:]],
+        "completion_decisions": completion_decisions[-12:],
         "result": result,
         "risks": _result_risks(result),
         "failures": [_tool_step(event) for event in failures],

@@ -148,19 +148,27 @@ sanitized timeline.
 `runtime/run_evidence.py` builds `run_evidence.v1`, the unified fact view for
 post-run consumers. RunEvidence gathers the Run metadata, task contract,
 trace summary, capability evidence, capability snapshot, plan, tool steps,
-result, verification evidence, failures, checkpoints, recovery summary, and a
-manual replay seed. Runbook, diagnostic export, Experience Sample export,
-Replay, and future Evaluation should consume RunEvidence instead of each
-parsing persisted events separately.
+completion decisions, result, verification evidence, failures, checkpoints,
+recovery summary, and a manual replay seed. Runbook, diagnostic export,
+Experience Sample export, Replay, and future Evaluation should consume
+RunEvidence instead of each parsing persisted events separately.
 
 RunEvidence is an evidence layer, not a strategy layer. It must not execute
 tools, silently promote generated code, alter model context, or decide whether
 a future run should retry, replay, or change strategy.
 
+`runtime/run_workbench.py` builds `run_workbench.v1`, the user-facing workbench
+view derived from RunEvidence. It presents run status, task contract facts,
+artifacts, verification, risks, failures, completion decisions, plan steps,
+timeline, capability state, and recovery actions in a compact UI-ready shape.
+It is a presentation layer, not a second evidence source; RunEvidence and
+RunResult remain the runtime-owned truth.
+
 Current canonical event names include:
 
 - `run.status`
 - `run.guidance`
+- `run.completion_decision`
 - `context.hygiene`
 - `capability.snapshot`
 - `task.contract`
@@ -200,6 +208,10 @@ Task store is still being separated from historical ToolTask records.
   events: task contract, capability snapshot, plan, tool steps, status
   timeline, result, risks, and failures.
 - `{"action": "evidence"}` returns the full `run_evidence.v1` view for a Run.
+- `{"action": "workbench"}` returns the UI-oriented `run_workbench.v1` view
+  built from RunEvidence, so the task history can show artifacts,
+  verification, risks, failures, plan steps, and timeline without parsing raw
+  events in the frontend.
 - `{"action": "export_evaluation_fixture"}` returns a local
   `evaluation_fixture_export.v1` artifact built from RunEvidence. It does not
   execute replay or submit anything remotely.
@@ -225,6 +237,13 @@ selected samples can become Replay Fixtures, a Skill Candidate can be tested
 against fixtures, and only replay evidence plus manual promotion can make the
 candidate available as a user skill. See [experience-runtime.md](experience-runtime.md)
 and [skill-evolution.md](skill-evolution.md).
+
+Completion decisions are completion-loop evidence. After a completion
+self-review prompt, the runtime records the model's observable choice: continue
+with tools, produce a final-answer candidate, repair malformed tool-call
+protocol, or make no observable decision. This event does not force a route; it
+exists so the Workbench, Replay, and Evaluation can inspect how a run attempted
+to close.
 
 ## Diagnostic Export
 

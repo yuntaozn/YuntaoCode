@@ -54,6 +54,13 @@ def test_build_runbook_summarizes_trace_and_result(tmp_path) -> None:
             "risks": ["write_not_verified"],
         },
     })
+    store.record_event(run.id, {
+        "event": "completion_decision",
+        "decision": {
+            "schema_version": "completion_decision.v1",
+            "action": "final_answer_candidate",
+        },
+    })
 
     current = store.get(run.id)
     runbook = build_runbook(current)
@@ -71,6 +78,7 @@ def test_build_runbook_summarizes_trace_and_result(tmp_path) -> None:
     assert runbook["plan"]["step_count"] == 1
     assert runbook["tool_steps"][0]["tool"] == "filesystem.write_file"
     assert runbook["tool_steps"][0]["declared_capability"] == "code.text_write"
+    assert runbook["completion_decisions"][0]["action"] == "final_answer_candidate"
     assert runbook["risks"] == ["write_not_verified"]
     assert runbook["recovery"]["checkpoint_count"] == 0
     assert runbook["replay"]["kind"] == "replay_request"

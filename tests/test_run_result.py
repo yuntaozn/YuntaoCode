@@ -28,6 +28,14 @@ def test_build_run_result_records_writes_verification_and_risks() -> None:
     assert result["status"] == "success"
     assert result["changed_paths"] == ["src/app.py"]
     assert result["written_paths"] == ["src/app.py"]
+    assert result["artifacts"] == [
+        {
+            "kind": "file",
+            "path": "src/app.py",
+            "tool": "code.edit_file",
+            "status": "success",
+        }
+    ]
     assert result["counts"]["write_successes"] == 1
     assert result["counts"]["verification_successes"] == 1
     assert result["counts"]["test_successes"] == 1
@@ -574,6 +582,9 @@ def test_build_run_result_uses_contract_deliverable_instead_of_any_state_write()
 
     assert result["status"] == "partial"
     assert result["written_paths"] == ["index.html"]
+    assert result["artifacts"][0]["kind"] == "file"
+    assert result["artifacts"][0]["path"] == "index.html"
+    assert result["artifacts"][0]["size"] == 44851
     assert result["counts"]["write_successes"] == 1
     assert result["counts"]["verification_successes"] == 2
     assert "write_not_verified" not in result["risks"]

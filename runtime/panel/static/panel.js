@@ -367,7 +367,7 @@ function renderTaskHistory() {
                         ${canStart ? `<button type="button" data-run-action="start" data-run-id="${escapeHtml(run.id)}" data-task-id="${escapeHtml(task.id)}" data-conversation-id="${escapeHtml(run.conversation_id || task.conversation_id || "")}" data-goal="${escapeHtml(task.goal || run.user_content || "")}">${escapeHtml(t('tasks.start'))}</button>` : ""}
                         <button type="button" data-run-action="export_fixture" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.export_fixture'))}</button>
                         <button type="button" data-run-action="replay" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.replay'))}</button>
-                        <button type="button" data-run-action="runbook" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.runbook'))}</button>
+                        <button type="button" data-run-action="workbench" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.workbench'))}</button>
                         <button type="button" data-run-action="export_diagnostic" data-run-id="${escapeHtml(run.id)}">${escapeHtml(t('tasks.export_diagnostic'))}</button>
                     </div>
                 </div>
@@ -420,7 +420,9 @@ async function runTaskHistoryAction(action, runId, button) {
         method: "POST",
         body: JSON.stringify({ action }),
     });
-    if (action === "runbook") {
+    if (action === "workbench") {
+        renderRunWorkbench(data);
+    } else if (action === "runbook") {
         const output = $("task-runbook-output");
         output.textContent = JSON.stringify(data, null, 2);
         output.classList.remove("hidden");
@@ -436,6 +438,159 @@ async function runTaskHistoryAction(action, runId, button) {
     if (!["export_diagnostic", "export_fixture"].includes(action)) {
         await Promise.all([refreshActiveRuns(), refreshTaskHistory()]);
     }
+}
+
+function renderRunWorkbench(workbench) {
+    const container = $("task-workbench");
+    if (!container) return;
+    $("task-runbook-output")?.classList.add("hidden");
+    const run = workbench?.run || {};
+    const task = workbench?.task || {};
+    const status = workbench?.status || {};
+    const artifacts = Array.isArray(workbench?.artifacts) ? workbench.artifacts : [];
+    const verification = Array.isArray(workbench?.verification) ? workbench.verification : [];
+    const risks = Array.isArray(workbench?.risks) ? workbench.risks : [];
+    const failures = Array.isArray(workbench?.failures) ? workbench.failures : [];
+    const plan = workbench?.plan || {};
+    const completionDecisions = Array.isArray(workbench?.completion_decisions) ? workbench.completion_decisions : [];
+    const timeline = Array.isArray(workbench?.timeline) ? workbench.timeline : [];
+    const chips = [
+        `${t('tasks.run_status')}：${status.run_status || run.status || "-"}`,
+        `${t('tasks.result_status')}：${status.result_status || "-"}`,
+        `${t('tasks.attempt')}：#${Number(run.attempt || 1)}`,
+        `${t('tasks.tool_events')}：${Number(status.tool_event_count || 0)}`,
+        `${t('tasks.failed_tools')}：${Number(status.failed_tool_count || 0)}`,
+    ];
+    container.innerHTML = `
+        <div class="task-workbench-head">
+            <h3>${escapeHtml(task.goal || task.contract_goal || t('tasks.untitled'))}</h3>
+            <div class="task-workbench-meta">
+                ${chips.map((item) => `<span class="task-workbench-chip">${escapeHtml(item)}</span>`).join("")}
+            </div>
+            ${status.result_summary ? `<div class="task-workbench-empty">${escapeHtml(status.result_summary)}</div>` : ""}
+        </div>
+        <div class="task-workbench-grid">
+            ${renderWorkbenchSection(t('tasks.artifacts'), renderWorkbenchArtifacts(artifacts))}
+            ${renderWorkbenchSection(t('tasks.verification'), renderWorkbenchVerification(verification))}
+            ${renderWorkbenchSection(t('tasks.risks'), renderWorkbenchRisks(risks))}
+            ${renderWorkbenchSection(t('tasks.failures'), renderWorkbenchFailures(failures))}
+            ${renderWorkbenchSection(t('tasks.completion_decisions'), renderWorkbenchCompletionDecisions(completionDecisions), "full")}
+            ${renderWorkbenchSection(t('tasks.plan'), renderWorkbenchPlan(plan), "full")}
+            ${renderWorkbenchSection(t('tasks.timeline'), renderWorkbenchTimeline(timeline), "full")}
+        </div>
+    `;
+    container.classList.remove("hidden");
+}
+
+function renderWorkbenchSection(title, body, extraClass = "") {
+    return `
+        <section class="task-workbench-section ${escapeHtml(extraClass)}">
+            <h4>${escapeHtml(title)}</h4>
+            ${body}
+        </section>
+    `;
+}
+
+function renderWorkbenchArtifacts(items) {
+    if (!items.length) return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    return `<ul class="task-workbench-list">${items.map((item) => {
+        const size = Number.isFinite(Number(item.size)) ? ` · ${formatFileSize(Number(item.size))}` : "";
+        const validation = item.validation && typeof item.validation === "object"
+            ? ` · ${item.validation.valid === false ? t('tasks.invalid') : t('tasks.valid')}${item.validation.text_chars ? ` · ${t('tasks.chars', {count: Number(item.validation.text_chars)})}` : ""}`
+            : "";
+        return `
+            <li>
+                <strong>${escapeHtml(item.path || item.kind || t('tasks.artifact'))}</strong>
+                <span>${escapeHtml([item.kind, item.status, item.tool].filter(Boolean).join(" · "))}${escapeHtml(size + validation)}</span>
+            </li>
+        `;
+    }).join("")}</ul>`;
+}
+
+function renderWorkbenchVerification(items) {
+    if (!items.length) return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    return `<ul class="task-workbench-list">${items.map((item) => `
+        <li>
+            <strong>${escapeHtml(item.tool || t('tasks.verification'))}</strong>
+            <span>${escapeHtml([item.status, item.strength, item.modality].filter(Boolean).join(" · "))}</span>
+            ${item.path ? `<code>${escapeHtml(item.path)}</code>` : ""}
+        </li>
+    `).join("")}</ul>`;
+}
+
+function renderWorkbenchRisks(items) {
+    if (!items.length) return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    return `<ul class="task-workbench-list">${items.map((item) => `
+        <li>
+            <strong>${escapeHtml(item.code || t('tasks.risk'))}</strong>
+            <span>${escapeHtml(item.message || "")}</span>
+        </li>
+    `).join("")}</ul>`;
+}
+
+function renderWorkbenchFailures(items) {
+    if (!items.length) return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    return `<ul class="task-workbench-list">${items.map((item) => `
+        <li>
+            <strong>${escapeHtml(item.tool || t('tasks.failure'))}</strong>
+            ${item.path ? `<code>${escapeHtml(item.path)}</code>` : ""}
+            <span>${escapeHtml(item.error || item.message || "")}</span>
+        </li>
+    `).join("")}</ul>`;
+}
+
+function renderWorkbenchCompletionDecisions(items) {
+    if (!items.length) return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    return `<ul class="task-workbench-list">${items.map((item) => `
+        <li>
+            <strong>${escapeHtml(completionDecisionLabel(item.action))}</strong>
+            <span>${escapeHtml([
+                item.result_status ? `${t('tasks.result_status')}：${item.result_status}` : "",
+                item.tool_call_count != null ? `${t('tasks.tool_calls')}：${Number(item.tool_call_count || 0)}` : "",
+                item.content_chars != null ? `${t('tasks.chars', {count: Number(item.content_chars || 0)})}` : "",
+                item.reason || "",
+            ].filter(Boolean).join(" · "))}</span>
+        </li>
+    `).join("")}</ul>`;
+}
+
+function completionDecisionLabel(action) {
+    const labels = {
+        continue_with_tools: t('tasks.decision_continue_tools'),
+        final_answer_candidate: t('tasks.decision_final_answer'),
+        repair_protocol: t('tasks.decision_repair_protocol'),
+        no_observable_decision: t('tasks.decision_none'),
+    };
+    return labels[action] || action || t('tasks.decision_none');
+}
+
+function renderWorkbenchPlan(plan) {
+    const steps = Array.isArray(plan?.steps) ? plan.steps : [];
+    if (!steps.length) return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    return `<ul class="task-workbench-list">${steps.map((step, index) => `
+        <li>
+            <strong>${escapeHtml(step.title || step.step || t('plan.step', {n: index + 1}))}</strong>
+            <span>${escapeHtml([step.status || step.state, step.tool_hint].filter(Boolean).join(" · "))}</span>
+        </li>
+    `).join("")}</ul>`;
+}
+
+function renderWorkbenchTimeline(items) {
+    if (!items.length) return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    const visible = items.slice(-40);
+    return `<ul class="task-workbench-list">${visible.map((item) => `
+        <li>
+            <strong>${escapeHtml([formatWorkbenchTime(item.time), item.kind, item.status].filter(Boolean).join(" · "))}</strong>
+            <span>${escapeHtml(item.label || item.message || "")}</span>
+            ${item.path ? `<code>${escapeHtml(item.path)}</code>` : ""}
+        </li>
+    `).join("")}</ul>`;
+}
+
+function formatWorkbenchTime(value) {
+    const time = Date.parse(value || "");
+    if (!Number.isFinite(time)) return "";
+    return new Date(time).toLocaleString();
 }
 
 function downloadJson(filename, data) {
@@ -490,7 +645,9 @@ function openAuxiliaryPage(url) {
 function openTaskHistoryDialog() {
     const dialog = $("task-history-dialog");
     const output = $("task-runbook-output");
+    const workbench = $("task-workbench");
     if (output) output.classList.add("hidden");
+    if (workbench) workbench.classList.add("hidden");
     refreshTaskHistory()
         .then(() => dialog?.showModal())
         .catch((error) => showToast(error.message));

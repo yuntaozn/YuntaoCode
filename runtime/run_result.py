@@ -139,6 +139,7 @@ def build_run_result(
         for path in _event_paths(workspace_path, event)
     )
     written_paths = _unique([*target_written_paths, *observed_written_paths])
+    artifacts = _artifact_records(workspace_path, write_successes)
     test_successes = [
         event for event in verification_successes
         if is_test_verification_event(event)
@@ -459,6 +460,7 @@ def build_run_result(
         "written_paths": written_paths,
         "target_written_paths": target_written_paths,
         "observed_written_paths": observed_written_paths,
+        "artifacts": artifacts[:24],
         "verified": verified[:12],
         "verification_evidence": verification_evidence[:12],
         "capability_evidence": capability_evidence,
@@ -705,6 +707,62 @@ def _effective_event_status(tool_id: str, event: dict[str, Any]) -> str:
     if status == "partial" or output_status in {"partial", "partial_resumable"} or output.get("partial_resumable") is True:
         return "partial"
     return status
+
+
+def _artifact_records(workspace_path: str, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for event in events:
+        output = event.get("output") if isinstance(event.get("output"), dict) else {}
+        tool_id = str(event.get("tool") or "")
+        kind = _artifact_kind(tool_id, output)
+        status = _effective_event_status(tool_id, event)
+        for path in _event_paths(workspace_path, event):
+            key = (tool_id, kind, path)
+            if key in seen:
+                continue
+            seen.add(key)
+            record: dict[str, Any] = {
+                "kind": kind,
+                "path": path,
+                "tool": tool_id,
+                "status": status,
+            }
+            for field in (
+                "size",
+                "created",
+                "changed",
+                "deleted",
+                "encoding",
+                "draft_id",
+            ):
+                if field in output:
+                    record[field] = output.get(field)
+            validation = output.get("validation")
+            if isinstance(validation, dict):
+                compact_validation = {
+                    key: validation.get(key)
+                    for key in ("valid", "validator", "text_chars", "line_count")
+                    if key in validation
+                }
+                if compact_validation:
+                    record["validation"] = compact_validation
+            records.append(record)
+    return records
+
+
+def _artifact_kind(tool_id: str, output: dict[str, Any]) -> str:
+    explicit = str(output.get("artifact_kind") or "").strip()
+    if explicit:
+        return explicit
+    output_type = str(output.get("type") or "").strip()
+    if output_type in {"file_write", "file_change_set"}:
+        return "file"
+    if tool_id.startswith("document."):
+        return "document"
+    if is_write_tool(tool_id):
+        return "file"
+    return "artifact"
 
 
 def _event_failure_message(event: dict[str, Any]) -> str:
