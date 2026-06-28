@@ -95,6 +95,7 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
         },
         "timeline": _timeline(tool_steps, _dict_list(evidence.get("status_timeline")))[:80],
         "completion_decisions": completion_decisions[:12],
+        "workspace": _dict(evidence.get("workspace_snapshot")),
         "capability": {
             "snapshot": _dict(evidence.get("capability_snapshot")),
             "evidence": _dict(evidence.get("capability_evidence")),

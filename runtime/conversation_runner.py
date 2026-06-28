@@ -28,6 +28,7 @@ from runtime.agent_strategy.profiles import profile_to_public_dict
 from runtime.run_completion import build_completion_decision
 from runtime.run_result import build_run_result
 from runtime.run_recovery import build_result_context_snapshot, format_recovery_context
+from runtime.workspace_snapshot import build_workspace_snapshot, format_workspace_snapshot_for_prompt
 from runtime import i18n
 
 
@@ -206,6 +207,13 @@ class ConversationRunExecutor:
         metadata["context_hygiene"] = context_hygiene_report
         _lang = i18n.get_lang(self._helper.request) if hasattr(self._helper, "request") else ""
         mode_config = get_terminal_config(_lang)
+        workspace_snapshot = build_workspace_snapshot(workspace.path)
+        workspace_context = format_workspace_snapshot_for_prompt(workspace_snapshot)
+        metadata["workspace_snapshot"] = workspace_snapshot
+        self.write_event({
+            "event": "workspace_snapshot",
+            "snapshot": workspace_snapshot,
+        })
         tools, tool_name_map = self._build_model_tools(mode_config)
         max_rounds = mode_config["max_rounds"]
         enable_thinking = bool(payload.get("enable_thinking", True))
@@ -264,6 +272,7 @@ class ConversationRunExecutor:
                 expected_document_coverage=expected_document_coverage,
                 expected_min_output_chars=expected_min_output_chars,
                 previous_contract=inherited_contract,
+                workspace_context=workspace_context,
             )
         capability_snapshot = self._build_capability_snapshot(mode_config)
         if ground_task_contract_with_capabilities(

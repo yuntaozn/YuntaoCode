@@ -249,6 +249,9 @@ class RunStore:
         elif event_type == "checkpoint":
             run.stage = "checkpoint"
             run.message = "checkpoint created"
+        elif event_type == "workspace_snapshot":
+            run.stage = "workspace_snapshot"
+            run.message = "workspace snapshot recorded"
         elif event_type == "capability_snapshot":
             run.stage = "capability_snapshot"
             preflight = event.get("preflight") if isinstance(event.get("preflight"), dict) else {}

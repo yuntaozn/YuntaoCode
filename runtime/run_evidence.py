@@ -12,6 +12,7 @@ from typing import Any
 
 from runtime.capability_evidence import build_capability_evidence_summary
 from runtime.run_trace import build_run_trace_summary
+from runtime.workspace_snapshot import workspace_snapshot_summary
 
 
 RUN_EVIDENCE_SCHEMA_VERSION = "run_evidence.v1"
@@ -28,6 +29,7 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
     plan = _latest_event_value(events, "plan", "plan")
     capability = _latest_event_value(events, "capability_snapshot", "snapshot")
     preflight = _latest_event_value(events, "capability_snapshot", "preflight")
+    workspace_snapshot = _latest_event_value(events, "workspace_snapshot", "snapshot")
     tool_events = [event for event in events if event.get("event") == "tool"]
     status_events = [event for event in events if event.get("event") == "status"]
     completion_decisions = [
@@ -53,6 +55,7 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
         "run": run_info,
         "task_contract": contract,
         "trace": build_run_trace_summary(run, events=events),
+        "workspace_snapshot": workspace_snapshot_summary(workspace_snapshot),
         "capability_evidence": build_capability_evidence_summary(
             tool_events,
             task_contract=contract,

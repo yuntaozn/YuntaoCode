@@ -220,6 +220,7 @@ def _run_evidence_summary(evidence: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": str(evidence.get("schema_version") or ""),
         "trace": evidence.get("trace") if isinstance(evidence.get("trace"), dict) else {},
+        "workspace_snapshot": evidence.get("workspace_snapshot") if isinstance(evidence.get("workspace_snapshot"), dict) else {},
         "capability_evidence": evidence.get("capability_evidence") if isinstance(evidence.get("capability_evidence"), dict) else {},
         "task_contract": evidence.get("task_contract") if isinstance(evidence.get("task_contract"), dict) else {},
         "capability_snapshot": evidence.get("capability_snapshot") if isinstance(evidence.get("capability_snapshot"), dict) else {},

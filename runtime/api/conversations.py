@@ -759,6 +759,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         expected_document_coverage: bool,
         expected_min_output_chars: int,
         previous_contract: dict[str, Any] | None = None,
+        workspace_context: str = "",
     ) -> dict[str, Any]:
         try:
             lang = self.get_lang()
@@ -769,6 +770,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             workspace_path,
             fallback_contract,
             capability_context=self._capability_context_prompt(mode_config),
+            workspace_context=workspace_context,
             previous_contract=previous_contract,
         )
         try:

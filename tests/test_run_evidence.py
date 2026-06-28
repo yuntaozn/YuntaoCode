@@ -12,6 +12,19 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
         task_id="task-1",
     )
     store.record_event(run.id, {
+        "event": "workspace_snapshot",
+        "snapshot": {
+            "schema_version": "workspace_snapshot.v1",
+            "name": "demo",
+            "path": str(tmp_path),
+            "exists": True,
+            "readable": True,
+            "file_count": 2,
+            "directory_count": 1,
+            "extension_counts": {".html": 1, ".js": 1},
+        },
+    })
+    store.record_event(run.id, {
         "event": "task_contract",
         "contract": {
             "requires_write": True,
@@ -69,6 +82,8 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
     assert evidence["kind"] == "run_evidence"
     assert evidence["run"]["id"] == run.id
     assert evidence["run"]["task_id"] == "task-1"
+    assert evidence["workspace_snapshot"]["name"] == "demo"
+    assert evidence["workspace_snapshot"]["extension_counts"][".html"] == 1
     assert evidence["task_contract"]["capability_ids"] == ["code.text_write"]
     assert evidence["trace"]["schema_version"] == "run_trace_summary.v1"
     assert evidence["trace"]["result_status"] == "partial"

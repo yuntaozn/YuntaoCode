@@ -117,6 +117,18 @@ def test_task_contract_prompt_contains_only_contract_request() -> None:
     assert "系统负责权限、工具执行和完成验收" in prompt
 
 
+def test_task_contract_prompt_includes_workspace_context_as_facts() -> None:
+    prompt = task_contract_prompt(
+        "D:\\code\\demo",
+        _fallback(),
+        workspace_context='Workspace fact snapshot: {"name":"lesson","extension_counts":{".html":1}}',
+    )
+
+    assert "Runtime workspace context" in prompt
+    assert "Workspace fact snapshot" in prompt
+    assert '"lesson"' in prompt
+
+
 def test_model_contract_can_require_external_state_without_local_file_write() -> None:
     contract = merge_model_task_contract(
         {

@@ -8,6 +8,7 @@ from runtime.agent_strategy.conversation_task_context import (
     effective_mode,
     expected_min_output_chars,
     has_recent_task_context,
+    is_relevant_previous_task_contract,
     previous_task_contract_context,
     previous_write_context,
 )
@@ -69,6 +70,33 @@ def test_previous_task_contract_context_skips_answer_only_anchor() -> None:
         previous_task_contract_context(conversation, "Now it is installed; build the house")
         == external_contract
     )
+
+
+def test_previous_task_contract_context_skips_irrelevant_external_state_anchor() -> None:
+    external_contract = {
+        "intent": "write_required",
+        "goal": "在 Blender 构件进场验收场景中把当前的车替换为板车.glb模型",
+        "requires_write": False,
+        "requires_state_change": True,
+        "capability_ids": ["mcp.blender"],
+        "deliverables": [
+            {
+                "kind": "external_state",
+                "path_hint": "板车.glb",
+                "capability_id": "mcp.blender",
+                "description": "将当前的车替换为板车模型",
+            }
+        ],
+    }
+    conversation = SimpleNamespace(messages=[
+        _message("user", "把这个车换成板车.glb"),
+        _message("assistant", "Blender service is not connected", {"task_contract": external_contract}),
+        _message("user", "帮我把场地换成外墙板-场地"),
+    ])
+
+    assert not is_relevant_previous_task_contract(external_contract, "帮我把场地换成外墙板-场地")
+    assert previous_task_contract_context(conversation, "帮我把场地换成外墙板-场地") is None
+    assert previous_task_contract_context(conversation, "帮我把这个场地换成外墙板-场地") is None
 
 
 def test_follow_up_inherits_previous_write_context_for_mode_and_intent() -> None:

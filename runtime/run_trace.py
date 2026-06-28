@@ -134,6 +134,12 @@ def _event_summary(event: dict[str, Any]) -> str:
         report = event.get("report") if isinstance(event.get("report"), dict) else {}
         changed = report.get("changed")
         return "context hygiene changed" if changed else "context hygiene checked"
+    if event_type == "workspace_snapshot":
+        snapshot = event.get("snapshot") if isinstance(event.get("snapshot"), dict) else {}
+        name = str(snapshot.get("name") or "workspace")
+        files = int(snapshot.get("file_count") or 0)
+        dirs = int(snapshot.get("directory_count") or 0)
+        return _truncate(f"workspace snapshot: {name}, files={files}, dirs={dirs}", 500)
     return _truncate(event.get("message") or event_type or "run event", 500)
 
 

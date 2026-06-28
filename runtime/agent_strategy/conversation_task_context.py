@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from runtime.agent_strategy import classifiers as _clf
@@ -13,6 +14,58 @@ WRITE_NOTICE_REASONS = {
     "no_successful_write_tool",
     "max_tool_rounds",
     "optional_write_not_verified",
+}
+
+
+STRONG_CONTEXT_REFERENCE_TERMS = (
+    "上次",
+    "上一",
+    "刚才",
+    "前面",
+    "之前",
+    "继续",
+    "重试",
+    "再试",
+    "再来",
+    "再做",
+    "重做",
+    "重新",
+    "原来",
+    "same",
+    "previous",
+    "last",
+    "again",
+    "retry",
+    "continue",
+    "redo",
+)
+
+
+TOKEN_STOPWORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "this",
+    "that",
+    "into",
+    "from",
+    "当前",
+    "这个",
+    "那个",
+    "帮我",
+    "一下",
+    "进行",
+    "替换",
+    "换成",
+    "修改",
+    "调整",
+    "生成",
+    "创建",
+    "模型",
+    "场景",
+    "文件",
+    "项目",
 }
 
 
@@ -126,6 +179,8 @@ def previous_task_contract_context(
                 continue
             if not (contract.get("goal") or intent):
                 continue
+            if not is_relevant_previous_task_contract(contract, current):
+                continue
             previous_user_content = ""
             for previous in reversed(messages[:index]):
                 if is_runtime_guidance_message(previous):
@@ -145,6 +200,29 @@ def previous_task_contract_context(
                 continue
             return contract
     return None
+
+
+def is_relevant_previous_task_contract(contract: dict[str, Any], current_content: str) -> bool:
+    """Return whether a previous task contract should enter this turn's context.
+
+    This is context hygiene, not task routing: the model still decides the
+    current task contract, but irrelevant previous contracts should not be
+    handed to it as semantic anchors.
+    """
+    current = str(current_content or "").strip()
+    if not current:
+        return False
+    if _tc.looks_like_execute_contract_followup(current) or _tc.looks_like_task_revision_followup(current):
+        return True
+    if _clf.looks_like_diagnostic_feedback(current) or _clf.looks_like_follow_up_execution(current):
+        return True
+    if _has_strong_context_reference(current) and len(current) <= 120:
+        return True
+    contract_tokens = _meaningful_tokens(_contract_text(contract))
+    current_tokens = _meaningful_tokens(current)
+    if not contract_tokens or not current_tokens:
+        return False
+    return bool(contract_tokens & current_tokens)
 
 
 def previous_document_export_context(conversation: Any | None, current_content: str) -> bool:
@@ -367,3 +445,47 @@ def code_change_intent(
         if _clf.looks_like_code_change_request(previous_content) or _clf.user_requests_code_change(previous_content, "coding"):
             return True
     return False
+
+
+def _has_strong_context_reference(content: str) -> bool:
+    text = str(content or "").strip().lower()
+    return any(term in text for term in STRONG_CONTEXT_REFERENCE_TERMS)
+
+
+def _contract_text(contract: dict[str, Any]) -> str:
+    parts = [
+        str(contract.get("goal") or ""),
+        " ".join(str(item or "") for item in contract.get("capability_ids") or []),
+    ]
+    raw = contract.get("raw_model_contract")
+    if isinstance(raw, dict):
+        parts.append(str(raw.get("goal") or ""))
+    for source in (contract, raw if isinstance(raw, dict) else {}):
+        deliverables = source.get("deliverables") if isinstance(source.get("deliverables"), list) else []
+        for item in deliverables:
+            if not isinstance(item, dict):
+                continue
+            parts.extend(
+                str(item.get(key) or "")
+                for key in ("kind", "path_hint", "path", "description", "capability_id")
+            )
+    return " ".join(parts)
+
+
+def _meaningful_tokens(text: str) -> set[str]:
+    lowered = str(text or "").lower()
+    tokens: set[str] = set()
+    for item in re.findall(r"[a-z0-9_./\\-]{2,}", lowered):
+        cleaned = item.strip("._/\\-")
+        if len(cleaned) >= 2 and cleaned not in TOKEN_STOPWORDS:
+            tokens.add(cleaned)
+    cjk = "".join(re.findall(r"[\u4e00-\u9fff]+", lowered))
+    for index in range(max(0, len(cjk) - 1)):
+        token = cjk[index:index + 2]
+        if token and token not in TOKEN_STOPWORDS:
+            tokens.add(token)
+    for index in range(max(0, len(cjk) - 2)):
+        token = cjk[index:index + 3]
+        if token and token not in TOKEN_STOPWORDS:
+            tokens.add(token)
+    return tokens

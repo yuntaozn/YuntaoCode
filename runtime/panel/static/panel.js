@@ -452,6 +452,7 @@ function renderRunWorkbench(workbench) {
     const risks = Array.isArray(workbench?.risks) ? workbench.risks : [];
     const failures = Array.isArray(workbench?.failures) ? workbench.failures : [];
     const plan = workbench?.plan || {};
+    const workspace = workbench?.workspace || {};
     const completionDecisions = Array.isArray(workbench?.completion_decisions) ? workbench.completion_decisions : [];
     const timeline = Array.isArray(workbench?.timeline) ? workbench.timeline : [];
     const chips = [
@@ -470,6 +471,7 @@ function renderRunWorkbench(workbench) {
             ${status.result_summary ? `<div class="task-workbench-empty">${escapeHtml(status.result_summary)}</div>` : ""}
         </div>
         <div class="task-workbench-grid">
+            ${renderWorkbenchSection(t('tasks.workspace_snapshot'), renderWorkbenchWorkspace(workspace))}
             ${renderWorkbenchSection(t('tasks.artifacts'), renderWorkbenchArtifacts(artifacts))}
             ${renderWorkbenchSection(t('tasks.verification'), renderWorkbenchVerification(verification))}
             ${renderWorkbenchSection(t('tasks.risks'), renderWorkbenchRisks(risks))}
@@ -505,6 +507,31 @@ function renderWorkbenchArtifacts(items) {
             </li>
         `;
     }).join("")}</ul>`;
+}
+
+function renderWorkbenchWorkspace(snapshot) {
+    if (!snapshot || !snapshot.schema_version) {
+        return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    }
+    const extensions = snapshot.extension_counts && typeof snapshot.extension_counts === "object"
+        ? Object.entries(snapshot.extension_counts).slice(0, 8).map(([key, value]) => `${key}:${value}`).join(" · ")
+        : "";
+    const patterns = Array.isArray(snapshot.observed_patterns)
+        ? snapshot.observed_patterns.slice(0, 6).map((item) => item.id).filter(Boolean).join(" · ")
+        : "";
+    return `<ul class="task-workbench-list">
+        <li>
+            <strong>${escapeHtml(snapshot.name || t('tasks.workspace_snapshot'))}</strong>
+            <span>${escapeHtml([
+                snapshot.readable ? t('tasks.readable') : t('tasks.unreadable'),
+                `${t('tasks.files')}：${Number(snapshot.file_count || 0)}`,
+                `${t('tasks.directories')}：${Number(snapshot.directory_count || 0)}`,
+            ].filter(Boolean).join(" · "))}</span>
+            ${snapshot.path ? `<code>${escapeHtml(snapshot.path)}</code>` : ""}
+        </li>
+        ${extensions ? `<li><strong>${escapeHtml(t('tasks.file_types'))}</strong><span>${escapeHtml(extensions)}</span></li>` : ""}
+        ${patterns ? `<li><strong>${escapeHtml(t('tasks.observed_patterns'))}</strong><span>${escapeHtml(patterns)}</span></li>` : ""}
+    </ul>`;
 }
 
 function renderWorkbenchVerification(items) {

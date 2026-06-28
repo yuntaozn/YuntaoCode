@@ -28,6 +28,7 @@ def build_runbook_from_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
         "run": evidence.get("run") if isinstance(evidence.get("run"), dict) else {},
         "task_contract": evidence.get("task_contract") if isinstance(evidence.get("task_contract"), dict) else {},
         "trace": evidence.get("trace") if isinstance(evidence.get("trace"), dict) else {},
+        "workspace_snapshot": evidence.get("workspace_snapshot") if isinstance(evidence.get("workspace_snapshot"), dict) else {},
         "capability_evidence": evidence.get("capability_evidence") if isinstance(evidence.get("capability_evidence"), dict) else {},
         "capability_snapshot": evidence.get("capability_snapshot") if isinstance(evidence.get("capability_snapshot"), dict) else {},
         "plan": evidence.get("plan") if isinstance(evidence.get("plan"), dict) else {},

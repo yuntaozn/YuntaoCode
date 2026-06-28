@@ -133,9 +133,32 @@ def test_context_hygiene_event_is_recorded_as_context_fact() -> None:
     }
 
 
+def test_workspace_snapshot_event_is_recorded_as_context_fact() -> None:
+    event = compact_run_event({
+        "event": "workspace_snapshot",
+        "snapshot": {
+            "schema_version": "workspace_snapshot.v1",
+            "name": "lesson",
+            "extension_counts": {".html": 1},
+        },
+    })
+
+    assert event == {
+        "schema_version": "0.1",
+        "event": "workspace_snapshot",
+        "event_name": "context.workspace_snapshot",
+        "snapshot": {
+            "schema_version": "workspace_snapshot.v1",
+            "name": "lesson",
+            "extension_counts": {".html": 1},
+        },
+    }
+
+
 def test_canonical_run_event_name_maps_runtime_events() -> None:
     assert canonical_run_event_name({"event": "status", "status": "thinking"}) == "run.status"
     assert canonical_run_event_name({"event": "context_hygiene"}) == "context.hygiene"
+    assert canonical_run_event_name({"event": "workspace_snapshot"}) == "context.workspace_snapshot"
     assert canonical_run_event_name({"event": "tool", "status": "running"}) == "tool.started"
     assert canonical_run_event_name({"event": "tool", "status": "partial"}) == "tool.partial"
     assert canonical_run_event_name({"event": "tool", "status": "failure"}) == "tool.failed"

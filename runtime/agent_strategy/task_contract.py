@@ -269,6 +269,7 @@ def task_contract_prompt(
     fallback_contract: dict[str, Any],
     *,
     capability_context: str = "",
+    workspace_context: str = "",
     previous_contract: dict[str, Any] | None = None,
 ) -> str:
     """Prompt used for the model-side task contract judgment."""
@@ -282,11 +283,22 @@ def task_contract_prompt(
             "classify it as read_only_analysis and choose first_action=read/search/use_tool. "
             "Do not classify such requests as answer_only merely because the content is remote.\n"
         )
+    workspace_block = ""
+    if str(workspace_context or "").strip():
+        workspace_block = (
+            "\nRuntime workspace context for this contract judgment:\n"
+            f"{str(workspace_context).strip()}\n"
+        )
     continuity_block = ""
     if isinstance(previous_contract, dict):
         continuity_block = (
             "\nPrevious task semantic anchor:\n"
             f"{json.dumps(task_continuity_anchor(previous_contract), ensure_ascii=False)}\n"
+            "This anchor is candidate context only, not the default current goal. "
+            "The current user request has priority. Use continue/revise only when "
+            "the current wording clearly refers to the same target, retries it, "
+            "or evaluates its result; use replace/new when the target, artifact, "
+            "or domain has changed.\n"
             "Decide scope_relation for the current request: continue/revise keeps "
             "the previous target and changes how it should be completed; replace/new "
             "changes the target. Do not turn an external-state goal into a script or "
@@ -295,7 +307,7 @@ def task_contract_prompt(
             "current result, consider read/verify/answer first unless the user clearly "
             "asks to change state again.\n"
         )
-    return capability_block + continuity_block + (
+    return capability_block + workspace_block + continuity_block + (
         "请先判断本轮用户请求的任务契约，只输出 JSON，不要调用工具，不要解释。\n"
         f"当前项目目录：{workspace_path}\n"
         "你负责判断任务语义；系统负责权限、工具执行和完成验收。\n"

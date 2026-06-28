@@ -175,6 +175,9 @@ Memory 是 Context Runtime 的一部分，但不能和任务事实混淆。
   - 在不删除 UI 历史和审计记录的前提下，清洗模型侧上下文中的失败工具标记、半截执行过程和噪声记录。
 - `runtime/tool_event_presentation.py`
   - 对工具结果做模型侧预算压缩，保留路径、错误、完整性、下一次读取提示和运行时风险。
+- `runtime/workspace_snapshot.py`
+  - 在不读取文件内容的前提下生成轻量项目事实快照，包括顶层目录、浅层文件类型、明显产物路径和观察线索。
+  - 快照以 `context.workspace_snapshot` 事件进入 RunEvidence/Runbook/诊断包，并作为任务契约判断的事实上下文，而不是路由规则。
 - `runtime/prompt_context.py`
   - 系统 prompt 中注入工作区、记忆和执行习惯。
 - `runtime/run_recovery.py`
@@ -192,8 +195,9 @@ Memory 是 Context Runtime 的一部分，但不能和任务事实混淆。
 
 1. 让 `compress_context()` 输出结构化摘要草案，而不仅是文本。
 2. 将 `task_contract`、`run_result`、失败风险写入 ContextSnapshot。
-3. 为已读取文件建立轻量 EvidenceRecord，记录路径、摘要、范围和 hash。
-4. 前端展示“上下文事实/未验证项”，避免用户只看到模型总结。
+3. 让 Workspace Snapshot 支持按用户当前表达提取相关候选路径，但仍保持事实层，不替模型判断任务。
+4. 为已读取文件建立轻量 EvidenceRecord，记录路径、摘要、范围和 hash。
+5. 前端展示“上下文事实/未验证项”，避免用户只看到模型总结。
 
 中期建议：
 

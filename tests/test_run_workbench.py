@@ -12,6 +12,18 @@ def test_build_run_workbench_presents_artifacts_risks_and_timeline(tmp_path) -> 
         task_id="task-1",
     )
     store.record_event(run.id, {
+        "event": "workspace_snapshot",
+        "snapshot": {
+            "schema_version": "workspace_snapshot.v1",
+            "name": "viewer-demo",
+            "exists": True,
+            "readable": True,
+            "file_count": 3,
+            "directory_count": 2,
+            "extension_counts": {".html": 1, ".js": 1, ".glb": 1},
+        },
+    })
+    store.record_event(run.id, {
         "event": "task_contract",
         "contract": {
             "goal": "Create a 3D model viewer",
@@ -88,6 +100,8 @@ def test_build_run_workbench_presents_artifacts_risks_and_timeline(tmp_path) -> 
     assert workbench["schema_version"] == "run_workbench.v1"
     assert workbench["kind"] == "run_workbench"
     assert workbench["run"]["id"] == run.id
+    assert workbench["workspace"]["name"] == "viewer-demo"
+    assert workbench["workspace"]["extension_counts"][".glb"] == 1
     assert workbench["task"]["goal"] == "Create a 3D model viewer"
     assert workbench["task"]["requires_write"] is True
     assert workbench["status"]["result_status"] == "partial"
