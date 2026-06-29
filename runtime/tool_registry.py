@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from .core.capability import CapabilityProvider, normalize_provider_kind
+from .tool_input_normalizer import normalize_tool_input
 from .tool_aliases import TOOL_ID_ALIASES, normalize_tool_id, normalize_tool_syntax
 
 
@@ -142,6 +143,13 @@ class ToolRegistry:
         except KeyError as exc:
             raise KeyError(f"unknown tool: {tool_id}") from exc
 
+    def normalize_input_data(
+        self,
+        tool_id: str,
+        input_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        return normalize_tool_input(self.resolve_id(tool_id), input_data)
+
     def get_public_spec(self, tool_id: str) -> dict[str, Any]:
         tool = self.get(tool_id)
         public = tool.spec.to_public_dict()
@@ -175,12 +183,13 @@ class ToolRegistry:
         input_data: dict[str, Any],
     ) -> list[str]:
         tool = self.get(tool_id)
+        normalized_input = self.normalize_input_data(tool.spec.id, input_data)
         schema = tool.spec.input_schema if isinstance(tool.spec.input_schema, dict) else {}
         required = schema.get("required") if isinstance(schema.get("required"), list) else []
         return [
             str(field)
             for field in required
-            if str(field) not in input_data or input_data.get(str(field)) is None
+            if str(field) not in normalized_input or normalized_input.get(str(field)) is None
         ]
 
     def check_plugin_dependencies(self, plugin_id: str) -> dict[str, bool]:

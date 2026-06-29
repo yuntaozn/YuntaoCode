@@ -15,6 +15,23 @@ def test_normalize_mcp_tool_result_marks_text_execution_error() -> None:
     assert output["message"] == "Error executing code: missing material"
 
 
+def test_normalize_mcp_tool_result_marks_generation_communication_error() -> None:
+    output = normalize_mcp_tool_result({
+        "content": [
+            {
+                "type": "text",
+                "text": (
+                    "Error generating Hyper3D task: Communication error with "
+                    "Blender: Unknown command type: create_rodin_job"
+                ),
+            }
+        ]
+    })
+
+    assert output["error"] is True
+    assert output["message"].startswith("Error generating Hyper3D task")
+
+
 def test_normalize_mcp_tool_result_marks_structured_failure() -> None:
     output = normalize_mcp_tool_result({
         "content": [{"type": "text", "text": "finished"}],

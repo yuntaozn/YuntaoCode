@@ -85,6 +85,7 @@ class TaskRunner:
         attachment_ids: tuple[str, ...] | list[str] | None = None,
     ) -> TaskRecord:
         tool_id = self.registry.resolve_id(tool_id)
+        input_data = self.registry.normalize_input_data(tool_id, input_data)
         tool = self.registry.get(tool_id)
         if self.settings and not self.settings.is_tool_enabled(tool_id):
             raise PermissionError(f"plugin is disabled for tool: {tool_id}")

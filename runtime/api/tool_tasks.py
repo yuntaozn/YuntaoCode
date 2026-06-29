@@ -27,6 +27,7 @@ class ToolTasksHandler(ApiHandler):
         input_data = payload.get("input") or {}
         if not isinstance(input_data, dict):
             raise tornado.web.HTTPError(400, reason="input must be an object")
+        input_data = self.runtime.registry.normalize_input_data(tool_id, input_data)
         missing_fields = self.runtime.registry.missing_required_input_fields(tool_id, input_data)
         if missing_fields:
             raise tornado.web.HTTPError(

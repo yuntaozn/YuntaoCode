@@ -688,7 +688,9 @@ def _parse_apply_patch(patch: str) -> list[dict[str, Any]]:
     end_index = len(lines) - 1
     headers = {
         "*** Add File: ": "add",
+        "*** Add File ": "add",
         "*** Update File: ": "update",
+        "*** Update File ": "update",
     }
     while index < end_index:
         if not lines[index].strip():

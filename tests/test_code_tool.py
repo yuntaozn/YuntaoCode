@@ -49,6 +49,30 @@ async def test_apply_patch_updates_existing_file(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_apply_patch_accepts_update_file_header_without_colon(tmp_path: Path) -> None:
+    path = tmp_path / "app.js"
+    path.write_text("const value = 1;\n", encoding="utf-8")
+    context = FakeContext(PathGuard([tmp_path]))
+
+    result = await apply_patch(
+        {
+            "patch": (
+                "*** Begin Patch\n"
+                "*** Update File app.js\n"
+                "@@\n"
+                "-const value = 1;\n"
+                "+const value = 2;\n"
+                "*** End Patch"
+            ),
+        },
+        context,
+    )
+
+    assert path.read_text(encoding="utf-8") == "const value = 2;\n"
+    assert result["paths"] == [str(path)]
+
+
+@pytest.mark.asyncio
 async def test_apply_patch_adds_complete_file(tmp_path: Path) -> None:
     context = FakeContext(PathGuard([tmp_path]))
 

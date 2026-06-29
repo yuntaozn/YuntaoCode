@@ -1833,6 +1833,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         try:
             tool_id = self.runtime.registry.resolve_id(tool_id)
             tool_spec = self.runtime.registry.get(tool_id).spec
+            arguments = self.runtime.registry.normalize_input_data(tool_id, arguments)
         except KeyError:
             return self._skipped_tool_call(
                 tool_call,

@@ -246,3 +246,70 @@ def test_registry_reports_missing_required_input_before_execution() -> None:
         "filesystem.write_file",
         {"path": "demo.txt", "content": ""},
     ) == []
+
+
+def test_registry_normalizes_code_edit_file_top_level_replace_fields() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            id="code.edit_file",
+            name="Edit File",
+            description="Edit a file",
+            input_schema={
+                "type": "object",
+                "required": ["path", "edits"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "edits": {"type": "array"},
+                },
+            },
+        ),
+        _noop_handler,
+    )
+
+    input_data = {
+        "path": "src/app.js",
+        "old_text": "const value = 1;",
+        "new_text": "const value = 2;",
+    }
+
+    assert registry.missing_required_input_fields("code.edit_file", input_data) == []
+    assert registry.normalize_input_data("code.edit_file", input_data) == {
+        "path": "src/app.js",
+        "old_text": "const value = 1;",
+        "new_text": "const value = 2;",
+        "edits": [{"old_text": "const value = 1;", "new_text": "const value = 2;"}],
+    }
+
+
+def test_registry_normalizes_apply_changes_top_level_replace_fields() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            id="filesystem.apply_changes",
+            name="Apply Changes",
+            description="Apply changes",
+            input_schema={
+                "type": "object",
+                "required": ["operations"],
+                "properties": {"operations": {"type": "array"}},
+            },
+        ),
+        _noop_handler,
+    )
+
+    input_data = {
+        "path": "src/app.js",
+        "old_text": "const value = 1;",
+        "new_text": "const value = 2;",
+    }
+
+    assert registry.missing_required_input_fields("filesystem.apply_changes", input_data) == []
+    assert registry.normalize_input_data("filesystem.apply_changes", input_data)["operations"] == [
+        {
+            "type": "replace_text",
+            "path": "src/app.js",
+            "old_text": "const value = 1;",
+            "new_text": "const value = 2;",
+        }
+    ]

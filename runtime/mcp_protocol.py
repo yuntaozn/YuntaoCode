@@ -346,11 +346,13 @@ def _mcp_result_reports_error(text: str, structured_content: Any) -> bool:
         return False
     lowered = first_line[0].strip().lower()
     return lowered.startswith((
+        "error generating",
         "error executing",
         "error executing code",
         "error executing tool",
+        "communication error",
         "tool execution failed",
         "execution failed",
         "traceback ",
         "traceback:",
-    ))
+    )) or "unknown command type" in lowered

@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from typing import Any
+
+
+def normalize_tool_input(tool_id: str, input_data: dict[str, Any]) -> dict[str, Any]:
+    """Return a canonical tool input without changing the user's intent.
+
+    Model providers do not always follow a tool schema perfectly, even when the
+    semantic payload is clear.  Normalize common equivalent shapes before
+    confirmation and execution so schema guards do not reject recoverable calls.
+    """
+    if not isinstance(input_data, dict):
+        return {}
+    normalized = deepcopy(input_data)
+    if tool_id == "code.edit_file":
+        _normalize_code_edit_file_input(normalized)
+    elif tool_id == "filesystem.apply_changes":
+        _normalize_apply_changes_input(normalized)
+    return normalized
+
+
+def _normalize_code_edit_file_input(input_data: dict[str, Any]) -> None:
+    if _has_meaningful_value(input_data.get("edits")):
+        return
+    old_text = _first_non_empty(
+        input_data,
+        ("old_text", "oldText", "old_string", "oldString", "original"),
+    )
+    new_text = _first_present(
+        input_data,
+        ("new_text", "newText", "new_string", "newString", "replacement"),
+    )
+    if old_text is None or new_text is None:
+        return
+    input_data["edits"] = [{"old_text": old_text, "new_text": new_text}]
+
+
+def _normalize_apply_changes_input(input_data: dict[str, Any]) -> None:
+    if _has_meaningful_value(input_data.get("operations")):
+        return
+    operations = _first_present(
+        input_data,
+        ("operation", "changes", "change_set", "changeSet"),
+    )
+    if isinstance(operations, dict):
+        input_data["operations"] = [operations]
+        return
+    if isinstance(operations, list):
+        input_data["operations"] = operations
+        return
+
+    path = _first_non_empty(input_data, ("path", "file_path", "filePath"))
+    old_text = _first_non_empty(
+        input_data,
+        ("old_text", "oldText", "old_string", "oldString", "original"),
+    )
+    new_text = _first_present(
+        input_data,
+        ("new_text", "newText", "new_string", "newString", "replacement"),
+    )
+    if path is not None and old_text is not None and new_text is not None:
+        input_data["operations"] = [{
+            "type": "replace_text",
+            "path": path,
+            "old_text": old_text,
+            "new_text": new_text,
+        }]
+
+
+def _first_present(input_data: dict[str, Any], keys: tuple[str, ...]) -> Any | None:
+    for key in keys:
+        if key in input_data and input_data[key] is not None:
+            return input_data[key]
+    return None
+
+
+def _first_non_empty(input_data: dict[str, Any], keys: tuple[str, ...]) -> Any | None:
+    value = _first_present(input_data, keys)
+    if isinstance(value, str) and not value:
+        return None
+    return value
+
+
+def _has_meaningful_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, dict, tuple, set)):
+        return bool(value)
+    return True
