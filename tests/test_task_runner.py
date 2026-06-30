@@ -37,7 +37,18 @@ async def _temp_dir_handler(input_data: dict[str, Any], context: Any) -> dict[st
     return {"temp_dir": str(context.temp_dir), "task_id": context.task_id}
 
 
-def _build_runner(tmp_path: Path, *, settings: Any | None = None) -> TaskRunner:
+async def _backup_then_success_handler(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    if callable(context.backup_file):
+        context.backup_file(input_data.get("path") or "demo.txt")
+    return {"ok": True}
+
+
+def _build_runner(
+    tmp_path: Path,
+    *,
+    settings: Any | None = None,
+    backup_store: Any | None = None,
+) -> TaskRunner:
     registry = ToolRegistry()
     registry.register(
         ToolSpec(
@@ -92,6 +103,7 @@ def _build_runner(tmp_path: Path, *, settings: Any | None = None) -> TaskRunner:
         registry=registry,
         store=TaskStore(tmp_path / "tasks.json"),
         path_guard=PathGuard([tmp_path]),
+        backup_store=backup_store,
         settings=settings,
     )
 
@@ -257,3 +269,63 @@ def test_disabled_plugin_blocks_submission(tmp_path: Path) -> None:
         asyncio.run(
             runner.submit("demo.write", {"value": 3}, wait=True, confirmed=True)
         )
+
+
+def test_backup_failure_is_recorded_without_blocking_tool_success(tmp_path: Path) -> None:
+    class BackupSettings:
+        def is_tool_enabled(self, tool_id: str) -> bool:
+            return True
+
+        def get_access_scope(self) -> str:
+            return "project_only"
+
+        def get_backup_settings(self) -> dict[str, Any]:
+            return {"enabled": True, "keep_rounds": 5}
+
+    class FailingBackupSession:
+        def backup_file(self, path: str | Path) -> None:
+            raise PermissionError("backup destination locked")
+
+        def finish(self, status: str, keep_rounds: int) -> None:
+            return None
+
+    class FailingBackupStore:
+        def begin(self, *args: Any, **kwargs: Any) -> FailingBackupSession:
+            return FailingBackupSession()
+
+    runner = _build_runner(
+        tmp_path,
+        settings=BackupSettings(),
+        backup_store=FailingBackupStore(),
+    )
+    runner.registry.unregister("filesystem.write_file")
+    runner.registry.register(
+        ToolSpec(
+            id="filesystem.write_file",
+            name="Write File",
+            description="Write file",
+            input_schema={"type": "object"},
+            requires_confirmation=True,
+        ),
+        _backup_then_success_handler,
+    )
+
+    task = asyncio.run(
+        runner.submit(
+            "filesystem.write_file",
+            {"path": "demo.txt"},
+            wait=True,
+            confirmed=True,
+            workspace_path=str(tmp_path),
+        )
+    )
+
+    assert task.status == "success"
+    assert task.output["ok"] is True
+    assert task.output["_backup_warnings"] == [
+        {"path": "demo.txt", "error": "backup destination locked"}
+    ]
+    assert any(
+        log["level"] == "warning" and "backup failed" in log["message"]
+        for log in task.logs
+    )

@@ -351,6 +351,9 @@ def _normalize_edits(input_data: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(edits, dict):
         edits = [edits]
     if not isinstance(edits, list):
+        line_edit = _normalize_line_range_edit(input_data)
+        if line_edit is not None:
+            return [line_edit]
         # Case 3: no edits key, but old/new at top level (various naming styles)
         old_text = (
             input_data.get("old_text")
@@ -374,6 +377,10 @@ def _normalize_edits(input_data: dict[str, Any]) -> list[dict[str, Any]]:
     for item in edits:
         if not isinstance(item, dict):
             continue
+        line_edit = _normalize_line_range_edit(item)
+        if line_edit is not None:
+            normalized.append(line_edit)
+            continue
         old = (
             item.get("old_text") or item.get("oldText")
             or item.get("old_string") or item.get("oldString")
@@ -389,6 +396,48 @@ def _normalize_edits(input_data: dict[str, Any]) -> list[dict[str, Any]]:
         if old:
             normalized.append({"old_text": old, "new_text": new})
     return normalized
+
+
+def _first_present_value(item: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in item:
+            return item.get(key)
+    return None
+
+
+def _coerce_positive_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed < 1:
+        return None
+    return parsed
+
+
+def _normalize_line_range_edit(item: dict[str, Any]) -> dict[str, Any] | None:
+    start_line = _coerce_positive_int(
+        _first_present_value(item, "start_line", "startLine", "line_start", "lineStart")
+    )
+    end_line = _coerce_positive_int(
+        _first_present_value(item, "end_line", "endLine", "line_end", "lineEnd")
+    )
+    new_text = _first_present_value(
+        item,
+        "new_text",
+        "newText",
+        "new_string",
+        "newString",
+        "replacement",
+        "new",
+    )
+    if start_line is None or end_line is None or new_text is None:
+        return None
+    return {"start_line": start_line, "end_line": end_line, "new_text": str(new_text)}
 
 
 def _normalize_text_for_match(text: str) -> str:
@@ -547,6 +596,50 @@ def _fuzzy_match(text: str, old_text: str) -> tuple[int, str | None]:
     return 0, None
 
 
+def _split_logical_lines(text: str) -> tuple[list[str], bool]:
+    had_final_newline = text.endswith("\n")
+    lines = text.split("\n")
+    if had_final_newline:
+        lines = lines[:-1]
+    return lines, had_final_newline
+
+
+def _apply_line_range_edit(text: str, edit: dict[str, Any]) -> tuple[str, list[str]]:
+    start_line = edit.get("start_line")
+    end_line = edit.get("end_line")
+    new_text = edit.get("new_text")
+    if not isinstance(start_line, int) or not isinstance(end_line, int):
+        raise ValueError("line range edit requires integer start_line and end_line")
+    if new_text is None:
+        raise ValueError("line range edit requires new_text")
+    if end_line < start_line:
+        raise ValueError("line range edit requires end_line >= start_line")
+
+    lines, had_final_newline = _split_logical_lines(text)
+    if start_line > len(lines) or end_line > len(lines):
+        raise ValueError(
+            f"line range {start_line}-{end_line} is outside file with {len(lines)} lines"
+        )
+
+    replacement_text = str(new_text).replace("\r\n", "\n").replace("\r", "\n")
+    replacement_lines = replacement_text.split("\n")
+    if replacement_lines and replacement_lines[-1] == "":
+        replacement_lines = replacement_lines[:-1]
+
+    old_lines = lines[start_line - 1 : end_line]
+    lines[start_line - 1 : end_line] = replacement_lines
+    updated = "\n".join(lines)
+    if had_final_newline:
+        updated += "\n"
+
+    diff_parts: list[str] = [f"@@ lines {start_line}-{end_line} @@"]
+    for line in old_lines[:3]:
+        diff_parts.append(f"- {line[:120]}")
+    for line in replacement_lines[:3]:
+        diff_parts.append(f"+ {line[:120]}")
+    return updated, diff_parts
+
+
 def edit_file_sync(path: Path, edits: list[dict[str, Any]], context: Any) -> dict[str, Any]:
     text, encoding = _read_text_with_encoding(path)
     text = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -555,6 +648,14 @@ def edit_file_sync(path: Path, edits: list[dict[str, Any]], context: Any) -> dic
     diff_parts: list[str] = []
 
     for edit in edits:
+        if "start_line" in edit or "end_line" in edit:
+            text, line_diff = _apply_line_range_edit(text, edit)
+            applied += 1
+            diff_parts.extend(line_diff)
+            if applied < len(edits):
+                diff_parts.append("---")
+            continue
+
         old_text = edit.get("old_text") or ""
         new_text = edit.get("new_text")
         if new_text is None:
@@ -866,7 +967,11 @@ def register_code_tools(registry: ToolRegistry) -> None:
         ToolSpec(
             id="code.edit_file",
             name="精确编辑文件",
-            description="用查找替换方式精确编辑文件。每个 edit 包含 old_text 和 new_text，old_text 必须在文件中唯一匹配。编辑前会在本地终端备份区创建可恢复回退点。",
+            description=(
+                "精确编辑文件。每个 edit 可使用 old_text/new_text 唯一文本替换，"
+                "也可使用 start_line/end_line/new_text 做有界行号替换。"
+                "编辑前会在本地终端备份区创建可恢复回退点。"
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -878,9 +983,14 @@ def register_code_tools(registry: ToolRegistry) -> None:
                             "type": "object",
                             "properties": {
                                 "old_text": {"type": "string", "description": "要替换的原文本（必须唯一匹配）"},
+                                "start_line": {"type": "integer", "description": "有界替换的起始行号，1-based，包含该行"},
+                                "end_line": {"type": "integer", "description": "有界替换的结束行号，1-based，包含该行"},
                                 "new_text": {"type": "string", "description": "替换后的新文本"},
                             },
-                            "required": ["old_text", "new_text"],
+                            "oneOf": [
+                                {"required": ["old_text", "new_text"]},
+                                {"required": ["start_line", "end_line", "new_text"]},
+                            ],
                         },
                     },
                 },

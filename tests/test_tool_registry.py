@@ -282,6 +282,42 @@ def test_registry_normalizes_code_edit_file_top_level_replace_fields() -> None:
     }
 
 
+def test_registry_normalizes_code_edit_file_top_level_line_range_fields() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            id="code.edit_file",
+            name="Edit File",
+            description="Edit a file",
+            input_schema={
+                "type": "object",
+                "required": ["path", "edits"],
+                "properties": {
+                    "path": {"type": "string"},
+                    "edits": {"type": "array"},
+                },
+            },
+        ),
+        _noop_handler,
+    )
+
+    input_data = {
+        "path": "src/app.js",
+        "start_line": 10,
+        "end_line": 12,
+        "new_text": "replacement",
+    }
+
+    assert registry.missing_required_input_fields("code.edit_file", input_data) == []
+    assert registry.normalize_input_data("code.edit_file", input_data) == {
+        "path": "src/app.js",
+        "start_line": 10,
+        "end_line": 12,
+        "new_text": "replacement",
+        "edits": [{"start_line": 10, "end_line": 12, "new_text": "replacement"}],
+    }
+
+
 def test_registry_normalizes_apply_changes_top_level_replace_fields() -> None:
     registry = ToolRegistry()
     registry.register(

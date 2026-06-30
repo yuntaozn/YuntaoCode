@@ -24,6 +24,20 @@ def normalize_tool_input(tool_id: str, input_data: dict[str, Any]) -> dict[str, 
 def _normalize_code_edit_file_input(input_data: dict[str, Any]) -> None:
     if _has_meaningful_value(input_data.get("edits")):
         return
+    start_line = _first_present(input_data, ("start_line", "startLine", "line_start", "lineStart"))
+    end_line = _first_present(input_data, ("end_line", "endLine", "line_end", "lineEnd"))
+    line_new_text = _first_present(
+        input_data,
+        ("new_text", "newText", "new_string", "newString", "replacement", "new"),
+    )
+    if start_line is not None and end_line is not None and line_new_text is not None:
+        input_data["edits"] = [{
+            "start_line": start_line,
+            "end_line": end_line,
+            "new_text": line_new_text,
+        }]
+        return
+
     old_text = _first_non_empty(
         input_data,
         ("old_text", "oldText", "old_string", "oldString", "original"),

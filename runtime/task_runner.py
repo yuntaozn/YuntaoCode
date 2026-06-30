@@ -137,6 +137,7 @@ class TaskRunner:
 
         backup_session = None
         backup_meta = None
+        backup_warnings: list[dict[str, str]] = []
         try:
             tool = self.registry.get(task.tool)
             access_scope = self.settings.get_access_scope() if self.settings else "project_only"
@@ -162,14 +163,28 @@ class TaskRunner:
             def log(level: str, message: str, data: dict[str, Any] | None = None) -> None:
                 self.store.append_log(task_id, level, message, data)
 
-            backup_file = backup_session.backup_file if backup_session else None
+            def backup_file(path: str | Path) -> None:
+                if not backup_session:
+                    return
+                try:
+                    backup_session.backup_file(path)
+                except Exception as exc:
+                    warning = {"path": str(path), "error": str(exc)}
+                    backup_warnings.append(warning)
+                    log(
+                        "warning",
+                        "backup failed; continuing without restore point for this path",
+                        warning,
+                    )
+
+            backup_handler = backup_file if backup_session else None
             temp_dir = self._task_temp_dir(artifact_scope_id or task_id)
             temp_dir.mkdir(parents=True, exist_ok=True)
             context = ToolContext(
                 path_guard=path_guard,
                 task_id=task_id,
                 log=log,
-                backup_file=backup_file,
+                backup_file=backup_handler,
                 settings=self.settings,
                 temp_dir=temp_dir,
                 attachment_store=self.attachment_store,
@@ -179,6 +194,8 @@ class TaskRunner:
             output = await tool.handler(task.input, context)
             failure_reason = self._output_failure_reason(task.tool, output)
             partial_reason = "" if failure_reason else self._output_partial_reason(task.tool, output)
+            if backup_warnings and isinstance(output, dict):
+                output["_backup_warnings"] = list(backup_warnings)
             if backup_session:
                 backup_meta = backup_session.finish(
                     "failure" if failure_reason else ("partial" if partial_reason else "success"),

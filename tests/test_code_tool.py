@@ -148,6 +148,62 @@ async def test_apply_patch_validates_all_files_before_writing(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_edit_file_replaces_bounded_line_range(tmp_path: Path) -> None:
+    path = tmp_path / "app.js"
+    path.write_text(
+        "const title = 'old';\n"
+        "function render() {\n"
+        "  return title;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    context = FakeContext(PathGuard([tmp_path]))
+
+    result = await edit_file(
+        {
+            "path": str(path),
+            "edits": [
+                {
+                    "start_line": 2,
+                    "end_line": 4,
+                    "new_text": "function render() {\n  return title.toUpperCase();\n}",
+                }
+            ],
+        },
+        context,
+    )
+
+    assert path.read_text(encoding="utf-8") == (
+        "const title = 'old';\n"
+        "function render() {\n"
+        "  return title.toUpperCase();\n"
+        "}\n"
+    )
+    assert result["edit_count"] == 1
+    assert "@@ lines 2-4 @@" in result["diff_preview"]
+    assert context.backups == [path]
+
+
+@pytest.mark.asyncio
+async def test_edit_file_rejects_invalid_line_range_without_writing(tmp_path: Path) -> None:
+    path = tmp_path / "app.js"
+    path.write_text("one\ntwo\n", encoding="utf-8")
+    context = FakeContext(PathGuard([tmp_path]))
+
+    with pytest.raises(ValueError, match="outside file"):
+        await edit_file(
+            {
+                "path": str(path),
+                "edits": [{"start_line": 2, "end_line": 3, "new_text": "changed"}],
+            },
+            context,
+        )
+
+    assert path.read_text(encoding="utf-8") == "one\ntwo\n"
+    assert context.backups == []
+
+
+@pytest.mark.asyncio
 async def test_edit_file_preserves_gb18030_when_non_ascii_appears_after_probe_window(tmp_path: Path) -> None:
     path = tmp_path / "app.js"
     prefix = "const filler = '" + ("a" * 9000) + "';\n"

@@ -67,8 +67,9 @@ def stage_prompt(
             "规则：\n"
             "1. 编辑前应基于本轮已读取的真实文件内容确认目标片段、缩进和 old_text；如果尚未读取目标片段，优先调用 filesystem.read_file。\n"
             "2. 构造 old_text 时，直接复制从 read_file 结果中看到的原文，不要调整空格或缩进。\n"
-            "3. 如果写入失败（如 old_text not found），应重新读取文件对应位置，基于真实内容换一种可靠写入策略，不要凭记忆猜测。\n"
-            "4. 不要伪造修改结果，不要声称已完成但未实际调用写入工具。"
+            "3. 如果 old_text 难以稳定匹配，可在重新读取目标位置后，使用 code.edit_file 的 start_line/end_line/new_text 做有界行号替换。\n"
+            "4. 如果写入失败（如 old_text not found），应重新读取文件对应位置，基于真实内容换一种可靠写入策略，不要凭记忆猜测。\n"
+            "5. 不要伪造修改结果，不要声称已完成但未实际调用写入工具。"
         )
     if stage == "writer":
         return (
