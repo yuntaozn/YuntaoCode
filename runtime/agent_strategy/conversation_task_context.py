@@ -5,6 +5,7 @@ from typing import Any
 
 from runtime.agent_strategy import classifiers as _clf
 from runtime.agent_strategy import task_contract as _tc
+from runtime.agent_strategy import task_lineage as _lineage
 
 
 WRITE_NOTICE_REASONS = {
@@ -200,6 +201,26 @@ def previous_task_contract_context(
                 continue
             return contract
     return None
+
+
+def task_lineage_candidates(
+    conversation: Any | None,
+    current_content: str,
+    *,
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    return _lineage.collect_task_lineage_candidates(
+        conversation,
+        current_content,
+        limit=limit,
+    )
+
+
+def referenced_task_candidate_contract(
+    candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
+    candidate_id: Any,
+) -> dict[str, Any] | None:
+    return _lineage.referenced_candidate_contract(candidates, candidate_id)
 
 
 def is_relevant_previous_task_contract(contract: dict[str, Any], current_content: str) -> bool:

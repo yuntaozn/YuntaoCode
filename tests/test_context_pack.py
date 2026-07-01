@@ -39,12 +39,59 @@ def test_context_pack_builds_phase_selected_records() -> None:
     assert [item["kind"] for item in pack["records"]] == [
         "user_intent",
         "workspace_summary",
-        "task_contract",
+        "task_lineage",
         "risk",
     ]
     assert pack["ledger"]["schema_version"] == "context_ledger.v1"
     assert pack["ledger"]["records"][0]["source_type"] == "user_message"
     assert "content_hash" in pack["ledger"]["records"][0]
+
+
+def test_context_pack_includes_task_lineage_candidates_as_candidates() -> None:
+    pack = build_context_pack(
+        phase="task_contract",
+        user_content="try again",
+        task_candidates=[
+            {
+                "candidate_id": "run-1",
+                "goal": "Create a Blender house",
+                "intent": "write_required",
+                "status": "partial",
+                "requires_write": False,
+                "requires_state_change": True,
+                "deliverable_kinds": ["external_state"],
+                "capability_ids": ["mcp.blender"],
+            }
+        ],
+    )
+
+    assert [item["kind"] for item in pack["records"]] == ["user_intent", "task_lineage"]
+    lineage = pack["records"][1]
+    assert lineage["source_type"] == "conversation_history"
+    assert "historical task candidates" in lineage["content"].lower()
+    assert lineage["metadata"]["candidates"][0]["candidate_id"] == "run-1"
+
+
+def test_context_pack_records_task_lineage_hygiene_counts() -> None:
+    pack = build_context_pack(
+        phase="task_contract",
+        user_content="continue",
+        context_hygiene_report={
+            "changed": True,
+            "sanitized_messages": 2,
+            "task_candidate_messages": 1,
+            "task_user_anchor_messages": 1,
+            "compacted_task_marker_messages": 1,
+            "current_request_boundary_inserted": True,
+        },
+    )
+
+    risk = pack["records"][-1]
+    assert risk["kind"] == "risk"
+    assert risk["metadata"]["task_candidate_messages"] == 1
+    assert risk["metadata"]["task_user_anchor_messages"] == 1
+    assert risk["metadata"]["compacted_task_marker_messages"] == 1
+    assert risk["metadata"]["current_request_boundary_inserted"] is True
 
 
 def test_context_pack_prompt_marks_records_as_facts_not_route() -> None:

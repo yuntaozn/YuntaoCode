@@ -66,6 +66,28 @@ def test_shell_success_with_exception_stderr_becomes_degraded_evidence_risk() ->
     assert "HttpListenerException" in risks[0]["detail"]
 
 
+def test_shell_failure_with_diagnostic_becomes_model_facing_risk() -> None:
+    risks = assess_tool_result_risks(
+        "shell.run_command",
+        "failure",
+        {
+            "exit_code": 1,
+            "diagnostics": [
+                {
+                    "code": "node_check_inline_script",
+                    "message": "Node -c/--check expects a JavaScript file path.",
+                    "suggested_calls": [{"command": "node", "args": ["--check", "app.js"]}],
+                }
+            ],
+        },
+        error="command exited with code 1",
+    )
+
+    assert risks[0]["code"] == "shell_node_check_inline_script"
+    assert risks[0]["action"] == "adjust_command_shape"
+    assert risks[0]["suggested_calls"][0]["args"] == ["--check", "app.js"]
+
+
 def test_encoding_warning_becomes_non_blocking_model_facing_risk() -> None:
     risks = assess_tool_result_risks(
         "filesystem.write_file",

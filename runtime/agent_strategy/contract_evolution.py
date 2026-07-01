@@ -76,10 +76,15 @@ def apply_task_continuity(
         anchor,
         result,
     )
+    current_explicit_local_target = (
+        _current_contract_changes_local_target(anchor, result)
+        and not _anchor_is_external_state_only(anchor)
+    )
     preserve_anchor_target = not (
         retargets_local_file_state
         or retargets_read_only_answer
         or retargets_read_only_anchor_to_state_change
+        or current_explicit_local_target
     )
 
     if "goal" in anchor and preserve_anchor_target:
@@ -161,12 +166,39 @@ def apply_task_continuity(
         if retargets_local_file_state
         or retargets_read_only_answer
         or retargets_read_only_anchor_to_state_change
+        or current_explicit_local_target
         else anchor
     )
     result["revision_request"] = _clean_text(current_user_content, 500)
     result["source"] = "model_with_task_anchor"
     result["success_conditions"] = success_conditions_for_contract(result)
     return result
+
+
+def should_apply_task_continuity(
+    contract: dict[str, Any],
+    *,
+    current_user_content: str,
+) -> bool:
+    """Return whether a prior task anchor may be applied after model judgment.
+
+    The previous task is not part of the first semantic decision.  It may only
+    affect the final contract after the model has represented the current turn
+    as a continuation/revision, or when the current wording is an explicit retry
+    and the model did not provide a stronger replacement/new relation.
+    """
+    if not isinstance(contract, dict):
+        return False
+    relation = normalize_scope_relation(contract.get("scope_relation"))
+    if relation in {"continue", "revise"}:
+        return True
+    if (
+        relation == "new"
+        and contract.get("scope_relation_source") != "model"
+        and looks_like_task_revision_followup(current_user_content)
+    ):
+        return True
+    return False
 
 
 def task_continuity_anchor(contract: dict[str, Any]) -> dict[str, Any]:
@@ -542,6 +574,41 @@ def _preserve_external_state_target(anchor: dict[str, Any], proposed: dict[str, 
         and bool(proposed_kinds)
         and proposed_kinds <= {"code", "file"}
     )
+
+
+def _anchor_is_external_state_only(anchor: dict[str, Any]) -> bool:
+    kinds = _deliverable_kinds(anchor.get("deliverables"))
+    return (
+        bool(kinds)
+        and kinds <= {"external_state"}
+        and not bool(anchor.get("requires_write"))
+    )
+
+
+def _current_contract_changes_local_target(anchor: dict[str, Any], proposed: dict[str, Any]) -> bool:
+    proposed_paths = _local_deliverable_path_hints(proposed.get("deliverables"))
+    if not proposed_paths:
+        return False
+    anchor_paths = _local_deliverable_path_hints(anchor.get("deliverables"))
+    if not anchor_paths:
+        return True
+    return not proposed_paths.issubset(anchor_paths)
+
+
+def _local_deliverable_path_hints(deliverables: Any) -> set[str]:
+    if not isinstance(deliverables, list):
+        return set()
+    paths: set[str] = set()
+    for item in deliverables:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip().lower()
+        if kind not in {"file", "code", "document", "spreadsheet"}:
+            continue
+        path_hint = str(item.get("path_hint") or item.get("path") or "").strip()
+        if path_hint:
+            paths.add(_normalize_path_hint(path_hint))
+    return {path for path in paths if path}
 
 
 def _retargets_local_file_state(proposed: dict[str, Any]) -> bool:

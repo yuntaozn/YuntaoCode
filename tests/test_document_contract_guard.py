@@ -493,7 +493,7 @@ def test_previous_task_contract_context_keeps_model_declared_replacement() -> No
 
 
 @pytest.mark.asyncio
-async def test_model_task_contract_receives_recent_conversation_context(monkeypatch: Any) -> None:
+async def test_model_task_contract_receives_current_request_not_raw_history(monkeypatch: Any) -> None:
     captured: dict[str, Any] = {}
 
     async def fake_generate_chat_completion(**kwargs: Any) -> tuple[str, dict[str, Any]]:
@@ -532,13 +532,11 @@ async def test_model_task_contract_receives_recent_conversation_context(monkeypa
     )
 
     assert contract["intent"] == "write_required"
-    assert [item["role"] for item in captured["messages"]] == [
-        "system",
-        "user",
-        "assistant",
-        "user",
-    ]
+    assert [item["role"] for item in captured["messages"]] == ["system", "user"]
     assert captured["messages"][-1]["content"] == "现在想加能选构件的能力"
+    contents = "\n".join(item["content"] for item in captured["messages"])
+    assert "重写一个 3D 模型查看器" not in contents
+    assert "已创建 viewer.html" not in contents
     assert all(item["content"] != "large tool catalog" for item in captured["messages"])
 
 

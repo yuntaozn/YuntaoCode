@@ -1,0 +1,14 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{md,txt,json,toml,yml,yaml,py,js,ts,css,html,ps1}]
+charset = utf-8
+
+[*.{png,jpg,jpeg,gif,ico,pdf,docx,xlsx,pptx,glb,blend}]
+insert_final_newline = unset
+trim_trailing_whitespace = unset

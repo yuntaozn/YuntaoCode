@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from runtime.visual_evidence import build_visual_evidence
+
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
 MCP_PROTOCOL_FALLBACK_VERSIONS = ("2024-11-05",)
@@ -272,7 +274,14 @@ def _apply_artifact_hints(
     if not isinstance(artifacts, list):
         artifacts = []
     artifacts.append(kind)
+    artifacts.append("visual_evidence")
     output["artifacts"] = list(dict.fromkeys(str(item) for item in artifacts if str(item).strip()))
+    output["visual_evidence"] = build_visual_evidence(
+        source_type="mcp",
+        screenshot_path=path,
+        artifact_kind=kind,
+        format=format_name,
+    )
 
 
 def _first_artifact_path(value: Any) -> str:

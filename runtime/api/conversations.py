@@ -319,6 +319,7 @@ class ConversationMessagesHandler(ApiHandler):
             messages.append({
                 "role": role,
                 "content": _message_content_with_attachment_catalog(item.content, metadata),
+                "_yuntao_metadata": metadata,
             })
         messages, hygiene_report = _ctx_hygiene.sanitize_model_context(messages)
         self._last_context_hygiene_report = hygiene_report
@@ -776,7 +777,11 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         try:
             decision_messages: list[dict[str, Any]] = [
                 {"role": "system", "content": prompt},
-                *_tc.task_contract_context_messages(messages, user_content),
+                *_tc.task_contract_context_messages(
+                    messages,
+                    user_content,
+                    include_history=False,
+                ),
             ]
             answer, _metadata = await generate_chat_completion(
                 settings=self.runtime.settings,
@@ -2207,6 +2212,20 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         current_content: str,
     ) -> dict[str, Any] | None:
         return _task_ctx.previous_task_contract_context(conversation, current_content)
+
+    def _task_lineage_candidates(
+        self,
+        conversation: Any | None,
+        current_content: str,
+    ) -> list[dict[str, Any]]:
+        return _task_ctx.task_lineage_candidates(conversation, current_content)
+
+    def _referenced_task_candidate_contract(
+        self,
+        candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
+        candidate_id: Any,
+    ) -> dict[str, Any] | None:
+        return _task_ctx.referenced_task_candidate_contract(candidates, candidate_id)
 
     def _previous_document_export_context(self, conversation: Any | None, current_content: str) -> bool:
         return _task_ctx.previous_document_export_context(conversation, current_content)

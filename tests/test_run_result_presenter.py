@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from runtime.core.result import RISK_CODES
 from runtime.run_result_presenter import (
+    append_changed_files_footer,
     risk_message_zh,
     synthesize_final_answer,
     synthesize_partial_answer,
@@ -101,3 +102,40 @@ def test_final_answer_summarizes_external_state_deliverable() -> None:
 
     assert "已观察到目标外部状态变更：" in answer
     assert "- mcp_blender.execute_blender_code" in answer
+
+
+def test_append_changed_files_footer_adds_runtime_file_list() -> None:
+    answer = append_changed_files_footer(
+        "已完成页面优化，并通过预览确认视觉效果。",
+        {
+            "changed_paths": ["src/app.js"],
+            "written_paths": ["src/app.js", "src/styles.css"],
+        },
+        {"files": [{"status": "M", "path": "src/app.js"}]},
+    )
+
+    assert "本轮新增/变更文件：" in answer
+    assert "- src/app.js" in answer
+    assert "- src/styles.css" in answer
+    assert answer.count("src/app.js") == 1
+
+
+def test_append_changed_files_footer_does_not_duplicate_existing_section() -> None:
+    content = "已完成。\n\n本轮新增/变更文件：\n- src/app.js"
+
+    assert append_changed_files_footer(
+        content,
+        {"changed_paths": ["src/app.js", "src/styles.css"]},
+        None,
+    ) == content
+
+
+def test_append_changed_files_footer_uses_english_for_english_answer() -> None:
+    answer = append_changed_files_footer(
+        "Done and verified.",
+        {"written_paths": ["README.md"]},
+        None,
+    )
+
+    assert "Files changed this turn:" in answer
+    assert "- README.md" in answer

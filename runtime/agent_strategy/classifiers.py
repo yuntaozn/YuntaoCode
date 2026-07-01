@@ -50,6 +50,7 @@ WRITE_TOOL_IDS: frozenset[str] = frozenset({
     "code.edit_file",
     "code.replace_text",
     "filesystem.apply_changes",
+    "filesystem.copy_file",
     "filesystem.transform_text",
     "filesystem.write_file",
     "filesystem.delete_file",
@@ -67,6 +68,9 @@ DELIVERABLE_VERIFICATION_TOOL_IDS: frozenset[str] = frozenset({
     "git.log",
     "spreadsheet.inspect_workbook",
     "web.capture_page",
+    "preview.capture_url",
+    "preview.capture_local_html",
+    "preview.interact_page",
 })
 
 NATIVE_TOOL_CALL_BEGIN = "<|FunctionCallBegin|>"

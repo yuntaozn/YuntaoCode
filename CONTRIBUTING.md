@@ -32,6 +32,7 @@ Before opening a pull request, run the checks that match your change:
 
 ```bash
 python scripts/sync_release_version.py --check
+python scripts/check_doc_encoding.py
 pytest
 python scripts/smoke_core.py
 ```
@@ -57,6 +58,9 @@ cargo check --manifest-path desktop-shell/src-tauri/Cargo.toml
 - Read `AGENTS.md` before making AI-assisted runtime, tool, or frontend changes.
 - Add tests for path access, write tools, task execution, plugin behavior, and model-provider compatibility when those areas change.
 - Do not include API keys, user data, local conversation data, packaged binaries, or generated build output.
+- Store documentation as UTF-8 without BOM. If Chinese text looks garbled in a
+  terminal, verify with `python scripts/check_doc_encoding.py` before rewriting
+  the file.
 - Document user-visible behavior changes in `CHANGELOG.md`.
 - Change the product release version only in `runtime/version.py`, then run
   `python scripts/sync_release_version.py`. Do not tie schema, settings,

@@ -260,6 +260,30 @@ def synthesize_final_answer(
     return "\n".join(lines)
 
 
+def append_changed_files_footer(
+    content: str,
+    run_result: dict[str, Any] | None,
+    change_summary: dict[str, Any] | None = None,
+    *,
+    limit: int = 20,
+) -> str:
+    """Append a compact file list to a final answer when runtime facts have one."""
+    text = str(content or "").rstrip()
+    paths = _changed_file_footer_paths(run_result, change_summary)
+    if not text or not paths or _has_file_footer(text):
+        return str(content or "")
+
+    zh = _looks_chinese(text)
+    title = "本轮新增/变更文件：" if zh else "Files changed this turn:"
+    omitted = len(paths) - max(0, limit)
+    visible = paths[: max(0, limit)]
+    lines = ["", "", title]
+    lines.extend(f"- {path}" for path in visible)
+    if omitted > 0:
+        lines.append(f"- 另有 {omitted} 个文件未显示" if zh else f"- {omitted} more files omitted")
+    return text + "\n".join(lines)
+
+
 def _append_risks(lines: list[str], risks: Any) -> None:
     items = [risk_message_zh(item) for item in risks or [] if str(item or "").strip()]
     _append_list(lines, "仍需注意", items)
@@ -288,6 +312,46 @@ def _changed_paths_from_summary(change_summary: dict[str, Any] | None) -> list[s
         if isinstance(item, dict) and item.get("path"):
             changed_paths.append(str(item["path"]))
     return changed_paths
+
+
+def _changed_file_footer_paths(
+    run_result: dict[str, Any] | None,
+    change_summary: dict[str, Any] | None,
+) -> list[str]:
+    paths: list[str] = []
+    paths.extend(_changed_paths_from_summary(change_summary))
+    if isinstance(run_result, dict):
+        for key in (
+            "changed_paths",
+            "target_written_paths",
+            "observed_written_paths",
+            "written_paths",
+        ):
+            value = run_result.get(key)
+            if isinstance(value, list):
+                paths.extend(str(item) for item in value if str(item or "").strip())
+        artifacts = run_result.get("artifacts")
+        if isinstance(artifacts, list):
+            for item in artifacts:
+                if isinstance(item, dict) and item.get("path"):
+                    paths.append(str(item["path"]))
+    return list(dict.fromkeys(path.strip() for path in paths if path and path.strip()))
+
+
+def _has_file_footer(content: str) -> bool:
+    markers = (
+        "本轮新增/变更文件",
+        "新增/变更文件",
+        "已观察到的产物/变更",
+        "Files changed this turn",
+        "Changed files",
+        "New/changed files",
+    )
+    return any(marker in content for marker in markers)
+
+
+def _looks_chinese(content: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in content)
 
 
 def _short(text: str, limit: int) -> str:

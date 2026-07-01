@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import html
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -213,6 +214,31 @@ async def delete_file(input_data: dict[str, Any], context: Any) -> dict[str, Any
     path = context.path_guard.resolve(path_value)
     missing_ok = bool(input_data.get("missing_ok", False))
     return await asyncio.to_thread(delete_file_sync, path, missing_ok, context)
+
+
+async def copy_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    source_value = input_data.get("source_path") or input_data.get("source")
+    if not isinstance(source_value, str) or not source_value.strip():
+        raise ValueError("source_path is required")
+    destination_value = (
+        input_data.get("destination_path")
+        or input_data.get("destination")
+        or input_data.get("path")
+    )
+    if not isinstance(destination_value, str) or not destination_value.strip():
+        raise ValueError("destination_path is required")
+    source = context.path_guard.resolve(source_value)
+    destination = context.path_guard.resolve(destination_value)
+    create_dirs = bool(input_data.get("create_dirs", True))
+    overwrite = bool(input_data.get("overwrite", True))
+    return await asyncio.to_thread(
+        copy_file_sync,
+        source,
+        destination,
+        create_dirs,
+        overwrite,
+        context,
+    )
 
 
 async def apply_changes(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -444,6 +470,60 @@ def delete_file_sync(path: Path, missing_ok: bool, context: Any) -> dict[str, An
         "roles": ["deliverable", "verification"],
         "verification_strength": "standard",
         "artifact_kind": "file_delete",
+    }
+
+
+def copy_file_sync(
+    source: Path,
+    destination: Path,
+    create_dirs: bool,
+    overwrite: bool,
+    context: Any,
+) -> dict[str, Any]:
+    if not source.exists() or not source.is_file():
+        raise ValueError(f"source file not found: {source}")
+    if destination.exists() and destination.is_dir():
+        raise ValueError(f"destination is a directory: {destination}")
+    if destination.exists() and not overwrite:
+        raise FileExistsError(f"destination already exists: {destination}")
+    if create_dirs:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    if not destination.parent.exists():
+        raise FileNotFoundError(f"destination folder not found: {destination.parent}")
+    existed = destination.exists()
+    if existed and callable(getattr(context, "backup_file", None)):
+        context.backup_file(destination)
+    shutil.copy2(source, destination)
+    source_size = source.stat().st_size
+    destination_size = destination.stat().st_size
+    valid = source_size == destination_size
+    context.log("info", "file copied", {
+        "source_path": str(source),
+        "destination_path": str(destination),
+        "size": destination_size,
+        "overwritten": existed,
+    })
+    return {
+        "type": "file_copy",
+        "source_path": str(source),
+        "path": str(destination),
+        "destination_path": str(destination),
+        "paths": [str(destination)],
+        "source_size": source_size,
+        "size": destination_size,
+        "destination_size": destination_size,
+        "created": not existed,
+        "overwritten": existed,
+        "integrity": {
+            "checked": True,
+            "valid": valid,
+            "source_size": source_size,
+            "destination_size": destination_size,
+        },
+        "artifacts": ["file"],
+        "effects": ["file_write", "local_state_change"],
+        "roles": ["deliverable", "verification"],
+        "verification_strength": "standard" if valid else "none",
     }
 
 
@@ -987,6 +1067,44 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
             idempotent=False,
         ),
         delete_file,
+    )
+    registry.register(
+        ToolSpec(
+            id="filesystem.copy_file",
+            name="Copy file",
+            description=(
+                "Copy one file inside the configured workspace boundary. "
+                "Use this for copying assets, documents, models, images, or other project files "
+                "instead of shell commands such as copy, cp, or Copy-Item. The result records "
+                "the destination path as a structured local file artifact."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "source_path": {"type": "string", "description": "Existing source file path"},
+                    "destination_path": {"type": "string", "description": "Destination file path"},
+                    "create_dirs": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "Create destination parent folders when missing",
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "Overwrite an existing destination file",
+                    },
+                },
+                "required": ["source_path", "destination_path"],
+            },
+            requires_confirmation=True,
+            capability="filesystem.change_set",
+            artifacts=["file"],
+            effects=["file_write", "local_state_change"],
+            roles=["deliverable", "verification"],
+            verification_strength="standard",
+            idempotent=False,
+        ),
+        copy_file,
     )
     registry.register(
         ToolSpec(

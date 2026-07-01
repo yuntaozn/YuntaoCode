@@ -30,6 +30,11 @@ foundation easier to understand, test, and extend.
     history, including previous write/document context and output-length goals.
   - `context_hygiene.py`: model-context cleanup before execution; keeps noisy
     history from becoming examples for the model.
+  - `context_noise.py`: pure classification and summaries for historical
+    tool-call markup, failure logs, and process-log noise.
+  - `model_context_boundary.py`: model-facing boundary notices and historical
+    task-lineage markers. It should not classify intent or decide task
+    strategy.
   - `tool_result_risks.py`: converts tool-result facts into non-blocking,
     model-facing risk evidence and audit records.
   - `profiles.py`: internal assistant profiles such as chat, analysis, coding,
@@ -112,6 +117,11 @@ foundation easier to understand, test, and extend.
 - Model-context cleanup belongs in `runtime/agent_strategy/context_hygiene.py`.
   Do not remove visible chat history to fix model pollution; sanitize only the
   model-facing context and keep audit records intact.
+- Historical noise classification belongs in
+  `runtime/agent_strategy/context_noise.py`; boundary wording and task-lineage
+  markers belong in `runtime/agent_strategy/model_context_boundary.py`.
+  Keep both layers advisory and model-facing. They must not become hidden task
+  routers or blockers.
 - Follow-up task inheritance belongs in
   `runtime/agent_strategy/conversation_task_context.py`; API handlers should
   not reimplement previous-task scanning rules.
@@ -169,6 +179,7 @@ Run the checks that match your change:
 
 ```bash
 python scripts/sync_release_version.py --check
+python scripts/check_doc_encoding.py
 pytest
 python -m py_compile runtime/api/conversations.py runtime/conversation_runner.py
 node --check runtime/panel/static/panel.js
@@ -196,11 +207,19 @@ Update the relevant docs when behavior or extension points change:
 
 - `README.md` / `README.en.md` for public-facing usage and architecture.
 - `docs/architecture.md` for runtime architecture decisions.
+- `docs/context-runtime.md` for Context Runtime boundaries, model-context
+  hygiene, task lineage, snapshots, memory scope, and Context Pack direction.
+- `docs/document-encoding.md` for UTF-8 documentation rules and encoding
+  checks.
 - `docs/plugin-system.md` for plugin direction.
 - `docs/versioning.md` for product release version synchronization and
   independent compatibility-version boundaries.
 - `SECURITY.md` for boundary or permission changes.
 - `CHANGELOG.md` for user-visible changes.
+
+Documentation files should be UTF-8 without BOM. On Windows PowerShell, read
+Chinese documentation with `Get-Content <path> -Encoding UTF8`; do not assume a
+document is corrupted just because default terminal decoding shows mojibake.
 
 ## When In Doubt
 

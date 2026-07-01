@@ -477,6 +477,15 @@ def test_visual_screenshot_satisfies_visual_verification_modality() -> None:
         [events[-1]],
         contract,
     ) == ()
+    assert sufficient_deliverable_verification_events(
+        events,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) == [events[-1]]
+    assert missing_required_verification_modalities(
+        [events[-1]],
+        contract,
+    ) == ()
 
 
 def test_visual_artifact_from_state_tool_satisfies_visual_verification_modality() -> None:
@@ -504,15 +513,93 @@ def test_visual_artifact_from_state_tool_satisfies_visual_verification_modality(
         events[-1],
         task_contract=contract,
     ) == ("visual",)
-    assert sufficient_deliverable_verification_events(
-        events,
-        task_contract=contract,
-        workspace_path="D:/workspace",
-    ) == [events[-1]]
-    assert missing_required_verification_modalities(
-        [events[-1]],
-        contract,
-    ) == ()
+
+
+def test_nested_visual_evidence_satisfies_visual_verification_modality() -> None:
+    event = {
+        "tool": "mcp_demo.get_viewport_screenshot",
+        "status": "success",
+        "output": {
+            "roles": ["verification"],
+            "verification_strength": "standard",
+            "visual_evidence": {
+                "kind": "visual_evidence",
+                "artifact": {
+                    "kind": "screenshot",
+                    "path": "D:/workspace/scene.png",
+                    "format": "png",
+                },
+                "runtime": {"has_errors": False},
+            },
+        },
+    }
+
+    assert verification_evidence_modalities(event) == ("visual",)
+    assert verification_evidence_strength(event) == "standard"
+
+
+def test_preview_with_runtime_errors_is_not_successful_visual_verification() -> None:
+    event = {
+        "tool": "preview.capture_local_html",
+        "status": "success",
+        "output": {
+            "roles": ["verification"],
+            "verification_strength": "standard",
+            "artifact_kind": "screenshot",
+            "path": "D:/workspace/preview.png",
+            "has_runtime_errors": True,
+            "console_errors": [{"type": "error", "text": "module failed"}],
+        },
+    }
+
+    assert verification_evidence_strength(event) == "none"
+    assert verification_evidence_modalities(event) == ()
+
+
+def test_preview_interaction_satisfies_visual_behavioral_and_content_modalities() -> None:
+    event = {
+        "tool": "preview.interact_page",
+        "status": "success",
+        "output": {
+            "roles": ["verification"],
+            "verification_strength": "standard",
+            "artifact_kind": "screenshot",
+            "artifacts": ["screenshot", "visual_evidence", "interaction_trace", "dom_text"],
+            "path": "D:/workspace/after.png",
+            "interaction": {
+                "action_count": 3,
+                "assertion_failed_count": 0,
+            },
+            "text": "答题完成后显示反馈",
+            "has_runtime_errors": False,
+        },
+    }
+
+    assert verification_evidence_strength(event) == "standard"
+    assert verification_evidence_modalities(event) == ("visual", "behavioral", "content")
+
+
+def test_preview_interaction_failed_assertion_is_not_successful_verification() -> None:
+    event = {
+        "tool": "preview.interact_page",
+        "status": "success",
+        "output": {
+            "roles": ["verification"],
+            "verification_strength": "none",
+            "artifact_kind": "screenshot",
+            "artifacts": ["screenshot", "visual_evidence", "interaction_trace", "dom_text"],
+            "path": "D:/workspace/after.png",
+            "interaction": {
+                "action_count": 2,
+                "assertion_failed_count": 1,
+            },
+            "text": "仍然在答题前显示答案",
+            "has_runtime_errors": True,
+        },
+    }
+
+    assert verification_evidence_strength(event) == "none"
+    assert verification_evidence_modalities(event) == ()
 
 
 def test_failed_tool_uses_declared_task_role_without_claiming_successful_effect() -> None:

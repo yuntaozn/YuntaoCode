@@ -29,6 +29,8 @@ from runtime.agent_strategy.tool_event_roles import (
 from runtime.agent_strategy.tool_result_risks import assess_tool_result_risks
 from runtime.capability_evidence import build_capability_evidence_summary
 from runtime.core.result import RUN_RESULT_SCHEMA_VERSION
+from runtime.debug_session import debug_session_summary, normalize_debug_session
+from runtime.visual_evidence import normalize_visual_evidence, visual_evidence_summary
 
 
 def build_run_result(
@@ -112,6 +114,13 @@ def build_run_result(
             workspace_path=workspace_path,
             mode=mode,
         )
+        if not write_successes and task_contract.get("requires_verification"):
+            verification_successes = successful_verification_events(tool_events, mode)
+            sufficient_verification_successes = _sufficient_verification_events_for_contract(
+                verification_successes,
+                task_contract=task_contract,
+                mode=mode,
+            )
     else:
         write_successes = state_write_successes
         write_failures = state_write_failures
@@ -139,6 +148,7 @@ def build_run_result(
         for path in _event_paths(workspace_path, event)
     )
     written_paths = _unique([*target_written_paths, *observed_written_paths])
+    code_artifact_written = _has_code_artifact(target_written_paths or observed_written_paths)
     artifacts = _artifact_records(workspace_path, write_successes)
     test_successes = [
         event for event in verification_successes
@@ -176,6 +186,8 @@ def build_run_result(
         }
         for event in verification_successes
     ]
+    visual_evidence = _visual_evidence_records(tool_events)
+    debug_sessions = _debug_session_records(tool_events)
     observed_verification_modalities = _unique(
         modality
         for item in verification_evidence
@@ -187,6 +199,15 @@ def build_run_result(
             task_contract,
             mode=mode,
         )
+    )
+    missing_code_test = _missing_code_test(
+        requires_code_write=requires_code_write,
+        code_artifact_written=code_artifact_written,
+        write_successes=write_successes,
+        test_successes=test_successes,
+        required_modalities=required_modalities,
+        observed_modalities=observed_verification_modalities,
+        sufficient_verifications=sufficient_verification_successes,
     )
     capability_evidence = build_capability_evidence_summary(
         tool_events,
@@ -252,7 +273,7 @@ def build_run_result(
     requires_target_verification = bool(
         isinstance(task_contract, dict)
         and task_contract.get("requires_verification")
-        and write_successes
+        and (write_successes or not requires_target_deliverable)
     )
     missing_required_verification = bool(
         requires_target_verification and not sufficient_verification_successes
@@ -265,8 +286,7 @@ def build_run_result(
             risks.append("verification_modality_missing")
         elif verification_successes:
             risks.append("verification_evidence_weak")
-    code_artifact_written = _has_code_artifact(target_written_paths or observed_written_paths)
-    if requires_code_write and code_artifact_written and write_successes and not test_successes:
+    if missing_code_test:
         risks.append("test_not_observed")
     if invalid_verification_failures:
         risks.append("invalid_verification_method")
@@ -420,10 +440,7 @@ def build_run_result(
         has_document_coverage_failure=bool(coverage_failure),
         has_document_min_output_failure=bool(min_output_failure),
         has_missing_code_test=(
-            bool(requires_code_write)
-            and bool(code_artifact_written)
-            and bool(write_successes)
-            and not bool(test_successes)
+            missing_code_test
         ),
         has_missing_target_deliverable=missing_target_deliverable,
         has_missing_required_verification=missing_required_verification,
@@ -450,6 +467,8 @@ def build_run_result(
             "unrecovered_write_failures": len(unrecovered_write_failures),
             "verification_successes": len(verification_successes),
             "test_successes": len(test_successes),
+            "visual_evidence": len(visual_evidence),
+            "debug_sessions": len(debug_sessions),
             "failures": len(failures),
             "blocking_failures": len(blocking_failures),
             "degraded_failures": len(degraded_failures),
@@ -463,6 +482,8 @@ def build_run_result(
         "artifacts": artifacts[:24],
         "verified": verified[:12],
         "verification_evidence": verification_evidence[:12],
+        "visual_evidence": visual_evidence[:12],
+        "debug_sessions": debug_sessions[:12],
         "capability_evidence": capability_evidence,
         "required_verification_strength": required_strength,
         "required_verification_modalities": list(required_modalities),
@@ -579,6 +600,63 @@ def _unrecovered_failed_deliverable_events(
         if not recovered:
             unrecovered.append(event)
     return unrecovered
+
+
+def _missing_code_test(
+    *,
+    requires_code_write: bool,
+    code_artifact_written: bool,
+    write_successes: list[dict[str, Any]],
+    test_successes: list[dict[str, Any]],
+    required_modalities: tuple[str, ...],
+    observed_modalities: list[str],
+    sufficient_verifications: list[dict[str, Any]],
+) -> bool:
+    if not (requires_code_write and code_artifact_written and write_successes):
+        return False
+    if test_successes:
+        return False
+    if required_modalities:
+        if "behavioral" in required_modalities:
+            return True
+        if set(required_modalities).issubset(set(observed_modalities)) and sufficient_verifications:
+            return False
+    return True
+
+
+def _sufficient_verification_events_for_contract(
+    events: list[dict[str, Any]],
+    *,
+    task_contract: dict[str, Any],
+    mode: str | None,
+) -> list[dict[str, Any]]:
+    required = required_verification_strength(task_contract)
+    candidates = [
+        event for event in events
+        if verification_strength_meets(
+            verification_evidence_strength(
+                event,
+                mode=mode,
+                task_contract=task_contract,
+            ),
+            required,
+        )
+    ]
+    required_modalities = required_verification_modalities(task_contract)
+    if not required_modalities:
+        return candidates
+    observed_modalities: set[str] = set()
+    for event in candidates:
+        observed_modalities.update(
+            verification_evidence_modalities(
+                event,
+                mode=mode,
+                task_contract=task_contract,
+            )
+        )
+    if set(required_modalities).issubset(observed_modalities):
+        return candidates
+    return []
 
 
 def _failure_details(
@@ -748,6 +826,58 @@ def _artifact_records(workspace_path: str, events: list[dict[str, Any]]) -> list
                 if compact_validation:
                     record["validation"] = compact_validation
             records.append(record)
+    return records
+
+
+def _visual_evidence_records(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for event in events:
+        tool_id = str(event.get("tool") or "")
+        status = _effective_event_status(tool_id, event)
+        if status not in {"success", "partial"}:
+            continue
+        output = event.get("output") if isinstance(event.get("output"), dict) else {}
+        evidence = normalize_visual_evidence(output)
+        summary = visual_evidence_summary(evidence)
+        if not summary:
+            continue
+        path = str(summary.get("path") or "")
+        key = (tool_id, path)
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append({
+            "tool": tool_id,
+            "status": status,
+            **summary,
+        })
+    return records
+
+
+def _debug_session_records(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for event in events:
+        tool_id = str(event.get("tool") or "")
+        output = event.get("output") if isinstance(event.get("output"), dict) else {}
+        session = normalize_debug_session(output)
+        summary = debug_session_summary(session)
+        if not summary:
+            continue
+        key = (
+            tool_id,
+            str(summary.get("command") or ""),
+            str(summary.get("pid") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append({
+            "tool": tool_id,
+            "status": _effective_event_status(tool_id, event),
+            **summary,
+        })
     return records
 
 

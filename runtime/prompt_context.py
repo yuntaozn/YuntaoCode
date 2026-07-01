@@ -36,6 +36,22 @@ large gathered content with filesystem.write_file. When the user asks to save a
 webpage as a screenshot or PDF, use web.capture_page.
 """
 
+_PREVIEW_CAPABILITY_ADDENDUM = """
+
+## Preview Capability Addendum
+When preview.* tools are available and the task involves HTML, CSS,
+JavaScript, UI layout, visual appearance, local pages, localhost, screenshots,
+or whether a rendered result looks correct, use preview tools as visual verification evidence. For a local HTML file inside the workspace, prefer
+preview.capture_local_html after the write. For a running local or public URL,
+use preview.capture_url. Treat console errors, page errors, and failed requests
+as evidence for the model to decide whether to repair, continue, or report the
+remaining risk. If no preview was captured, keep visual correctness marked as
+unobserved instead of treating source-only inspection as visual verification.
+Local HTML preview is served through a short-lived 127.0.0.1 static server by
+default so module scripts, import maps, relative assets, and Three.js pages are
+closer to real browser execution than file:// loading.
+"""
+
 _TEXT_WRITE_ROUTE_ADDENDUM = """
 
 ## Text Write Route Addendum
@@ -80,6 +96,8 @@ def build_system_prompt(
         prompt += "\n" + capability_context
         if _has_web_capability_context(capability_context):
             prompt += _WEB_ACCESS_CAPABILITY_ADDENDUM
+        if _has_preview_capability_context(capability_context):
+            prompt += _PREVIEW_CAPABILITY_ADDENDUM
         if _has_text_write_context(capability_context):
             prompt += _TEXT_WRITE_ROUTE_ADDENDUM
     if "Capability Extension Rules" in prompt:
@@ -90,6 +108,11 @@ def build_system_prompt(
 def _has_web_capability_context(capability_context: str) -> bool:
     text = str(capability_context or "")
     return "web." in text or "web.network_fetch" in text
+
+
+def _has_preview_capability_context(capability_context: str) -> bool:
+    text = str(capability_context or "")
+    return "preview." in text or "preview.visual_debug" in text
 
 
 def _has_text_write_context(capability_context: str) -> bool:

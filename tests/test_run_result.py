@@ -39,6 +39,9 @@ def test_build_run_result_records_writes_verification_and_risks() -> None:
     assert result["counts"]["write_successes"] == 1
     assert result["counts"]["verification_successes"] == 1
     assert result["counts"]["test_successes"] == 1
+    assert result["counts"]["debug_sessions"] == 1
+    assert result["debug_sessions"][0]["tool"] == "shell.run_command"
+    assert result["debug_sessions"][0]["exit_code"] == 0
     assert result["risks"] == []
 
 
@@ -125,6 +128,131 @@ def test_build_run_result_does_not_treat_py_compile_as_behavioral_api_verificati
     assert result["missing_verification_modalities"] == ["behavioral"]
     assert "verification_modality_missing" in result["risks"]
     assert "test_not_observed" in result["risks"]
+
+
+def test_build_run_result_accepts_visual_verification_for_visual_code_task() -> None:
+    contract = {
+        "intent": "write_required",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "deliverables": [
+            {"kind": "code", "path_hint": "D:/workspace/viewer.html"}
+        ],
+    }
+
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary={"files": [{"path": "viewer.html"}]},
+        requires_code_write=True,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "code.edit_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/viewer.html"},
+                "output": {"path": "D:/workspace/viewer.html"},
+            },
+            {
+                "tool": "preview.capture_local_html",
+                "status": "success",
+                "input": {"path": "D:/workspace/viewer.html"},
+                "output": {
+                    "path": "D:/workspace/preview.png",
+                    "roles": ["verification"],
+                    "artifact_kind": "screenshot",
+                    "verification_strength": "standard",
+                    "has_runtime_errors": False,
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "success"
+    assert result["observed_verification_modalities"] == ["visual"]
+    assert result["missing_verification_modalities"] == []
+    assert result["counts"]["visual_evidence"] == 1
+    assert result["visual_evidence"][0]["tool"] == "preview.capture_local_html"
+    assert result["visual_evidence"][0]["path"] == "D:/workspace/preview.png"
+    assert result["visual_evidence"][0]["model_context_eligible"] is True
+    assert "test_not_observed" not in result["risks"]
+
+
+def test_build_run_result_preserves_compact_visual_and_debug_summaries() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        task_contract={
+            "requires_write": False,
+            "requires_state_change": False,
+            "requires_verification": True,
+            "required_verification_modalities": ["visual"],
+            "deliverables": [{"kind": "answer", "description": "Visual check"}],
+        },
+        tool_events=[
+            {
+                "tool": "preview.capture_local_html",
+                "status": "success",
+                "output": {
+                    "roles": ["verification"],
+                    "verification_strength": "standard",
+                    "artifact_kind": "screenshot",
+                    "path": "C:/Users/demo/AppData/Local/YuntaoCode/task-artifacts/run/preview/index.png",
+                    "visual_evidence": {
+                        "schema_version": "visual_evidence.v1",
+                        "kind": "visual_evidence",
+                        "source_type": "local_html",
+                        "source_url": "http://127.0.0.1:1234/index.html",
+                        "source_path": "D:/workspace/index.html",
+                        "path": "C:/Users/demo/AppData/Local/YuntaoCode/task-artifacts/run/preview/index.png",
+                        "artifact_kind": "screenshot",
+                        "format": "png",
+                        "width": 1440,
+                        "height": 1000,
+                        "size": 272301,
+                        "captured_at": "2026-07-01T15:22:54Z",
+                        "title": "Demo",
+                        "status_code": 200,
+                        "has_runtime_errors": False,
+                        "console_error_count": 0,
+                        "page_error_count": 0,
+                        "failed_request_count": 1,
+                        "model_context_eligible": True,
+                        "model_context_modality": "image",
+                    },
+                    "debug_session": {
+                        "schema_version": "debug_session.v1",
+                        "kind": "debug_session",
+                        "source_type": "preview.capture_page",
+                        "command": "playwright capture http://127.0.0.1:1234/index.html",
+                        "executable": "playwright.chromium",
+                        "cwd": "D:/workspace",
+                        "exit_code": 0,
+                        "timed_out": False,
+                        "timeout": 20,
+                        "duration_seconds": 13.165,
+                        "stdout_chars": 36,
+                        "stderr_chars": 0,
+                        "service": {"kind": "browser_preview", "status_code": 200},
+                        "diagnostic_count": 0,
+                        "status": "success",
+                        "has_runtime_errors": False,
+                    },
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "success"
+    assert result["visual_evidence"][0]["path"].endswith("index.png")
+    assert result["visual_evidence"][0]["source_type"] == "local_html"
+    assert result["visual_evidence"][0]["width"] == 1440
+    assert result["debug_sessions"][0]["command"].startswith("playwright capture")
+    assert result["debug_sessions"][0]["exit_code"] == 0
+    assert result["debug_sessions"][0]["service"]["status_code"] == 200
 
 
 def test_build_run_result_marks_model_error_after_write_as_partial() -> None:
@@ -977,6 +1105,81 @@ def test_build_run_result_accepts_visual_evidence_for_visual_modality() -> None:
     assert "visual_verification_not_observed" not in result["risks"]
 
 
+def test_build_run_result_counts_read_only_visual_verification() -> None:
+    contract = {
+        "intent": "read_only_analysis",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "deliverables": [{"kind": "answer", "description": "Visual analysis"}],
+    }
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "preview.capture_local_html",
+                "status": "success",
+                "output": {
+                    "roles": ["verification"],
+                    "verification_strength": "standard",
+                    "artifact_kind": "screenshot",
+                    "path": "D:/workspace/preview.png",
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "success"
+    assert result["counts"]["verification_successes"] == 1
+    assert result["observed_verification_modalities"] == ["visual"]
+    assert result["missing_verification_modalities"] == []
+
+
+def test_build_run_result_marks_read_only_visual_runtime_errors_partial() -> None:
+    contract = {
+        "intent": "read_only_analysis",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "deliverables": [{"kind": "answer", "description": "Visual analysis"}],
+    }
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "preview.capture_local_html",
+                "status": "success",
+                "output": {
+                    "roles": ["verification"],
+                    "verification_strength": "standard",
+                    "artifact_kind": "screenshot",
+                    "path": "D:/workspace/preview.png",
+                    "has_runtime_errors": True,
+                    "console_errors": [{"type": "error", "text": "module failed"}],
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["counts"]["verification_successes"] == 1
+    assert result["verification_evidence"][0]["strength"] == "none"
+    assert result["verification_evidence"][0]["sufficient"] is False
+    assert result["observed_verification_modalities"] == []
+    assert result["missing_verification_modalities"] == ["visual"]
+    assert "required_verification_not_satisfied" in result["risks"]
+    assert "visual_verification_not_observed" in result["risks"]
+    assert "verification_modality_missing" in result["risks"]
+
+
 def test_build_run_result_marks_unverified_external_state_deliverable_partial() -> None:
     contract = {
         "requires_write": False,
@@ -1306,6 +1509,54 @@ def test_build_run_result_includes_capability_evidence_summary() -> None:
     assert evidence["observed_capability_ids"] == ["mcp.blender"]
     assert evidence["observed_effects"] == ["external_state_change"]
     assert evidence["artifacts"] == ["external_state"]
+
+
+def test_build_run_result_treats_copy_file_as_file_deliverable() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace/course",
+        tool_events=[
+            {
+                "tool": "filesystem.copy_file",
+                "status": "success",
+                "input": {
+                    "source_path": "D:/workspace/course/other/standing.glb",
+                    "destination_path": "D:/workspace/course/assets/standing.glb",
+                },
+                "output": {
+                    "type": "file_copy",
+                    "source_path": "D:/workspace/course/other/standing.glb",
+                    "path": "D:/workspace/course/assets/standing.glb",
+                    "paths": ["D:/workspace/course/assets/standing.glb"],
+                    "integrity": {"checked": True, "valid": True},
+                    "roles": ["deliverable", "verification"],
+                    "effects": ["file_write", "local_state_change"],
+                    "artifacts": ["file"],
+                    "verification_strength": "standard",
+                },
+            },
+        ],
+        change_summary=None,
+        mode="terminal",
+        task_contract={
+            "intent": "write_required",
+            "requires_write": True,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "deliverables": [
+                {
+                    "kind": "file",
+                    "path_hint": "D:/workspace/course/assets/standing.glb",
+                    "path_policy": "hint",
+                }
+            ],
+        },
+    )
+
+    assert result["status"] == "success"
+    assert result["written_paths"] == ["assets/standing.glb"]
+    assert result["target_written_paths"] == ["assets/standing.glb"]
+    assert result["artifacts"][0]["path"] == "assets/standing.glb"
+    assert result["counts"]["verification_successes"] == 1
 
 
 def test_build_run_result_fails_when_requested_capability_has_no_tool_evidence() -> None:

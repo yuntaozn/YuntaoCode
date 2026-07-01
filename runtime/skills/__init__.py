@@ -11,6 +11,7 @@ from .document import register_document_tools
 from .filesystem import register_filesystem_tools
 from .git import register_git_tools
 from .memory import register_memory_tools
+from .preview import register_preview_tools
 from .shell import register_shell_tools
 from .spreadsheet import register_spreadsheet_tools
 from .web import register_web_tools
@@ -28,6 +29,7 @@ BUILTIN_TOOL_GROUPS: dict[str, ToolRegistrar] = {
     "shell": register_shell_tools,
     "git": register_git_tools,
     "web": register_web_tools,
+    "preview": register_preview_tools,
     "memory": register_memory_tools,
 }
 

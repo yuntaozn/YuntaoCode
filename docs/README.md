@@ -21,6 +21,8 @@ new architecture note belongs.
 - [testing-intent.md](testing-intent.md) calibrates what the test suite should
   protect during the 0.1 closeout and when a regression test should become a
   general runtime contract.
+- [document-encoding.md](document-encoding.md) defines UTF-8 documentation
+  rules and the local encoding check.
 
 ## Task Runtime
 
@@ -88,3 +90,6 @@ new architecture note belongs.
   to `skill-evolution.md` after replay/evaluation evidence matters.
 - Avoid adding a new document for a single rule unless it is likely to become a
   stable extension point.
+- Store documentation as UTF-8 without BOM. If Chinese text appears garbled in
+  PowerShell or another terminal, verify with `python scripts/check_doc_encoding.py`
+  before rewriting the document.

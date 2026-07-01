@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -10,6 +10,7 @@ from runtime.security import PathGuard
 from runtime.skills.filesystem import (
     apply_changes,
     append_text_chunk,
+    copy_file,
     create_text_draft,
     delete_file,
     finalize_text_file,
@@ -26,9 +27,13 @@ from runtime.skills.filesystem import (
 class FakeContext:
     path_guard: PathGuard
     temp_dir: Path
+    backups: list[Path] = field(default_factory=list)
 
     def log(self, level: str, message: str, data: dict | None = None) -> None:
         return None
+
+    def backup_file(self, path: Path) -> None:
+        self.backups.append(path)
 
 
 @pytest.mark.asyncio
@@ -135,6 +140,58 @@ async def test_delete_file_removes_file_with_structured_evidence(tmp_path: Path)
     assert result["effects"] == ["file_delete", "local_state_change"]
     assert result["roles"] == ["deliverable", "verification"]
     assert result["verification_strength"] == "standard"
+
+
+@pytest.mark.asyncio
+async def test_copy_file_creates_destination_and_returns_artifact_facts(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    source = workspace / "other" / "standing.glb"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"glb-data")
+    destination = workspace / "project" / "assets" / "standing.glb"
+    context = FakeContext(PathGuard([workspace]), tmp_path / "task")
+
+    result = await copy_file(
+        {
+            "source_path": str(source),
+            "destination_path": str(destination),
+        },
+        context,
+    )
+
+    assert destination.read_bytes() == b"glb-data"
+    assert result["type"] == "file_copy"
+    assert result["source_path"] == str(source)
+    assert result["path"] == str(destination)
+    assert result["paths"] == [str(destination)]
+    assert result["created"] is True
+    assert result["integrity"]["valid"] is True
+    assert result["roles"] == ["deliverable", "verification"]
+    assert result["effects"] == ["file_write", "local_state_change"]
+    assert context.backups == []
+
+
+@pytest.mark.asyncio
+async def test_copy_file_backs_up_existing_destination(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source = workspace / "source.txt"
+    destination = workspace / "destination.txt"
+    source.write_text("new", encoding="utf-8")
+    destination.write_text("old", encoding="utf-8")
+    context = FakeContext(PathGuard([workspace]), tmp_path / "task")
+
+    result = await copy_file(
+        {
+            "source_path": str(source),
+            "destination_path": str(destination),
+        },
+        context,
+    )
+
+    assert destination.read_text(encoding="utf-8") == "new"
+    assert result["overwritten"] is True
+    assert context.backups == [destination]
 
 
 @pytest.mark.asyncio

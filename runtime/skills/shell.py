@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 import locale
 import os
 from pathlib import Path
@@ -11,8 +12,10 @@ import shlex
 import signal
 import subprocess
 import sys
+import time
 from typing import Any
 
+from runtime.debug_session import build_debug_session
 from runtime.tool_registry import ToolRegistry, ToolSpec
 
 MAX_TIMEOUT = 120
@@ -54,6 +57,10 @@ def _decode_output(raw: bytes) -> str:
         except (UnicodeDecodeError, LookupError):
             continue
     return raw.decode("utf-8", errors="replace")
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _quote_windows_arg(value: Any) -> str:
@@ -134,6 +141,9 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
     timed_out = False
     stdout_bytes = b""
     stderr_bytes = b""
+    process: asyncio.subprocess.Process | None = None
+    started_at = _utc_now_iso()
+    started_monotonic = time.monotonic()
     try:
         process_kwargs: dict[str, Any] = {}
         if argv:
@@ -201,7 +211,15 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
 
     stdout = _decode_output(stdout_bytes)[:MAX_STDOUT]
     stderr = _decode_output(stderr_bytes)[:MAX_STDERR]
-    exit_code = process.returncode or 0
+    exit_code = process.returncode if process is not None and process.returncode is not None else 0
+    diagnostics = _shell_result_diagnostics(
+        command=command,
+        argv=argv,
+        cwd=cwd,
+        exit_code=exit_code,
+        stdout=stdout,
+        stderr=stderr,
+    )
 
     context.log(
         "info" if exit_code == 0 else "error",
@@ -209,7 +227,7 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
         {"timed_out": timed_out},
     )
 
-    return {
+    output = {
         "command": display_command,
         "executable": command,
         "args": argv,
@@ -221,9 +239,33 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
         "stderr": stderr,
         "timed_out": timed_out,
         "timeout": timeout,
+        "pid": process.pid if process is not None else None,
         "stdout_truncated": len(stdout_bytes) > MAX_STDOUT,
         "stderr_truncated": len(stderr_bytes) > MAX_STDERR,
     }
+    if diagnostics:
+        output["diagnostics"] = diagnostics
+        output["failure_message"] = str(diagnostics[0].get("message") or "")
+    output["debug_session"] = build_debug_session(
+        source_type="shell.run_command",
+        command=display_command,
+        executable=command,
+        args=argv,
+        cwd=cwd,
+        pid=process.pid if process is not None else None,
+        exit_code=exit_code,
+        timed_out=timed_out,
+        timeout=timeout,
+        stdout=stdout,
+        stderr=stderr,
+        stdout_truncated=len(stdout_bytes) > MAX_STDOUT,
+        stderr_truncated=len(stderr_bytes) > MAX_STDERR,
+        diagnostics=diagnostics,
+        started_at=started_at,
+        finished_at=_utc_now_iso(),
+        duration_seconds=round(max(0.0, time.monotonic() - started_monotonic), 3),
+    )
+    return output
 
 
 def _resolve_cwd(input_data: dict[str, Any], context: Any) -> str:
@@ -260,6 +302,93 @@ def _context_temp_dir(context: Any) -> Path | None:
     if temp_dir is None:
         return None
     return Path(temp_dir).resolve()
+
+
+def _shell_result_diagnostics(
+    *,
+    command: str,
+    argv: list[str],
+    cwd: str,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+) -> list[dict[str, Any]]:
+    if exit_code == 0:
+        return []
+    node_check = _node_check_inline_script_diagnostic(command, argv, cwd)
+    if node_check:
+        return [node_check]
+    return []
+
+
+def _node_check_inline_script_diagnostic(
+    command: str,
+    argv: list[str],
+    cwd: str,
+) -> dict[str, Any] | None:
+    executable = Path(str(command or "")).name.lower()
+    if executable not in {"node", "node.exe"}:
+        return None
+    if not argv or str(argv[0]).strip().lower() not in {"-c", "--check"}:
+        return None
+    if len(argv) < 2:
+        return None
+    candidate = str(argv[1] or "").strip()
+    if not candidate or not _looks_like_inline_javascript(candidate, cwd):
+        return None
+    suggested_file = _extract_read_file_sync_path(candidate)
+    suggested: list[dict[str, Any]] = []
+    if suggested_file:
+        suggested.append({
+            "command": "node",
+            "args": ["--check", suggested_file],
+            "purpose": "syntax-check the JavaScript file without executing it",
+        })
+    suggested.append({
+        "command": "node",
+        "args": ["-e", "<inline JavaScript>"],
+        "purpose": "run a small inline Node.js probe when execution is intended",
+    })
+    return {
+        "code": "node_check_inline_script",
+        "severity": "error",
+        "message": (
+            "Node -c/--check expects a JavaScript file path, but this call passed "
+            "inline JavaScript. Use node --check <file> for syntax-only checks, "
+            "or node -e <code> for a small execution probe."
+        ),
+        "received_arg_preview": candidate[:500],
+        "suggested_calls": suggested,
+    }
+
+
+def _looks_like_inline_javascript(value: str, cwd: str) -> bool:
+    path_candidate = Path(value)
+    if not path_candidate.is_absolute():
+        path_candidate = Path(cwd) / value
+    try:
+        if path_candidate.exists():
+            return False
+    except OSError:
+        pass
+    lowered = value.lower()
+    inline_markers = (
+        "const ",
+        "let ",
+        "var ",
+        "require(",
+        "import ",
+        "console.",
+        "=>",
+        ";",
+        "\n",
+    )
+    return any(marker in lowered for marker in inline_markers)
+
+
+def _extract_read_file_sync_path(value: str) -> str:
+    match = re.search(r"readFileSync\(\s*['\"]([^'\"]+)['\"]", value)
+    return match.group(1).replace("\\\\", "\\") if match else ""
 
 
 def register_shell_tools(registry: ToolRegistry) -> None:

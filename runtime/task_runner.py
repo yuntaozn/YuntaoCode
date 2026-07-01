@@ -194,15 +194,36 @@ class TaskRunner:
             output = await tool.handler(task.input, context)
             failure_reason = self._output_failure_reason(task.tool, output)
             partial_reason = "" if failure_reason else self._output_partial_reason(task.tool, output)
+            if backup_session:
+                try:
+                    backup_meta = backup_session.finish(
+                        "failure" if failure_reason else ("partial" if partial_reason else "success"),
+                        int(backup_settings.get("keep_rounds") or 5),
+                    )
+                    if backup_meta:
+                        for warning in backup_meta.get("retention_warnings") or []:
+                            backup_warnings.append({
+                                "path": str(warning.get("path") or ""),
+                                "error": str(warning.get("error") or ""),
+                                "phase": "retention",
+                            })
+                            log(
+                                "warning",
+                                "backup retention cleanup failed; continuing without pruning old backup",
+                                warning,
+                            )
+                        if isinstance(output, dict):
+                            output["_backup"] = backup_meta
+                except Exception as backup_exc:
+                    warning = {"path": "", "error": str(backup_exc), "phase": "finish"}
+                    backup_warnings.append(warning)
+                    log(
+                        "warning",
+                        "backup finish failed; continuing without restore point metadata",
+                        warning,
+                    )
             if backup_warnings and isinstance(output, dict):
                 output["_backup_warnings"] = list(backup_warnings)
-            if backup_session:
-                backup_meta = backup_session.finish(
-                    "failure" if failure_reason else ("partial" if partial_reason else "success"),
-                    int(backup_settings.get("keep_rounds") or 5),
-                )
-                if backup_meta and isinstance(output, dict):
-                    output["_backup"] = backup_meta
             if failure_reason:
                 self.store.update(task_id, status="failure", output=output, error=failure_reason)
                 self.store.append_log(task_id, "error", failure_reason)
@@ -220,7 +241,12 @@ class TaskRunner:
                     if backup_meta:
                         self.store.append_log(task_id, "warning", "backup captured before failed write", backup_meta)
                 except Exception as backup_exc:
-                    self.store.append_log(task_id, "error", f"backup failed: {backup_exc}")
+                    self.store.append_log(
+                        task_id,
+                        "warning",
+                        "backup finish failed while handling tool failure",
+                        {"error": str(backup_exc)},
+                    )
             self.store.update(task_id, status="failure", error=str(exc))
             self.store.append_log(task_id, "error", str(exc))
 
@@ -282,8 +308,9 @@ class TaskRunner:
 def _compact_failure_message(output: dict[str, Any], fallback: str) -> str:
     stderr = str(output.get("stderr") or "").strip()
     stdout = str(output.get("stdout") or "").strip()
+    failure_message = str(output.get("failure_message") or "").strip()
     message = str(output.get("message") or output.get("content") or "").strip()
-    detail = stderr or stdout or message
+    detail = failure_message or stderr or stdout or message
     if not detail:
         return fallback
     return f"{fallback}: {detail[:500]}"

@@ -20,6 +20,8 @@ def assess_tool_result_risks(
     """
     normalized_status = str(status or "").strip()
     if normalized_status == "failure":
+        if str(tool_id or "").strip() == "shell.run_command":
+            return _failed_shell_risks(tool_id, output, error=error)
         return _failed_tool_risks(tool_id, output, error=error)
     if normalized_status != "success" or not isinstance(output, dict):
         return []
@@ -167,6 +169,30 @@ def _failed_tool_risks(tool_id: str, output: Any, *, error: Any = "") -> list[di
         ),
         "detail": text[:500],
         "action": action,
+        "blocking": False,
+    }]
+
+
+def _failed_shell_risks(tool_id: str, output: Any, *, error: Any = "") -> list[dict[str, Any]]:
+    if not isinstance(output, dict):
+        return []
+    diagnostics = output.get("diagnostics")
+    if not isinstance(diagnostics, list) or not diagnostics:
+        return []
+    first = diagnostics[0] if isinstance(diagnostics[0], dict) else {}
+    code = str(first.get("code") or "shell_command_failed_with_diagnostic")
+    return [{
+        "code": f"shell_{code}",
+        "severity": "warning",
+        "source": str(tool_id or ""),
+        "message": (
+            "The shell command failed with a structured diagnostic. Treat the "
+            "diagnostic as evidence, change the command shape or verification "
+            "route, and avoid repeating the same invocation blindly."
+        ),
+        "detail": str(first.get("message") or _failure_text(output, error=error))[:500],
+        "suggested_calls": first.get("suggested_calls") or [],
+        "action": "adjust_command_shape",
         "blocking": False,
     }]
 

@@ -7,7 +7,11 @@ import sys
 import pytest
 
 from runtime.security import PathGuard
-from runtime.skills.shell import _compose_command, run_command
+from runtime.skills.shell import (
+    _compose_command,
+    _node_check_inline_script_diagnostic,
+    run_command,
+)
 
 
 @dataclass
@@ -26,6 +30,24 @@ def test_compose_command_appends_args() -> None:
     assert "-m" in command
     assert "pip" in command
     assert "python-docx" in command
+
+
+def test_node_check_inline_script_diagnostic_suggests_file_check(tmp_path: Path) -> None:
+    script = (
+        "const fs = require('fs'); "
+        "const content = fs.readFileSync('D:\\\\code\\\\demo\\\\src\\\\app.js', 'utf8'); "
+        "console.log(content.length);"
+    )
+
+    diagnostic = _node_check_inline_script_diagnostic("node", ["-c", script], str(tmp_path))
+
+    assert diagnostic is not None
+    assert diagnostic["code"] == "node_check_inline_script"
+    assert "expects a JavaScript file path" in diagnostic["message"]
+    assert diagnostic["suggested_calls"][0]["args"] == [
+        "--check",
+        "D:\\code\\demo\\src\\app.js",
+    ]
 
 
 @pytest.mark.asyncio
@@ -64,6 +86,11 @@ async def test_run_command_passes_multiline_args_without_shell_requoting(tmp_pat
 
     assert result["exit_code"] == 0
     assert "引号'和中文冒号：OK" in result["stdout"]
+    assert result["debug_session"]["kind"] == "debug_session"
+    assert result["debug_session"]["source"]["type"] == "shell.run_command"
+    assert result["debug_session"]["command"]["executable"] == sys.executable
+    assert result["debug_session"]["process"]["exit_code"] == 0
+    assert result["debug_session"]["health"]["status"] == "success"
 
 
 @pytest.mark.asyncio
@@ -88,3 +115,4 @@ async def test_run_command_can_use_task_temp_cwd(tmp_path: Path) -> None:
     assert result["cwd"] == str(temp_dir.resolve())
     assert result["task_temp_dir"] == str(temp_dir)
     assert "TEMP_OK" in result["stdout"]
+    assert result["debug_session"]["command"]["cwd"] == str(temp_dir.resolve())

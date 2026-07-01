@@ -58,3 +58,20 @@ def test_build_system_prompt_adds_text_write_route_guidance_when_available() -> 
     assert "not use filesystem.write_file or a large filesystem.apply_changes payload" in prompt
     assert "Plan chunk boundaries" in prompt
     assert "do not wait for truncation before switching to draft chunks" in prompt
+
+
+def test_build_system_prompt_adds_preview_guidance_when_available() -> None:
+    prompt = build_system_prompt(
+        settings=_Settings(),
+        mode_config=_mode_config(),
+        workspace_path=r"D:\code\demo",
+        capability_context=(
+            "- preview.visual_debug: Capture visual evidence; "
+            "tools=preview.capture_local_html, preview.capture_url"
+        ),
+    )
+
+    assert "Preview Capability Addendum" in prompt
+    assert "preview.capture_local_html" in prompt
+    assert "console errors" in prompt
+    assert "visual verification evidence" in prompt

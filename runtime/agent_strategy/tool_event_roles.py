@@ -286,6 +286,8 @@ def verification_evidence_strength(
     if _event_has_degraded_shell_stderr(event):
         return "none"
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    if _event_has_runtime_errors(event):
+        return "none"
     explicit = str(
         event.get("verification_strength")
         or event.get("declared_verification_strength")
@@ -327,6 +329,8 @@ def verification_evidence_modalities(
     if _event_has_visual_artifact(event):
         modalities.append("visual")
     if is_test_verification_event(event):
+        modalities.append("behavioral")
+    elif _event_has_behavioral_interaction(event):
         modalities.append("behavioral")
     elif is_structural_verification_event(event):
         modalities.append("structural")
@@ -392,11 +396,23 @@ def _event_has_visual_artifact(event: dict[str, Any]) -> bool:
         output.get("artifact_kind"),
         output.get("format"),
     ]
+    visual_artifact_path = ""
+    visual_evidence = output.get("visual_evidence")
+    if isinstance(visual_evidence, dict):
+        artifact = visual_evidence.get("artifact")
+        if isinstance(artifact, dict):
+            visual_artifact_path = str(artifact.get("path") or "")
+            artifact_values.extend([
+                artifact.get("kind"),
+                artifact.get("format"),
+            ])
     for values in (event.get("artifacts"), output.get("artifacts")):
         if isinstance(values, list):
             artifact_values.extend(values)
     normalized = {str(item or "").strip().lower() for item in artifact_values if str(item or "").strip()}
     if normalized & VISUAL_ARTIFACT_KINDS:
+        return True
+    if _path_looks_visual_artifact(visual_artifact_path):
         return True
     if any(_path_looks_visual_artifact(path) for path in event_path_hints(event)):
         return True
@@ -409,6 +425,33 @@ def _event_has_visual_artifact(event: dict[str, Any]) -> bool:
         "render_view",
     )
     return any(term in tool_id for term in visual_tool_terms)
+
+
+def _event_has_runtime_errors(event: dict[str, Any]) -> bool:
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    visual_evidence = output.get("visual_evidence")
+    if isinstance(visual_evidence, dict):
+        runtime = visual_evidence.get("runtime")
+        if isinstance(runtime, dict) and runtime.get("has_errors") is True:
+            return True
+    return output.get("has_runtime_errors") is True
+
+
+def _event_has_behavioral_interaction(event: dict[str, Any]) -> bool:
+    if canonical_tool_id(str(event.get("tool") or "")) != "preview.interact_page":
+        return False
+    if _event_has_runtime_errors(event):
+        return False
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    interaction = output.get("interaction")
+    if not isinstance(interaction, dict):
+        return False
+    try:
+        action_count = int(interaction.get("action_count") or 0)
+        failed_count = int(interaction.get("assertion_failed_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    return action_count > 0 and failed_count == 0
 
 
 def _path_looks_visual_artifact(path: str) -> bool:
@@ -441,7 +484,9 @@ def _event_has_content_artifact(event: dict[str, Any]) -> bool:
     if isinstance(output.get("artifacts"), list):
         artifact_values.extend(output.get("artifacts") or [])
     normalized = {str(item or "").strip().lower() for item in artifact_values if str(item or "").strip()}
-    return bool(normalized & {"text", "document_text", "html", "markdown"})
+    if normalized & {"text", "document_text", "dom_text", "html", "markdown", "page_text"}:
+        return True
+    return tool_id == "preview.interact_page" and bool(str(output.get("text") or "").strip())
 
 
 _STATE_FACT_META_KEYS: frozenset[str] = frozenset({

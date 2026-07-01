@@ -92,9 +92,12 @@ class BackupStore:
         with self._lock:
             backups = self._index.setdefault("backups", [])
             backups.append(record)
-            self._enforce_retention_locked(keep_rounds)
+            retention_warnings = self._enforce_retention_locked(keep_rounds)
             self._save_locked()
-            return self._public_record(record)
+            public = self._public_record(record)
+            if retention_warnings:
+                public["retention_warnings"] = retention_warnings
+            return public
 
     def _find(self, backup_id: str) -> dict[str, Any] | None:
         for item in self._index.get("backups") or []:
@@ -109,19 +112,30 @@ class BackupStore:
             reverse=True,
         )
 
-    def _enforce_retention_locked(self, keep_rounds: int) -> None:
+    def _enforce_retention_locked(self, keep_rounds: int) -> list[dict[str, str]]:
         keep = max(1, min(int(keep_rounds or 50), 100))
         backups = self._sorted_backups()
         retained = backups[:keep]
         expired = backups[keep:]
+        undeleted: list[dict[str, Any]] = []
+        warnings: list[dict[str, str]] = []
         for item in expired:
             backup_id = item.get("id")
             if not backup_id:
                 continue
             backup_dir = self.root / str(backup_id)
             if backup_dir.exists():
-                shutil.rmtree(backup_dir)
-        self._index["backups"] = retained
+                try:
+                    shutil.rmtree(backup_dir)
+                except Exception as exc:
+                    undeleted.append(item)
+                    warnings.append({
+                        "backup_id": str(backup_id),
+                        "path": str(backup_dir),
+                        "error": str(exc),
+                    })
+        self._index["backups"] = retained + undeleted
+        return warnings
 
     def _public_record(self, item: dict[str, Any]) -> dict[str, Any]:
         files = item.get("files") or []

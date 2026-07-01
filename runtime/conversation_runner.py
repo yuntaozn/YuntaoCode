@@ -32,6 +32,7 @@ from runtime.context_pack import (
 )
 from runtime.run_completion import build_completion_decision
 from runtime.run_result import build_run_result
+from runtime.run_result_presenter import append_changed_files_footer
 from runtime.run_recovery import build_result_context_snapshot, format_recovery_context
 from runtime.workspace_snapshot import build_workspace_snapshot
 from runtime import i18n
@@ -250,17 +251,20 @@ class ConversationRunExecutor:
             expected_min_output_chars=expected_min_output_chars,
         )
         inherited_contract = self._previous_task_contract_context(conversation, content)
+        task_lineage_candidates = self._task_lineage_candidates(conversation, content)
         context_pack = build_context_pack(
             phase="task_contract",
             user_content=content,
             workspace_snapshot=workspace_snapshot,
-            previous_contract=inherited_contract,
+            task_candidates=task_lineage_candidates,
             context_hygiene_report=context_hygiene_report,
             task_id=str(getattr(run, "task_id", "") or ""),
         )
         context_pack_prompt = format_context_pack_for_prompt(context_pack)
         metadata["context_pack"] = context_pack
         metadata.setdefault("context_packs", []).append(context_pack)
+        if task_lineage_candidates:
+            metadata["task_lineage_candidates"] = task_lineage_candidates
         self.write_event({
             "event": "context_pack",
             "pack": context_pack,
@@ -290,9 +294,36 @@ class ConversationRunExecutor:
                 user_no_write_hint=user_no_write_hint,
                 expected_document_coverage=expected_document_coverage,
                 expected_min_output_chars=expected_min_output_chars,
-                previous_contract=inherited_contract,
+                previous_contract=None,
                 workspace_context=context_pack_prompt,
             )
+            referenced_contract = self._referenced_task_candidate_contract(
+                task_lineage_candidates,
+                task_contract.get("referenced_task_candidate_id"),
+            )
+            continuity_contract = (
+                referenced_contract
+                if task_lineage_candidates
+                else inherited_contract
+            )
+            if (
+                continuity_contract
+                and not user_no_write_hint
+                and _tc.should_apply_task_continuity(
+                    task_contract,
+                    current_user_content=content,
+                )
+            ):
+                task_contract = _tc.apply_task_continuity(
+                    task_contract,
+                    previous_contract=continuity_contract,
+                    current_user_content=content,
+                )
+                metadata["applied_task_continuity"] = True
+                if referenced_contract:
+                    metadata["applied_task_candidate_id"] = str(
+                        task_contract.get("referenced_task_candidate_id") or ""
+                    )
         capability_snapshot = self._build_capability_snapshot(mode_config)
         if ground_task_contract_with_capabilities(
             task_contract,
@@ -356,6 +387,7 @@ class ConversationRunExecutor:
             user_content=content,
             workspace_snapshot=workspace_snapshot,
             task_contract=task_contract,
+            task_candidates=task_lineage_candidates,
             capability_snapshot=capability_snapshot,
             capability_preflight=capability_preflight,
             context_hygiene_report=context_hygiene_report,
@@ -2090,6 +2122,14 @@ class ConversationRunExecutor:
                 )
                 metadata["synthesized_final_answer"] = True
                 metadata["synthesized_final_answer_source"] = "runtime_fallback"
+        assistant_content_with_files = append_changed_files_footer(
+            assistant_content,
+            run_result,
+            change_summary,
+        )
+        if assistant_content_with_files != assistant_content:
+            assistant_content = assistant_content_with_files
+            metadata["changed_files_footer_appended"] = True
         execution_notice = self._build_execution_notice(
             effective_mode,
             assistant_content,

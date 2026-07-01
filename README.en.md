@@ -87,6 +87,7 @@ Built-in capabilities include:
 * Document Processing
 * Conversation Attachments
 * Web Access
+* Preview / Visual Debug
 * Memory
 
 Tools are capability units for task execution. Local Capability Packs should first capture method skills, task templates, and context packs; stricter tool adapters or plugins are needed only when a new execution capability is truly required. Tools themselves are not the product boundary; they should enter the runtime through Capability Contracts.
@@ -316,7 +317,7 @@ Create a Handler under `runtime/api/` and register it in `runtime/app.py`.
 
 ### Capability Packs and Plugin Contract
 
-The current version provides built-in plugin capability management. It groups tools by ID prefix, such as `filesystem`, `code`, `shell`, `git`, and `web`, and displays enablement and dependency status.
+The current version provides built-in plugin capability management. It groups tools by ID prefix, such as `filesystem`, `code`, `shell`, `git`, `web`, and `preview`, and displays enablement and dependency status.
 
 This is not a plugin marketplace or remote update system. The third-party manifest, dynamic loading, permission declarations, and isolation model remain future foundation work.
 

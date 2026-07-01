@@ -174,6 +174,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "shell": {"enabled": True},
         "git": {"enabled": True},
         "web": {"enabled": True},
+        "preview": {"enabled": True},
     },
 }
 

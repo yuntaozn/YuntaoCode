@@ -87,6 +87,7 @@ YuntaoCode 把一次请求看作一个可管理的任务，而不是一次普通
 * Document Processing
 * Conversation Attachments
 * Web Access
+* Preview / Visual Debug
 * Memory
 
 工具是任务执行的能力单元。本机能力包优先沉淀方法型 Skill、任务模板和上下文包；只有确实需要新执行能力时，才进入更严格的工具适配器或插件边界。工具本身不是产品边界；它们需要通过 Capability Contract 接入任务运行时。
@@ -313,7 +314,7 @@ def register_my_tools(registry: ToolRegistry):
 
 ### 本机能力包与插件契约
 
-当前版本提供的是内置插件能力管理：系统会按工具 ID 前缀展示 `filesystem`、`code`、`shell`、`git`、`web` 等能力分组，并支持启停和依赖状态展示。
+当前版本提供的是内置插件能力管理：系统会按工具 ID 前缀展示 `filesystem`、`code`、`shell`、`git`、`web`、`preview` 等能力分组，并支持启停和依赖状态展示。
 
 这还不是插件市场，也不是远程更新系统。真正面向第三方扩展的插件 manifest、动态加载、权限声明和隔离机制仍属于后续基座工作。
 

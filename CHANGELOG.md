@@ -60,6 +60,9 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
   `roles`, and artifact kinds for provider-neutral result auditing.
 - Shared atomic JSON persistence mechanics and an indexed SQLite Run/RunEvent
   repository with one-time legacy `runs.json` import.
+- `preview.interact_page` for generic Playwright-backed page interaction
+  verification, returning screenshot, DOM text, interaction trace, visual
+  evidence, and debug-session facts for RunResult.
 
 ### Changed
 

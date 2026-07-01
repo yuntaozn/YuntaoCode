@@ -465,6 +465,9 @@ class TestIsWriteTool:
     def test_write_file(self):
         assert is_write_tool("filesystem.write_file")
 
+    def test_copy_file(self):
+        assert is_write_tool("filesystem.copy_file")
+
     def test_delete_file(self):
         assert is_write_tool("filesystem.delete_file")
 
@@ -538,6 +541,8 @@ class TestIsVerificationTool:
 
     def test_web_capture_page(self):
         assert is_verification_tool("web.capture_page", None)
+        assert is_verification_tool("preview.capture_url", None)
+        assert is_verification_tool("preview.capture_local_html", None)
 
 
 class TestExplorerToolIds:
@@ -561,6 +566,7 @@ class TestVerificationToolIds:
         ids = verification_tool_ids(None)
         assert "shell.run_command" in ids
         assert "web.capture_page" in ids
+        assert "preview.capture_local_html" in ids
 
     def test_paper_adds_read(self):
         ids = verification_tool_ids("paper")

@@ -17,6 +17,7 @@ EVIDENCE_RECORD_SCHEMA_VERSION = "evidence_record.v1"
 ContextKind = Literal[
     "user_intent",
     "task_contract",
+    "task_lineage",
     "workspace_summary",
     "capability",
     "evidence",
@@ -38,7 +39,7 @@ TrustLevel = Literal[
 
 PHASE_CONTEXT_KINDS: dict[str, frozenset[str]] = {
     "understanding": frozenset({"user_intent", "memory", "task_contract", "risk"}),
-    "task_contract": frozenset({"user_intent", "workspace_summary", "task_contract", "memory", "recovery", "risk"}),
+    "task_contract": frozenset({"user_intent", "workspace_summary", "task_lineage", "task_contract", "memory", "recovery", "risk"}),
     "planning": frozenset({"user_intent", "task_contract", "workspace_summary", "capability", "memory", "risk"}),
     "execution": frozenset({"task_contract", "capability", "evidence", "tool_result", "recovery", "risk"}),
     "verification": frozenset({"task_contract", "capability", "evidence", "tool_result", "risk"}),

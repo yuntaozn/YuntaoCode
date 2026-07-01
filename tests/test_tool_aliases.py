@@ -38,6 +38,8 @@ def test_common_model_tool_name_variants_resolve_to_registered_tools() -> None:
         "filesystem.apply_change_set": "filesystem.apply_changes",
         "filesystem.write_temp": "filesystem.write_temp_file",
         "filesystem.remove_file": "filesystem.delete_file",
+        "filesystem.copy": "filesystem.copy_file",
+        "filesystem.cp": "filesystem.copy_file",
         "document.pdf_extract_text": "document.extract_pdf_text_preview",
         "document.extract_docx": "document.extract_docx_outline",
         "document.pdf_to_word": "document.extract_pdf_to_docx",
@@ -49,6 +51,8 @@ def test_common_model_tool_name_variants_resolve_to_registered_tools() -> None:
         "shell.exec": "shell.run_command",
         "git.get_diff": "git.diff",
         "web.fetch": "web.fetch_url",
+        "preview.verify_ui": "preview.interact_page",
+        "preview.interact": "preview.interact_page",
         "memory.search": "memory.recall",
     }
 

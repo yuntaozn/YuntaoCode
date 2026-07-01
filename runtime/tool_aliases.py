@@ -74,6 +74,10 @@ TOOL_ID_ALIASES: dict[str, str] = {
     "filesystem.apply_changeset": "filesystem.apply_changes",
     "filesystem.change_set": "filesystem.apply_changes",
     "filesystem.write_changes": "filesystem.apply_changes",
+    "filesystem.copy": "filesystem.copy_file",
+    "filesystem.copy_asset": "filesystem.copy_file",
+    "filesystem.copy_file_to": "filesystem.copy_file",
+    "filesystem.cp": "filesystem.copy_file",
     "filesystem.delete": "filesystem.delete_file",
     "filesystem.delete_text": "filesystem.delete_file",
     "filesystem.remove": "filesystem.delete_file",
@@ -107,6 +111,15 @@ TOOL_ID_ALIASES: dict[str, str] = {
     "web.read_url": "web.extract_text",
     "web.scrape": "web.extract_text",
     "web.render": "web.render_page",
+    "preview.screenshot": "preview.capture_url",
+    "preview.capture_page": "preview.capture_url",
+    "preview.capture_html": "preview.capture_local_html",
+    "preview.browser_interaction": "preview.interact_page",
+    "preview.interact": "preview.interact_page",
+    "preview.local_html": "preview.capture_local_html",
+    "preview.run_actions": "preview.interact_page",
+    "preview.screenshot_html": "preview.capture_local_html",
+    "preview.verify_ui": "preview.interact_page",
 }
 
 

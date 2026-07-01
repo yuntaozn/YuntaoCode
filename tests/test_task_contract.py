@@ -8,6 +8,7 @@ from runtime.agent_strategy.task_contract import (
     looks_like_task_revision_followup,
     merge_model_task_contract,
     promote_task_contract_for_write_intent,
+    should_apply_task_continuity,
     should_use_model_task_contract,
     task_continuity_anchor,
     task_contract_context_messages,
@@ -114,6 +115,7 @@ def test_task_contract_prompt_contains_only_contract_request() -> None:
     assert "只输出 JSON" in prompt
     assert "requires_write" in prompt
     assert "requires_state_change" in prompt
+    assert "referenced_task_candidate_id" in prompt
     assert "系统负责权限、工具执行和完成验收" in prompt
 
 
@@ -239,6 +241,7 @@ def test_task_contract_context_keeps_recent_task_and_current_follow_up() -> None
             {"role": "user", "content": "现在想加能选构件的能力"},
         ],
         "现在想加能选构件的能力",
+        include_history=True,
     )
 
     assert context == [
@@ -246,6 +249,20 @@ def test_task_contract_context_keeps_recent_task_and_current_follow_up() -> None
         {"role": "assistant", "content": "已创建 viewer.html"},
         {"role": "user", "content": "现在想加能选构件的能力"},
     ]
+
+
+def test_task_contract_context_can_use_current_request_only() -> None:
+    context = task_contract_context_messages(
+        [
+            {"role": "user", "content": "Create a Blender house"},
+            {"role": "assistant", "content": "I changed the scene"},
+            {"role": "user", "content": "Now update the teaching page code"},
+        ],
+        "Now update the teaching page code",
+        include_history=False,
+    )
+
+    assert context == [{"role": "user", "content": "Now update the teaching page code"}]
 
 
 def test_short_action_request_still_uses_model_contract() -> None:
@@ -400,6 +417,46 @@ def test_revision_followup_preserves_previous_external_state_target() -> None:
     assert contract["revision_request"] == "not good enough, try again"
 
 
+def test_task_continuity_applies_only_after_model_continuation_judgment() -> None:
+    explicit_continue = {
+        "intent": "write_required",
+        "scope_relation": "continue",
+        "scope_relation_source": "model",
+    }
+    explicit_replace = {
+        "intent": "write_required",
+        "scope_relation": "replace",
+        "scope_relation_source": "model",
+    }
+    explicit_new = {
+        "intent": "write_required",
+        "scope_relation": "new",
+        "scope_relation_source": "model",
+    }
+    fallback_retry = {
+        "intent": "answer_only",
+        "scope_relation": "new",
+        "scope_relation_source": "default",
+    }
+
+    assert should_apply_task_continuity(
+        explicit_continue,
+        current_user_content="continue",
+    )
+    assert not should_apply_task_continuity(
+        explicit_replace,
+        current_user_content="continue",
+    )
+    assert not should_apply_task_continuity(
+        explicit_new,
+        current_user_content="try again",
+    )
+    assert should_apply_task_continuity(
+        fallback_retry,
+        current_user_content="try again",
+    )
+
+
 def test_observation_followup_over_previous_state_task_adds_soft_advisory() -> None:
     previous = {
         "intent": "write_required",
@@ -451,6 +508,75 @@ def test_observation_followup_over_previous_state_task_adds_soft_advisory() -> N
     assert contract["continuity_advisories"][0]["code"] == "possible_observation_followup"
     assert contract["continuity_advisories"][0]["suggested_first_action"] == "verify"
     assert "observation_followup_read_only" not in contract.get("system_overrides", [])
+
+
+def test_continuity_keeps_current_specific_local_target_over_broad_anchor() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "优化独立基础施工全过程交互动画的模型和动画细节",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "capability_ids": ["filesystem.local_files", "code.edit_file"],
+        "deliverables": [
+            {
+                "kind": "file",
+                "path_hint": "D:\\code\\demo\\教学课件\\",
+                "path_policy": "hint",
+                "description": "优化后的3D模型文件、动画相关代码/配置文件，以及优化说明文档",
+            },
+            {
+                "kind": "code",
+                "path_hint": "D:\\code\\demo\\教学课件\\独立基础施工全过程\\交互动画\\src\\app.js",
+                "path_policy": "hint",
+                "description": "Successful local write via code.edit_file",
+            },
+        ],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "goal": "从其他子项目查找站立人.glb，复制到当前项目 assets 目录，并修改代码引用替代示意人模型",
+            "intent": "write_required",
+            "requires_write": True,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "required_verification_modalities": ["visual"],
+            "capability_ids": ["filesystem.local_files", "filesystem.change_set", "code.edit_file"],
+            "deliverables": [
+                {
+                    "kind": "file",
+                    "path_hint": "D:\\code\\demo\\教学课件\\独立基础施工全过程\\交互动画\\assets\\站立人.glb",
+                    "path_policy": "hint",
+                    "description": "复制到 assets 目录的站立人3D模型文件",
+                },
+                {
+                    "kind": "code",
+                    "path_hint": "D:\\code\\demo\\教学课件\\独立基础施工全过程\\交互动画\\src\\app.js",
+                    "path_policy": "hint",
+                    "description": "引用新站立人模型的项目代码文件",
+                },
+            ],
+            "scope_relation": "revise",
+            "referenced_task_candidate_id": "previous-run",
+            "first_action": "read",
+            "confidence": 0.95,
+        },
+        _fallback("answer_only"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content="可从其他子项目中找到 站立人.glb 复制到 assets 目录，然后在项目中引用替代现在的示意人模型",
+    )
+
+    assert contract["goal"].startswith("从其他子项目查找站立人.glb")
+    assert contract["deliverables"][0]["path_hint"].endswith("assets\\站立人.glb")
+    assert "优化后的3D模型文件" not in contract["deliverables"][0]["description"]
+    assert contract["continuity_anchor"]["goal"].startswith("从其他子项目查找站立人.glb")
+    assert contract["requires_write"] is True
+    assert contract["requires_verification"] is True
 
 
 def test_retry_followup_still_preserves_previous_state_change_target() -> None:
@@ -1013,6 +1139,21 @@ def test_task_contract_run_event_is_recordable() -> None:
     assert canonical_run_event_name(payload) == "task.contract"
     assert compact["event_name"] == "task.contract"
     assert compact["contract"]["intent"] == "write_required"
+
+
+def test_model_contract_preserves_referenced_task_candidate_id() -> None:
+    contract = merge_model_task_contract(
+        {
+            "goal": "Try the same Blender house again",
+            "intent": "write_required",
+            "scope_relation": "revise",
+            "referenced_task_candidate_id": "run-1",
+        },
+        _fallback("answer_only"),
+    )
+
+    assert contract["scope_relation"] == "revise"
+    assert contract["referenced_task_candidate_id"] == "run-1"
 
 
 def test_runtime_guidance_can_raise_document_size_contract() -> None:

@@ -204,7 +204,7 @@ Runtime 能力
   支撑本地任务执行，可以启停，但仍受权限、确认和审计约束。
 
 内置可选能力
-  document, web
+  document, web, preview
   通用但偏重或带外部访问边界，可以启停，也应清楚展示依赖和风险。
 
 外部能力提供者
@@ -213,6 +213,31 @@ Runtime 能力
 ```
 
 不适合默认内置的能力包括视频生成、Blender/CAD 建模、RAG/向量库、重度浏览器自动化、特定办公流程、特定行业工具，以及纯提示词方法论 Skill Pack。这些应优先走 CLI provider、MCP、外部插件、AI 草稿或 Skill Evolution，而不是扩大主 Runtime。
+
+`preview.visual_debug` 是内置可选能力中的证据能力。它使用浏览器预览本地 HTML
+或 URL，并把截图、console error、page error 和 failed request 作为 verification
+evidence 写入任务临时目录。它不代表 Runtime 要替模型判断 UI 是否完成，也不应把
+网页调试硬编码成任务流程；Runtime 只把可观察证据交给模型和 RunResult。
+本地 HTML 默认通过短生命周期的 `127.0.0.1` 静态服务打开，避免 `file://`
+导致 module script、import map、相对资源和 Three.js 页面被浏览器策略误拦。
+`preview.interact_page` 在同一能力下提供有界交互验证：模型可以自行声明点击、输入、
+等待、读取文本和文本断言动作，工具返回 `interaction_trace`、`dom_text`、截图和
+调试证据。成功的交互断言可作为 behavioral/content evidence；失败的断言只作为
+风险和下一步修正依据，不应被 Runtime 静默替换成固定流程。
+
+视觉类工具应返回或可归一化为 `visual_evidence.v1`。该契约至少包含来源
+（URL、本地文件、MCP 或外部提供者）、截图/渲染产物路径、尺寸、格式、捕获时间、
+页面状态、console/page/network 错误，以及该产物是否可作为模型上下文的 image
+input。`preview.*`、`web.*` 和 MCP 截图结果都应尽量进入这个证据结构；旧的
+`path`、`artifact_kind`、`has_runtime_errors` 等顶层字段可继续保留作为兼容出口。
+RunResult 只把它作为“观察证据”汇总，不把它变成隐藏任务路线或硬性拦截。
+
+运行/调试类工具应返回或可归一化为 `debug_session.v1`。该契约记录命令、工作目录、
+进程号、退出码、超时、stdout/stderr 摘要、诊断、服务 URL/端口和心跳等事实。
+`shell.run_command` 和 `preview.*` 首先接入该结构；未来 CLI provider、dev server、
+浏览器调试、长任务和外部应用连接也应优先复用它。它的作用是帮助模型、用户和
+RunResult 理解“实际运行过什么、运行到哪里、失败在哪里”，而不是让 Runtime 替模型
+决定下一步策略。
 
 ## Cross-platform Baseline
 

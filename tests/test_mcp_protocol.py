@@ -55,7 +55,10 @@ def test_normalize_mcp_tool_result_extracts_visual_artifact_from_text_path() -> 
     assert output["path"] == r"D:\code\YuntaoCode\task-artifacts\scene.png"
     assert output["artifact_kind"] == "image"
     assert output["format"] == "png"
-    assert output["artifacts"] == ["image"]
+    assert output["artifacts"] == ["image", "visual_evidence"]
+    assert output["visual_evidence"]["source"]["type"] == "mcp"
+    assert output["visual_evidence"]["artifact"]["path"] == output["path"]
+    assert output["visual_evidence"]["model_context"]["eligible"] is True
 
 
 def test_normalize_mcp_tool_result_extracts_visual_artifact_from_structured_content() -> None:
@@ -71,4 +74,6 @@ def test_normalize_mcp_tool_result_extracts_visual_artifact_from_structured_cont
     assert output["path"] == "/tmp/yuntaocode/viewport.pdf"
     assert output["artifact_kind"] == "pdf"
     assert output["format"] == "pdf"
-    assert output["artifacts"] == ["pdf"]
+    assert output["artifacts"] == ["pdf", "visual_evidence"]
+    assert output["visual_evidence"]["artifact"]["path"] == output["path"]
+    assert output["visual_evidence"]["model_context"]["eligible"] is False

@@ -121,6 +121,7 @@ def default_task_contract(
         "confidence": 0.0,
         "scope_relation": "new",
         "scope_relation_source": "default",
+        "referenced_task_candidate_id": "",
         "revision_request": "",
         "system_overrides": [],
         "execution_advisories": [],
@@ -208,10 +209,20 @@ def merge_model_task_contract(
                 if str(raw_contract.get("scope_relation") or "").strip().lower() in VALID_SCOPE_RELATIONS
                 else "default"
             ),
+            "referenced_task_candidate_id": _clean_text(
+                raw_contract.get("referenced_task_candidate_id")
+                or raw_contract.get("task_candidate_id")
+                or raw_contract.get("previous_task_candidate_id"),
+                160,
+            ),
         })
 
     contract["scope_relation"] = _normalize_scope_relation(contract.get("scope_relation"))
     contract.setdefault("scope_relation_source", "default")
+    contract["referenced_task_candidate_id"] = _clean_text(
+        contract.get("referenced_task_candidate_id"),
+        160,
+    )
     contract.setdefault("revision_request", "")
     contract["execution_advisories"] = _normalize_advisories(contract.get("execution_advisories"))
     contract["expected_document_coverage"] = (
@@ -255,6 +266,17 @@ def apply_task_continuity(
     return _contract_evolution.apply_task_continuity(
         contract,
         previous_contract=previous_contract,
+        current_user_content=current_user_content,
+    )
+
+
+def should_apply_task_continuity(
+    contract: dict[str, Any],
+    *,
+    current_user_content: str,
+) -> bool:
+    return _contract_evolution.should_apply_task_continuity(
+        contract,
         current_user_content=current_user_content,
     )
 
@@ -330,6 +352,9 @@ def task_contract_prompt(
         "runtime/API probes, service startup checks, database checks, or UI interactions; do not use behavioral "
         "for syntax-only checks such as python -m py_compile or node --check. Use content for text/document "
         "content checks.\n"
+        "Task lineage rule: if the Context Pack contains task_lineage candidates, treat them as historical "
+        "candidate facts only. Set scope_relation=continue or revise and referenced_task_candidate_id only when "
+        "the current user request clearly refers to that candidate. Otherwise leave referenced_task_candidate_id empty.\n"
         "JSON 字段：\n"
         "{\n"
         '  "goal": "用户真实目标的简短描述",\n'
@@ -342,6 +367,7 @@ def task_contract_prompt(
         '  "capability_ids": ["optional runtime capability id from <available_capabilities>, e.g. mcp.blender"],\n'
         '  "deliverables": [{"kind": "file|answer|document|code|external_state", "path_hint": "", "path_policy": "hint|exact", "description": ""}],\n'
         '  "scope_relation": "new|continue|revise|replace",\n'
+        '  "referenced_task_candidate_id": "",\n'
         '  "expected_min_output_chars": 0,\n'
         '  "execution_advisories": [{"code": "optional-short-code", "message": "non-binding execution note", "suggested_first_action": "read|write|verify|use_tool"}],\n'
         '  "first_action": "answer|read|search|plan|write|verify|ask_user|use_tool",\n'
@@ -358,9 +384,19 @@ def task_contract_context_messages(
     *,
     max_messages: int = 4,
     max_chars: int = 600,
+    include_history: bool = False,
 ) -> list[dict[str, str]]:
-    """Return a compact recent conversation for model-side contract judgment."""
+    """Return bounded user input for model-side contract judgment.
+
+    The model should normally judge the current request from the current user
+    message plus structured Context Pack facts.  Raw recent chat history is kept
+    as an explicit compatibility option for tests and old call sites, not the
+    default contract-decision path.
+    """
     current = str(current_user_content or "").strip()
+    if not include_history:
+        return [{"role": "user", "content": current[:max_chars]}] if current else []
+
     history: list[dict[str, str]] = []
     skipped_current = False
     history_limit = max(0, max_messages - (1 if current else 0))

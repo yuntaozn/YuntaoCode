@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from runtime.security import PathGuard
-from runtime.task_runner import TaskRunner
+from runtime.task_runner import TaskRunner, _compact_failure_message
 from runtime.task_store import TaskStore
 from runtime.tool_registry import ToolRegistry, ToolSpec
 
@@ -21,6 +21,22 @@ async def _shell_failure_handler(input_data: dict[str, Any], context: Any) -> di
         return {"exit_code": 1, "stdout": "", "stderr": "", "timed_out": True, "timeout": 10}
     context.log("error", "command finished with exit code 1")
     return {"exit_code": 1, "stdout": "", "stderr": "SyntaxError: invalid syntax"}
+
+
+def test_compact_failure_message_prefers_structured_failure_message() -> None:
+    message = _compact_failure_message(
+        {
+            "exit_code": 1,
+            "failure_message": "Node -c/--check expects a JavaScript file path.",
+            "stderr": "Error: Cannot find module 'const fs = require(...)'",
+        },
+        "command exited with code 1",
+    )
+
+    assert message == (
+        "command exited with code 1: "
+        "Node -c/--check expects a JavaScript file path."
+    )
 
 
 async def _partial_handler(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -327,5 +343,65 @@ def test_backup_failure_is_recorded_without_blocking_tool_success(tmp_path: Path
     ]
     assert any(
         log["level"] == "warning" and "backup failed" in log["message"]
+        for log in task.logs
+    )
+
+
+def test_backup_finish_failure_is_recorded_without_blocking_tool_success(tmp_path: Path) -> None:
+    class BackupSettings:
+        def is_tool_enabled(self, tool_id: str) -> bool:
+            return True
+
+        def get_access_scope(self) -> str:
+            return "project_only"
+
+        def get_backup_settings(self) -> dict[str, Any]:
+            return {"enabled": True, "keep_rounds": 5}
+
+    class FailingBackupSession:
+        def backup_file(self, path: str | Path) -> None:
+            return None
+
+        def finish(self, status: str, keep_rounds: int) -> None:
+            raise PermissionError("old backup asset is locked")
+
+    class FailingBackupStore:
+        def begin(self, *args: Any, **kwargs: Any) -> FailingBackupSession:
+            return FailingBackupSession()
+
+    runner = _build_runner(
+        tmp_path,
+        settings=BackupSettings(),
+        backup_store=FailingBackupStore(),
+    )
+    runner.registry.unregister("filesystem.write_file")
+    runner.registry.register(
+        ToolSpec(
+            id="filesystem.write_file",
+            name="Write File",
+            description="Write file",
+            input_schema={"type": "object"},
+            requires_confirmation=True,
+        ),
+        _backup_then_success_handler,
+    )
+
+    task = asyncio.run(
+        runner.submit(
+            "filesystem.write_file",
+            {"path": "demo.txt"},
+            wait=True,
+            confirmed=True,
+            workspace_path=str(tmp_path),
+        )
+    )
+
+    assert task.status == "success"
+    assert task.output["ok"] is True
+    assert task.output["_backup_warnings"] == [
+        {"path": "", "error": "old backup asset is locked", "phase": "finish"}
+    ]
+    assert any(
+        log["level"] == "warning" and "backup finish failed" in log["message"]
         for log in task.logs
     )

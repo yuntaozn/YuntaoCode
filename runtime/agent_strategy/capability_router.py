@@ -116,6 +116,11 @@ PREFIX_CAPABILITIES: dict[str, tuple[str, str, str]] = {
         "Web Fetch",
         "Fetch or search network content when the runtime and settings allow it.",
     ),
+    "preview": (
+        "preview.visual_debug",
+        "Preview And Visual Debug",
+        "Capture visual previews, screenshots, browser console errors, page errors, and failed requests for local HTML or URL-based UI verification.",
+    ),
     "memory": (
         "memory.local_memory",
         "Local Memory",

@@ -12,6 +12,7 @@ import json
 from typing import Any
 
 from runtime.core.context import ContextRecord, select_records_for_phase
+from runtime.agent_strategy.task_lineage import format_task_candidates_for_model
 from runtime.workspace_snapshot import workspace_snapshot_summary
 
 
@@ -26,6 +27,7 @@ def build_context_pack(
     workspace_snapshot: dict[str, Any] | None = None,
     task_contract: dict[str, Any] | None = None,
     previous_contract: dict[str, Any] | None = None,
+    task_candidates: list[dict[str, Any]] | None = None,
     capability_snapshot: dict[str, Any] | None = None,
     capability_preflight: dict[str, Any] | None = None,
     tool_events: list[dict[str, Any]] | None = None,
@@ -45,6 +47,7 @@ def build_context_pack(
         workspace_snapshot=workspace_snapshot,
         task_contract=task_contract,
         previous_contract=previous_contract,
+        task_candidates=task_candidates,
         capability_snapshot=capability_snapshot,
         capability_preflight=capability_preflight,
         tool_events=tool_events,
@@ -165,6 +168,7 @@ def _candidate_records(
     workspace_snapshot: dict[str, Any] | None,
     task_contract: dict[str, Any] | None,
     previous_contract: dict[str, Any] | None,
+    task_candidates: list[dict[str, Any]] | None,
     capability_snapshot: dict[str, Any] | None,
     capability_preflight: dict[str, Any] | None,
     tool_events: list[dict[str, Any]] | None,
@@ -191,6 +195,9 @@ def _candidate_records(
     workspace_record = _workspace_record(workspace_snapshot, task_id=task_id)
     if workspace_record:
         records.append(workspace_record)
+    lineage_record = _task_lineage_record(task_candidates, task_id=task_id)
+    if lineage_record:
+        records.append(lineage_record)
     current_contract_record = _task_contract_record(task_contract, task_id=task_id)
     if current_contract_record:
         records.append(current_contract_record)
@@ -295,7 +302,7 @@ def _previous_contract_record(
         f"deliverables={', '.join(deliverable_kinds[:6]) or 'none'}"
     )
     return ContextRecord(
-        kind="task_contract",
+        kind="task_lineage",
         content=content,
         source_id="previous_task_contract",
         source_type="run_event",
@@ -311,6 +318,41 @@ def _previous_contract_record(
             "capability_ids": capability_ids[:6],
             "deliverable_kinds": deliverable_kinds[:6],
         },
+    )
+
+
+def _task_lineage_record(
+    candidates: list[dict[str, Any]] | None,
+    *,
+    task_id: str,
+) -> ContextRecord | None:
+    content = format_task_candidates_for_model(candidates, limit=4)
+    if not content:
+        return None
+    compact_candidates: list[dict[str, Any]] = []
+    for candidate in candidates or []:
+        if not isinstance(candidate, dict):
+            continue
+        compact_candidates.append({
+            "candidate_id": candidate.get("candidate_id"),
+            "goal": candidate.get("goal"),
+            "intent": candidate.get("intent"),
+            "status": candidate.get("status"),
+            "requires_write": bool(candidate.get("requires_write")),
+            "requires_state_change": bool(candidate.get("requires_state_change")),
+            "deliverable_kinds": candidate.get("deliverable_kinds") or [],
+            "capability_ids": candidate.get("capability_ids") or [],
+        })
+    return ContextRecord(
+        kind="task_lineage",
+        content=content,
+        source_id="task_lineage_candidates",
+        source_type="conversation_history",
+        trust="runtime_fact",
+        task_id=task_id,
+        freshness="recent",
+        token_estimate=_estimate_tokens_fast(content),
+        metadata={"candidates": compact_candidates[:4]},
     )
 
 
@@ -450,6 +492,10 @@ def _context_hygiene_record(
             "sanitized_messages": _safe_int(report.get("sanitized_messages")),
             "tool_markup_messages": _safe_int(report.get("tool_markup_messages")),
             "failed_run_messages": _safe_int(report.get("failed_run_messages")),
+            "task_candidate_messages": _safe_int(report.get("task_candidate_messages")),
+            "task_user_anchor_messages": _safe_int(report.get("task_user_anchor_messages")),
+            "compacted_task_marker_messages": _safe_int(report.get("compacted_task_marker_messages")),
+            "current_request_boundary_inserted": bool(report.get("current_request_boundary_inserted")),
         },
     )
 

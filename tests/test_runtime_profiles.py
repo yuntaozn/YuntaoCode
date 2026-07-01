@@ -39,6 +39,14 @@ def test_lite_tool_groups_exclude_optional_product_capabilities() -> None:
     assert "document.extract_pdf_to_docx" not in tool_ids
     assert "spreadsheet.inspect_workbook" not in tool_ids
     assert "web.fetch_url" not in tool_ids
+    assert "preview.capture_local_html" not in tool_ids
+
+
+def test_full_tool_groups_include_preview_capability() -> None:
+    tool_ids = _tool_ids_for(DEFAULT_BUILTIN_TOOL_GROUPS)
+
+    assert "preview.capture_url" in tool_ids
+    assert "preview.capture_local_html" in tool_ids
 
 
 def test_lite_runtime_skips_optional_managers(tmp_path, monkeypatch) -> None:
@@ -57,5 +65,6 @@ def test_lite_runtime_skips_optional_managers(tmp_path, monkeypatch) -> None:
         assert runtime.capability_packs is None
         assert "filesystem.read_file" in {item["id"] for item in runtime.registry.list_specs()}
         assert "document.extract_pdf_to_docx" not in {item["id"] for item in runtime.registry.list_specs()}
+        assert "preview.capture_local_html" not in {item["id"] for item in runtime.registry.list_specs()}
     finally:
         runtime.close()

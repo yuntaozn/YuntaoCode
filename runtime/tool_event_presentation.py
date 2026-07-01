@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from runtime.debug_session import debug_session_summary, normalize_debug_session
+from runtime.visual_evidence import normalize_visual_evidence, visual_evidence_summary
+
 
 def tool_progress_snapshot(tool_id: str, task: Any) -> dict[str, Any]:
     logs = task.logs if getattr(task, "logs", None) else []
@@ -175,6 +178,7 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
     if tool_id == "shell.run_command":
         stdout = str(output.get("stdout") or "")[:4000]
         stderr = str(output.get("stderr") or "")[:2000]
+        debug_session = debug_session_summary(normalize_debug_session(output))
         preview = {
             "type": "shell",
             "exit_code": output.get("exit_code"),
@@ -182,6 +186,9 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
             "stderr": stderr,
             "timed_out": bool(output.get("timed_out")),
             "timeout": output.get("timeout"),
+            "failure_message": output.get("failure_message"),
+            "diagnostics": (output.get("diagnostics") or [])[:5],
+            "debug_session": debug_session,
         }
     elif tool_id == "code.apply_patch":
         preview = {
@@ -416,6 +423,8 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
     elif tool_id == "git.log":
         preview = {"type": "git_log", "commits": (output.get("commits") or [])[:10]}
     elif tool_id.startswith("web."):
+        visual_evidence = visual_evidence_summary(normalize_visual_evidence(output))
+        debug_session = debug_session_summary(normalize_debug_session(output))
         preview = {
             "type": "web",
             "url": output.get("url") or output.get("final_url"),
@@ -428,8 +437,45 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
             "text": str(output.get("text") or "")[:4000],
             "links": (output.get("links") or [])[:20],
             "truncated": bool(output.get("truncated")),
+            "visual_evidence": visual_evidence,
+            "debug_session": debug_session,
+        }
+    elif tool_id.startswith("preview."):
+        visual_evidence = visual_evidence_summary(normalize_visual_evidence(output))
+        debug_session = debug_session_summary(normalize_debug_session(output))
+        preview = {
+            "type": "preview",
+            "source_type": output.get("source_type"),
+            "source_path": output.get("source_path"),
+            "served_via": output.get("served_via"),
+            "served_root": output.get("served_root"),
+            "url": output.get("url"),
+            "status_code": output.get("status_code"),
+            "title": output.get("title") or "",
+            "path": output.get("path"),
+            "format": output.get("format"),
+            "size": output.get("size"),
+            "width": output.get("width"),
+            "height": output.get("height"),
+            "full_page": bool(output.get("full_page")),
+            "artifact_kind": output.get("artifact_kind"),
+            "roles": list(output.get("roles") or [])[:12],
+            "artifacts": list(output.get("artifacts") or [])[:12],
+            "verification_strength": output.get("verification_strength"),
+            "interaction": output.get("interaction"),
+            "text": str(output.get("text") or "")[:4000],
+            "text_chars": output.get("text_chars"),
+            "console_errors": (output.get("console_errors") or [])[:10],
+            "console_warnings": (output.get("console_warnings") or [])[:10],
+            "page_errors": (output.get("page_errors") or [])[:10],
+            "failed_requests": (output.get("failed_requests") or [])[:10],
+            "has_runtime_errors": bool(output.get("has_runtime_errors")),
+            "visual_evidence": visual_evidence,
+            "debug_session": debug_session,
         }
     elif any(output.get(key) for key in ("effects", "roles", "artifacts", "verification_strength")):
+        visual_evidence = visual_evidence_summary(normalize_visual_evidence(output))
+        debug_session = debug_session_summary(normalize_debug_session(output))
         preview = {
             "type": "capability_result",
             "content": str(output.get("content") or "")[:4000],
@@ -440,6 +486,8 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
             "roles": list(output.get("roles") or [])[:12],
             "artifacts": list(output.get("artifacts") or [])[:12],
             "verification_strength": output.get("verification_strength"),
+            "visual_evidence": visual_evidence,
+            "debug_session": debug_session,
         }
     else:
         return None
@@ -566,6 +614,7 @@ def summarize_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "stdout": stdout,
             "stderr": stderr,
             "truncated_for_context": stdout_truncated or stderr_truncated,
+            "debug_session": debug_session_summary(normalize_debug_session(output)),
         }
     elif tool_id == "document.extract_docx_outline":
         text = str(output.get("text") or "")
@@ -586,6 +635,8 @@ def summarize_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "sheets": (output.get("sheets") or [])[:8],
         }
     elif tool_id.startswith("web."):
+        visual_evidence = visual_evidence_summary(normalize_visual_evidence(output))
+        debug_session = debug_session_summary(normalize_debug_session(output))
         text, text_truncated = _bounded_text(
             output.get("text"),
             _budget(tool_id, "text", 24_000),
@@ -602,5 +653,45 @@ def summarize_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "html_preview": html_preview,
             "links": (output.get("links") or [])[:80],
             "truncated_for_context": text_truncated or html_truncated or len(output.get("links") or []) > 80,
+            "visual_evidence": visual_evidence,
+            "debug_session": debug_session,
+        }
+    elif tool_id.startswith("preview."):
+        text, text_truncated = _bounded_text(
+            output.get("text"),
+            12_000,
+            suffix="\n... preview text 已按上下文预算截断 ...",
+        )
+        compacted["output"] = {
+            "type": output.get("type"),
+            "source_type": output.get("source_type"),
+            "source_path": output.get("source_path"),
+            "served_via": output.get("served_via"),
+            "served_root": output.get("served_root"),
+            "url": output.get("url"),
+            "status_code": output.get("status_code"),
+            "title": output.get("title"),
+            "path": output.get("path"),
+            "format": output.get("format"),
+            "size": output.get("size"),
+            "width": output.get("width"),
+            "height": output.get("height"),
+            "full_page": output.get("full_page"),
+            "artifact_kind": output.get("artifact_kind"),
+            "artifacts": output.get("artifacts"),
+            "effects": output.get("effects"),
+            "roles": output.get("roles"),
+            "verification_strength": output.get("verification_strength"),
+            "interaction": output.get("interaction"),
+            "text": text,
+            "text_chars": output.get("text_chars"),
+            "truncated_for_context": text_truncated,
+            "has_runtime_errors": output.get("has_runtime_errors"),
+            "console_errors": (output.get("console_errors") or [])[:10],
+            "console_warnings": (output.get("console_warnings") or [])[:10],
+            "page_errors": (output.get("page_errors") or [])[:10],
+            "failed_requests": (output.get("failed_requests") or [])[:10],
+            "visual_evidence": visual_evidence_summary(normalize_visual_evidence(output)),
+            "debug_session": debug_session_summary(normalize_debug_session(output)),
         }
     return compacted
