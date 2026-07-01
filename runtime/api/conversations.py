@@ -2435,8 +2435,69 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             guidance_text,
         )
 
-    def _verifier_retry_prompt(self, mode: str | None, workspace_path: str) -> str:
-        return _prp.verifier_retry_prompt(mode, workspace_path)
+    def _verification_modality_status(
+        self,
+        task_contract: dict[str, Any] | None,
+        tool_events: list[dict[str, Any]] | None,
+        workspace_path: str,
+        mode: str | None,
+    ) -> tuple[list[str], list[str], list[str]]:
+        if not isinstance(task_contract, dict):
+            return [], [], []
+        workspace = str(workspace_path or task_contract.get("workspace_path") or "")
+        required = list(_event_roles.required_verification_modalities(task_contract))
+        verifications = _event_roles.deliverable_verification_events(
+            tool_events or [],
+            task_contract=task_contract,
+            workspace_path=workspace,
+            mode=mode,
+        )
+        observed: list[str] = []
+        for event in verifications:
+            for item in _event_roles.verification_evidence_modalities(
+                event,
+                mode=mode,
+                task_contract=task_contract,
+            ):
+                if item not in observed:
+                    observed.append(item)
+        missing = list(
+            _event_roles.missing_required_verification_modalities(
+                verifications,
+                task_contract,
+                mode=mode,
+            )
+        )
+        return required, observed, missing
+
+    def _verifier_retry_prompt(
+        self,
+        mode: str | None,
+        workspace_path: str,
+        *,
+        task_contract: dict[str, Any] | None = None,
+        tool_events: list[dict[str, Any]] | None = None,
+        capability_preflight: dict[str, Any] | None = None,
+    ) -> str:
+        required, observed, missing = self._verification_modality_status(
+            task_contract,
+            tool_events,
+            workspace_path,
+            mode,
+        )
+        visual_tools = []
+        if isinstance(capability_preflight, dict):
+            raw_tools = capability_preflight.get("visual_verification_tool_ids")
+            if isinstance(raw_tools, list):
+                visual_tools = [str(item) for item in raw_tools if str(item or "").strip()]
+        return _prp.verifier_retry_prompt(
+            mode,
+            workspace_path,
+            required_modalities=required,
+            observed_modalities=observed,
+            missing_modalities=missing,
+            visual_verification_tool_ids=visual_tools,
+        )
 
     def _read_only_task_prompt(self, workspace_path: str) -> str:
         return _prp.read_only_task_prompt(workspace_path)

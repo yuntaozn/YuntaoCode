@@ -144,6 +144,7 @@ def test_planning_context_pack_includes_contract_and_capability_facts() -> None:
             "ok": True,
             "target_capability_ids": ["code.text_write"],
             "preferred_tool_ids": ["code.edit_file"],
+            "visual_verification_tool_ids": ["preview.capture_local_html", "preview.interact_page"],
             "advisories": [],
         },
     )
@@ -152,6 +153,11 @@ def test_planning_context_pack_includes_contract_and_capability_facts() -> None:
     assert kinds == ["user_intent", "workspace_summary", "task_contract", "capability"]
     assert pack["ledger"]["records"][-1]["kind"] == "capability"
     assert "code.edit_file" in pack["records"][-1]["content"]
+    assert "preview.interact_page" in pack["records"][-1]["content"]
+    assert pack["records"][-1]["metadata"]["visual_verification_tool_ids"] == [
+        "preview.capture_local_html",
+        "preview.interact_page",
+    ]
 
 
 def test_verification_context_pack_includes_run_result_facts() -> None:

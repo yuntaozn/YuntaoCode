@@ -67,11 +67,13 @@ def test_build_system_prompt_adds_preview_guidance_when_available() -> None:
         workspace_path=r"D:\code\demo",
         capability_context=(
             "- preview.visual_debug: Capture visual evidence; "
-            "tools=preview.capture_local_html, preview.capture_url"
+            "tools=preview.capture_local_html, preview.capture_url, preview.interact_page"
         ),
     )
 
     assert "Preview Capability Addendum" in prompt
     assert "preview.capture_local_html" in prompt
+    assert "preview.interact_page" in prompt
+    assert "interaction trace" in prompt
     assert "console errors" in prompt
     assert "visual verification evidence" in prompt

@@ -306,6 +306,56 @@ def test_task_contract_uses_declared_deliverable_role_for_write_and_verification
     assert handler._task_contract_failures(contract, events, "coding") == []
 
 
+def test_verifier_retry_prompt_uses_observed_modality_status() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    contract = {
+        "requires_write": True,
+        "requires_verification": True,
+        "workspace_path": r"D:\workspace\site",
+        "deliverables": [
+            {"kind": "code", "path_hint": r"D:\workspace\site\index.html"}
+        ],
+        "required_verification_modalities": ["visual", "behavioral", "content"],
+    }
+    events = [
+        {
+            "tool": "code.edit_file",
+            "status": "success",
+            "input": {"path": r"D:\workspace\site\index.html"},
+            "output": {"path": r"D:\workspace\site\index.html"},
+        },
+        {
+            "tool": "preview.capture_local_html",
+            "status": "success",
+            "input": {"path": r"D:\workspace\site\index.html"},
+            "output": {
+                "screenshot_path": r"C:\Users\demo\AppData\Local\YuntaoCode\task-artifacts\run\preview\index.png",
+                "title": "demo",
+                "artifacts": ["screenshot", "visual_evidence"],
+                "page_errors": [],
+                "console_errors": [],
+            },
+        },
+    ]
+
+    prompt = handler._verifier_retry_prompt(
+        "coding",
+        r"D:\workspace\site",
+        task_contract=contract,
+        tool_events=events,
+        capability_preflight={
+            "visual_verification_tool_ids": [
+                "preview.capture_local_html",
+                "preview.interact_page",
+            ],
+        },
+    )
+
+    assert "observed_modalities=visual" in prompt
+    assert "missing_modalities=behavioral, content" in prompt
+    assert "preview.interact_page" in prompt
+
+
 def test_execution_notice_reports_invalid_verification_method() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
 

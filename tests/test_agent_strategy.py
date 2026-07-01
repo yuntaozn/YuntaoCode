@@ -1463,6 +1463,25 @@ class TestPrompts:
         prompt = verifier_retry_prompt("paper", "/tmp")
         assert "document.extract_docx_outline" in prompt
 
+    def test_verifier_retry_prompt_exposes_missing_modalities(self):
+        prompt = verifier_retry_prompt(
+            "coding",
+            "/tmp",
+            required_modalities=["visual", "content", "behavioral"],
+            observed_modalities=["visual"],
+            missing_modalities=["content", "behavioral"],
+            visual_verification_tool_ids=[
+                "preview.capture_local_html",
+                "preview.interact_page",
+            ],
+        )
+
+        assert "required_modalities=visual, content, behavioral" in prompt
+        assert "observed_modalities=visual" in prompt
+        assert "missing_modalities=content, behavioral" in prompt
+        assert "preview.interact_page" in prompt
+        assert "bounded page actions and assertions" in prompt
+
     def test_post_deliverable_prompt_is_not_file_write_only(self):
         prompt = post_deliverable_prompt("/tmp")
 

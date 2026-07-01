@@ -433,6 +433,11 @@ def _capability_record(
         for item in preflight.get("preferred_tool_ids") or []
         if str(item or "").strip()
     ] if isinstance(preflight.get("preferred_tool_ids"), list) else []
+    visual_verification_tool_ids = [
+        str(item)
+        for item in preflight.get("visual_verification_tool_ids") or []
+        if str(item or "").strip()
+    ] if isinstance(preflight.get("visual_verification_tool_ids"), list) else []
     advisories = preflight.get("advisories") if isinstance(preflight.get("advisories"), list) else []
     advisory_codes = [
         str(item.get("code") or "")
@@ -445,6 +450,7 @@ def _capability_record(
         f"{_safe_int(snapshot.get('tool_count'))}; "
         f"target_capabilities={', '.join(target_capability_ids[:8]) or 'none'}; "
         f"preferred_tools={', '.join(preferred_tool_ids[:8]) or 'none'}; "
+        f"visual_verification_tools={', '.join(visual_verification_tool_ids[:8]) or 'none'}; "
         f"advisories={', '.join(advisory_codes[:8]) or 'none'}; "
         f"preflight_ok={preflight.get('ok') if 'ok' in preflight else 'unknown'}"
     )
@@ -460,6 +466,7 @@ def _capability_record(
         metadata={
             "target_capability_ids": target_capability_ids[:8],
             "preferred_tool_ids": preferred_tool_ids[:12],
+            "visual_verification_tool_ids": visual_verification_tool_ids[:12],
             "advisory_codes": advisory_codes[:12],
             "available_tool_count": _safe_int(snapshot.get("available_tool_count")),
             "tool_count": _safe_int(snapshot.get("tool_count")),

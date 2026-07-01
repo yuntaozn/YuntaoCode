@@ -393,6 +393,11 @@ def preflight_task_capabilities(
             ),
         })
 
+    visual_verification_tool_ids = (
+        _visual_verification_tool_ids(snapshot)
+        if "visual" in _required_verification_modalities(contract)
+        else []
+    )
     preferred_tool_ids = _preferred_tool_ids(
         contract,
         snapshot,
@@ -411,6 +416,7 @@ def preflight_task_capabilities(
         "restrict_fallback": False,
         "allowed_tool_ids": None,
         "preferred_tool_ids": preferred_tool_ids,
+        "visual_verification_tool_ids": visual_verification_tool_ids,
         "enforce_allowed_tools": False,
         "enforce_stop": False,
     }
@@ -583,6 +589,25 @@ def _healthy_visual_tool_ids(snapshot: dict[str, Any], tool_ids: set[str]) -> li
         if _tool_snapshot_health(snapshot, tool_id) == "available"
         and _tool_supports_visual_artifact(snapshot, tool_id)
     ]
+
+
+def _visual_verification_tool_ids(snapshot: dict[str, Any]) -> list[str]:
+    tool_ids = set(_string_list(snapshot.get("available_tool_ids")))
+    candidates = [
+        tool_id for tool_id in _healthy_visual_tool_ids(snapshot, tool_ids)
+        if _tool_snapshot_roles(snapshot, tool_id) & {"verification", "evidence"}
+    ]
+    return sorted(dict.fromkeys(candidates), key=_visual_tool_prompt_order)
+
+
+def _visual_tool_prompt_order(tool_id: str) -> tuple[int, str]:
+    order = {
+        "preview.capture_local_html": 0,
+        "preview.interact_page": 1,
+        "preview.capture_url": 2,
+        "web.capture_page": 3,
+    }
+    return (order.get(tool_id, 50), tool_id)
 
 
 def _tool_supports_visual_artifact(snapshot: dict[str, Any], tool_id: str) -> bool:

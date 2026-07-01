@@ -1078,7 +1078,13 @@ class ConversationRunExecutor:
                                 verifier_retry_prompted = True
                                 messages.append({
                                     "role": "system",
-                                    "content": self._verifier_retry_prompt(effective_mode, workspace.path),
+                                    "content": self._verifier_retry_prompt(
+                                        effective_mode,
+                                        workspace.path,
+                                        task_contract=task_contract,
+                                        tool_events=tool_events,
+                                        capability_preflight=capability_preflight,
+                                    ),
                                 })
                                 self.write_event({
                                     "event": "status",
@@ -1214,7 +1220,13 @@ class ConversationRunExecutor:
                             verifier_retry_prompted = True
                             messages.append({
                                 "role": "system",
-                                "content": self._verifier_retry_prompt(effective_mode, workspace.path),
+                                "content": self._verifier_retry_prompt(
+                                    effective_mode,
+                                    workspace.path,
+                                    task_contract=task_contract,
+                                    tool_events=tool_events,
+                                    capability_preflight=capability_preflight,
+                                ),
                             })
                             self.write_event({
                                 "event": "status",

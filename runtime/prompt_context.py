@@ -50,6 +50,14 @@ unobserved instead of treating source-only inspection as visual verification.
 Local HTML preview is served through a short-lived 127.0.0.1 static server by
 default so module scripts, import maps, relative assets, and Three.js pages are
 closer to real browser execution than file:// loading.
+When the result depends on user interaction, such as click flows, form input,
+quiz answering, reveal-after-answer behavior, or UI feedback after an action,
+use preview.interact_page to run bounded Playwright actions and assertions. It
+returns screenshot, DOM text, interaction trace, console/page/network facts,
+visual evidence, and debug-session evidence. Do not start a long-lived local
+server yourself just to preview a workspace HTML file; preview.capture_local_html
+and preview.interact_page can serve local HTML through a short-lived localhost
+preview server.
 """
 
 _TEXT_WRITE_ROUTE_ADDENDUM = """

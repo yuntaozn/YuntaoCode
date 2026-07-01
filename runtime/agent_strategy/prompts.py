@@ -439,11 +439,71 @@ def result_synthesis_prompt(
     )
 
 
-def verifier_retry_prompt(mode: str | None, workspace_path: str) -> str:
+def _format_prompt_list(values: list[str] | tuple[str, ...] | None) -> str:
+    result: list[str] = []
+    for item in values or []:
+        text = str(item or "").strip()
+        if text and text not in result:
+            result.append(text)
+    return ", ".join(result)
+
+
+def _verification_retry_context(
+    *,
+    required_modalities: list[str] | tuple[str, ...] | None = None,
+    observed_modalities: list[str] | tuple[str, ...] | None = None,
+    missing_modalities: list[str] | tuple[str, ...] | None = None,
+    visual_verification_tool_ids: list[str] | tuple[str, ...] | None = None,
+) -> str:
+    rows: list[str] = []
+    required = _format_prompt_list(required_modalities)
+    observed = _format_prompt_list(observed_modalities)
+    missing = _format_prompt_list(missing_modalities)
+    visual_tools = _format_prompt_list(visual_verification_tool_ids)
+    if required:
+        rows.append(f"- required_modalities={required}")
+    if observed:
+        rows.append(f"- observed_modalities={observed}")
+    if missing:
+        rows.append(f"- missing_modalities={missing}")
+    if visual_tools:
+        rows.append(f"- visual_verification_tools={visual_tools}")
+    if not rows:
+        return ""
+    guidance = (
+        "\nCurrent verification facts from this run:\n"
+        + "\n".join(rows)
+        + "\nUse these facts to decide the next verification step; they are not a fixed route.\n"
+    )
+    if "behavioral" in {str(item or "").strip().lower() for item in (missing_modalities or [])}:
+        if "preview.interact_page" in {str(item or "").strip() for item in (visual_verification_tool_ids or [])}:
+            guidance += (
+                "If the target is a UI or local HTML page, preview.interact_page can run "
+                "bounded page actions and assertions to produce behavioral evidence.\n"
+            )
+    return guidance
+
+
+def verifier_retry_prompt(
+    mode: str | None,
+    workspace_path: str,
+    *,
+    required_modalities: list[str] | tuple[str, ...] | None = None,
+    observed_modalities: list[str] | tuple[str, ...] | None = None,
+    missing_modalities: list[str] | tuple[str, ...] | None = None,
+    visual_verification_tool_ids: list[str] | tuple[str, ...] | None = None,
+) -> str:
+    context = _verification_retry_context(
+        required_modalities=required_modalities,
+        observed_modalities=observed_modalities,
+        missing_modalities=missing_modalities,
+        visual_verification_tool_ids=visual_verification_tool_ids,
+    )
     if mode in {"document", "paper"}:
         return (
             "Verification evidence advisory, not a hard tool constraint.\n"
             f"Workspace: {workspace_path}\n"
+            f"{context}"
             "If you plan to claim the document or paper task is complete, gather "
             "real evidence first. Prefer a read/check tool that fits the artifact: "
             "filesystem.read_file for .md/.txt, document.extract_docx_outline for "
@@ -456,6 +516,7 @@ def verifier_retry_prompt(mode: str | None, workspace_path: str) -> str:
     return (
         "Verification evidence advisory, not a hard tool constraint.\n"
         f"Workspace: {workspace_path}\n"
+        f"{context}"
         "If you plan to claim the target is complete, gather real evidence first. "
         "For external applications, MCP services, browsers, databases, or other "
         "non-file state, prefer a read-only state query, inspection, screenshot, "

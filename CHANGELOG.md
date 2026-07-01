@@ -72,6 +72,12 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 - Made RunResult convergence role-aware: blocking, degraded, incidental, and
   recovered failures are audited separately, while verification evidence now
   carries weak/standard/strong strength instead of a boolean-only signal.
+- Exposed visual verification tool options in capability preflight and Context
+  Pack facts so HTML/UI tasks can discover preview and interaction evidence
+  tools without forcing a fixed execution route.
+- Verifier retry prompts now include observed and missing verification
+  modalities plus available visual verification tools, giving the model
+  clearer evidence facts without forcing a fixed route.
 - Normalized repository metadata URLs in `pyproject.toml`.
 - Updated quick-start documentation with editable install, pytest, smoke test, and desktop UI build commands.
 - Reframed README and roadmap around a Task Runtime foundation instead of a feature/tool checklist.

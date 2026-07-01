@@ -378,6 +378,57 @@ def test_preflight_adds_soft_visual_advisory_when_no_healthy_visual_tool() -> No
     )
 
 
+def test_preflight_exposes_visual_verification_tools_for_code_task() -> None:
+    snapshot = build_capability_snapshot([
+        {
+            "id": "code.edit_file",
+            "capability": "code.text_write",
+            "artifacts": ["diff"],
+            "available": True,
+        },
+        {
+            "id": "preview.capture_local_html",
+            "capability": "preview.visual_debug",
+            "artifacts": ["screenshot", "visual_evidence"],
+            "roles": ["verification"],
+            "verification_strength": "standard",
+            "available": True,
+        },
+        {
+            "id": "preview.interact_page",
+            "capability": "preview.visual_debug",
+            "artifacts": ["screenshot", "visual_evidence", "interaction_trace", "dom_text"],
+            "roles": ["verification"],
+            "verification_strength": "standard",
+            "available": True,
+        },
+        {
+            "id": "web.capture_page",
+            "capability": "web.page_capture",
+            "artifacts": ["screenshot"],
+            "roles": ["verification"],
+            "verification_strength": "standard",
+            "available": True,
+        },
+    ])
+    contract = {
+        "requires_write": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "capability_ids": ["code.text_write"],
+        "deliverables": [{"kind": "code", "path_hint": "index.html"}],
+    }
+
+    result = preflight_task_capabilities(contract, snapshot)
+
+    assert result["preferred_tool_ids"] is None
+    assert result["visual_verification_tool_ids"] == [
+        "preview.capture_local_html",
+        "preview.interact_page",
+        "web.capture_page",
+    ]
+
+
 def test_preflight_advises_unavailable_target_capability() -> None:
     snapshot = build_capability_snapshot([
         {
