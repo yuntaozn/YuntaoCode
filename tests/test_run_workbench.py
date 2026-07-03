@@ -65,6 +65,25 @@ def test_build_run_workbench_presents_artifacts_risks_and_timeline(tmp_path) -> 
         },
     })
     store.record_event(run.id, {
+        "event": "capability_snapshot",
+        "snapshot": {
+            "available_tool_ids": ["filesystem.finalize_text_file", "preview.capture_local_html"],
+            "unavailable_tool_ids": ["mcp_blender.get_scene_info"],
+        },
+        "preflight": {
+            "ok": True,
+            "target_capability_ids": ["code.text_write"],
+            "preferred_tool_ids": ["filesystem.finalize_text_file"],
+            "visual_verification_tool_ids": ["preview.capture_local_html"],
+            "advisories": [{
+                "code": "tool_degraded",
+                "message": "An optional external-state provider is degraded.",
+                "tool_id": "mcp_blender.get_scene_info",
+                "recommended_action": "restart",
+            }],
+        },
+    })
+    store.record_event(run.id, {
         "event": "status",
         "status": "thinking",
         "message": "model is preparing the file",
@@ -105,6 +124,22 @@ def test_build_run_workbench_presents_artifacts_risks_and_timeline(tmp_path) -> 
         },
     })
     store.record_event(run.id, {
+        "event": "visual_context",
+        "records": [{
+            "tool": "preview.capture_local_html",
+            "source_type": "local_html",
+            "source_path": "viewer.html",
+            "path": str(tmp_path / "viewer.png"),
+            "artifact_kind": "screenshot",
+            "format": "png",
+            "width": 1024,
+            "height": 768,
+            "size": 4096,
+            "model_context_eligible": True,
+        }],
+        "message": "visual evidence added to model context",
+    })
+    store.record_event(run.id, {
         "event": "completion_decision",
         "decision": {
             "schema_version": "completion_decision.v1",
@@ -139,6 +174,19 @@ def test_build_run_workbench_presents_artifacts_risks_and_timeline(tmp_path) -> 
     ]
     assert workbench["verification"][0]["tool"] == "filesystem.read_text_preview"
     assert workbench["risks"][0]["code"] == "write_not_verified"
+    assert workbench["audit"]["counts"]["artifacts"] == 1
+    assert workbench["audit"]["counts"]["changed_paths"] == 1
+    assert workbench["audit"]["counts"]["verification"] == 1
+    assert workbench["audit"]["counts"]["runtime_advisories"] == 1
+    assert workbench["audit"]["counts"]["visual_context"] == 1
+    assert workbench["audit"]["flags"]["has_changed_paths"] is True
+    assert workbench["audit"]["changed_paths"][0]["path"] == "viewer.html"
+    assert workbench["audit"]["verification"]["strengths"] == ["weak"]
+    assert workbench["context_evidence"]["context_pack_count"] == 1
+    assert workbench["context_evidence"]["capability"]["target_capability_ids"] == ["code.text_write"]
+    assert workbench["context_evidence"]["capability"]["advisory_count"] == 1
+    assert workbench["context_evidence"]["runtime_advisories"][0]["code"] == "tool_degraded"
+    assert workbench["context_evidence"]["visual_context"][0]["tool"] == "preview.capture_local_html"
     assert workbench["plan"]["steps"][0]["title"] == "Write HTML"
     assert workbench["completion_decisions"][0]["action"] == "continue_with_tools"
     assert [item["kind"] for item in workbench["timeline"]] == ["status", "tool"]

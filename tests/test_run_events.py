@@ -177,10 +177,35 @@ def test_context_pack_event_is_recorded_as_context_fact() -> None:
     }
 
 
+def test_visual_context_event_is_recorded_as_context_fact() -> None:
+    event = compact_run_event({
+        "event": "visual_context",
+        "records": [{
+            "tool": "preview.capture_local_html",
+            "path": "D:/workspace/viewer.png",
+            "artifact_kind": "screenshot",
+        }],
+        "message": "visual evidence added to model context",
+    })
+
+    assert event == {
+        "schema_version": "0.1",
+        "event": "visual_context",
+        "event_name": "context.visual",
+        "records": [{
+            "tool": "preview.capture_local_html",
+            "path": "D:/workspace/viewer.png",
+            "artifact_kind": "screenshot",
+        }],
+        "message": "visual evidence added to model context",
+    }
+
+
 def test_canonical_run_event_name_maps_runtime_events() -> None:
     assert canonical_run_event_name({"event": "status", "status": "thinking"}) == "run.status"
     assert canonical_run_event_name({"event": "context_hygiene"}) == "context.hygiene"
     assert canonical_run_event_name({"event": "context_pack"}) == "context.pack"
+    assert canonical_run_event_name({"event": "visual_context"}) == "context.visual"
     assert canonical_run_event_name({"event": "workspace_snapshot"}) == "context.workspace_snapshot"
     assert canonical_run_event_name({"event": "tool", "status": "running"}) == "tool.started"
     assert canonical_run_event_name({"event": "tool", "status": "partial"}) == "tool.partial"

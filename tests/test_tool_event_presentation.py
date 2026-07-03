@@ -124,8 +124,29 @@ def test_preview_capture_preview_keeps_visual_debug_evidence() -> None:
             "console_errors": [{"type": "error", "text": "boom"}],
             "console_warnings": [{"type": "warning", "text": "careful"}],
             "page_errors": ["ReferenceError"],
+            "page_error_details": [{"message": "ReferenceError", "stack": "app.js:1:1"}],
             "failed_requests": [{"url": "missing.glb", "method": "GET"}],
+            "resource_responses": [
+                {
+                    "url": "https://cdn.example/app.js",
+                    "status": 200,
+                    "resource_type": "script",
+                    "content_type": "application/javascript",
+                }
+            ],
             "has_runtime_errors": True,
+            "dom_snapshot": {
+                "ready_state": "complete",
+                "body_text": "正在初始化场景...",
+                "body_text_chars": 9,
+                "loading_visible": True,
+                "loading_texts": ["正在初始化场景..."],
+                "external_resource_hosts": ["cdn.jsdelivr.net"],
+            },
+            "runtime_diagnostics": [
+                {"code": "browser_page_error", "message": "ReferenceError"},
+                {"code": "page_loading_state_visible", "message": "loading"},
+            ],
         },
     )
 
@@ -140,6 +161,10 @@ def test_preview_capture_preview_keeps_visual_debug_evidence() -> None:
     assert preview["has_runtime_errors"] is True
     assert preview["console_errors"][0]["text"] == "boom"
     assert preview["failed_requests"][0]["url"] == "missing.glb"
+    assert preview["resource_responses"][0]["resource_type"] == "script"
+    assert preview["page_error_details"][0]["stack"] == "app.js:1:1"
+    assert preview["runtime_diagnostics"][0]["code"] == "browser_page_error"
+    assert preview["dom_snapshot"]["loading_visible"] is True
     assert preview["visual_evidence"]["kind"] == "visual_evidence"
     assert preview["visual_evidence"]["path"].endswith("viewer.png")
     assert preview["visual_evidence"]["has_runtime_errors"] is True
@@ -162,6 +187,18 @@ def test_preview_payload_summary_keeps_visual_evidence_summary() -> None:
             "height": 800,
             "console_errors": [{"type": "error", "text": "boom"}],
             "has_runtime_errors": True,
+            "dom_snapshot": {
+                "body_text": "Page body",
+                "body_text_chars": 9,
+                "loading_visible": False,
+                "external_resource_hosts": ["example.com"],
+            },
+            "runtime_diagnostics": [
+                {"code": "browser_console_error", "message": "boom"},
+            ],
+            "resource_responses": [
+                {"url": "https://example.com/app.js", "status": 200, "resource_type": "script"},
+            ],
         },
     })
 
@@ -170,6 +207,9 @@ def test_preview_payload_summary_keeps_visual_evidence_summary() -> None:
     assert output["visual_evidence"]["source_type"] == "url"
     assert output["visual_evidence"]["has_runtime_errors"] is True
     assert output["console_errors"][0]["text"] == "boom"
+    assert output["runtime_diagnostics"][0]["code"] == "browser_console_error"
+    assert output["resource_responses"][0]["resource_type"] == "script"
+    assert output["dom_snapshot"]["body_text"] == "Page body"
     assert output["debug_session"] is None
 
 
@@ -188,7 +228,12 @@ def test_preview_interaction_preview_keeps_trace_and_dom_text() -> None:
         "interaction": {
             "action_count": 2,
             "assertion_failed_count": 0,
-            "actions": [{"action": "click", "ok": True}],
+            "actions": [{
+                "action": "click",
+                "ok": True,
+                "click_strategy": "dom_clickable_ancestor",
+                "recovered_from_error": "Locator.click: Timeout",
+            }],
         },
         "text": "开始学习\n答题完成后显示反馈",
         "text_chars": 16,
@@ -204,9 +249,11 @@ def test_preview_interaction_preview_keeps_trace_and_dom_text() -> None:
 
     assert preview is not None
     assert preview["interaction"]["action_count"] == 2
+    assert preview["interaction"]["actions"][0]["click_strategy"] == "dom_clickable_ancestor"
     assert "答题完成后" in preview["text"]
     assert preview["text_chars"] == 16
     assert summary["output"]["interaction"]["assertion_failed_count"] == 0
+    assert summary["output"]["interaction"]["actions"][0]["recovered_from_error"].startswith("Locator.click")
     assert "开始学习" in summary["output"]["text"]
     assert summary["output"]["truncated_for_context"] is False
 

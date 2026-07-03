@@ -35,6 +35,17 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
     verification = _verification_records(result, evidence)
     tool_steps = _dict_list(evidence.get("tool_steps"))
     completion_decisions = _dict_list(evidence.get("completion_decisions"))
+    context_evidence = _context_evidence_summary(evidence)
+    timeline = _timeline(tool_steps, _dict_list(evidence.get("status_timeline")))[:80]
+    audit = _audit_summary(
+        artifacts=artifacts,
+        verification=verification,
+        risks=risks,
+        failures=failures,
+        timeline=timeline,
+        completion_decisions=completion_decisions,
+        context_evidence=context_evidence,
+    )
 
     run_status = str(run.get("status") or "")
     result_status = str(result.get("status") or "")
@@ -88,13 +99,15 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
             for code in risks
         ],
         "failures": failures[:24],
+        "audit": audit,
         "plan": {
             "title": str(plan.get("title") or ""),
             "state": str(plan.get("state") or ""),
             "steps": _dict_list(plan.get("steps"))[:24],
         },
-        "timeline": _timeline(tool_steps, _dict_list(evidence.get("status_timeline")))[:80],
+        "timeline": timeline,
         "completion_decisions": completion_decisions[:12],
+        "context_evidence": context_evidence,
         "context_pack": _dict(evidence.get("context_pack")),
         "context_packs": _dict_list(evidence.get("context_packs"))[:8],
         "workspace": _dict(evidence.get("workspace_snapshot")),
@@ -189,6 +202,155 @@ def _timeline(tool_steps: list[dict[str, Any]], status_steps: list[dict[str, Any
     return sorted(items, key=lambda item: item.get("time") or "")
 
 
+def _audit_summary(
+    *,
+    artifacts: list[dict[str, Any]],
+    verification: list[dict[str, Any]],
+    risks: list[str],
+    failures: list[dict[str, Any]],
+    timeline: list[dict[str, Any]],
+    completion_decisions: list[dict[str, Any]],
+    context_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    changed_paths = _changed_path_records(artifacts)
+    visual_context = _dict_list(context_evidence.get("visual_context"))
+    runtime_advisories = _dict_list(context_evidence.get("runtime_advisories"))
+    verification_strengths = _unique_strings(item.get("strength") for item in verification)
+    verification_modalities = _unique_strings(item.get("modality") for item in verification)
+    failure_tools = _unique_strings(item.get("tool") for item in failures)
+    risk_codes = _unique_strings(risks)
+    return {
+        "counts": {
+            "artifacts": len(artifacts),
+            "changed_paths": len(changed_paths),
+            "verification": len(verification),
+            "risks": len(risk_codes),
+            "failures": len(failures),
+            "runtime_advisories": len(runtime_advisories),
+            "visual_context": len(visual_context),
+            "completion_decisions": len(completion_decisions),
+            "timeline": len(timeline),
+        },
+        "flags": {
+            "has_artifacts": bool(artifacts),
+            "has_changed_paths": bool(changed_paths),
+            "has_verification": bool(verification),
+            "has_risks": bool(risk_codes),
+            "has_failures": bool(failures),
+            "has_runtime_advisories": bool(runtime_advisories),
+            "has_visual_context": bool(visual_context),
+        },
+        "changed_paths": changed_paths[:24],
+        "verification": {
+            "strengths": verification_strengths,
+            "modalities": verification_modalities,
+        },
+        "risks": risk_codes[:24],
+        "failure_tools": failure_tools[:16],
+    }
+
+
+def _changed_path_records(artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in artifacts:
+        path = str(item.get("path") or "").strip()
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        records.append({
+            "path": path,
+            "kind": str(item.get("kind") or ""),
+            "status": str(item.get("status") or ""),
+            "tool": str(item.get("tool") or ""),
+            "created": bool(item.get("created")),
+            "changed": bool(item.get("changed")),
+            "deleted": bool(item.get("deleted")),
+        })
+    return records
+
+
+def _context_evidence_summary(evidence: dict[str, Any]) -> dict[str, Any]:
+    context_packs = _dict_list(evidence.get("context_packs"))
+    capability = _dict(evidence.get("capability_snapshot"))
+    visual_context = _dict_list(evidence.get("visual_context"))
+    runtime_advisories = _runtime_advisory_records(
+        tool_steps=_dict_list(evidence.get("tool_steps")),
+        capability_snapshot=capability,
+        risks=_string_list(evidence.get("risks")),
+    )
+    phases = [
+        str(item.get("phase") or "")
+        for item in context_packs
+        if str(item.get("phase") or "")
+    ]
+    record_kinds: list[str] = []
+    total_records = 0
+    for pack in context_packs:
+        total_records += _safe_int(pack.get("record_count"), 0)
+        for kind in pack.get("record_kinds") or []:
+            text = str(kind or "").strip()
+            if text and text not in record_kinds:
+                record_kinds.append(text)
+    return {
+        "context_pack_count": len(context_packs),
+        "context_record_count": total_records,
+        "context_phases": phases,
+        "context_record_kinds": record_kinds[:16],
+        "visual_context": visual_context[:12],
+        "runtime_advisories": runtime_advisories[:24],
+        "capability": {
+            "ok": capability.get("ok"),
+            "target_capability_ids": _string_list(capability.get("target_capability_ids")),
+            "preferred_tool_ids": _string_list(capability.get("preferred_tool_ids")),
+            "visual_verification_tool_ids": _string_list(capability.get("visual_verification_tool_ids")),
+            "readiness_issue_count": len(_dict_list(capability.get("readiness_issues"))),
+            "advisory_count": len(_dict_list(capability.get("advisories"))),
+            "available_tool_count": _safe_int(capability.get("available_tool_count"), 0),
+            "unavailable_tool_count": _safe_int(capability.get("unavailable_tool_count"), 0),
+        },
+    }
+
+
+def _runtime_advisory_records(
+    *,
+    tool_steps: list[dict[str, Any]],
+    capability_snapshot: dict[str, Any],
+    risks: list[str],
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for item in _dict_list(capability_snapshot.get("readiness_issues")):
+        records.append({
+            "source": "capability_preflight",
+            "code": str(item.get("code") or ""),
+            "message": str(item.get("message") or item.get("code") or ""),
+            "tool": str(item.get("tool_id") or ""),
+            "capability_id": str(item.get("capability_id") or ""),
+            "recommended_action": str(item.get("recommended_action") or ""),
+        })
+    for step in tool_steps:
+        for risk in _dict_list(step.get("runtime_risks")):
+            records.append({
+                "source": str(risk.get("source") or step.get("tool") or "tool_result"),
+                "code": str(risk.get("code") or ""),
+                "message": str(risk.get("message") or risk.get("code") or ""),
+                "tool": str(step.get("tool") or ""),
+                "capability_id": str(risk.get("capability_id") or ""),
+                "recommended_action": str(risk.get("recommended_action") or ""),
+            })
+    for code in risks:
+        if code.startswith("capability_") or code.endswith("_advisory"):
+            records.append({
+                "source": "run_result",
+                "code": code,
+                "message": risk_message_zh(code),
+                "tool": "",
+                "capability_id": "",
+                "recommended_action": "",
+            })
+    return records
+
+
 def _tool_step_path(item: dict[str, Any]) -> str:
     output = _dict(item.get("output"))
     event_input = _dict(item.get("input"))
@@ -210,6 +372,15 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if str(item or "").strip()]
+
+
+def _unique_strings(values: Any) -> list[str]:
+    result: list[str] = []
+    for value in values or []:
+        text = str(value or "").strip()
+        if text and text not in result:
+            result.append(text)
+    return result
 
 
 def _safe_int(value: Any, fallback: int) -> int:

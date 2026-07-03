@@ -1,6 +1,5 @@
 from runtime.agent_strategy.capability_preflight import (
     build_capability_snapshot,
-    preflight_should_stop,
     preflight_task_capabilities,
     task_contract_capability_ids,
 )
@@ -110,29 +109,12 @@ def test_preflight_advises_external_state_when_no_external_capability_available(
     result = preflight_task_capabilities(contract, snapshot)
 
     assert result["ok"] is True
-    assert result["blockers"] == []
+    assert result["schema_version"] == "capability_preflight.v2"
     assert result["advisories"][0]["code"] == "missing_external_state_capability"
-    assert result["restrict_fallback"] is False
-    assert result["allowed_tool_ids"] is None
+    assert result["readiness_issues"][0]["code"] == "missing_external_state_capability"
     assert result["preferred_tool_ids"] is None
-    assert result["enforce_stop"] is False
-    assert preflight_should_stop(result) is False
-
-
-def test_preflight_does_not_stop_even_when_explicitly_enforced() -> None:
-    advisory_preflight = {
-        "ok": False,
-        "blockers": [{"message": "Capability unavailable"}],
-        "enforce_stop": False,
-    }
-    enforced_preflight = {
-        "ok": False,
-        "blockers": [{"message": "Safety boundary"}],
-        "enforce_stop": True,
-    }
-
-    assert preflight_should_stop(advisory_preflight) is False
-    assert preflight_should_stop(enforced_preflight) is False
+    assert result["route_hint"]["policy"] == "advisory"
+    assert result["route_hint"]["strategy_owner"] == "model"
 
 
 def test_preflight_reports_mcp_protocol_issue_for_external_state_target() -> None:
@@ -165,8 +147,8 @@ def test_preflight_reports_mcp_protocol_issue_for_external_state_target() -> Non
     result = preflight_task_capabilities(contract, snapshot)
 
     assert result["ok"] is True
-    assert result["blockers"] == []
     assert [item["code"] for item in result["advisories"]] == ["protocol_disconnected"]
+    assert [item["code"] for item in result["readiness_issues"]] == ["protocol_disconnected"]
     assert result["advisories"][0]["capability_id"] == "mcp.blender"
     assert result["advisories"][0]["recommended_action"] == "restart"
 
@@ -250,7 +232,7 @@ def test_preflight_allows_normalized_local_file_delete_contract() -> None:
     assert contract["capability_ids"] == ["filesystem.local_state"]
     assert contract["deliverables"][0]["kind"] == "file"
     assert result["ok"] is True
-    assert result["blockers"] == []
+    assert result["readiness_issues"] == []
 
 
 def test_preflight_prefers_external_state_capability_without_restricting_fallback() -> None:
@@ -284,10 +266,8 @@ def test_preflight_prefers_external_state_capability_without_restricting_fallbac
     result = preflight_task_capabilities(contract, snapshot)
 
     assert result["ok"] is True
-    assert result["restrict_fallback"] is False
-    assert result["allowed_tool_ids"] is None
-    assert result["enforce_allowed_tools"] is False
     assert result["preferred_tool_ids"] == ["mcp_blender.execute_blender_code"]
+    assert result["route_hint"]["safety_owner"] == "tool_execution_guard"
 
 
 def test_preflight_prefers_role_relevant_tools_instead_of_entire_mcp_service() -> None:
@@ -370,7 +350,6 @@ def test_preflight_adds_soft_visual_advisory_when_no_healthy_visual_tool() -> No
     result = preflight_task_capabilities(contract, snapshot)
 
     assert result["ok"] is True
-    assert result["blockers"] == []
     assert result["preferred_tool_ids"] == ["mcp_blender.execute_blender_code"]
     assert any(
         item["code"] == "visual_verification_path_uncertain"
@@ -390,6 +369,14 @@ def test_preflight_exposes_visual_verification_tools_for_code_task() -> None:
             "id": "preview.capture_local_html",
             "capability": "preview.visual_debug",
             "artifacts": ["screenshot", "visual_evidence"],
+            "roles": ["verification"],
+            "verification_strength": "standard",
+            "available": True,
+        },
+        {
+            "id": "preview.capture_file",
+            "capability": "preview.visual_debug",
+            "artifacts": ["screenshot", "image", "visual_evidence", "pdf_page_render"],
             "roles": ["verification"],
             "verification_strength": "standard",
             "available": True,
@@ -424,6 +411,7 @@ def test_preflight_exposes_visual_verification_tools_for_code_task() -> None:
     assert result["preferred_tool_ids"] is None
     assert result["visual_verification_tool_ids"] == [
         "preview.capture_local_html",
+        "preview.capture_file",
         "preview.interact_page",
         "web.capture_page",
     ]
@@ -450,8 +438,11 @@ def test_preflight_advises_unavailable_target_capability() -> None:
     result = preflight_task_capabilities(contract, snapshot)
 
     assert result["ok"] is True
-    assert result["blockers"] == []
     assert [item["code"] for item in result["advisories"]] == [
+        "capability_unavailable",
+        "missing_external_state_capability",
+    ]
+    assert [item["code"] for item in result["readiness_issues"]] == [
         "capability_unavailable",
         "missing_external_state_capability",
     ]

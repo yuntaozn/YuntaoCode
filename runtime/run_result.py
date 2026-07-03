@@ -12,7 +12,6 @@ from runtime.agent_strategy.classifiers import (
 from runtime.agent_strategy.document_completion import min_text_output_check
 from runtime.agent_strategy.tool_event_roles import (
     deliverable_path_deviations,
-    deliverable_verification_events,
     event_effects,
     event_declared_roles,
     failed_tool_event_role,
@@ -20,8 +19,9 @@ from runtime.agent_strategy.tool_event_roles import (
     missing_required_verification_modalities,
     required_verification_modalities,
     required_verification_strength,
-    sufficient_deliverable_verification_events,
+    sufficient_task_verification_events,
     successful_deliverable_events,
+    task_verification_events,
     verification_evidence_modalities,
     verification_evidence_strength,
     verification_strength_meets,
@@ -67,7 +67,7 @@ def build_run_result(
         failures.append({
             "tool": "capability.preflight",
             "path": "",
-            "error": str(blocker.get("message") or blocker.get("code") or "capability preflight blocked"),
+            "error": str(blocker.get("message") or blocker.get("code") or "capability preflight advisory"),
         })
     invalid_verification_failures: list[dict[str, Any]] = []
     effective_statuses: list[str] = []
@@ -102,25 +102,18 @@ def build_run_result(
             workspace_path=workspace_path,
             mode=mode,
         )
-        verification_successes = deliverable_verification_events(
+        verification_successes = task_verification_events(
             tool_events,
             task_contract=task_contract,
             workspace_path=workspace_path,
             mode=mode,
         )
-        sufficient_verification_successes = sufficient_deliverable_verification_events(
+        sufficient_verification_successes = sufficient_task_verification_events(
             tool_events,
             task_contract=task_contract,
             workspace_path=workspace_path,
             mode=mode,
         )
-        if not write_successes and task_contract.get("requires_verification"):
-            verification_successes = successful_verification_events(tool_events, mode)
-            sufficient_verification_successes = _sufficient_verification_events_for_contract(
-                verification_successes,
-                task_contract=task_contract,
-                mode=mode,
-            )
     else:
         write_successes = state_write_successes
         write_failures = state_write_failures
@@ -622,41 +615,6 @@ def _missing_code_test(
         if set(required_modalities).issubset(set(observed_modalities)) and sufficient_verifications:
             return False
     return True
-
-
-def _sufficient_verification_events_for_contract(
-    events: list[dict[str, Any]],
-    *,
-    task_contract: dict[str, Any],
-    mode: str | None,
-) -> list[dict[str, Any]]:
-    required = required_verification_strength(task_contract)
-    candidates = [
-        event for event in events
-        if verification_strength_meets(
-            verification_evidence_strength(
-                event,
-                mode=mode,
-                task_contract=task_contract,
-            ),
-            required,
-        )
-    ]
-    required_modalities = required_verification_modalities(task_contract)
-    if not required_modalities:
-        return candidates
-    observed_modalities: set[str] = set()
-    for event in candidates:
-        observed_modalities.update(
-            verification_evidence_modalities(
-                event,
-                mode=mode,
-                task_contract=task_contract,
-            )
-        )
-    if set(required_modalities).issubset(observed_modalities):
-        return candidates
-    return []
 
 
 def _failure_details(

@@ -13,6 +13,7 @@ from typing import Any
 from runtime.capability_evidence import build_capability_evidence_summary
 from runtime.context_pack import context_pack_summary
 from runtime.run_trace import build_run_trace_summary
+from runtime.visual_evidence import visual_evidence_summary
 from runtime.workspace_snapshot import workspace_snapshot_summary
 
 
@@ -39,6 +40,7 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
     workspace_snapshot = _latest_event_value(events, "workspace_snapshot", "snapshot")
     tool_events = [event for event in events if event.get("event") == "tool"]
     status_events = [event for event in events if event.get("event") == "status"]
+    visual_context_events = [event for event in events if event.get("event") == "visual_context"]
     completion_decisions = [
         event.get("decision")
         for event in events
@@ -64,6 +66,7 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
         "trace": build_run_trace_summary(run, events=events),
         "context_pack": context_pack_summary(context_pack),
         "context_packs": _selected_context_pack_summaries(context_packs, limit=8),
+        "visual_context": _visual_context_records(visual_context_events),
         "workspace_snapshot": workspace_snapshot_summary(workspace_snapshot),
         "capability_evidence": build_capability_evidence_summary(
             tool_events,
@@ -162,12 +165,19 @@ def _selected_context_pack_summaries(
 def _capability_summary(capability: Any, preflight: Any) -> dict[str, Any]:
     capability = capability if isinstance(capability, dict) else {}
     preflight = preflight if isinstance(preflight, dict) else {}
+    advisories = _dict_list(preflight.get("advisories"))
+    readiness_issues = _dict_list(preflight.get("readiness_issues"))
+    if not readiness_issues:
+        readiness_issues = [*_dict_list(preflight.get("blockers")), *advisories]
     return {
         "ok": preflight.get("ok"),
         "available_tool_count": len(capability.get("available_tool_ids") or []),
         "unavailable_tool_count": len(capability.get("unavailable_tool_ids") or []),
         "target_capability_ids": list(preflight.get("target_capability_ids") or []),
-        "blockers": list(preflight.get("blockers") or []),
+        "preferred_tool_ids": _string_list(preflight.get("preferred_tool_ids")),
+        "visual_verification_tool_ids": _string_list(preflight.get("visual_verification_tool_ids")),
+        "advisories": advisories,
+        "readiness_issues": readiness_issues,
     }
 
 
@@ -207,6 +217,20 @@ def _tool_step(event: dict[str, Any]) -> dict[str, Any]:
         "declared_verification_strength": str(event.get("declared_verification_strength") or ""),
         "runtime_risks": _dict_list(event.get("runtime_risks")),
     }
+
+
+def _visual_context_records(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for event in events:
+        for record in _dict_list(event.get("records")):
+            summary = visual_evidence_summary(record)
+            if not summary:
+                continue
+            summary["tool"] = str(record.get("tool") or "")
+            summary["injected_into_model_context"] = True
+            summary["mime_type"] = str(record.get("mime_type") or "")
+            records.append(summary)
+    return records[-24:]
 
 
 def _status_step(event: dict[str, Any]) -> dict[str, Any]:

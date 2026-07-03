@@ -374,7 +374,8 @@ def convert_messages_to_responses_input(messages: list[dict[str, Any]]) -> tuple
         if not isinstance(message, dict):
             continue
         role = str(message.get("role") or "user").strip().lower()
-        content = normalize_text(message.get("content") or "")
+        raw_content = message.get("content") or ""
+        content = normalize_text(raw_content)
         if role in {"system", "developer"}:
             if content:
                 instructions.append(content)
@@ -401,10 +402,45 @@ def convert_messages_to_responses_input(messages: list[dict[str, Any]]) -> tuple
             if content:
                 input_items.append({"role": "assistant", "content": content})
             continue
-        input_items.append({"role": "user", "content": content})
+        input_items.append({
+            "role": "user",
+            "content": convert_user_content_to_responses(raw_content),
+        })
     if not input_items:
         input_items.append({"role": "user", "content": ""})
     return input_items, "\n\n".join(part for part in instructions if part)
+
+
+def convert_user_content_to_responses(content: Any) -> str | list[dict[str, Any]]:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return normalize_text(content)
+    parts: list[dict[str, Any]] = []
+    for item in content:
+        if not isinstance(item, dict):
+            text = str(item or "").strip()
+            if text:
+                parts.append({"type": "input_text", "text": text})
+            continue
+        part_type = str(item.get("type") or "").strip()
+        if part_type == "text":
+            text = str(item.get("text") or "").strip()
+            if text:
+                parts.append({"type": "input_text", "text": text})
+            continue
+        if part_type == "image_url":
+            image_url = item.get("image_url")
+            url = ""
+            if isinstance(image_url, dict):
+                url = str(image_url.get("url") or "").strip()
+            elif image_url:
+                url = str(image_url).strip()
+            if url:
+                parts.append({"type": "input_image", "image_url": url})
+    if not parts:
+        return normalize_text(content)
+    return parts
 
 
 def convert_tool_call_message_to_responses_item(tool_call: Any) -> dict[str, Any] | None:
@@ -631,11 +667,40 @@ def fit_request_body_to_context(
 
 
 def estimate_request_tokens(body: dict[str, Any]) -> int:
-    text = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    text = json.dumps(_request_token_estimate_body(body), ensure_ascii=False, separators=(",", ":"))
     try:
         return len(_get_encoding().encode(text))
     except Exception:
         return max(1, len(text) // 3)
+
+
+def _request_token_estimate_body(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_request_token_estimate_body(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    item_type = str(value.get("type") or "")
+    if item_type in {"image_url", "input_image"}:
+        compact = dict(value)
+        if isinstance(compact.get("image_url"), dict):
+            image_url = dict(compact["image_url"])
+            image_url["url"] = "<image>"
+            compact["image_url"] = image_url
+        elif "image_url" in compact:
+            compact["image_url"] = "<image>"
+        return compact
+    compacted: dict[str, Any] = {}
+    for key, item in value.items():
+        if key == "image_url":
+            if isinstance(item, dict):
+                image_url = dict(item)
+                image_url["url"] = "<image>"
+                compacted[key] = image_url
+            else:
+                compacted[key] = "<image>"
+            continue
+        compacted[key] = _request_token_estimate_body(item)
+    return compacted
 
 
 def provider_root_url(provider: dict[str, Any]) -> str:

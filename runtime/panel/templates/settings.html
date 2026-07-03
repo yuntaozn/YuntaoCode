@@ -470,6 +470,11 @@
                 <span data-i18n="settings_js.allow_disable_thinking">允许关闭 thinking 参数</span>
             </label>
             <span class="hint-line" data-i18n="settings_js.allow_disable_thinking_hint">部分 Qwen / DashScope 模型要求 enable_thinking=true；不确定时请保持关闭。</span>
+            <label class="checkbox-line compact">
+                <input id="add-model-supports-vision-input" type="checkbox" checked>
+                <span data-i18n="settings_js.support_vision">支持视觉输入</span>
+            </label>
+            <span class="hint-line" data-i18n="settings_js.support_vision_hint">允许把截图、图片附件和文件预览作为模型图片输入；如果接口不支持多模态可关闭。</span>
             <div class="dialog-actions">
                 <button class="secondary-button" id="cancel-add-model-btn" type="button" data-i18n="common.cancel">取消</button>
                 <button class="primary-button" id="confirm-add-model-btn" type="button" data-i18n="settings_js.save_model">保存模型</button>
@@ -477,8 +482,8 @@
         </div>
     </dialog>
 
-    <script src="/static/i18n.js?v=20260622-1"></script>
-    <script src="/static/settings.js?v=20260622-1"></script>
+    <script src="/static/i18n.js?v=20260702-1"></script>
+    <script src="/static/settings.js?v=20260702-1"></script>
 </body>
 </html>
 

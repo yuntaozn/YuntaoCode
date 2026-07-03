@@ -25,6 +25,14 @@ from runtime.agent_strategy.classifiers import (
 )
 from runtime.agent_strategy.policy import deterministic_plan_gate, resolve_profile
 from runtime.agent_strategy.profiles import profile_to_public_dict
+from runtime.agent_strategy.run_finalization import (
+    COMPLETION_REVIEW,
+    FINAL_ANSWER_CONVERGED,
+    FINAL_ANSWER_VERIFIED,
+    NEEDS_VERIFICATION_EVIDENCE,
+    POST_DELIVERABLE_STAGE,
+    build_finalization_gate,
+)
 from runtime.context_pack import (
     build_context_pack,
     format_context_pack_for_prompt,
@@ -34,6 +42,7 @@ from runtime.run_completion import build_completion_decision
 from runtime.run_result import build_run_result
 from runtime.run_result_presenter import append_changed_files_footer
 from runtime.run_recovery import build_result_context_snapshot, format_recovery_context
+from runtime.visual_context import build_visual_context_messages
 from runtime.workspace_snapshot import build_workspace_snapshot
 from runtime import i18n
 
@@ -68,6 +77,57 @@ class ConversationRunExecutor:
         task_contract["system_overrides"] = list(dict.fromkeys(str(item) for item in overrides if item))
         self._active_task_contract = task_contract
         return True
+
+    def _task_requires_target_deliverable(self, task_contract: dict[str, Any] | None) -> bool:
+        return bool(
+            isinstance(task_contract, dict)
+            and (
+                task_contract.get("requires_write")
+                or task_contract.get("requires_state_change")
+            )
+        )
+
+    def _needs_task_verification_evidence(
+        self,
+        task_contract: dict[str, Any] | None,
+        tool_events: list[dict[str, Any]],
+        workspace_path: str,
+        mode: str | None,
+    ) -> bool:
+        if not isinstance(task_contract, dict) or not task_contract.get("requires_verification"):
+            return False
+        if self._has_successful_target_verification(
+            task_contract,
+            tool_events,
+            workspace_path,
+            mode,
+        ):
+            return False
+        requires_deliverable = self._task_requires_target_deliverable(task_contract)
+        if requires_deliverable and not self._has_successful_target_deliverable(
+            task_contract,
+            tool_events,
+            workspace_path,
+            mode,
+        ):
+            return False
+        return True
+
+    def _verification_retry_status_message(
+        self,
+        task_contract: dict[str, Any] | None,
+        tool_events: list[dict[str, Any]],
+        workspace_path: str,
+        mode: str | None,
+    ) -> str:
+        if self._has_successful_target_deliverable(
+            task_contract,
+            tool_events,
+            workspace_path,
+            mode,
+        ):
+            return "目标产物已出现但尚未取得足够验证证据，正在把证据缺口反馈给模型。"
+        return "当前任务要求验证，但尚未取得足够验证证据，正在把证据缺口反馈给模型。"
 
     def _tool_event_primary_path(self, arguments: dict[str, Any], tool_event: dict[str, Any]) -> str:
         output = tool_event.get("output") if isinstance(tool_event.get("output"), dict) else {}
@@ -473,6 +533,7 @@ class ConversationRunExecutor:
         latest_completion_review_result: dict[str, Any] = {}
         consecutive_idle_timeouts = 0
         final_answer_mode = False
+        user_requested_final_answer = False
         verifier_retry_prompted = False
         dangling_action_retries = 0
         malformed_tool_call_retries = 0
@@ -591,6 +652,7 @@ class ConversationRunExecutor:
                     runtime_intervention_pending = True
                     runtime_intervention_count += 1
                     final_answer_mode = False
+                    user_requested_final_answer = False
                     completion_review_pending = False
                     latest_completion_review_result = {}
                     stage_prompted.clear()
@@ -714,6 +776,7 @@ class ConversationRunExecutor:
                                 "content": self._final_answer_prompt(workspace.path),
                             })
                             final_answer_mode = True
+                            user_requested_final_answer = True
                             round_tools = None
                             round_enable_thinking = False
                             round_reasoning_effort = "low"
@@ -1071,11 +1134,35 @@ class ConversationRunExecutor:
                             continue
                         elif current_stage == "verifier":
                             if (
-                                self._has_successful_write(tool_events)
-                                and not self._has_successful_verification(tool_events, effective_mode)
+                                self._needs_task_verification_evidence(
+                                    task_contract,
+                                    tool_events,
+                                    workspace.path,
+                                    effective_mode,
+                                )
+                                and user_requested_final_answer
+                            ):
+                                self.write_event({
+                                    "event": "status",
+                                    "status": "verification_contract_failed",
+                                    "message": "用户已请求停止；当前缺少足够验证证据，系统将保存真实部分结果。",
+                                })
+                                await self.flush()
+                                break
+                            if (
+                                self._needs_task_verification_evidence(
+                                    task_contract,
+                                    tool_events,
+                                    workspace.path,
+                                    effective_mode,
+                                )
                                 and not verifier_retry_prompted
                             ):
                                 verifier_retry_prompted = True
+                                final_answer_mode = False
+                                user_requested_final_answer = False
+                                completion_review_pending = False
+                                latest_completion_review_result = {}
                                 messages.append({
                                     "role": "system",
                                     "content": self._verifier_retry_prompt(
@@ -1089,19 +1176,27 @@ class ConversationRunExecutor:
                                 self.write_event({
                                     "event": "status",
                                     "status": "verifier_retry",
-                                    "message": "验证阶段尚未调用验证工具，正在要求模型执行一次实际验证。",
+                                    "message": self._verification_retry_status_message(
+                                        task_contract,
+                                        tool_events,
+                                        workspace.path,
+                                        effective_mode,
+                                    ),
                                 })
                                 await self.flush()
                                 continue
                             if (
-                                task_contract.get("requires_verification")
-                                and self._has_successful_write(tool_events)
-                                and not self._has_successful_verification(tool_events, effective_mode)
+                                self._needs_task_verification_evidence(
+                                    task_contract,
+                                    tool_events,
+                                    workspace.path,
+                                    effective_mode,
+                                )
                             ):
                                 self.write_event({
                                     "event": "status",
                                     "status": "progress_observer",
-                                    "message": "验证者阶段尚未调用验证工具，正在提示模型继续推进。",
+                                    "message": "验证者阶段尚未取得足够验证证据，正在提示模型继续推进。",
                                 })
                                 await self.flush()
                                 messages.append({
@@ -1200,24 +1295,29 @@ class ConversationRunExecutor:
                         await self.flush()
                         break
                     if (
-                        task_contract.get("requires_verification")
-                        and self._has_successful_target_deliverable(
-                            task_contract,
-                            tool_events,
-                            workspace.path,
-                            effective_mode,
-                        )
-                        and not self._has_successful_target_verification(
+                        self._needs_task_verification_evidence(
                             task_contract,
                             tool_events,
                             workspace.path,
                             effective_mode,
                         )
                     ):
+                        if user_requested_final_answer:
+                            self.write_event({
+                                "event": "status",
+                                "status": "verification_contract_failed",
+                                "message": "用户已请求停止；当前缺少足够验证证据，系统将保存真实部分结果。",
+                            })
+                            await self.flush()
+                            break
                         self._discard_parts(content_parts, round_content_parts)
                         self._discard_parts(reasoning_parts, round_reasoning_parts)
                         if not verifier_retry_prompted:
                             verifier_retry_prompted = True
+                            final_answer_mode = False
+                            user_requested_final_answer = False
+                            completion_review_pending = False
+                            latest_completion_review_result = {}
                             messages.append({
                                 "role": "system",
                                 "content": self._verifier_retry_prompt(
@@ -1231,14 +1331,19 @@ class ConversationRunExecutor:
                             self.write_event({
                                 "event": "status",
                                 "status": "verifier_retry",
-                                "message": "目标产物已出现但尚未取得验证证据，正在要求模型调用只读验证能力。",
+                                "message": self._verification_retry_status_message(
+                                    task_contract,
+                                    tool_events,
+                                    workspace.path,
+                                    effective_mode,
+                                ),
                             })
                             await self.flush()
                             continue
                         self.write_event({
                             "event": "status",
                             "status": "verification_contract_failed",
-                            "message": "目标产物已出现但没有成功验证；系统记录真实结果，不再继续空转。",
+                            "message": "本轮没有取得足够验证证据；系统记录真实结果，不再继续空转。",
                         })
                         await self.flush()
                         break
@@ -1473,6 +1578,29 @@ class ConversationRunExecutor:
                         await self.flush()
                     messages.append(tool_message)
                 round_events = tool_events[round_start_event_count:]
+                visual_context = build_visual_context_messages(
+                    round_events,
+                    model_config=self.runtime.settings.get_model_config(model),
+                    workspace_path=workspace.path,
+                    data_dir=getattr(self.runtime.settings, "data_dir", None),
+                )
+                if visual_context.records:
+                    messages.extend(visual_context.messages)
+                    audit_records = [
+                        {
+                            key: value
+                            for key, value in record.items()
+                            if key != "data_url"
+                        }
+                        for record in visual_context.records
+                    ]
+                    metadata.setdefault("visual_context_evidence", []).extend(audit_records)
+                    self.write_event({
+                        "event": "visual_context",
+                        "records": audit_records,
+                        "message": "已把工具产生的视觉证据加入下一轮模型上下文。",
+                    })
+                    await self.flush()
                 if round_events:
                     execution_context_pack = build_context_pack(
                         phase="execution",
@@ -1667,7 +1795,12 @@ class ConversationRunExecutor:
                         if advance_stage("integrity_gate_tool_round_completed"):
                             continue
                     if current_stage == "verifier":
-                        if self._has_successful_verification(tool_events, effective_mode):
+                        if self._has_successful_target_verification(
+                            task_contract,
+                            tool_events,
+                            workspace.path,
+                            effective_mode,
+                        ):
                             if advance_stage("verifier_tool_round_completed"):
                                 continue
                         elif stage_round_counts.get(current_stage, 0) >= stage_limit:
@@ -1675,62 +1808,126 @@ class ConversationRunExecutor:
                                 continue
                         else:
                             continue
-                if self._has_successful_target_deliverable(
+                has_target_deliverable = self._has_successful_target_deliverable(
                     task_contract,
                     tool_events,
                     workspace.path,
                     effective_mode,
-                ):
-                    if self._has_successful_target_verification(
+                )
+                if has_target_deliverable:
+                    has_target_verification = self._has_successful_target_verification(
                         task_contract,
                         tool_events,
                         workspace.path,
                         effective_mode,
-                    ):
-                        if len(tool_events) > completion_review_event_count:
-                            provisional_result = build_run_result(
-                                workspace_path=workspace.path,
-                                tool_events=tool_events,
-                                change_summary=None,
-                                mode=effective_mode,
-                                requires_code_write=code_change_intent,
-                                expected_document_coverage=bool(task_contract.get("expected_document_coverage")),
-                                expected_min_output_chars=int(task_contract.get("expected_min_output_chars") or 0),
-                                task_contract=task_contract,
-                                contract_failed=False,
-                                max_rounds_exceeded=max_rounds_exceeded,
-                                convergence_stopped=convergence_stopped,
-                            )
-                            completion_review_event_count = len(tool_events)
-                            completion_review_count += 1
-                            completion_review_pending = True
-                            latest_completion_review_result = provisional_result
-                            post_deliverable_mode = True
+                    )
+                    finalization_gate = build_finalization_gate(
+                        has_target_deliverable=has_target_deliverable,
+                        has_target_verification=has_target_verification,
+                        needs_verification_evidence=self._needs_task_verification_evidence(
+                            task_contract,
+                            tool_events,
+                            workspace.path,
+                            effective_mode,
+                        ),
+                        post_deliverable_mode=post_deliverable_mode,
+                        post_deliverable_rounds=post_deliverable_rounds,
+                        round_had_post_deliverable_verification=round_had_post_deliverable_verification,
+                        post_deliverable_refusals=post_deliverable_refusals,
+                        round_had_post_deliverable_change=round_had_post_deliverable_change,
+                        completion_review_stale=len(tool_events) > completion_review_event_count,
+                    )
+                    if finalization_gate.action == NEEDS_VERIFICATION_EVIDENCE:
+                        final_answer_mode = False
+                        user_requested_final_answer = False
+                        completion_review_pending = False
+                        latest_completion_review_result = {}
+                        if not verifier_retry_prompted:
+                            verifier_retry_prompted = True
                             messages.append({
                                 "role": "system",
-                                "content": self._completion_review_prompt(
+                                "content": self._verifier_retry_prompt(
+                                    effective_mode,
                                     workspace.path,
-                                    task_contract,
-                                    provisional_result,
+                                    task_contract=task_contract,
+                                    tool_events=tool_events,
+                                    capability_preflight=capability_preflight,
                                 ),
                             })
                             self.write_event({
                                 "event": "status",
-                                "status": "completion_review",
-                                "message": "目标产物已有证据，正在要求模型基于运行事实自审是否真正完成。",
-                                "review": {
-                                    "count": completion_review_count,
-                                    "run_result_status": provisional_result.get("status"),
-                                    "risks": provisional_result.get("risks") or [],
-                                },
+                                "status": "verifier_retry",
+                                "message": self._verification_retry_status_message(
+                                    task_contract,
+                                    tool_events,
+                                    workspace.path,
+                                    effective_mode,
+                                ),
                             })
-                            await self.flush()
-                            continue
+                        else:
+                            messages.append({
+                                "role": "system",
+                                "content": self._progress_observer_prompt(
+                                    workspace.path,
+                                    current_stage,
+                                    tool_events,
+                                    code_change_intent,
+                                    "target_verification_still_missing",
+                                ),
+                            })
+                            self.write_event({
+                                "event": "status",
+                                "status": "progress_observer",
+                                "message": "目标产物仍缺少足够验证证据，正在把证据缺口反馈给模型继续判断。",
+                            })
+                        await self.flush()
+                        continue
+                    if finalization_gate.action == COMPLETION_REVIEW:
+                        provisional_result = build_run_result(
+                            workspace_path=workspace.path,
+                            tool_events=tool_events,
+                            change_summary=None,
+                            mode=effective_mode,
+                            requires_code_write=code_change_intent,
+                            expected_document_coverage=bool(task_contract.get("expected_document_coverage")),
+                            expected_min_output_chars=int(task_contract.get("expected_min_output_chars") or 0),
+                            task_contract=task_contract,
+                            contract_failed=False,
+                            max_rounds_exceeded=max_rounds_exceeded,
+                            convergence_stopped=convergence_stopped,
+                        )
+                        completion_review_event_count = len(tool_events)
+                        completion_review_count += 1
+                        completion_review_pending = True
+                        latest_completion_review_result = provisional_result
+                        post_deliverable_mode = True
+                        messages.append({
+                            "role": "system",
+                            "content": self._completion_review_prompt(
+                                workspace.path,
+                                task_contract,
+                                provisional_result,
+                            ),
+                        })
+                        self.write_event({
+                            "event": "status",
+                            "status": "completion_review",
+                            "message": "目标产物已有证据，正在要求模型基于运行事实自审是否真正完成。",
+                            "review": {
+                                "count": completion_review_count,
+                                "run_result_status": provisional_result.get("status"),
+                                "risks": provisional_result.get("risks") or [],
+                            },
+                        })
+                        await self.flush()
+                        continue
+                    if finalization_gate.action == FINAL_ANSWER_VERIFIED:
                         messages.append({
                             "role": "system",
                             "content": self._final_answer_prompt(workspace.path),
                         })
                         final_answer_mode = True
+                        user_requested_final_answer = False
                         self.write_event({
                             "event": "status",
                             "status": "success_conditions_met",
@@ -1738,7 +1935,7 @@ class ConversationRunExecutor:
                         })
                         await self.flush()
                         continue
-                    if not post_deliverable_mode:
+                    if finalization_gate.action == POST_DELIVERABLE_STAGE:
                         post_deliverable_mode = True
                         messages.append({
                             "role": "system",
@@ -1751,18 +1948,13 @@ class ConversationRunExecutor:
                         })
                         await self.flush()
                         continue
-                    if post_deliverable_rounds >= 3 and (
-                        round_had_post_deliverable_verification
-                        or (
-                            post_deliverable_refusals > 2
-                            and not round_had_post_deliverable_change
-                        )
-                    ):
+                    if finalization_gate.action == FINAL_ANSWER_CONVERGED:
                         messages.append({
                             "role": "system",
                             "content": self._final_answer_prompt(workspace.path),
                         })
                         final_answer_mode = True
+                        user_requested_final_answer = False
                         self.write_event({
                             "event": "status",
                             "status": "finalizing",
@@ -1909,21 +2101,24 @@ class ConversationRunExecutor:
                 "未完整完成：本轮已经观察到文本/文档产物，但没有证明达到任务要求的输出长度，"
                 "或实际字符数低于任务目标。因此系统不会把它标记为完整完成；请继续扩写、补全或重新导出后再验证。"
             )
-        elif tool_contract_failed and "missing_target_deliverable_verification" in contract_failures:
+        elif tool_contract_failed and (
+            "missing_target_deliverable_verification" in contract_failures
+            or "missing_target_verification" in contract_failures
+        ):
             model_content = "".join(content_parts).strip()
             assistant_content = (
                 f"{model_content}\n\n" if model_content else ""
             ) + (
-                "未完整完成：本轮已经生成或更新目标产物，但没有成功取得真实验证证据，"
-                "因此系统不会把它标记为完整完成。请继续下一轮执行验证。"
+                "未完整完成：本轮没有取得足够的真实验证证据，"
+                "因此系统不会把它标记为完整完成。请继续下一轮补充验证或调整执行策略。"
             )
         elif tool_contract_failed:
             model_content = "".join(content_parts).strip()
             assistant_content = (
                 f"{model_content}\n\n" if model_content else ""
             ) + (
-                "未完成需要的写入/导出：本轮没有成功生成或更新任务目标产物，"
-                "因此本轮没有生成或修改目标文件。"
+                "未完成任务目标：本轮没有观察到满足目标契约的执行证据。"
+                "请根据上方工具记录继续修正。"
             )
         else:
             assistant_content = "".join(content_parts).strip() or "模型没有返回内容。"

@@ -49,6 +49,32 @@ def test_valid_integrity_does_not_add_risk() -> None:
     assert "runtime_risks" not in payload
 
 
+def test_runtime_advisory_becomes_model_facing_risk_evidence() -> None:
+    payload = attach_tool_result_risks({
+        "tool": "shell.run_command",
+        "status": "success",
+        "output": {"exit_code": 0, "stdout": "ok", "stderr": ""},
+        "runtime_advisories": [
+            {
+                "reason": "verification_runtime_advisory",
+                "message": "long-running service is weak verification",
+                "blocking": False,
+            }
+        ],
+    })
+
+    assert payload["runtime_risks"] == [
+        {
+            "code": "verification_runtime_advisory",
+            "severity": "info",
+            "source": "runtime_intervention_governance",
+            "message": "long-running service is weak verification",
+            "action": "treat_as_weak_verification_evidence",
+            "blocking": False,
+        }
+    ]
+
+
 def test_shell_success_with_exception_stderr_becomes_degraded_evidence_risk() -> None:
     risks = assess_tool_result_risks(
         "shell.run_command",

@@ -389,15 +389,22 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 
 * [x] Task Model 基础：ProductTask、Run、ToolTask、状态、结果和运行血缘
 * [x] Run Lifecycle 基础：running、waiting_confirmation、paused、resumed、completed、failed、stopped
-* [ ] Task Trace：模型输出、工具调用、确认、错误、验证和最终摘要
+* [x] Task Trace 基础：RunEvent、canonical event_name、工具调用、确认、错误、验证、结果和最终摘要预览
 * [x] Run Recovery 基础：暂停、恢复、Runbook、Replay Request
 * [x] Recovery Context 基础：Checkpoint、Context Snapshot、显式启动的 Replay Run
-* [ ] Task Audit：可读的执行记录和可测试的状态迁移
-* [ ] Context Runtime：上下文选择、证据、压缩快照、记忆边界
-* [ ] Capability Runtime：能力契约、权限、确认、产物和验证规则
+* [x] Task Audit 基础：RunEvidence、RunWorkbench、执行审计摘要、任务记录 UI 和状态迁移测试
+* [x] Context Runtime 最小闭环：Context Pack / Ledger、上下文卫生、任务血缘、记忆边界、视觉证据和恢复快照
+* [x] Capability Runtime 最小闭环：ToolSpec 元数据、Capability Preflight v2、权限、确认、产物、Provider 和验证证据
 * [x] Automation Runtime 基础：触发器、任务模板、并发边界、配置页和普通 Run 转换契约
-* [ ] MCP Service Lifecycle：服务配置、启动策略、协议连接、工具发现、诊断和能力绑定
-* [ ] Runtime Extension Contract：插件 Manifest、权限声明、依赖声明和任务产物规范
+* [x] MCP Service Lifecycle 基础：服务配置、启动 / 重启、协议连接、工具发现、诊断和能力绑定
+* [x] Runtime Extension Contract 基础：插件 / MCP / CLI / Capability Pack 边界、权限声明、依赖声明和任务产物规范
+
+0.1 发布前剩余工作不再是新增运行时能力，而是收口卫生：
+
+* [x] README / README.en / CHANGELOG / SECURITY 最终同步
+* [x] 版本号、文档编码、完整测试、前端语法、启动脚本 help 和 HTTP / 面板冒烟检查
+* [x] 清理临时样例、生成物、缓存和不应进入开源仓库的本机测试资产
+* [ ] 用一个代码任务、一个文档任务、一个网页/视觉验证任务、一个 MCP 示例任务做发布前人工冒烟测试
 
 ### Phase 2：Experience And Evaluation Loop
 

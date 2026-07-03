@@ -391,15 +391,22 @@ Goal: stabilize the Task, Context, Capability, and Evidence foundations. YuntaoC
 
 * [x] Task Model foundation: ProductTask, Run, ToolTask, state, results, and lineage
 * [x] Run Lifecycle foundation: running, waiting_confirmation, paused, resumed, completed, failed, stopped
-* [ ] Task Trace: model output, tool calls, confirmations, errors, verification, and final summary
+* [x] Task Trace foundation: RunEvent, canonical event_name, tool calls, confirmations, errors, verification, results, and final-answer previews
 * [x] Run Recovery foundation: pause, resume, Runbook, and Replay Request
 * [x] Recovery Context foundation: Checkpoint, Context Snapshot, and explicitly started Replay Runs
-* [ ] Task Audit: readable execution records and testable state transitions
-* [ ] Context Runtime: context selection, evidence, compression snapshots, and memory boundaries
-* [ ] Capability Runtime: capability contracts, permissions, confirmations, artifacts, and verification rules
+* [x] Task Audit foundation: RunEvidence, RunWorkbench, run audit summary, task-history UI, and state-transition tests
+* [x] Context Runtime minimum loop: Context Pack / Ledger, context hygiene, task lineage, memory boundaries, visual evidence, and recovery snapshots
+* [x] Capability Runtime minimum loop: ToolSpec metadata, Capability Preflight v2, permissions, confirmations, artifacts, providers, and verification evidence
 * [x] Automation Runtime foundation: triggers, task templates, concurrency boundary, configuration UI, and normal Run conversion contract
-* [ ] MCP Service Lifecycle: service configuration, start policy, protocol connection, tool discovery, diagnostics, and capability binding
-* [ ] Runtime Extension Contract: plugin manifest, permissions, dependencies, and task artifact conventions
+* [x] MCP Service Lifecycle foundation: service configuration, start / restart actions, protocol connection, tool discovery, diagnostics, and capability binding
+* [x] Runtime Extension Contract foundation: plugin / MCP / CLI / Capability Pack boundaries, permissions, dependencies, and task artifact conventions
+
+The remaining work before tagging 0.1 is release hygiene, not more runtime scope:
+
+* [x] Final README / README.en / CHANGELOG / SECURITY synchronization
+* [x] Version, documentation encoding, full tests, frontend syntax, startup-script help, and HTTP / panel smoke checks
+* [x] Remove temporary examples, generated artifacts, caches, and local test assets that should not enter the open-source repository
+* [ ] Run manual release smoke tests with one coding task, one document task, one webpage / visual-verification task, and one MCP example task
 
 ### Phase 2: Experience And Evaluation Loop
 

@@ -41,6 +41,12 @@ Current intended boundaries:
   network isolation. The Blender example disables its supported telemetry by
   default, but third-party MCP services must still be treated as executable
   code with their own network behavior.
+- Declarative CLI providers are controlled capability providers, not a bypass
+  around shell permissions. They must declare command, arguments, timeout,
+  permissions, and evidence behavior before they are exposed to tasks.
+- AI-built Capability Packs are stored as user-data drafts by default. They do
+  not become trusted runtime code, built-in plugins, or executable tool
+  adapters without an explicit enablement path, tests, and user confirmation.
 
 Known pre-1.0 hardening work:
 

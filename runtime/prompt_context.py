@@ -41,9 +41,12 @@ _PREVIEW_CAPABILITY_ADDENDUM = """
 ## Preview Capability Addendum
 When preview.* tools are available and the task involves HTML, CSS,
 JavaScript, UI layout, visual appearance, local pages, localhost, screenshots,
-or whether a rendered result looks correct, use preview tools as visual verification evidence. For a local HTML file inside the workspace, prefer
-preview.capture_local_html after the write. For a running local or public URL,
-use preview.capture_url. Treat console errors, page errors, and failed requests
+PDF/image file previews, or whether a rendered result looks correct, use
+preview tools as visual verification evidence. For a local HTML file inside the
+workspace, prefer preview.capture_local_html after the write. For a generic
+workspace file that should be visually observed, use preview.capture_file. For
+a running local or public URL, use preview.capture_url. Treat console errors,
+page errors, failed requests, file preview diagnostics, and runtime diagnostics
 as evidence for the model to decide whether to repair, continue, or report the
 remaining risk. If no preview was captured, keep visual correctness marked as
 unobserved instead of treating source-only inspection as visual verification.

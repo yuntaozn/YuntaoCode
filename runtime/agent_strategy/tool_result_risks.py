@@ -132,11 +132,42 @@ def attach_tool_result_risks(payload: dict[str, Any]) -> dict[str, Any]:
         payload.get("output"),
         error=payload.get("error"),
     )
+    risks = _runtime_advisory_risks(payload.get("runtime_advisories")) + risks
     if not risks:
         return dict(payload)
     # Keep risks before potentially large output so compact transport cannot
     # truncate the advisory before the model sees it.
     return {"runtime_risks": risks, **payload}
+
+
+def _runtime_advisory_risks(advisories: Any) -> list[dict[str, Any]]:
+    if not isinstance(advisories, list):
+        return []
+    risks: list[dict[str, Any]] = []
+    for advisory in advisories[:8]:
+        if not isinstance(advisory, dict):
+            continue
+        reason = str(advisory.get("reason") or "runtime_advisory").strip() or "runtime_advisory"
+        message = str(advisory.get("message") or "").strip()
+        if not message:
+            continue
+        risks.append({
+            "code": reason,
+            "severity": "info",
+            "source": "runtime_intervention_governance",
+            "message": message[:800],
+            "action": _advisory_action(reason),
+            "blocking": bool(advisory.get("blocking")) is True,
+        })
+    return risks
+
+
+def _advisory_action(reason: str) -> str:
+    return {
+        "capability_fallback_advisory": "treat_as_capability_fact_not_tool_blocker",
+        "document_contract_advisory": "treat_as_document_coverage_risk",
+        "verification_runtime_advisory": "treat_as_weak_verification_evidence",
+    }.get(reason, "treat_as_runtime_advisory")
 
 
 def _failed_tool_risks(tool_id: str, output: Any, *, error: Any = "") -> list[dict[str, Any]]:

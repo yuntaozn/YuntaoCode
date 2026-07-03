@@ -56,7 +56,16 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
     store.record_event(run.id, {
         "event": "capability_snapshot",
         "snapshot": {"available_tool_ids": ["filesystem.write_file"], "unavailable_tool_ids": []},
-        "preflight": {"ok": True, "target_capability_ids": ["code.text_write"]},
+        "preflight": {
+            "ok": True,
+            "target_capability_ids": ["code.text_write"],
+            "preferred_tool_ids": ["filesystem.write_file"],
+            "visual_verification_tool_ids": ["preview.capture_local_html"],
+            "advisories": [{
+                "code": "visual_verification_path_uncertain",
+                "message": "visual verification route is uncertain",
+            }],
+        },
     })
     store.record_event(run.id, {
         "event": "context_pack",
@@ -122,6 +131,22 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
     store.record_event(run.id, {
         "event": "checkpoint",
         "checkpoint": {"id": "checkpoint-1", "state": "partial"},
+    })
+    store.record_event(run.id, {
+        "event": "visual_context",
+        "records": [{
+            "tool": "preview.capture_local_html",
+            "source_type": "local_html",
+            "source_path": "viewer.html",
+            "path": str(tmp_path / "viewer.png"),
+            "artifact_kind": "screenshot",
+            "format": "png",
+            "width": 1280,
+            "height": 720,
+            "size": 2048,
+            "model_context_eligible": True,
+        }],
+        "message": "visual evidence added to model context",
     })
     store.record_event(run.id, {
         "event": "result",
@@ -215,6 +240,10 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
     assert evidence["trace"]["result_status"] == "partial"
     assert evidence["capability_evidence"]["observed_capability_ids"] == ["code.text_write"]
     assert evidence["capability_snapshot"]["target_capability_ids"] == ["code.text_write"]
+    assert evidence["capability_snapshot"]["advisories"][0]["code"] == "visual_verification_path_uncertain"
+    assert evidence["capability_snapshot"]["preferred_tool_ids"] == ["filesystem.write_file"]
+    assert evidence["visual_context"][0]["tool"] == "preview.capture_local_html"
+    assert evidence["visual_context"][0]["injected_into_model_context"] is True
     assert evidence["tool_steps"][0]["declared_capability"] == "code.text_write"
     assert evidence["completion_decisions"][0]["action"] == "final_answer_candidate"
     assert evidence["risks"] == ["write_not_verified"]

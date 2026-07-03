@@ -15,6 +15,7 @@ from .capability_router import build_capability_catalog
 
 
 CAPABILITY_SNAPSHOT_SCHEMA_VERSION = "capability_snapshot.v1"
+CAPABILITY_PREFLIGHT_SCHEMA_VERSION = "capability_preflight.v2"
 VISUAL_ARTIFACT_KINDS = {
     "screenshot",
     "image",
@@ -407,49 +408,25 @@ def preflight_task_capabilities(
     )
 
     return {
-        "schema_version": "capability_preflight.v1",
+        "schema_version": CAPABILITY_PREFLIGHT_SCHEMA_VERSION,
         "ok": True,
-        "blockers": [],
         "advisories": advisories,
+        "readiness_issues": advisories,
         "target_capability_ids": target_capability_ids,
         "requires_external_state_capability": requires_external_state,
-        "restrict_fallback": False,
-        "allowed_tool_ids": None,
         "preferred_tool_ids": preferred_tool_ids,
         "visual_verification_tool_ids": visual_verification_tool_ids,
-        "enforce_allowed_tools": False,
-        "enforce_stop": False,
+        "route_hint": {
+            "policy": "advisory",
+            "strategy_owner": "model",
+            "safety_owner": "tool_execution_guard",
+        },
     }
 
 
 def tool_allowed_by_preflight(preflight: dict[str, Any] | None, tool_id: str) -> bool:
-    if not isinstance(preflight, dict):
-        return True
-    if not bool(preflight.get("enforce_allowed_tools")):
-        return True
-    allowed = preflight.get("allowed_tool_ids")
-    if not isinstance(allowed, list):
-        return True
-    return str(tool_id or "") in set(str(item) for item in allowed)
-
-
-def preflight_should_stop(preflight: dict[str, Any] | None) -> bool:
-    """Preflight is advisory and must not terminate a run before model repair."""
-    return False
-
-
-def preflight_blocker_messages(preflight: dict[str, Any] | None) -> list[str]:
-    blockers = preflight.get("blockers") if isinstance(preflight, dict) else []
-    if not isinstance(blockers, list):
-        return []
-    result: list[str] = []
-    for blocker in blockers:
-        if not isinstance(blocker, dict):
-            continue
-        message = str(blocker.get("message") or blocker.get("code") or "").strip()
-        if message:
-            result.append(message)
-    return result
+    """Preflight is advisory; it never hides or rejects a visible tool."""
+    return True
 
 
 def preflight_advisory_messages(preflight: dict[str, Any] | None) -> list[str]:
@@ -603,9 +580,10 @@ def _visual_verification_tool_ids(snapshot: dict[str, Any]) -> list[str]:
 def _visual_tool_prompt_order(tool_id: str) -> tuple[int, str]:
     order = {
         "preview.capture_local_html": 0,
-        "preview.interact_page": 1,
-        "preview.capture_url": 2,
-        "web.capture_page": 3,
+        "preview.capture_file": 1,
+        "preview.interact_page": 2,
+        "preview.capture_url": 3,
+        "web.capture_page": 4,
     }
     return (order.get(tool_id, 50), tool_id)
 

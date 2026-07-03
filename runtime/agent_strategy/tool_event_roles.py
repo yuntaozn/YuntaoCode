@@ -247,6 +247,78 @@ def sufficient_deliverable_verification_events(
     return []
 
 
+def task_verification_events(
+    tool_events: list[dict[str, Any]],
+    *,
+    task_contract: dict[str, Any] | None,
+    workspace_path: str,
+    mode: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return verification evidence for the task contract.
+
+    Write/state-change tasks verify the observed deliverable after it appears.
+    Verification-only tasks, such as "check whether the previous change works",
+    have no new deliverable before verification; in that case evidence tools
+    are evaluated directly against the current task contract.
+    """
+
+    deliverable_events = deliverable_verification_events(
+        tool_events,
+        task_contract=task_contract,
+        workspace_path=workspace_path,
+        mode=mode,
+    )
+    if deliverable_events or not _is_verification_only_contract(task_contract):
+        return deliverable_events
+    return [
+        event
+        for event in tool_events
+        if _is_verification_event(event, mode, written_paths=event_path_hints(event))
+    ]
+
+
+def sufficient_task_verification_events(
+    tool_events: list[dict[str, Any]],
+    *,
+    task_contract: dict[str, Any] | None,
+    workspace_path: str,
+    mode: str | None = None,
+) -> list[dict[str, Any]]:
+    required = required_verification_strength(task_contract)
+    candidates = [
+        event
+        for event in task_verification_events(
+            tool_events,
+            task_contract=task_contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+        if verification_strength_meets(
+            verification_evidence_strength(
+                event,
+                mode=mode,
+                task_contract=task_contract,
+            ),
+            required,
+        )
+    ]
+    required_modalities = required_verification_modalities(task_contract)
+    if not required_modalities:
+        return candidates
+    observed_modalities: set[str] = set()
+    for event in candidates:
+        observed_modalities.update(
+            verification_evidence_modalities(
+                event,
+                mode=mode,
+                task_contract=task_contract,
+            )
+        )
+    if set(required_modalities).issubset(observed_modalities):
+        return candidates
+    return []
+
+
 def required_verification_strength(task_contract: dict[str, Any] | None) -> str:
     if not isinstance(task_contract, dict) or not task_contract.get("requires_verification"):
         return "none"
@@ -613,6 +685,17 @@ def contract_deliverable_kinds(task_contract: dict[str, Any] | None) -> set[str]
         for item in task_contract.get("deliverables") or []
         if isinstance(item, dict) and str(item.get("kind") or "").strip()
     }
+
+
+def _is_verification_only_contract(task_contract: dict[str, Any] | None) -> bool:
+    if not isinstance(task_contract, dict):
+        return False
+    if not task_contract.get("requires_verification"):
+        return False
+    if task_contract.get("requires_write") or task_contract.get("requires_state_change"):
+        return False
+    kinds = contract_deliverable_kinds(task_contract)
+    return not kinds or kinds.issubset({"answer"})
 
 
 def deliverable_path_deviations(

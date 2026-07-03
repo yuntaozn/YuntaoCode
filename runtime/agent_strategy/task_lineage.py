@@ -47,6 +47,24 @@ def task_candidate_from_message(
         for item in contract.get("capability_ids") or []
         if str(item or "").strip()
     ]
+    run_result = metadata.get("run_result") if isinstance(metadata.get("run_result"), dict) else {}
+    target_written_paths = _string_list(run_result.get("target_written_paths"), limit=8)
+    observed_written_paths = _string_list(run_result.get("observed_written_paths"), limit=8)
+    changed_paths = _string_list(run_result.get("changed_paths"), limit=8)
+    written_paths = _string_list(run_result.get("written_paths"), limit=8)
+    verified_paths = _verification_paths(run_result)
+    artifact_paths = _artifact_paths(run_result)
+    actual_paths = _unique_strings(
+        [
+            *target_written_paths,
+            *changed_paths,
+            *observed_written_paths,
+            *written_paths,
+            *artifact_paths,
+            *verified_paths,
+        ],
+        limit=12,
+    )
     return {
         "schema_version": TASK_LINEAGE_CANDIDATE_SCHEMA_VERSION,
         "candidate_id": candidate_id,
@@ -62,6 +80,12 @@ def task_candidate_from_message(
         "deliverable_kinds": deliverable_kinds[:6],
         "capability_ids": capability_ids[:6],
         "status": _status_from_metadata(metadata),
+        "changed_paths": changed_paths,
+        "target_written_paths": target_written_paths,
+        "observed_written_paths": observed_written_paths,
+        "verified_paths": verified_paths,
+        "artifact_paths": artifact_paths,
+        "actual_paths": actual_paths,
         "contract_anchor": _contract_anchor(contract),
     }
 
@@ -79,6 +103,8 @@ def collect_task_lineage_candidates(
     result: list[dict[str, Any]] = []
     messages = list(getattr(conversation, "messages", []) or [])
     seen: set[str] = set()
+    scan_limit = max(limit, limit * 3)
+    source_recency_rank = 0
     for index in range(len(messages) - 1, -1, -1):
         message = messages[index]
         role = str(getattr(message, "role", "") or "")
@@ -98,11 +124,15 @@ def collect_task_lineage_candidates(
         if key in seen:
             continue
         seen.add(key)
+        source_recency_rank += 1
+        candidate["recency_rank"] = source_recency_rank
         result.append(candidate)
-        if len(result) >= limit:
+        if len(result) >= scan_limit:
             break
-    result.reverse()
-    return result
+    ranked = sorted(result, key=_candidate_sort_key)[:limit]
+    for rank, candidate in enumerate(ranked, start=1):
+        candidate["lineage_rank"] = rank
+    return ranked
 
 
 def referenced_candidate_contract(
@@ -135,6 +165,8 @@ def format_task_candidates_for_model(
             continue
         compact.append({
             "candidate_id": candidate.get("candidate_id"),
+            "lineage_rank": candidate.get("lineage_rank"),
+            "recency_rank": candidate.get("recency_rank"),
             "goal": candidate.get("goal"),
             "intent": candidate.get("intent"),
             "status": candidate.get("status"),
@@ -142,6 +174,10 @@ def format_task_candidates_for_model(
             "requires_state_change": bool(candidate.get("requires_state_change")),
             "deliverable_kinds": candidate.get("deliverable_kinds") or [],
             "capability_ids": candidate.get("capability_ids") or [],
+            "target_written_paths": candidate.get("target_written_paths") or [],
+            "changed_paths": candidate.get("changed_paths") or [],
+            "verified_paths": candidate.get("verified_paths") or [],
+            "actual_paths": candidate.get("actual_paths") or [],
         })
         if len(compact) >= limit:
             break
@@ -152,8 +188,14 @@ def format_task_candidates_for_model(
         "kind": "task_lineage",
         "rule": (
             "These are historical task candidates, not the current goal. "
+            "They are ordered by lineage_rank: recent candidates with "
+            "runtime-observed target paths first. "
             "Use one only if the current user request continues, revises, "
-            "retries, or evaluates that candidate."
+            "retries, or evaluates that candidate. Prefer runtime-observed "
+            "actual_paths over guessed, stale, or intermediate paths when "
+            "inspecting a continued task. Read-only failed verification "
+            "attempts may explain what went wrong, but should not replace the "
+            "target paths from a prior write/change run."
         ),
         "candidates": compact,
     }
@@ -192,6 +234,94 @@ def _status_from_metadata(metadata: dict[str, Any]) -> str:
     if isinstance(change_summary, dict) and int(change_summary.get("file_count") or 0) > 0:
         return "changed_files"
     return str(metadata.get("status") or "historical")
+
+
+def _candidate_sort_key(candidate: dict[str, Any]) -> tuple[int, int]:
+    recency = _safe_int(candidate.get("recency_rank"), default=9999)
+    has_target_path = bool(
+        candidate.get("target_written_paths")
+        or candidate.get("changed_paths")
+        or candidate.get("observed_written_paths")
+    )
+    has_any_path = bool(candidate.get("actual_paths"))
+    status = str(candidate.get("status") or "").strip().lower()
+    if has_target_path:
+        group = 0
+    elif has_any_path and status != "failure":
+        group = 1
+    elif has_any_path:
+        group = 2
+    else:
+        group = 3
+    return (group, recency)
+
+
+def _safe_int(value: Any, *, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _string_list(value: Any, *, limit: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if not text or text in result:
+            continue
+        result.append(text)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _verification_paths(run_result: dict[str, Any]) -> list[str]:
+    values = run_result.get("verified") if isinstance(run_result.get("verified"), list) else []
+    paths: list[str] = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        if path and path not in paths:
+            paths.append(path)
+    evidence = (
+        run_result.get("verification_evidence")
+        if isinstance(run_result.get("verification_evidence"), list)
+        else []
+    )
+    for item in evidence:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        if path and path not in paths:
+            paths.append(path)
+    return paths[:8]
+
+
+def _artifact_paths(run_result: dict[str, Any]) -> list[str]:
+    artifacts = run_result.get("artifacts") if isinstance(run_result.get("artifacts"), list) else []
+    paths: list[str] = []
+    for item in artifacts:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        if path and path not in paths:
+            paths.append(path)
+    return paths[:8]
+
+
+def _unique_strings(values: list[str], *, limit: int) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in result:
+            continue
+        result.append(text)
+        if len(result) >= limit:
+            break
+    return result
 
 
 def _candidate_hash(index: int, goal: str, content: str) -> str:

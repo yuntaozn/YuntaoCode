@@ -1,12 +1,14 @@
 # Tool Result Risks
 
-Tool result risks are structured facts discovered after a tool finishes. They
-help the model notice important evidence without letting the runtime choose the
+Tool result risks are structured facts discovered around a tool call. They help
+the model notice important evidence without letting the runtime choose the
 model's next strategy.
 
 The protocol has four boundaries:
 
-1. A tool reports factual output such as an integrity check.
+1. A tool reports factual output such as an integrity check, or the runtime
+   records a non-blocking pre-execution advisory such as weak verification or
+   document coverage risk.
 2. `runtime/agent_strategy/tool_result_risks.py` converts relevant facts into
    non-blocking `runtime_risks`.
 3. The conversation runtime sends those risks back to the model and records
@@ -33,6 +35,11 @@ Another common case is a shell command that exits with code `0` while stderr
 contains exception-like output. The command result is still recorded exactly as
 the tool returned it, but the runtime adds `shell_stderr_warning` so the model
 does not treat that command as clean verification evidence.
+
+Non-blocking execution advisories, such as `document_contract_advisory`,
+`verification_runtime_advisory`, and `capability_fallback_advisory`, also flow
+through `runtime_risks`. They are evidence for the model and audit trail, not
+tool-call blockers.
 
 Risks are advisory by default. The model may repair the artifact, continue with
 an explicit assumption, or stop and report the issue. Safety and permission

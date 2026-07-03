@@ -117,9 +117,12 @@ def _event_summary(event: dict[str, Any]) -> str:
         )
     if event_type == "capability_snapshot":
         preflight = event.get("preflight") if isinstance(event.get("preflight"), dict) else {}
-        status = "ok" if preflight.get("ok") is not False else "blocked"
+        status = "ok" if preflight.get("ok") is not False else "attention"
         targets = ", ".join(str(item) for item in (preflight.get("target_capability_ids") or [])[:6])
         return _truncate(f"capability snapshot {status}" + (f": {targets}" if targets else ""), 500)
+    if event_type == "visual_context":
+        records = event.get("records") if isinstance(event.get("records"), list) else []
+        return _truncate(f"visual context evidence: records={len(records)}", 500)
     if event_type == "plan":
         plan = event.get("plan") if isinstance(event.get("plan"), dict) else {}
         return _truncate(plan.get("title") or "plan generated", 500)

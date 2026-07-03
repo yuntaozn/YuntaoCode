@@ -433,26 +433,28 @@ class ConversationMessagesHandler(ApiHandler):
         targets = ", ".join(preflight.get("target_capability_ids") or []) if isinstance(preflight, dict) else ""
         if targets:
             return (
-                f"Tool {tool_id} is outside the target capability boundary ({targets}). "
-                "This boundary is enforced by the active task policy."
+                f"Runtime capability advisory: tool {tool_id} is outside the target capability facts ({targets}). "
+                "This is advisory evidence, not a hard stop; use the visible capability tools when they fit, "
+                "or choose another safe strategy and make the reason observable."
             )
         return (
-            f"Tool {tool_id} is outside the current capability preflight boundary. "
-            "Use an available target capability or explain why another safe strategy is necessary."
+            f"Runtime capability advisory: tool {tool_id} is outside the current capability preflight facts. "
+            "Use an available target capability when it fits the goal, or choose another safe strategy and "
+            "explain the observable reason."
         )
 
     def _capability_preflight_failure_message(self, preflight: dict[str, Any]) -> str:
-        messages = _cap_preflight.preflight_blocker_messages(preflight)
+        messages = _cap_preflight.preflight_advisory_messages(preflight)
         lines = [
-            "未完成：当前任务被运行时策略阻止，模型和工具尚未继续执行。",
+            "未完成：当前任务触发了运行时安全边界，模型和工具尚未继续执行。",
         ]
         if messages:
             lines.append("")
-            lines.append("阻断原因：")
+            lines.append("边界原因：")
             lines.extend(f"- {message}" for message in messages[:6])
         lines.extend([
             "",
-            "这类阻断只应由明确的安全或权限策略触发；普通能力缺失会作为提示交给模型自主处理。",
+            "这类停止只应由明确的安全或权限策略触发；普通能力缺失会作为提示交给模型自主处理。",
         ])
         return "\n".join(lines)
 
@@ -460,12 +462,8 @@ class ConversationMessagesHandler(ApiHandler):
         if not isinstance(preflight, dict):
             return ""
         advisory_messages = _cap_preflight.preflight_advisory_messages(preflight)
-        if not bool(preflight.get("enforce_stop")):
-            advisory_messages.extend(_cap_preflight.preflight_blocker_messages(preflight))
         preferred = preflight.get("preferred_tool_ids")
-        allowed = preflight.get("allowed_tool_ids")
-        enforce_allowed = isinstance(allowed, list) and bool(preflight.get("enforce_allowed_tools"))
-        if not advisory_messages and not isinstance(preferred, list) and not enforce_allowed:
+        if not advisory_messages and not isinstance(preferred, list):
             return ""
         targets = ", ".join(preflight.get("target_capability_ids") or [])
         lines = [
@@ -488,13 +486,11 @@ class ConversationMessagesHandler(ApiHandler):
                 "For external application or MCP state changes, prefer a small roundtrip check before a large script, "
                 "and split complex actions into smaller verifiable tool calls when the provider has recent failures."
             )
-        if enforce_allowed and isinstance(allowed, list):
-            lines.append("This run has an enforced tool boundary: use only the tools still visible for state-changing work.")
-        else:
-            lines.append(
-                "This is not a hard blocker. You may choose another safe strategy, ask the user, or explain the missing capability. "
-                "Do not claim an external application state changed unless tool evidence confirms it."
-            )
+        lines.append(
+            "This is not a hard blocker and it does not restrict the visible tool list. "
+            "You may choose another safe strategy, ask the user, or explain the missing capability. "
+            "Do not claim an external application state changed unless tool evidence confirms it."
+        )
         return "\n".join(lines)
 
 class ConversationMessagesStreamHandler(ConversationMessagesHandler):
@@ -932,23 +928,23 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             workspace_path=workspace_path,
             mode=mode,
         )
-        verifications = _event_roles.sufficient_deliverable_verification_events(
+        verifications = _event_roles.sufficient_task_verification_events(
             tool_events,
             task_contract=contract,
             workspace_path=workspace_path,
             mode=mode,
         )
-        if (
-            (contract.get("requires_write") or contract.get("requires_state_change"))
-            and not deliverables
-        ):
+        requires_target_deliverable = bool(
+            contract.get("requires_write") or contract.get("requires_state_change")
+        )
+        if requires_target_deliverable and not deliverables:
             failures.append("missing_target_deliverable_success")
         if (
             contract.get("requires_verification")
-            and deliverables
+            and (deliverables or not requires_target_deliverable)
             and not verifications
         ):
-            failures.append("missing_target_deliverable_verification")
+            failures.append("missing_target_verification")
         min_output_check = min_text_output_check(
             tool_events,
             expected_min_output_chars=contract.get("expected_min_output_chars") or 0,
@@ -1663,10 +1659,10 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return ""
         command = _clf.shell_command_text(arguments)
         return (
-            "检测到模型把长驻服务启动命令当作普通验证命令："
-            f"{command}。这类命令通常不会自行退出，不能作为本轮目标产物完成后的自动验证。"
-            "请改用可退出的语法检查、构建、测试、读取生成文件、git diff/status，"
-            "或在最终总结中明确说明需要用户手动打开浏览器验证。"
+            "验证证据提示：检测到长驻服务启动命令被用于验证："
+            f"{command}。这类命令通常不会自行退出，作为完成证据偏弱。"
+            "可考虑改用可退出的语法检查、构建、测试、读取生成文件、git diff/status，"
+            "或在最终总结中明确说明仍需用户手动打开浏览器验证。"
         )
 
     def _ai_plugin_draft_workspace_guard(
@@ -2333,7 +2329,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         )
         if min_output_check.get("required") and not min_output_check.get("ok"):
             return False
-        return bool(_event_roles.sufficient_deliverable_verification_events(
+        return bool(_event_roles.sufficient_task_verification_events(
             tool_events,
             task_contract=task_contract,
             workspace_path=workspace_path,
@@ -2446,7 +2442,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return [], [], []
         workspace = str(workspace_path or task_contract.get("workspace_path") or "")
         required = list(_event_roles.required_verification_modalities(task_contract))
-        verifications = _event_roles.deliverable_verification_events(
+        verifications = _event_roles.task_verification_events(
             tool_events or [],
             task_contract=task_contract,
             workspace_path=workspace,
@@ -2470,6 +2466,86 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         )
         return required, observed, missing
 
+    def _verification_runtime_diagnostics(
+        self,
+        task_contract: dict[str, Any] | None,
+        tool_events: list[dict[str, Any]] | None,
+        workspace_path: str,
+        mode: str | None,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(task_contract, dict):
+            return []
+        workspace = str(workspace_path or task_contract.get("workspace_path") or "")
+        verifications = _event_roles.task_verification_events(
+            tool_events or [],
+            task_contract=task_contract,
+            workspace_path=workspace,
+            mode=mode,
+        )
+        result: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for event in verifications[-4:]:
+            output = event.get("output") if isinstance(event.get("output"), dict) else {}
+            diagnostics = output.get("runtime_diagnostics")
+            if isinstance(diagnostics, list):
+                for item in diagnostics[:8]:
+                    if not isinstance(item, dict):
+                        continue
+                    key = json.dumps(item, ensure_ascii=False, sort_keys=True)[:600]
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    result.append(item)
+                    if len(result) >= 10:
+                        return result
+            dom_snapshot = output.get("dom_snapshot") if isinstance(output.get("dom_snapshot"), dict) else {}
+            if dom_snapshot.get("loading_visible"):
+                item = {
+                    "code": "page_loading_state_visible",
+                    "severity": "warning",
+                    "message": "Page still shows visible loading/progress UI after verification.",
+                    "source": "dom_snapshot",
+                    "loading_texts": list(dom_snapshot.get("loading_texts") or [])[:6],
+                }
+                key = json.dumps(item, ensure_ascii=False, sort_keys=True)
+                if key not in seen:
+                    seen.add(key)
+                    result.append(item)
+            resource_responses = (
+                output.get("resource_responses")
+                if isinstance(output.get("resource_responses"), list)
+                else []
+            )
+            if resource_responses:
+                script_items = []
+                for resource in resource_responses[:20]:
+                    if not isinstance(resource, dict):
+                        continue
+                    resource_type = str(resource.get("resource_type") or "").lower()
+                    url = str(resource.get("url") or "").lower().split("?", 1)[0]
+                    if resource_type == "script" or url.endswith((".js", ".mjs")):
+                        script_items.append({
+                            "url": resource.get("url"),
+                            "status": resource.get("status"),
+                            "content_type": resource.get("content_type"),
+                            "content_length": resource.get("content_length"),
+                        })
+                if script_items:
+                    item = {
+                        "code": "verification_script_resource_facts",
+                        "severity": "info",
+                        "message": "Script/module resource response facts observed during verification.",
+                        "source": "response",
+                        "resources": script_items[:8],
+                    }
+                    key = json.dumps(item, ensure_ascii=False, sort_keys=True)[:600]
+                    if key not in seen:
+                        seen.add(key)
+                        result.append(item)
+            if len(result) >= 10:
+                break
+        return result[:10]
+
     def _verifier_retry_prompt(
         self,
         mode: str | None,
@@ -2480,6 +2556,12 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         capability_preflight: dict[str, Any] | None = None,
     ) -> str:
         required, observed, missing = self._verification_modality_status(
+            task_contract,
+            tool_events,
+            workspace_path,
+            mode,
+        )
+        runtime_diagnostics = self._verification_runtime_diagnostics(
             task_contract,
             tool_events,
             workspace_path,
@@ -2497,6 +2579,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             observed_modalities=observed,
             missing_modalities=missing,
             visual_verification_tool_ids=visual_tools,
+            runtime_diagnostics=runtime_diagnostics,
         )
 
     def _read_only_task_prompt(self, workspace_path: str) -> str:

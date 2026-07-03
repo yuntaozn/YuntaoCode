@@ -543,6 +543,7 @@ class TestIsVerificationTool:
         assert is_verification_tool("web.capture_page", None)
         assert is_verification_tool("preview.capture_url", None)
         assert is_verification_tool("preview.capture_local_html", None)
+        assert is_verification_tool("preview.capture_file", None)
 
 
 class TestExplorerToolIds:
@@ -567,6 +568,7 @@ class TestVerificationToolIds:
         assert "shell.run_command" in ids
         assert "web.capture_page" in ids
         assert "preview.capture_local_html" in ids
+        assert "preview.capture_file" in ids
 
     def test_paper_adds_read(self):
         ids = verification_tool_ids("paper")
@@ -1474,12 +1476,34 @@ class TestPrompts:
                 "preview.capture_local_html",
                 "preview.interact_page",
             ],
+            runtime_diagnostics=[
+                {
+                    "code": "browser_page_error",
+                    "severity": "error",
+                    "message": "Unexpected end of input",
+                },
+                {
+                    "code": "script_parse_error_resource_candidates",
+                    "severity": "info",
+                    "message": "Script candidates",
+                    "resources": [
+                        {
+                            "url": "https://cdn.example/app.js",
+                            "status": 200,
+                            "content_type": "application/javascript",
+                        }
+                    ],
+                },
+            ],
         )
 
         assert "required_modalities=visual, content, behavioral" in prompt
         assert "observed_modalities=visual" in prompt
         assert "missing_modalities=content, behavioral" in prompt
         assert "preview.interact_page" in prompt
+        assert "runtime_diagnostic=browser_page_error" in prompt
+        assert "Unexpected end of input" in prompt
+        assert "https://cdn.example/app.js" in prompt
         assert "bounded page actions and assertions" in prompt
 
     def test_post_deliverable_prompt_is_not_file_write_only(self):

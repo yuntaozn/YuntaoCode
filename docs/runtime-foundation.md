@@ -97,6 +97,35 @@ write. Once the write and verification conditions are both satisfied, the
 runtime moves to finalization instead of continuing to expose an open-ended
 write loop.
 
+## Runtime Intervention Governance
+
+Runtime intervention is not a second planner. Its job is to keep execution
+observable and safe while leaving task strategy to the model.
+
+Interventions should stay in three explicit layers:
+
+1. **Hard safety boundary**
+   - PathGuard, permission scope, user confirmation, disabled tools, unavailable
+     providers, malformed arguments, provider protocol errors, and truncated
+     state-changing calls.
+   - These may stop or skip a tool call because the runtime cannot execute it
+     safely or meaningfully.
+2. **Advisory fact**
+   - Capability fit, document-coverage hints, weak verification routes, repeated
+     read/search patterns, degraded provider health, and preferred tools.
+   - These are model-facing facts. They should not block execution or force a
+     strategy by themselves.
+3. **Risk evidence**
+   - Non-blocking advisories and observable tool-result warnings are carried as
+     `runtime_risks` so Context Pack, RunResult, diagnostics, Runbook, and future
+     replay/evaluation can audit them.
+
+This means a document translation hint should say that a temporary script may
+weaken coverage, progress, resumability, and verification evidence. It should
+not say that the model is forbidden to choose that route. If the model chooses a
+different safe strategy, the runtime should judge the actual artifact and
+verification evidence, not the route label.
+
 ## Task And ToolTask
 
 YuntaoCode uses two related but different concepts:
@@ -159,7 +188,8 @@ a future run should retry, replay, or change strategy.
 
 `runtime/run_workbench.py` builds `run_workbench.v1`, the user-facing workbench
 view derived from RunEvidence. It presents run status, task contract facts,
-artifacts, verification, risks, failures, completion decisions, plan steps,
+an audit summary, changed paths, artifacts, verification, risks, failures,
+completion decisions, context evidence, visual context evidence, plan steps,
 timeline, capability state, and recovery actions in a compact UI-ready shape.
 It is a presentation layer, not a second evidence source; RunEvidence and
 RunResult remain the runtime-owned truth.
@@ -170,6 +200,9 @@ Current canonical event names include:
 - `run.guidance`
 - `run.completion_decision`
 - `context.hygiene`
+- `context.pack`
+- `context.visual`
+- `context.workspace_snapshot`
 - `capability.snapshot`
 - `task.contract`
 - `plan.decision`
@@ -209,9 +242,10 @@ Task store is still being separated from historical ToolTask records.
   timeline, result, risks, and failures.
 - `{"action": "evidence"}` returns the full `run_evidence.v1` view for a Run.
 - `{"action": "workbench"}` returns the UI-oriented `run_workbench.v1` view
-  built from RunEvidence, so the task history can show artifacts,
-  verification, risks, failures, plan steps, and timeline without parsing raw
-  events in the frontend.
+  built from RunEvidence, so the task history can show audit counts, changed
+  paths, context evidence, visual context evidence, artifacts, verification,
+  risks, failures, plan steps, and timeline without parsing raw events in the
+  frontend.
 - `{"action": "export_evaluation_fixture"}` returns a local
   `evaluation_fixture_export.v1` artifact built from RunEvidence. It does not
   execute replay or submit anything remotely.
@@ -603,14 +637,18 @@ Current runtime-level capability guards:
 - each run records a `capability_snapshot` event after `task_contract`;
 - the snapshot includes available tools, unavailable tools, capability groups,
   and external-state effects declared by ToolSpec or MCP tool policies;
-- `capability_preflight` blocks tasks that explicitly target external
-  application state when no available capability reports
-  `external_state_change`;
-- when a target capability is declared for an external-state task, the model's
-  visible state-changing tools are restricted to that capability boundary;
+- `capability_preflight` reports readiness facts and advisories for tasks that
+  appear to target external application state, missing services, degraded tools,
+  or uncertain visual verification routes;
+- when a target capability is declared for an external-state task, the runtime
+  presents preferred visible tools and readiness evidence, while leaving route
+  selection to the model unless a separate safety/permission boundary applies;
+- new runs use `capability_preflight.v2`, which carries advisory
+  `readiness_issues` and `route_hint` metadata instead of legacy
+  `blockers/enforce_*` route-control fields;
 - execution still performs a second guard before running a tool, so malformed
   native/tool-call variants cannot silently fall back to shell scripts or file
-  generation outside the preflight boundary.
+  generation outside the declared safety and permission boundary.
 
 Tool execution guards have a stable pre-confirmation order for a resolved tool:
 plugin enablement, service availability, capability fallback boundary, required
@@ -648,14 +686,25 @@ outputs still need explicit write tools such as `code.edit_file`,
 
 ## Next Foundation Work
 
-Recommended next steps:
+0.1 release hygiene:
+
+1. Synchronize README, README.en, CHANGELOG, SECURITY, and architecture docs.
+2. Run version, documentation encoding, backend tests, frontend syntax, and
+   startup-script checks.
+3. Remove generated artifacts, local-only examples, temporary assets, and
+   machine-specific test files from the release tree.
+4. Smoke-test one coding task, one document task, one webpage / visual
+   verification task, and one MCP provider task.
+
+Post-0.1 foundation work:
 
 1. Refine product-level Task lifecycle and task-level cancellation.
 2. Connect context snapshots to compression and longer-running resume flows.
-3. Map ToolSpec metadata into CapabilityContract.
-4. Persist confirmation requests and outcomes as first-class trace events.
+3. Add richer CapabilityContract verification rules such as artifact_exists,
+   coverage_check, syntax_check, and visual_observation.
+4. Persist confirmation requests and outcomes as richer first-class trace
+   records.
 5. Split `conversation_runner.execute()` by controller responsibility.
-6. Teach the frontend to display `RunResult` explicitly.
-7. Add checkpoint rollback and policy-controlled unattended Runbook execution.
-8. Connect selected Experience Samples to local Replay/Evaluation without
+6. Add checkpoint rollback and policy-controlled unattended Runbook execution.
+7. Connect selected Experience Samples to local Replay/Evaluation without
    automatic collection or promotion.

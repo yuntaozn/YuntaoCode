@@ -180,6 +180,28 @@ UI 历史和审计记录应完整保留，但模型侧上下文需要卫生处�
 Context Pack 以 `context.pack` 事件进入 RunEvidence、Runbook 和诊断包。它是可
 审计事实包，不是任务路由器。
 
+## Visual Evidence Context
+
+视觉证据是 Evidence Context 的一种。网页截图、文件预览、图片、PDF 页面渲染、
+MCP 视口截图和外部应用截图都应先成为可审计的 `visual_evidence.v1`，再由
+Context Runtime 判断是否能作为模型输入。
+
+当前边界是：
+
+- Runtime 不因为存在截图就判定任务完成，也不强制模型使用截图。
+- 模型配置默认视为支持图片输入；如果某个接口或模型不支持多模态，应在模型设置中
+  显式关闭视觉输入。
+- 只有模型未关闭视觉输入时，符合边界的视觉证据才会作为 image input 加入下一轮
+  模型上下文。
+- 图片上下文只来自当前 workspace 或 Runtime 数据目录，避免把任意本地路径读入
+  模型请求。
+- 不支持多模态的模型仍会收到文本化证据，例如截图路径、尺寸、DOM 文本、
+  console/page/network 错误、OCR 或运行诊断。
+- 每次视觉证据注入都应写入 RunEvent/metadata，方便诊断“模型当时是否真的看到了图”。
+
+这层的目标是让模型有机会“看见”自己刚刚生成或验证的产物，而不是把视觉判断硬编码
+进系统。视觉上下文和文本上下文一样，只提供来源、可信度和边界。
+
 ## Memory Scope
 
 Memory 是 Context Runtime 的一部分，但不能和任务事实混淆。
@@ -275,6 +297,9 @@ summary
   - 生成 Context Ledger。
 - `runtime/tool_event_presentation.py`
   - 对工具结果做模型侧预算压缩，保留路径、错误、完整性和风险。
+- `runtime/visual_context.py`
+  - 将工具产生且符合边界的视觉证据转换为模型可接收的 image input。
+  - 默认随模型配置启用，支持通过 `supports_vision=false` 显式关闭，并保留可审计注入记录。
 - `runtime/run_recovery.py`
   - 从 RunResult 生成恢复用 ContextSnapshot。
 - `runtime/run_events.py`
@@ -292,6 +317,20 @@ summary
 4. 旧工具调用格式和失败日志不能成为模型模仿样本。
 5. Context Pack 和 Context Ledger 必须先稳定，再考虑 Evidence Index。
 6. Runtime 提醒模型风险和事实，不替模型选择任务策略。
+
+## 0.1 Minimum Closure Status
+
+Context Runtime 的 0.1 最小闭环已经成立：
+
+- 当前模型上下文经过 `context_hygiene` 清理，旧工具调用格式、失败日志和历史任务噪声不会作为可模仿样本直接进入下一轮模型输入。
+- 每个关键阶段可以生成 `Context Pack`，并以 `context.pack` 事件进入 RunEvidence、Runbook、诊断包和任务工作台。
+- Context Ledger 记录来源、信任度、新鲜度、任务归属和内容预览，使用户可以审计模型当时看到的是哪些事实。
+- Task lineage、previous contract、recovery context、tool result facts 和 final-answer candidate 都通过 Context Pack 暴露为事实，而不是隐藏路线控制。
+- Memory 已区分 global 与 workspace 范围，避免跨项目记忆默认污染当前任务。
+- 视觉证据可以在模型支持时进入 image input，同时保留 `context.visual` / RunEvidence 审计记录。
+- Context Snapshot 可由 RunResult / recovery flow 生成，为暂停、恢复和显式 Replay Run 提供恢复依据。
+
+0.1 之后再考虑 Evidence Index、向量检索、复杂知识库、样本库和跨设备上下文同步。它们不能成为 0.1 发布前置条件。
 
 ## Next Steps
 

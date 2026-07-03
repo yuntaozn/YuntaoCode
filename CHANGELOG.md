@@ -38,9 +38,10 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
   including separate Blender Add-on and `uvx` readiness indicators.
 - MCP executable resolution through the current Python runtime's `Scripts`
   directory, plus local-first telemetry disablement for the Blender example.
-- Runtime-owned capability preflight and per-run capability snapshots, including
-  external-state fallback blocking and `RunResult` evidence for capability
-  blockers.
+- Runtime-owned capability preflight and per-run capability snapshots. New runs
+  use `capability_preflight.v2`, which reports readiness issues, preferred
+  tools, visual verification tools, and advisory route hints without turning
+  provider fit into hidden execution locks.
 - `RunResult` now separates target deliverable paths from observed local writes
   so optional model-initiated repairs are auditable without turning the task
   contract into an execution lock.
@@ -63,6 +64,13 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 - `preview.interact_page` for generic Playwright-backed page interaction
   verification, returning screenshot, DOM text, interaction trace, visual
   evidence, and debug-session facts for RunResult.
+- `preview.capture_file` as a generic visual observation entrypoint for
+  workspace files: HTML delegates to browser preview, images become visual
+  evidence, PDFs render page screenshots when PyMuPDF is available, and
+  unsupported formats return structured diagnostics.
+- A visual-context bridge that can feed eligible screenshot/image evidence back
+  into the next model round when the selected model allows vision input, while
+  recording the injected evidence for audit.
 
 ### Changed
 
@@ -75,9 +83,36 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 - Exposed visual verification tool options in capability preflight and Context
   Pack facts so HTML/UI tasks can discover preview and interaction evidence
   tools without forcing a fixed execution route.
+- Preserved user and runtime visual image parts in OpenAI-compatible Responses
+  requests, and estimated image data URLs as bounded placeholders instead of
+  counting embedded base64 as prompt text.
+- Model configs now default vision input support to enabled, with an explicit
+  settings-page toggle for disabling image input on text-only providers.
+- Runtime intervention governance now carries non-blocking guard advisories as
+  `runtime_risks`, and document/verification/capability hints use advisory
+  wording instead of route-blocking language.
 - Verifier retry prompts now include observed and missing verification
   modalities plus available visual verification tools, giving the model
   clearer evidence facts without forcing a fixed route.
+- Run finalization now uses a pure evidence gate so missing required
+  verification evidence keeps tools available instead of letting
+  post-deliverable convergence enter final-answer mode too early.
+- Context Runtime task lineage candidates now carry runtime-observed target,
+  changed, and verified paths and rank recent real target artifacts ahead of
+  failed read-only verification attempts, reducing stale continuation context.
+- Verification-only runs now evaluate task-level evidence directly instead of
+  requiring a newly written deliverable first, so read-only validation tasks
+  can continue until required evidence modalities are satisfied.
+- Preview tools now return runtime diagnostics and DOM snapshots for browser
+  console errors, page errors, failed requests, visible loading states, and
+  local HTML remote dependencies so models can debug visual failures from
+  evidence instead of guessing.
+- Preview verification now records key document/script/style resource response
+  facts and feeds runtime diagnostics into verifier retry prompts, helping the
+  model continue from browser evidence after a failed visual check.
+- `preview.interact_page` now recovers brittle text clicks by falling back to a
+  visible clickable DOM target, while preserving the original Playwright error
+  and click strategy in interaction evidence.
 - Normalized repository metadata URLs in `pyproject.toml`.
 - Updated quick-start documentation with editable install, pytest, smoke test, and desktop UI build commands.
 - Reframed README and roadmap around a Task Runtime foundation instead of a feature/tool checklist.

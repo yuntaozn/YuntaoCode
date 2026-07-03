@@ -29,7 +29,7 @@ RISK_MESSAGES_ZH: dict[str, str] = {
     "execution_contract_failed": "执行结果没有满足本轮任务契约。",
     "max_rounds_exceeded": "执行达到轮次上限。",
     "repeated_tool_failure": "同一类工具调用反复失败，需要换策略或检查环境。",
-    "capability_preflight_blocked": "能力预检未通过，当前环境可能缺少完成任务所需的工具或服务。",
+    "capability_preflight_blocked": "能力预检提示：当前环境可能缺少完成任务所需的工具或服务。",
     "model_provider_error": "模型服务返回错误或中断。",
     "invalid_tool_call_protocol": "模型输出了无效工具调用格式，系统没有执行这次调用。",
     "invalid_final_answer": "模型最终回复与实际工具执行记录不一致。",
@@ -49,6 +49,9 @@ RISK_MESSAGES_ZH: dict[str, str] = {
     "runtime_verification_not_observed": "没有观察到可退出的运行时验证。",
     "artifact_integrity_invalid": "产物完整性检查未通过。",
     "shell_stderr_warning": "命令退出码为 0，但 stderr 出现异常或错误迹象，不能把它当作干净验证。",
+    "capability_fallback_advisory": "工具选择偏离当前能力事实，需结合证据判断是否合理。",
+    "document_contract_advisory": "文档任务存在覆盖率、进度或验证证据风险。",
+    "verification_runtime_advisory": "验证方式证据偏弱，可能需要更明确的可退出验证。",
 }
 
 
@@ -73,7 +76,7 @@ def synthesize_failure_answer(
     )
     failures = summary.get("failures") if isinstance(summary.get("failures"), list) else []
     lines = [
-        "未完成：本轮有阻断性失败，系统已按真实工具记录标记为失败。",
+        "未完成：本轮有关键失败，系统已按真实工具记录标记为失败。",
         "",
         "失败事实：",
     ]
@@ -176,7 +179,7 @@ def synthesize_final_answer(
         else []
     )
     target_verifications = (
-        _event_roles.deliverable_verification_events(
+        _event_roles.task_verification_events(
             tool_events,
             task_contract=task_contract,
             workspace_path=workspace_path,

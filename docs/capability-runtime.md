@@ -225,12 +225,30 @@ evidence 写入任务临时目录。它不代表 Runtime 要替模型判断 UI �
 调试证据。成功的交互断言可作为 behavioral/content evidence；失败的断言只作为
 风险和下一步修正依据，不应被 Runtime 静默替换成固定流程。
 
+`preview.capture_file` 是同一能力下的通用文件观察入口。它不替模型判断任务类型，
+只根据文件本身返回可观察证据：HTML 复用浏览器预览，图片登记为 visual evidence，
+PDF 在 PyMuPDF 可用时渲染指定页截图；不支持的格式或缺失依赖返回结构化
+runtime diagnostics。Word/PPT 等重依赖文件预览应继续走可选 provider 或文档能力，
+而不是让主 Runtime 假设本机一定具备 Office/LibreOffice。
+
 视觉类工具应返回或可归一化为 `visual_evidence.v1`。该契约至少包含来源
 （URL、本地文件、MCP 或外部提供者）、截图/渲染产物路径、尺寸、格式、捕获时间、
 页面状态、console/page/network 错误，以及该产物是否可作为模型上下文的 image
 input。`preview.*`、`web.*` 和 MCP 截图结果都应尽量进入这个证据结构；旧的
 `path`、`artifact_kind`、`has_runtime_errors` 等顶层字段可继续保留作为兼容出口。
 RunResult 只把它作为“观察证据”汇总，不把它变成隐藏任务路线或硬性拦截。
+
+`visual_evidence.model_context.eligible` 只是工具声明“这张图适合给模型看”，不是
+Runtime 必须注入图片的命令。真正进入模型上下文前还需要满足三层边界：
+
+1. 当前模型配置未显式关闭图片输入。YuntaoCode 默认把模型视为可接收视觉输入；
+   如果接口或模型不支持多模态，应设置 `supports_vision=false`。
+2. 视觉产物路径位于当前 workspace 或 Runtime 数据目录之内。
+3. 文件类型和大小处于模型上下文桥接允许的范围。
+
+如果模型不支持多模态或产物不满足边界，Runtime 仍应保留截图路径、尺寸、错误和
+DOM/OCR 等文本证据，让模型基于可审计事实继续判断。也就是说，视觉证据桥接是
+Evidence Context 的增强，不是任务路由、验证替代品或系统级自动判定。
 
 运行/调试类工具应返回或可归一化为 `debug_session.v1`。该契约记录命令、工作目录、
 进程号、退出码、超时、stdout/stderr 摘要、诊断、服务 URL/端口和心跳等事实。
@@ -311,8 +329,17 @@ Additional runtime guards now exist in `runtime/agent_strategy/capability_prefli
   require normal safety confirmation, but the model remains responsible for
   choosing whether to retry, ask the user, explain the boundary, or select
   another safe strategy.
-- Preflight blockers are recorded in `RunResult` as deterministic failure
-  evidence.
+- Capability preflight facts are advisory unless they represent a hard safety
+  boundary. Non-blocking advisories are carried as `runtime_risks` so the model,
+  RunResult, diagnostics, and future replay/evaluation can audit them without
+  turning capability fit into a hidden route lock.
+- New runs emit `capability_preflight.v2`. The contract contains
+  `advisories`, `readiness_issues`, `preferred_tool_ids`,
+  `visual_verification_tool_ids`, and a `route_hint` whose policy is advisory.
+  It intentionally does not emit `blockers`, `allowed_tool_ids`,
+  `restrict_fallback`, or `enforce_*` fields. Readers may still normalize older
+  diagnostic records, but new runtime behavior must not reintroduce those
+  fields as hidden policy controls.
 
 `runtime/capability_evidence.py` builds `capability_evidence_summary.v1` from
 persisted tool events. It preserves declared ToolSpec metadata
@@ -336,6 +363,38 @@ Current built-in local file capability split:
 - `filesystem.local_state`: change local file state, such as
   `filesystem.delete_file`, with PathGuard, confirmation, backup, trace, and
   RunResult evidence.
+
+## 0.1 Provider Boundary Check
+
+Capability Runtime 的 0.1 Provider 边界已经收束到同一套原则：
+
+- Built-in tools, CLI providers, MCP providers, Capability Packs, and future
+  plugins are capability providers. None of them owns task state, planning,
+  completion, replay, or audit.
+- Provider metadata must normalize into ToolSpec / Capability facts:
+  artifacts, effects, roles, permissions, verification strength, provider kind,
+  provider id, availability, health, and last error.
+- `capability_preflight.v2` is advisory. It provides readiness issues,
+  preferred tools, visual verification tools, and route hints, but it does not
+  hide tools, stop runs, or force fallback rules.
+- Tool execution guards remain the hard boundary for PathGuard, permissions,
+  confirmation, disabled providers, unavailable services, malformed arguments,
+  and unsafe state changes.
+- MCP lifecycle state is a provider health fact: stopped, process running,
+  protocol disconnected, connected, discovered, degraded, or unavailable. It
+  must flow into capability evidence instead of creating Blender-specific or
+  MCP-specific runner branches.
+- CLI providers must be declarative command providers with permissions,
+  timeout, output schema, and evidence. They must not become a free-form shell
+  escape hatch.
+- AI-built Capability Packs are user-data-level drafts by default. They can
+  provide method skills, task templates, context packs, or tool-adapter drafts,
+  but generated executable code is not trusted runtime code until an explicit
+  promotion design exists.
+
+The remaining Capability Runtime work is depth, not direction: richer
+verification rules, provider isolation, better promotion flow, and stronger
+cross-platform adapter checks can continue after 0.1.
 
 ## Next Steps
 

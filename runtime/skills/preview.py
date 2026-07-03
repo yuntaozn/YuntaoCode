@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import shutil
 import re
 from pathlib import Path
 from threading import Thread
@@ -26,6 +27,9 @@ USER_AGENT = (
     "(preview capability; +https://localhost.local)"
 )
 TASK_TEMP_ALIASES = {"", "task_temp", "__task_temp__", "$TASK_TEMP", "{task_temp}"}
+HTML_EXTENSIONS = {".html", ".htm"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+PDF_EXTENSIONS = {".pdf"}
 
 
 async def capture_url(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -88,6 +92,50 @@ async def capture_local_html(input_data: dict[str, Any], context: Any) -> dict[s
         )
 
 
+async def capture_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    """Capture visual/debug evidence for a workspace file.
+
+    This is a generic observation entrypoint.  It delegates HTML to the browser
+    preview path, records images as visual evidence, and renders PDF pages when
+    PyMuPDF is available.  It returns structured diagnostics instead of
+    becoming a task router.
+    """
+
+    source_path = context.path_guard.resolve(input_data.get("path"))
+    if not source_path.is_file():
+        raise ValueError(f"file not found: {source_path}")
+    suffix = source_path.suffix.lower()
+    if suffix in HTML_EXTENSIONS:
+        try:
+            result = await capture_local_html(input_data, context)
+        except ValueError as exc:
+            if "playwright is required" in str(exc).lower():
+                return _file_preview_failure(
+                    source_path,
+                    code="preview_dependency_missing",
+                    message=str(exc),
+                    dependency="playwright",
+                )
+            raise
+        result["file_preview_type"] = "html"
+        result["via_tool"] = "preview.capture_file"
+        return result
+    if suffix in IMAGE_EXTENSIONS:
+        return _capture_image_file(source_path, input_data, context)
+    if suffix in PDF_EXTENSIONS:
+        return _capture_pdf_file(source_path, input_data, context)
+    return _file_preview_failure(
+        source_path,
+        code="file_preview_unsupported_format",
+        message=(
+            "preview.capture_file currently supports HTML, common image files, "
+            "and PDF page rendering. Use a document-specific read/export tool "
+            "or another provider for this file type."
+        ),
+        severity="info",
+    )
+
+
 async def interact_page(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
     """Open a page, run bounded Playwright actions, and capture verification evidence."""
 
@@ -144,6 +192,263 @@ async def interact_page(input_data: dict[str, Any], context: Any) -> dict[str, A
         )
 
 
+def _capture_image_file(source_path: Path, input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    started_at = _utc_now_iso()
+    started_monotonic = time.monotonic()
+    artifact_path = source_path
+    copied = False
+    if input_data.get("output_path") or input_data.get("output_dir"):
+        artifact_path = _resolve_file_copy_output_path(
+            input_data,
+            context,
+            default_label=_safe_label(source_path.stem, "image"),
+            suffix=source_path.suffix or ".png",
+        )
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        if callable(getattr(context, "backup_file", None)) and artifact_path.exists():
+            context.backup_file(artifact_path)
+        shutil.copyfile(source_path, artifact_path)
+        copied = True
+
+    width, height = _read_image_dimensions(source_path)
+    format_name = _image_format_name(source_path)
+    diagnostics: list[dict[str, Any]] = []
+    if width is None or height is None:
+        diagnostics.append({
+            "code": "image_dimensions_unreadable",
+            "severity": "info",
+            "message": "Image preview was recorded, but dimensions could not be read without additional image support.",
+            "source": "file_preview",
+        })
+    debug_session = build_debug_session(
+        source_type="preview.capture_file",
+        command=f"preview image {source_path}",
+        executable="filesystem",
+        cwd=str(source_path.parent),
+        exit_code=0,
+        timed_out=False,
+        stdout=f"file_type=image; copied={copied}",
+        stderr="",
+        service={
+            "kind": "file_preview",
+            "file_type": "image",
+            "source_path": str(source_path),
+            "artifact_path": str(artifact_path),
+        },
+        diagnostics=diagnostics,
+        started_at=started_at,
+        finished_at=_utc_now_iso(),
+        duration_seconds=round(max(0.0, time.monotonic() - started_monotonic), 3),
+    )
+    visual_evidence = build_visual_evidence(
+        source_type="image_file",
+        source_path=str(source_path),
+        screenshot_path=str(artifact_path),
+        artifact_kind="image",
+        format=format_name,
+        size=artifact_path.stat().st_size,
+        width=width,
+        height=height,
+        has_runtime_errors=False,
+        provider="filesystem",
+    )
+    effects = ["artifact_write"] if copied else ["artifact_reference"]
+    context.log("info", "file preview captured", {"path": str(source_path), "artifact": str(artifact_path)})
+    return {
+        "type": "file_preview",
+        "file_preview_type": "image",
+        "source_type": "image_file",
+        "source_path": str(source_path),
+        "path": str(artifact_path),
+        "format": format_name,
+        "size": artifact_path.stat().st_size,
+        "width": width,
+        "height": height,
+        "artifact_kind": "image",
+        "artifacts": ["image", "visual_evidence"],
+        "effects": effects,
+        "roles": ["verification"],
+        "verification_strength": "standard",
+        "has_runtime_errors": False,
+        "runtime_diagnostics": diagnostics,
+        "debug_session": debug_session,
+        "visual_evidence": visual_evidence,
+    }
+
+
+def _capture_pdf_file(source_path: Path, input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    try:
+        import fitz  # type: ignore[import-not-found]
+    except Exception as exc:
+        return _file_preview_failure(
+            source_path,
+            code="preview_dependency_missing",
+            message=(
+                "PDF visual preview requires PyMuPDF/fitz. Install the documents "
+                "extra or use a document text extraction tool when visual rendering "
+                "is unavailable."
+            ),
+            dependency="fitz",
+            detail=str(exc),
+        )
+
+    started_at = _utc_now_iso()
+    started_monotonic = time.monotonic()
+    page_number = max(1, _safe_int(input_data.get("page") or input_data.get("page_number") or 1))
+    output_path = _resolve_output_path(
+        input_data,
+        context,
+        default_label=f"{_safe_label(source_path.stem, 'pdf')}-page-{page_number}",
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if callable(getattr(context, "backup_file", None)) and output_path.exists():
+        context.backup_file(output_path)
+
+    capture_format = _capture_format(input_data.get("format"), output_path)
+    zoom = _safe_float(input_data.get("scale") or input_data.get("zoom") or 2.0, default=2.0)
+    zoom = max(0.5, min(4.0, zoom))
+    diagnostics: list[dict[str, Any]] = []
+    doc = fitz.open(str(source_path))
+    try:
+        page_count = int(getattr(doc, "page_count", 0) or 0)
+        if page_count <= 0:
+            return _file_preview_failure(
+                source_path,
+                code="pdf_has_no_pages",
+                message="PDF file has no renderable pages.",
+            )
+        page_index = min(page_number - 1, page_count - 1)
+        if page_index != page_number - 1:
+            diagnostics.append({
+                "code": "pdf_page_clamped",
+                "severity": "info",
+                "message": f"Requested page {page_number}, rendered last available page {page_index + 1}.",
+                "source": "file_preview",
+                "page_count": page_count,
+            })
+        page = doc.load_page(page_index)
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        pixmap.save(str(output_path))
+        width = _safe_int(getattr(pixmap, "width", 0))
+        height = _safe_int(getattr(pixmap, "height", 0))
+    finally:
+        doc.close()
+
+    debug_session = build_debug_session(
+        source_type="preview.capture_file",
+        command=f"render pdf page {page_number} {source_path}",
+        executable="fitz",
+        cwd=str(source_path.parent),
+        exit_code=0,
+        timed_out=False,
+        stdout=f"file_type=pdf; page={page_number}; output={output_path.name}",
+        stderr="",
+        service={
+            "kind": "file_preview",
+            "file_type": "pdf",
+            "source_path": str(source_path),
+            "artifact_path": str(output_path),
+            "page": page_number,
+            "scale": zoom,
+        },
+        diagnostics=diagnostics,
+        started_at=started_at,
+        finished_at=_utc_now_iso(),
+        duration_seconds=round(max(0.0, time.monotonic() - started_monotonic), 3),
+    )
+    visual_evidence = build_visual_evidence(
+        source_type="pdf_file",
+        source_path=str(source_path),
+        screenshot_path=str(output_path),
+        artifact_kind="render",
+        format=capture_format,
+        size=output_path.stat().st_size,
+        width=width,
+        height=height,
+        has_runtime_errors=False,
+        provider="pymupdf",
+    )
+    context.log("info", "pdf preview captured", {"path": str(source_path), "artifact": str(output_path)})
+    return {
+        "type": "file_preview",
+        "file_preview_type": "pdf",
+        "source_type": "pdf_file",
+        "source_path": str(source_path),
+        "path": str(output_path),
+        "format": capture_format,
+        "size": output_path.stat().st_size,
+        "width": width,
+        "height": height,
+        "page": page_number,
+        "artifact_kind": "render",
+        "artifacts": ["screenshot", "visual_evidence", "pdf_page_render"],
+        "effects": ["artifact_write"],
+        "roles": ["verification"],
+        "verification_strength": "standard",
+        "has_runtime_errors": False,
+        "runtime_diagnostics": diagnostics,
+        "debug_session": debug_session,
+        "visual_evidence": visual_evidence,
+    }
+
+
+def _file_preview_failure(
+    source_path: Path,
+    *,
+    code: str,
+    message: str,
+    severity: str = "error",
+    dependency: str = "",
+    detail: str = "",
+) -> dict[str, Any]:
+    diagnostics = [{
+        "code": code,
+        "severity": severity,
+        "message": message[:800],
+        "source": "file_preview",
+    }]
+    if dependency:
+        diagnostics[0]["dependency"] = dependency
+    if detail:
+        diagnostics[0]["detail"] = detail[:500]
+    debug_session = build_debug_session(
+        source_type="preview.capture_file",
+        command=f"preview file {source_path}",
+        executable="preview.capture_file",
+        cwd=str(source_path.parent),
+        exit_code=1,
+        timed_out=False,
+        stdout=f"file_type={source_path.suffix.lower().lstrip('.') or 'unknown'}",
+        stderr=message[:1000],
+        service={
+            "kind": "file_preview",
+            "file_type": source_path.suffix.lower().lstrip(".") or "unknown",
+            "source_path": str(source_path),
+        },
+        diagnostics=diagnostics,
+        started_at=_utc_now_iso(),
+        finished_at=_utc_now_iso(),
+        duration_seconds=0.0,
+    )
+    return {
+        "type": "file_preview",
+        "file_preview_type": "unsupported",
+        "source_type": "file",
+        "source_path": str(source_path),
+        "path": "",
+        "artifact_kind": "",
+        "artifacts": [],
+        "effects": [],
+        "roles": ["evidence"],
+        "verification_strength": "none",
+        "status": "unsupported",
+        "error": True,
+        "has_runtime_errors": True,
+        "runtime_diagnostics": diagnostics,
+        "debug_session": debug_session,
+    }
+
+
 async def _capture_page(
     url: str,
     output_path: Path,
@@ -171,7 +476,10 @@ async def _capture_page(
 
     console_messages: list[dict[str, str]] = []
     page_errors: list[str] = []
+    page_error_details: list[dict[str, str]] = []
     failed_requests: list[dict[str, str]] = []
+    resource_responses: list[dict[str, Any]] = []
+    dom_snapshot: dict[str, Any] = {}
     started_at = _utc_now_iso()
     started_monotonic = time.monotonic()
 
@@ -183,11 +491,13 @@ async def _capture_page(
             ignore_https_errors=ignore_https_errors,
         )
         page.on("console", lambda message: _record_console(console_messages, message))
-        page.on("pageerror", lambda error: page_errors.append(str(error)[:500]))
+        page.on("pageerror", lambda error: _record_page_error(page_errors, page_error_details, error))
         page.on("requestfailed", lambda request: _record_failed_request(failed_requests, request))
+        page.on("response", lambda response: _record_resource_response(resource_responses, response))
         try:
             response = await page.goto(url, wait_until=wait_until, timeout=timeout * 1000)
             title = await page.title()
+            dom_snapshot = await _read_dom_snapshot(page)
             if capture_format in {"png", "jpeg"}:
                 await page.screenshot(
                     path=str(output_path),
@@ -213,6 +523,17 @@ async def _capture_page(
         if _failed_request_is_blocking(item)
     ]
     has_runtime_errors = bool(error_messages or page_errors or blocking_failed_requests)
+    diagnostics = _build_preview_diagnostics(
+        source_type=source_type,
+        served_via=served_via,
+        console_errors=error_messages,
+        page_errors=page_errors,
+        page_error_details=page_error_details,
+        failed_requests=failed_requests,
+        blocking_failed_requests=blocking_failed_requests,
+        resource_responses=resource_responses,
+        dom_snapshot=dom_snapshot,
+    )
     debug_session = build_debug_session(
         source_type="preview.capture_page",
         command=f"playwright capture {url}",
@@ -232,6 +553,7 @@ async def _capture_page(
             "wait_until": wait_until,
             "ignore_https_errors": ignore_https_errors,
         },
+        diagnostics=diagnostics,
         started_at=started_at,
         finished_at=_utc_now_iso(),
         duration_seconds=round(max(0.0, time.monotonic() - started_monotonic), 3),
@@ -282,8 +604,12 @@ async def _capture_page(
         "console_errors": error_messages[:20],
         "console_warnings": warning_messages[:20],
         "page_errors": page_errors[:20],
+        "page_error_details": page_error_details[:20],
         "failed_requests": failed_requests[:20],
+        "resource_responses": resource_responses[:40],
         "has_runtime_errors": has_runtime_errors,
+        "dom_snapshot": dom_snapshot,
+        "runtime_diagnostics": diagnostics,
         "debug_session": debug_session,
         "visual_evidence": visual_evidence,
     }
@@ -318,12 +644,15 @@ async def _interact_with_page(
 
     console_messages: list[dict[str, str]] = []
     page_errors: list[str] = []
+    page_error_details: list[dict[str, str]] = []
     failed_requests: list[dict[str, str]] = []
+    resource_responses: list[dict[str, Any]] = []
     action_results: list[dict[str, Any]] = []
     assertion_failures: list[dict[str, Any]] = []
     status_code = 0
     title = ""
     body_text = ""
+    dom_snapshot: dict[str, Any] = {}
     started_at = _utc_now_iso()
     started_monotonic = time.monotonic()
 
@@ -335,8 +664,9 @@ async def _interact_with_page(
             ignore_https_errors=ignore_https_errors,
         )
         page.on("console", lambda message: _record_console(console_messages, message))
-        page.on("pageerror", lambda error: page_errors.append(str(error)[:500]))
+        page.on("pageerror", lambda error: _record_page_error(page_errors, page_error_details, error))
         page.on("requestfailed", lambda request: _record_failed_request(failed_requests, request))
+        page.on("response", lambda response: _record_resource_response(resource_responses, response))
         try:
             response = await page.goto(url, wait_until=wait_until, timeout=timeout * 1000)
             status_code = response.status if response else 0
@@ -352,6 +682,7 @@ async def _interact_with_page(
                     assertion_failures.append(result)
             title = await page.title()
             body_text = await _read_body_text(page)
+            dom_snapshot = await _read_dom_snapshot(page)
             if capture_format in {"png", "jpeg"}:
                 await page.screenshot(
                     path=str(output_path),
@@ -378,6 +709,18 @@ async def _interact_with_page(
     has_runtime_errors = bool(
         error_messages or page_errors or blocking_failed_requests or assertion_failures
     )
+    diagnostics = _build_preview_diagnostics(
+        source_type=source_type,
+        served_via=served_via,
+        console_errors=error_messages,
+        page_errors=page_errors,
+        page_error_details=page_error_details,
+        failed_requests=failed_requests,
+        blocking_failed_requests=blocking_failed_requests,
+        resource_responses=resource_responses,
+        dom_snapshot=dom_snapshot,
+        assertion_failures=assertion_failures,
+    )
     stderr = _preview_error_summary(error_messages, page_errors, blocking_failed_requests)
     if assertion_failures:
         suffix = f"assertion_failures={len(assertion_failures)}"
@@ -402,15 +745,7 @@ async def _interact_with_page(
             "ignore_https_errors": ignore_https_errors,
             "action_timeout": action_timeout,
         },
-        diagnostics=[
-            {
-                "code": "interaction_action_failed",
-                "message": str(item.get("message") or item.get("error") or "interaction action failed")[:500],
-                "action_index": item.get("index"),
-                "action": item.get("action"),
-            }
-            for item in assertion_failures[:10]
-        ],
+        diagnostics=diagnostics,
         started_at=started_at,
         finished_at=_utc_now_iso(),
         duration_seconds=round(max(0.0, time.monotonic() - started_monotonic), 3),
@@ -468,8 +803,12 @@ async def _interact_with_page(
         "console_errors": error_messages[:20],
         "console_warnings": warning_messages[:20],
         "page_errors": page_errors[:20],
+        "page_error_details": page_error_details[:20],
         "failed_requests": failed_requests[:20],
+        "resource_responses": resource_responses[:40],
         "has_runtime_errors": has_runtime_errors,
+        "dom_snapshot": dom_snapshot,
+        "runtime_diagnostics": diagnostics,
         "debug_session": debug_session,
         "visual_evidence": visual_evidence,
     }
@@ -523,7 +862,7 @@ async def _run_interaction_action(
         if kind == "click":
             if not selector:
                 raise ValueError("click action requires selector")
-            await page.locator(selector).click(timeout=action_timeout_ms)
+            result.update(await _click_with_recovery(page, selector, action_timeout_ms))
         elif kind == "fill":
             if not selector:
                 raise ValueError("fill action requires selector")
@@ -580,6 +919,66 @@ async def _run_interaction_action(
         return result
 
 
+async def _click_with_recovery(page: Any, selector: str, timeout_ms: int) -> dict[str, Any]:
+    """Click a selector, recovering when text selectors resolve to child nodes.
+
+    Playwright text selectors often resolve to an inner span/icon label inside a
+    real button.  In browser verification that makes otherwise valid model
+    actions brittle: the model chose the right visible text, but the actionable
+    element is an ancestor.  Keep the primary Playwright click first, then fall
+    back to a bounded DOM-side click on the nearest visible clickable target.
+    """
+
+    try:
+        await page.locator(selector).click(timeout=timeout_ms)
+        return {
+            "selector": selector[:300],
+            "click_strategy": "locator.click",
+        }
+    except Exception as first_error:
+        fallback = await _click_clickable_dom_target(page, selector)
+        if fallback.get("clicked"):
+            return {
+                "selector": selector[:300],
+                "click_strategy": str(fallback.get("strategy") or "dom_clickable_target")[:80],
+                "recovered_from_error": str(first_error)[:500],
+                "click_target": {
+                    key: fallback.get(key)
+                    for key in (
+                        "target_tag",
+                        "target_role",
+                        "target_text",
+                        "original_tag",
+                        "selector_kind",
+                    )
+                    if fallback.get(key) not in (None, "")
+                },
+            }
+        reason = str(fallback.get("reason") or "no fallback target").strip()
+        raise RuntimeError(
+            f"{str(first_error)[:500]}; fallback click failed: {reason[:240]}"
+        ) from first_error
+
+
+async def _click_clickable_dom_target(page: Any, selector: str) -> dict[str, Any]:
+    try:
+        value = await page.evaluate(_CLICK_FALLBACK_SCRIPT, selector)
+    except TypeError:
+        return {
+            "clicked": False,
+            "reason": "page.evaluate does not support selector arguments",
+        }
+    except Exception as exc:
+        return {
+            "clicked": False,
+            "reason": str(exc)[:500],
+        }
+    return value if isinstance(value, dict) else {
+        "clicked": False,
+        "reason": "fallback returned no structured result",
+    }
+
+
 async def _read_selector_or_body_text(page: Any, selector: str) -> str:
     if selector:
         locator = page.locator(selector)
@@ -601,6 +1000,198 @@ async def _read_body_text(page: Any) -> str:
         return ""
 
 
+_CLICK_FALLBACK_SCRIPT = r"""(selector) => {
+  const YUNTAOCODE_PREVIEW_CLICK_FALLBACK = true;
+  const rawSelector = String(selector || "").trim();
+  const cleanTextSelector = (value) => {
+    const raw = String(value || "").trim();
+    if (!/^text\s*=/i.test(raw)) return "";
+    return raw.replace(/^text\s*=/i, "").trim().replace(/^['"]|['"]$/g, "");
+  };
+  const textOf = (element) => (element.innerText || element.textContent || "").trim();
+  const isVisible = (element) => {
+    if (!element) return false;
+    const style = window.getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    const opacity = Number.parseFloat(style.opacity || "1");
+    return style.display !== "none"
+      && style.visibility !== "hidden"
+      && opacity > 0.01
+      && rect.width > 0
+      && rect.height > 0;
+  };
+  const isDisabled = (element) => {
+    if (!element) return true;
+    return Boolean(element.disabled)
+      || String(element.getAttribute("aria-disabled") || "").toLowerCase() === "true";
+  };
+  const clickableSelector = [
+    "button",
+    "a[href]",
+    "[role='button']",
+    "[onclick]",
+    "[tabindex]",
+    "input",
+    "select",
+    "textarea",
+    "label"
+  ].join(",");
+  const nearestClickable = (element) => {
+    if (!element) return null;
+    const candidate = element.closest(clickableSelector) || element;
+    if (!isVisible(candidate) || isDisabled(candidate)) return null;
+    return candidate;
+  };
+  const text = cleanTextSelector(rawSelector);
+  let candidates = [];
+  let selectorKind = "css";
+  if (text) {
+    selectorKind = "text";
+    const clickables = Array.from(document.querySelectorAll(clickableSelector))
+      .filter((element) => isVisible(element) && textOf(element).includes(text));
+    const textNodes = Array.from(document.querySelectorAll("body *"))
+      .filter((element) => isVisible(element) && textOf(element).includes(text));
+    candidates = [...clickables, ...textNodes];
+  } else {
+    try {
+      candidates = Array.from(document.querySelectorAll(rawSelector));
+    } catch (error) {
+      return {
+        clicked: false,
+        reason: `invalid selector for fallback: ${error.message || error}`,
+        selector: rawSelector,
+      };
+    }
+  }
+  const seen = new Set();
+  for (const element of candidates) {
+    const target = nearestClickable(element);
+    if (!target || seen.has(target)) continue;
+    seen.add(target);
+    try {
+      target.scrollIntoView({block: "center", inline: "center"});
+      target.click();
+      return {
+        clicked: true,
+        strategy: target === element ? "dom_target_click" : "dom_clickable_ancestor",
+        selector_kind: selectorKind,
+        original_tag: element.tagName ? element.tagName.toLowerCase() : "",
+        target_tag: target.tagName ? target.tagName.toLowerCase() : "",
+        target_role: target.getAttribute("role") || "",
+        target_text: textOf(target).slice(0, 200),
+      };
+    } catch (error) {
+      return {
+        clicked: false,
+        reason: `fallback target click failed: ${error.message || error}`,
+        selector: rawSelector,
+      };
+    }
+  }
+  return {
+    clicked: false,
+    reason: text ? "no visible clickable text target" : "no visible clickable selector target",
+    selector: rawSelector,
+    text,
+  };
+}"""
+
+
+_DOM_SNAPSHOT_SCRIPT = r"""() => {
+  const isVisible = (element) => {
+    if (!element) return false;
+    const style = window.getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    const opacity = Number.parseFloat(style.opacity || "1");
+    return style.display !== "none"
+      && style.visibility !== "hidden"
+      && opacity > 0.01
+      && rect.width > 0
+      && rect.height > 0;
+  };
+  const textOf = (element) => (element.innerText || element.textContent || "").trim();
+  const takeTexts = (selector, limit) => Array.from(document.querySelectorAll(selector))
+    .filter(isVisible)
+    .map(textOf)
+    .filter(Boolean)
+    .slice(0, limit);
+  const loadingSelector = [
+    '[id*="loading" i]',
+    '[class*="loading" i]',
+    '[aria-busy="true"]',
+    '[role="progressbar"]',
+    '[class*="spinner" i]'
+  ].join(",");
+  const loadingTexts = takeTexts(loadingSelector, 8);
+  const scripts = Array.from(document.scripts).map((script) => ({
+    src: script.src || "",
+    type: script.type || "",
+    inline_chars: script.src ? 0 : (script.textContent || "").length
+  })).slice(0, 30);
+  const importHosts = [];
+  for (const item of Array.from(document.querySelectorAll('script[type="importmap"]'))) {
+    try {
+      const parsed = JSON.parse(item.textContent || "{}");
+      for (const value of Object.values(parsed.imports || {})) {
+        if (typeof value !== "string") continue;
+        if (!/^https?:\/\//i.test(value)) continue;
+        importHosts.push(new URL(value, document.baseURI).host);
+      }
+    } catch (error) {
+      importHosts.push("invalid-importmap");
+    }
+  }
+  const externalHosts = [];
+  for (const script of scripts) {
+    if (!/^https?:\/\//i.test(script.src)) continue;
+    externalHosts.push(new URL(script.src, document.baseURI).host);
+  }
+  const bodyText = document.body ? textOf(document.body) : "";
+  return {
+    marker: "YUNTAOCODE_PREVIEW_RUNTIME_SNAPSHOT",
+    ready_state: document.readyState,
+    title: document.title || "",
+    body_text: bodyText.slice(0, 4000),
+    body_text_chars: bodyText.length,
+    loading_visible: loadingTexts.length > 0,
+    loading_texts: loadingTexts,
+    headings: takeTexts("h1,h2,h3", 10),
+    buttons: takeTexts("button,[role=button]", 20),
+    scripts,
+    external_resource_hosts: Array.from(new Set([...externalHosts, ...importHosts])).slice(0, 20),
+    importmap_hosts: Array.from(new Set(importHosts)).slice(0, 20)
+  };
+}"""
+
+
+async def _read_dom_snapshot(page: Any) -> dict[str, Any]:
+    try:
+        raw = await page.evaluate(_DOM_SNAPSHOT_SCRIPT)
+    except Exception as exc:
+        return {
+            "snapshot_error": str(exc)[:300],
+        }
+    if not isinstance(raw, dict):
+        text = str(raw or "")
+        return {
+            "body_text": text[:4000],
+            "body_text_chars": len(text),
+        }
+    return {
+        "ready_state": str(raw.get("ready_state") or "")[:40],
+        "title": str(raw.get("title") or "")[:200],
+        "body_text": str(raw.get("body_text") or "")[:4000],
+        "body_text_chars": _safe_int(raw.get("body_text_chars")),
+        "loading_visible": bool(raw.get("loading_visible")),
+        "loading_texts": _string_list(raw.get("loading_texts"), limit=8, item_limit=300),
+        "headings": _string_list(raw.get("headings"), limit=10, item_limit=300),
+        "buttons": _string_list(raw.get("buttons"), limit=20, item_limit=200),
+        "scripts": _script_list(raw.get("scripts")),
+        "external_resource_hosts": _string_list(raw.get("external_resource_hosts"), limit=20, item_limit=120),
+        "importmap_hosts": _string_list(raw.get("importmap_hosts"), limit=20, item_limit=120),
+    }
+
+
 def _resolve_output_path(input_data: dict[str, Any], context: Any, *, default_label: str) -> Path:
     raw_output = str(input_data.get("output_path") or "").strip()
     if raw_output:
@@ -613,6 +1204,56 @@ def _resolve_output_path(input_data: dict[str, Any], context: Any, *, default_la
     if not raw_output_dir or raw_output_dir in TASK_TEMP_ALIASES:
         return _task_temp_root(context) / "preview" / filename
     return context.path_guard.resolve(raw_output_dir) / filename
+
+
+def _resolve_file_copy_output_path(
+    input_data: dict[str, Any],
+    context: Any,
+    *,
+    default_label: str,
+    suffix: str,
+) -> Path:
+    normalized_suffix = suffix if suffix.startswith(".") else f".{suffix}"
+    raw_output = str(input_data.get("output_path") or "").strip()
+    if raw_output:
+        if _is_task_temp_path(raw_output):
+            path = _resolve_task_temp_file_with_suffix(
+                context,
+                raw_output,
+                default_label,
+                normalized_suffix,
+            )
+        else:
+            path = context.path_guard.resolve(raw_output)
+        return path if path.suffix else path.with_suffix(normalized_suffix)
+
+    raw_output_dir = str(input_data.get("output_dir") or "").strip()
+    filename = f"{default_label}{normalized_suffix}"
+    if not raw_output_dir or raw_output_dir in TASK_TEMP_ALIASES:
+        return _task_temp_root(context) / "preview" / filename
+    return context.path_guard.resolve(raw_output_dir) / filename
+
+
+def _resolve_task_temp_file_with_suffix(
+    context: Any,
+    raw_output: str,
+    default_label: str,
+    suffix: str,
+) -> Path:
+    temp_root = _task_temp_root(context)
+    value = raw_output.strip().replace("\\", "/")
+    for alias in ("task_temp/", "__task_temp__/", "$TASK_TEMP/", "{task_temp}/"):
+        if value.startswith(alias):
+            value = value[len(alias):]
+            break
+    if not value or value in TASK_TEMP_ALIASES:
+        value = f"preview/{default_label}{suffix}"
+    path = (temp_root / value).resolve()
+    if temp_root not in path.parents and path != temp_root:
+        raise ValueError("output_path escapes task_temp")
+    if not path.suffix:
+        path = path.with_suffix(suffix)
+    return path
 
 
 def _resolve_task_temp_file(context: Any, raw_output: str, default_label: str) -> Path:
@@ -656,10 +1297,102 @@ def _capture_format(value: Any, output_path: Path) -> str:
     return fmt
 
 
+def _image_format_name(path: Path) -> str:
+    suffix = path.suffix.lower().lstrip(".")
+    if suffix == "jpg":
+        return "jpeg"
+    return suffix or "image"
+
+
+def _read_image_dimensions(path: Path) -> tuple[int | None, int | None]:
+    try:
+        from PIL import Image  # type: ignore[import-not-found]
+
+        with Image.open(path) as image:
+            width, height = image.size
+            return int(width), int(height)
+    except Exception:
+        pass
+    try:
+        return _read_image_dimensions_stdlib(path)
+    except Exception:
+        return None, None
+
+
+def _read_image_dimensions_stdlib(path: Path) -> tuple[int | None, int | None]:
+    suffix = path.suffix.lower()
+    with path.open("rb") as handle:
+        header = handle.read(32)
+        if suffix == ".png" and header.startswith(b"\x89PNG\r\n\x1a\n") and len(header) >= 24:
+            return int.from_bytes(header[16:20], "big"), int.from_bytes(header[20:24], "big")
+        if suffix == ".gif" and header[:6] in {b"GIF87a", b"GIF89a"} and len(header) >= 10:
+            return int.from_bytes(header[6:8], "little"), int.from_bytes(header[8:10], "little")
+        if suffix in {".jpg", ".jpeg"} and header.startswith(b"\xff\xd8"):
+            return _read_jpeg_dimensions(handle)
+    return None, None
+
+
+def _read_jpeg_dimensions(handle: Any) -> tuple[int | None, int | None]:
+    handle.seek(2)
+    while True:
+        marker_prefix = handle.read(1)
+        if not marker_prefix:
+            return None, None
+        if marker_prefix != b"\xff":
+            continue
+        marker = handle.read(1)
+        while marker == b"\xff":
+            marker = handle.read(1)
+        if not marker or marker in {b"\xd8", b"\xd9"}:
+            continue
+        length_bytes = handle.read(2)
+        if len(length_bytes) != 2:
+            return None, None
+        length = int.from_bytes(length_bytes, "big")
+        if length < 2:
+            return None, None
+        if marker[0] in {
+            0xC0,
+            0xC1,
+            0xC2,
+            0xC3,
+            0xC5,
+            0xC6,
+            0xC7,
+            0xC9,
+            0xCA,
+            0xCB,
+            0xCD,
+            0xCE,
+            0xCF,
+        }:
+            data = handle.read(5)
+            if len(data) != 5:
+                return None, None
+            return int.from_bytes(data[3:5], "big"), int.from_bytes(data[1:3], "big")
+        handle.seek(length - 2, 1)
+
+
 def _record_console(target: list[dict[str, str]], message: Any) -> None:
     target.append({
         "type": str(_read_attr(message, "type") or ""),
         "text": str(_read_attr(message, "text") or "")[:500],
+    })
+
+
+def _record_page_error(
+    messages: list[str],
+    details: list[dict[str, str]],
+    error: Any,
+) -> None:
+    message = str(error or "")[:500]
+    messages.append(message)
+    name = str(_read_attr(error, "name") or "")[:120]
+    stack = str(_read_attr(error, "stack") or "")[:2000]
+    details.append({
+        "name": name,
+        "message": message,
+        "stack": stack,
     })
 
 
@@ -678,8 +1411,43 @@ def _record_failed_request(target: list[dict[str, str]], request: Any) -> None:
     target.append({
         "url": str(_read_attr(request, "url") or "")[:500],
         "method": str(_read_attr(request, "method") or "")[:40],
+        "resource_type": str(_read_attr(request, "resource_type") or "")[:80],
         "error": error_text[:500],
     })
+
+
+def _record_resource_response(target: list[dict[str, Any]], response: Any) -> None:
+    if len(target) >= 80:
+        return
+    request = _read_attr(response, "request")
+    resource_type = str(_read_attr(request, "resource_type") or "").strip().lower()
+    url = str(_read_attr(response, "url") or _read_attr(request, "url") or "").strip()
+    if not _resource_response_is_relevant(url, resource_type):
+        return
+    headers = _read_attr(response, "headers")
+    if not isinstance(headers, dict):
+        headers = {}
+    normalized_headers = {str(k).lower(): str(v) for k, v in headers.items()}
+    try:
+        status = int(_read_attr(response, "status") or 0)
+    except (TypeError, ValueError):
+        status = 0
+    target.append({
+        "url": url[:500],
+        "status": status,
+        "method": str(_read_attr(request, "method") or "")[:40],
+        "resource_type": resource_type[:80],
+        "content_type": normalized_headers.get("content-type", "")[:160],
+        "content_length": normalized_headers.get("content-length", "")[:40],
+        "remote": bool(re.match(r"^https?://", url, flags=re.IGNORECASE)),
+    })
+
+
+def _resource_response_is_relevant(url: str, resource_type: str) -> bool:
+    if resource_type in {"document", "script", "stylesheet", "fetch", "xhr"}:
+        return True
+    lower = str(url or "").lower().split("?", 1)[0]
+    return lower.endswith((".html", ".htm", ".js", ".mjs", ".css", ".json", ".wasm"))
 
 
 def _read_attr(obj: Any, name: str) -> Any:
@@ -705,6 +1473,229 @@ def _preview_error_summary(
     if failed_requests:
         parts.append(f"failed_requests={len(failed_requests)}")
     return "; ".join(parts)
+
+
+def _build_preview_diagnostics(
+    *,
+    source_type: str,
+    served_via: str,
+    console_errors: list[dict[str, str]],
+    page_errors: list[str],
+    page_error_details: list[dict[str, str]],
+    failed_requests: list[dict[str, str]],
+    blocking_failed_requests: list[dict[str, str]],
+    resource_responses: list[dict[str, Any]],
+    dom_snapshot: dict[str, Any],
+    assertion_failures: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    diagnostics: list[dict[str, Any]] = []
+    for item in console_errors[:5]:
+        text = str(item.get("text") or "").strip()
+        diagnostics.append({
+            "code": "browser_console_error",
+            "severity": "error",
+            "message": text[:500] or "Browser console error",
+            "source": "console",
+            "type": item.get("type") or "error",
+        })
+    for index, message in enumerate(page_errors[:5]):
+        detail = page_error_details[index] if index < len(page_error_details) else {}
+        diagnostics.append({
+            "code": "browser_page_error",
+            "severity": "error",
+            "message": str(message or "Browser page error")[:500],
+            "source": "pageerror",
+            "name": detail.get("name") or "",
+            "stack_preview": str(detail.get("stack") or "")[:800],
+        })
+    blocking_ids = {id(item) for item in blocking_failed_requests}
+    for item in failed_requests[:10]:
+        blocking = id(item) in blocking_ids or _failed_request_is_blocking(item)
+        diagnostics.append({
+            "code": "browser_request_failed" if blocking else "browser_request_failed_nonblocking",
+            "severity": "error" if blocking else "info",
+            "message": _failed_request_message(item, blocking=blocking),
+            "source": "requestfailed",
+            "url": item.get("url") or "",
+            "method": item.get("method") or "",
+            "resource_type": item.get("resource_type") or "",
+            "error": item.get("error") or "",
+            "blocking": blocking,
+        })
+    for item in resource_responses[:20]:
+        status = _safe_int(item.get("status"))
+        if status >= 400:
+            diagnostics.append({
+                "code": "browser_resource_http_error",
+                "severity": "error",
+                "message": f"Resource responded HTTP {status}: {_resource_tail(item)}",
+                "source": "response",
+                "url": item.get("url") or "",
+                "status": status,
+                "resource_type": item.get("resource_type") or "",
+                "content_type": item.get("content_type") or "",
+            })
+            continue
+        if _script_response_content_type_suspicious(item):
+            diagnostics.append({
+                "code": "browser_script_response_type_suspicious",
+                "severity": "warning",
+                "message": f"Script-like resource has suspicious content-type: {_resource_tail(item)}",
+                "source": "response",
+                "url": item.get("url") or "",
+                "status": status,
+                "resource_type": item.get("resource_type") or "",
+                "content_type": item.get("content_type") or "",
+            })
+    if _has_unexpected_end_of_input(page_errors):
+        script_candidates = _script_response_candidates(resource_responses)
+        if script_candidates:
+            diagnostics.append({
+                "code": "script_parse_error_resource_candidates",
+                "severity": "info",
+                "message": "A JavaScript parse error was observed; these script/module responses were loaded near the failure.",
+                "source": "response",
+                "resources": script_candidates[:10],
+            })
+    for item in (assertion_failures or [])[:10]:
+        diagnostics.append({
+            "code": "preview_assertion_failed",
+            "severity": "error",
+            "message": str(item.get("message") or item.get("error") or "Preview assertion failed")[:500],
+            "source": "interaction",
+            "action_index": item.get("index"),
+            "action": item.get("action"),
+        })
+    if dom_snapshot.get("loading_visible"):
+        diagnostics.append({
+            "code": "page_loading_state_visible",
+            "severity": "warning",
+            "message": "Page still shows visible loading/progress UI after capture.",
+            "source": "dom_snapshot",
+            "loading_texts": dom_snapshot.get("loading_texts") or [],
+        })
+    ready_state = str(dom_snapshot.get("ready_state") or "").strip()
+    if ready_state and ready_state != "complete":
+        diagnostics.append({
+            "code": "document_not_complete",
+            "severity": "warning",
+            "message": f"document.readyState is {ready_state}.",
+            "source": "dom_snapshot",
+            "ready_state": ready_state,
+        })
+    if _safe_int(dom_snapshot.get("body_text_chars")) == 0:
+        diagnostics.append({
+            "code": "empty_body_text",
+            "severity": "warning",
+            "message": "Document body text is empty or not readable after capture.",
+            "source": "dom_snapshot",
+        })
+    if source_type == "local_html" and served_via in {"localhost", "file"}:
+        hosts = dom_snapshot.get("external_resource_hosts") or []
+        if hosts:
+            diagnostics.append({
+                "code": "local_html_remote_dependencies",
+                "severity": "info",
+                "message": "Local HTML depends on remote scripts or import maps; preview may fail when network/CDN responses are unavailable or invalid.",
+                "source": "dom_snapshot",
+                "hosts": hosts[:10],
+            })
+    return diagnostics[:20]
+
+
+def _resource_tail(item: dict[str, Any]) -> str:
+    url = str(item.get("url") or "")
+    return url.rsplit("/", 1)[-1][:160] if url else "resource"
+
+
+def _script_response_content_type_suspicious(item: dict[str, Any]) -> bool:
+    resource_type = str(item.get("resource_type") or "").strip().lower()
+    url = str(item.get("url") or "").strip().lower().split("?", 1)[0]
+    if resource_type != "script" and not url.endswith((".js", ".mjs")):
+        return False
+    content_type = str(item.get("content_type") or "").strip().lower()
+    if not content_type:
+        return False
+    allowed = (
+        "javascript",
+        "ecmascript",
+        "text/plain",
+        "application/octet-stream",
+    )
+    return not any(part in content_type for part in allowed)
+
+
+def _has_unexpected_end_of_input(page_errors: list[str]) -> bool:
+    return any("unexpected end of input" in str(item or "").lower() for item in page_errors)
+
+
+def _script_response_candidates(resource_responses: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for item in resource_responses:
+        resource_type = str(item.get("resource_type") or "").strip().lower()
+        url = str(item.get("url") or "").strip().lower().split("?", 1)[0]
+        if resource_type != "script" and not url.endswith((".js", ".mjs")):
+            continue
+        result.append({
+            "url": item.get("url") or "",
+            "status": item.get("status"),
+            "content_type": item.get("content_type") or "",
+            "content_length": item.get("content_length") or "",
+            "remote": bool(item.get("remote")),
+        })
+    return result[:20]
+
+
+def _failed_request_message(item: dict[str, str], *, blocking: bool) -> str:
+    url = str(item.get("url") or "")
+    tail = url.rsplit("/", 1)[-1] if url else "request"
+    error = str(item.get("error") or "").strip()
+    label = "Blocking request failed" if blocking else "Non-blocking request failed"
+    return f"{label}: {tail}{f' ({error})' if error else ''}"[:500]
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_float(value: Any, *, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _string_list(value: Any, *, limit: int, item_limit: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            result.append(text[:item_limit])
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _script_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        result.append({
+            "src": str(item.get("src") or "")[:500],
+            "type": str(item.get("type") or "")[:80],
+            "inline_chars": _safe_int(item.get("inline_chars")),
+        })
+        if len(result) >= 30:
+            break
+    return result
 
 
 def _utc_now_iso() -> str:
@@ -775,6 +1766,9 @@ def _local_static_server(directory: Path):
 def _failed_request_is_blocking(item: dict[str, str]) -> bool:
     error = str(item.get("error") or "").strip().lower()
     url = str(item.get("url") or "").strip().lower()
+    resource_type = str(item.get("resource_type") or "").strip().lower()
+    if resource_type in {"media", "video", "audio"} and error == "net::err_aborted":
+        return False
     if error == "net::err_aborted" and url.endswith((
         ".mp4",
         ".webm",
@@ -859,6 +1853,43 @@ def register_preview_tools(registry: ToolRegistry) -> None:
             retry_safe=True,
         ),
         capture_local_html,
+    )
+    registry.register(
+        ToolSpec(
+            id="preview.capture_file",
+            name="文件视觉预览",
+            description=(
+                "对工作区内文件生成或登记统一视觉观察证据。HTML 复用浏览器预览，图片登记为 "
+                "visual_evidence，PDF 在 PyMuPDF 可用时渲染指定页截图；不支持或缺依赖时返回结构化诊断。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "工作区内要预览的文件路径"},
+                    "page": {"type": "integer", "default": 1, "description": "PDF 页码，1 开始"},
+                    "output_path": {"type": "string", "description": "可选输出路径；默认写入 task_temp/preview"},
+                    "output_dir": {"type": "string", "description": "可选输出目录；传 task_temp 使用任务临时目录"},
+                    "format": {"type": "string", "enum": ["png", "jpeg"], "default": "png"},
+                    "scale": {"type": "number", "default": 2.0, "description": "PDF 渲染缩放，0.5 到 4.0"},
+                    "wait_until": {"type": "string", "default": "networkidle"},
+                    "timeout": {"type": "integer", "default": DEFAULT_TIMEOUT},
+                    "width": {"type": "integer", "default": 1440},
+                    "height": {"type": "integer", "default": 1000},
+                    "full_page": {"type": "boolean", "default": True},
+                    "serve_mode": {"type": "string", "enum": ["http", "file"], "default": "http"},
+                },
+                "required": ["path"],
+            },
+            requires_confirmation=False,
+            local_only=True,
+            capability="preview.visual_debug",
+            artifacts=["screenshot", "image", "visual_evidence", "pdf_page_render"],
+            effects=["artifact_write", "artifact_reference"],
+            roles=["verification"],
+            verification_strength="standard",
+            retry_safe=True,
+        ),
+        capture_file,
     )
     registry.register(
         ToolSpec(

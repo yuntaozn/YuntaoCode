@@ -454,6 +454,7 @@ def _verification_retry_context(
     observed_modalities: list[str] | tuple[str, ...] | None = None,
     missing_modalities: list[str] | tuple[str, ...] | None = None,
     visual_verification_tool_ids: list[str] | tuple[str, ...] | None = None,
+    runtime_diagnostics: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
 ) -> str:
     rows: list[str] = []
     required = _format_prompt_list(required_modalities)
@@ -468,6 +469,8 @@ def _verification_retry_context(
         rows.append(f"- missing_modalities={missing}")
     if visual_tools:
         rows.append(f"- visual_verification_tools={visual_tools}")
+    for row in _format_runtime_diagnostics(runtime_diagnostics):
+        rows.append(row)
     if not rows:
         return ""
     guidance = (
@@ -484,6 +487,47 @@ def _verification_retry_context(
     return guidance
 
 
+def _format_runtime_diagnostics(
+    diagnostics: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
+) -> list[str]:
+    rows: list[str] = []
+    for item in diagnostics or []:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "runtime_diagnostic").strip()
+        severity = str(item.get("severity") or "").strip()
+        message = str(item.get("message") or "").strip()
+        if not code and not message:
+            continue
+        pieces = [code]
+        if severity:
+            pieces.append(f"severity={severity}")
+        if message:
+            pieces.append(f"message={message[:260]}")
+        url = str(item.get("url") or "").strip()
+        if url:
+            pieces.append(f"url={url[:260]}")
+        resources = item.get("resources")
+        if isinstance(resources, list) and resources:
+            formatted = []
+            for resource in resources[:5]:
+                if not isinstance(resource, dict):
+                    continue
+                resource_url = str(resource.get("url") or "").strip()
+                status = str(resource.get("status") or "").strip()
+                content_type = str(resource.get("content_type") or "").strip()
+                if resource_url:
+                    formatted.append(
+                        f"{resource_url[:160]} status={status or '?'} type={content_type or '?'}"
+                    )
+            if formatted:
+                pieces.append("resources=[" + "; ".join(formatted) + "]")
+        rows.append("- runtime_diagnostic=" + "; ".join(pieces))
+        if len(rows) >= 8:
+            break
+    return rows
+
+
 def verifier_retry_prompt(
     mode: str | None,
     workspace_path: str,
@@ -492,12 +536,14 @@ def verifier_retry_prompt(
     observed_modalities: list[str] | tuple[str, ...] | None = None,
     missing_modalities: list[str] | tuple[str, ...] | None = None,
     visual_verification_tool_ids: list[str] | tuple[str, ...] | None = None,
+    runtime_diagnostics: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
 ) -> str:
     context = _verification_retry_context(
         required_modalities=required_modalities,
         observed_modalities=observed_modalities,
         missing_modalities=missing_modalities,
         visual_verification_tool_ids=visual_verification_tool_ids,
+        runtime_diagnostics=runtime_diagnostics,
     )
     if mode in {"document", "paper"}:
         return (

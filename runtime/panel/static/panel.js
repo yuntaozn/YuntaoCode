@@ -451,8 +451,10 @@ function renderRunWorkbench(workbench) {
     const verification = Array.isArray(workbench?.verification) ? workbench.verification : [];
     const risks = Array.isArray(workbench?.risks) ? workbench.risks : [];
     const failures = Array.isArray(workbench?.failures) ? workbench.failures : [];
+    const audit = workbench?.audit || {};
     const plan = workbench?.plan || {};
     const workspace = workbench?.workspace || {};
+    const contextEvidence = workbench?.context_evidence || {};
     const contextPack = workbench?.context_pack || {};
     const completionDecisions = Array.isArray(workbench?.completion_decisions) ? workbench.completion_decisions : [];
     const timeline = Array.isArray(workbench?.timeline) ? workbench.timeline : [];
@@ -472,7 +474,9 @@ function renderRunWorkbench(workbench) {
             ${status.result_summary ? `<div class="task-workbench-empty">${escapeHtml(status.result_summary)}</div>` : ""}
         </div>
         <div class="task-workbench-grid">
+            ${renderWorkbenchSection(t('tasks.audit'), renderWorkbenchAudit(audit), "full")}
             ${renderWorkbenchSection(t('tasks.workspace_snapshot'), renderWorkbenchWorkspace(workspace))}
+            ${renderWorkbenchSection(t('tasks.context_evidence'), renderWorkbenchContextEvidence(contextEvidence), "full")}
             ${renderWorkbenchSection(t('tasks.context_pack'), renderWorkbenchContextPack(contextPack))}
             ${renderWorkbenchSection(t('tasks.artifacts'), renderWorkbenchArtifacts(artifacts))}
             ${renderWorkbenchSection(t('tasks.verification'), renderWorkbenchVerification(verification))}
@@ -484,6 +488,148 @@ function renderRunWorkbench(workbench) {
         </div>
     `;
     container.classList.remove("hidden");
+}
+
+function renderWorkbenchAudit(audit) {
+    if (!audit || typeof audit !== "object") {
+        return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    }
+    const counts = audit.counts && typeof audit.counts === "object" ? audit.counts : {};
+    const verification = audit.verification && typeof audit.verification === "object" ? audit.verification : {};
+    const changedPaths = Array.isArray(audit.changed_paths) ? audit.changed_paths : [];
+    const failureTools = Array.isArray(audit.failure_tools) ? audit.failure_tools.filter(Boolean) : [];
+    const riskCodes = Array.isArray(audit.risks) ? audit.risks.filter(Boolean) : [];
+    const strengths = Array.isArray(verification.strengths) ? verification.strengths.filter(Boolean) : [];
+    const modalities = Array.isArray(verification.modalities) ? verification.modalities.filter(Boolean) : [];
+    const rows = [`
+        <li>
+            <strong>${escapeHtml(t('tasks.audit_counts'))}</strong>
+            <span>${escapeHtml([
+                `${t('tasks.artifacts')}：${Number(counts.artifacts || 0)}`,
+                `${t('tasks.changed_paths')}：${Number(counts.changed_paths || 0)}`,
+                `${t('tasks.verification')}：${Number(counts.verification || 0)}`,
+                `${t('tasks.risks')}：${Number(counts.risks || 0)}`,
+                `${t('tasks.failures')}：${Number(counts.failures || 0)}`,
+                `${t('tasks.advisories')}：${Number(counts.runtime_advisories || 0)}`,
+                `${t('tasks.visual_evidence')}：${Number(counts.visual_context || 0)}`,
+            ].join(" · "))}</span>
+        </li>
+    `];
+
+    if (strengths.length || modalities.length) {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(t('tasks.verification_evidence'))}</strong>
+                <span>${escapeHtml([
+                    strengths.length ? `${t('tasks.verification_strengths')}：${strengths.join(" · ")}` : "",
+                    modalities.length ? `${t('tasks.verification_modalities')}：${modalities.join(" · ")}` : "",
+                ].filter(Boolean).join(" · "))}</span>
+            </li>
+        `);
+    }
+
+    changedPaths.slice(0, 10).forEach((item) => {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(t('tasks.changed_path'))}</strong>
+                <span>${escapeHtml([item.kind, item.status, item.tool].filter(Boolean).join(" · "))}</span>
+                ${item.path ? `<code>${escapeHtml(item.path)}</code>` : ""}
+            </li>
+        `);
+    });
+
+    if (failureTools.length || riskCodes.length) {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(t('tasks.risk_evidence'))}</strong>
+                <span>${escapeHtml([
+                    failureTools.length ? `${t('tasks.failure_tools')}：${failureTools.slice(0, 8).join(" · ")}` : "",
+                    riskCodes.length ? `${t('tasks.risks')}：${riskCodes.slice(0, 8).join(" · ")}` : "",
+                ].filter(Boolean).join(" · "))}</span>
+            </li>
+        `);
+    }
+
+    return `<ul class="task-workbench-list">${rows.join("")}</ul>`;
+}
+
+function renderWorkbenchContextEvidence(summary) {
+    if (!summary || typeof summary !== "object") {
+        return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    }
+    const capability = summary.capability && typeof summary.capability === "object" ? summary.capability : {};
+    const phases = Array.isArray(summary.context_phases) ? summary.context_phases.filter(Boolean) : [];
+    const recordKinds = Array.isArray(summary.context_record_kinds) ? summary.context_record_kinds.filter(Boolean) : [];
+    const visualContext = Array.isArray(summary.visual_context) ? summary.visual_context : [];
+    const advisories = Array.isArray(summary.runtime_advisories) ? summary.runtime_advisories : [];
+    const rows = [];
+
+    if (Number(summary.context_pack_count || 0) || phases.length || recordKinds.length) {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(t('tasks.context_scope'))}</strong>
+                <span>${escapeHtml([
+                    `${t('tasks.context_packs')}：${Number(summary.context_pack_count || 0)}`,
+                    `${t('tasks.context_records')}：${Number(summary.context_record_count || 0)}`,
+                    phases.length ? `${t('tasks.context_phases')}：${phases.join(" / ")}` : "",
+                    recordKinds.length ? `${t('tasks.context_record_kinds')}：${recordKinds.slice(0, 10).join(" · ")}` : "",
+                ].filter(Boolean).join(" · "))}</span>
+            </li>
+        `);
+    }
+
+    if (capability.target_capability_ids || capability.preferred_tool_ids || capability.visual_verification_tool_ids) {
+        const targets = Array.isArray(capability.target_capability_ids) ? capability.target_capability_ids : [];
+        const preferred = Array.isArray(capability.preferred_tool_ids) ? capability.preferred_tool_ids : [];
+        const visualTools = Array.isArray(capability.visual_verification_tool_ids) ? capability.visual_verification_tool_ids : [];
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(t('tasks.capability_facts'))}</strong>
+                <span>${escapeHtml([
+                    `${t('tasks.available_tools')}：${Number(capability.available_tool_count || 0)}`,
+                    `${t('tasks.unavailable_tools')}：${Number(capability.unavailable_tool_count || 0)}`,
+                    targets.length ? `${t('tasks.target_capabilities')}：${targets.slice(0, 8).join(" · ")}` : "",
+                    preferred.length ? `${t('tasks.preferred_tools')}：${preferred.slice(0, 8).join(" · ")}` : "",
+                    visualTools.length ? `${t('tasks.visual_tools')}：${visualTools.slice(0, 8).join(" · ")}` : "",
+                    Number(capability.advisory_count || 0) ? `${t('tasks.advisories')}：${Number(capability.advisory_count || 0)}` : "",
+                ].filter(Boolean).join(" · "))}</span>
+            </li>
+        `);
+    }
+
+    visualContext.slice(0, 8).forEach((item) => {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(t('tasks.visual_evidence'))}</strong>
+                <span>${escapeHtml([
+                    item.tool || "",
+                    item.source_type || "",
+                    item.artifact_kind || "",
+                    item.model_context_eligible || item.injected_into_model_context ? t('tasks.model_context_used') : "",
+                    item.has_runtime_errors ? t('tasks.runtime_errors_seen') : "",
+                    item.width && item.height ? `${item.width}x${item.height}` : "",
+                ].filter(Boolean).join(" · "))}</span>
+                ${item.path ? `<code>${escapeHtml(item.path)}</code>` : ""}
+            </li>
+        `);
+    });
+
+    advisories.slice(0, 10).forEach((item) => {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(item.code || t('tasks.advisory'))}</strong>
+                <span>${escapeHtml([
+                    item.source || "",
+                    item.tool || item.capability_id || "",
+                    item.recommended_action ? `${t('tasks.recommended_action')}：${item.recommended_action}` : "",
+                    item.message || "",
+                ].filter(Boolean).join(" · "))}</span>
+            </li>
+        `);
+    });
+
+    if (!rows.length) return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    return `<ul class="task-workbench-list">${rows.join("")}</ul>`;
 }
 
 function renderWorkbenchSection(title, body, extraClass = "") {

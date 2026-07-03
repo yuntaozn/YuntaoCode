@@ -151,6 +151,59 @@ def test_agent_plan_openai_provider_uses_responses_body() -> None:
     assert "messages" not in body
 
 
+def test_responses_body_preserves_user_image_parts() -> None:
+    body = build_request_body(
+        provider_id="openai",
+        provider={"kind": "openai", "wire_api": "responses"},
+        model_config={"supports_tools": True},
+        model="vision-model",
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look at this"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            ],
+        }],
+        stream=True,
+        enable_thinking=False,
+        reasoning_effort="low",
+        tools=None,
+    )
+
+    assert body["input"] == [{
+        "role": "user",
+        "content": [
+            {"type": "input_text", "text": "look at this"},
+            {"type": "input_image", "image_url": "data:image/png;base64,abc"},
+        ],
+    }]
+
+
+def test_request_token_estimate_counts_image_data_url_as_placeholder() -> None:
+    small = {
+        "model": "vision",
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            ],
+        }],
+    }
+    large = {
+        "model": "vision",
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "a" * 100_000}},
+            ],
+        }],
+    }
+
+    assert estimate_request_tokens(large) == estimate_request_tokens(small)
+
+
 def test_extract_stream_event_accepts_responses_text_delta() -> None:
     event = extract_stream_event({
         "type": "response.output_text.delta",

@@ -252,6 +252,9 @@ class RunStore:
         elif event_type == "context_pack":
             run.stage = "context_pack"
             run.message = "context pack recorded"
+        elif event_type == "visual_context":
+            run.stage = "visual_context"
+            run.message = "visual context recorded"
         elif event_type == "workspace_snapshot":
             run.stage = "workspace_snapshot"
             run.message = "workspace snapshot recorded"
@@ -259,7 +262,7 @@ class RunStore:
             run.stage = "capability_snapshot"
             preflight = event.get("preflight") if isinstance(event.get("preflight"), dict) else {}
             if preflight.get("ok") is False:
-                run.message = "capability preflight blocked"
+                run.message = "capability preflight advisory"
             else:
                 run.message = "capability preflight ok"
         elif event_type in {"plan", "plan_decision", "plan_step", "changes"}:

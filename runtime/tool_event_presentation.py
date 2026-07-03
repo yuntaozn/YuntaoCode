@@ -445,6 +445,10 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
         debug_session = debug_session_summary(normalize_debug_session(output))
         preview = {
             "type": "preview",
+            "status": output.get("status"),
+            "error": bool(output.get("error")),
+            "file_preview_type": output.get("file_preview_type"),
+            "via_tool": output.get("via_tool"),
             "source_type": output.get("source_type"),
             "source_path": output.get("source_path"),
             "served_via": output.get("served_via"),
@@ -468,8 +472,12 @@ def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
             "console_errors": (output.get("console_errors") or [])[:10],
             "console_warnings": (output.get("console_warnings") or [])[:10],
             "page_errors": (output.get("page_errors") or [])[:10],
+            "page_error_details": (output.get("page_error_details") or [])[:10],
             "failed_requests": (output.get("failed_requests") or [])[:10],
+            "resource_responses": (output.get("resource_responses") or [])[:20],
             "has_runtime_errors": bool(output.get("has_runtime_errors")),
+            "dom_snapshot": _preview_dom_snapshot_summary(output.get("dom_snapshot")),
+            "runtime_diagnostics": (output.get("runtime_diagnostics") or [])[:12],
             "visual_evidence": visual_evidence,
             "debug_session": debug_session,
         }
@@ -664,6 +672,10 @@ def summarize_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:
         )
         compacted["output"] = {
             "type": output.get("type"),
+            "status": output.get("status"),
+            "error": output.get("error"),
+            "file_preview_type": output.get("file_preview_type"),
+            "via_tool": output.get("via_tool"),
             "source_type": output.get("source_type"),
             "source_path": output.get("source_path"),
             "served_via": output.get("served_via"),
@@ -690,8 +702,30 @@ def summarize_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "console_errors": (output.get("console_errors") or [])[:10],
             "console_warnings": (output.get("console_warnings") or [])[:10],
             "page_errors": (output.get("page_errors") or [])[:10],
+            "page_error_details": (output.get("page_error_details") or [])[:10],
             "failed_requests": (output.get("failed_requests") or [])[:10],
+            "resource_responses": (output.get("resource_responses") or [])[:20],
+            "runtime_diagnostics": (output.get("runtime_diagnostics") or [])[:12],
+            "dom_snapshot": _preview_dom_snapshot_summary(output.get("dom_snapshot")),
             "visual_evidence": visual_evidence_summary(normalize_visual_evidence(output)),
             "debug_session": debug_session_summary(normalize_debug_session(output)),
         }
     return compacted
+
+
+def _preview_dom_snapshot_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    body_text = str(value.get("body_text") or "")
+    return {
+        "ready_state": value.get("ready_state"),
+        "title": value.get("title"),
+        "body_text": body_text[:2000],
+        "body_text_chars": value.get("body_text_chars"),
+        "loading_visible": bool(value.get("loading_visible")),
+        "loading_texts": (value.get("loading_texts") or [])[:6],
+        "headings": (value.get("headings") or [])[:8],
+        "buttons": (value.get("buttons") or [])[:12],
+        "external_resource_hosts": (value.get("external_resource_hosts") or [])[:10],
+        "importmap_hosts": (value.get("importmap_hosts") or [])[:10],
+    }

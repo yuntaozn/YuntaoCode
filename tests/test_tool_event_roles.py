@@ -7,7 +7,9 @@ from runtime.agent_strategy.tool_event_roles import (
     failed_tool_event_role,
     missing_required_verification_modalities,
     sufficient_deliverable_verification_events,
+    sufficient_task_verification_events,
     successful_deliverable_events,
+    task_verification_events,
     verification_evidence_modalities,
     verification_evidence_strength,
 )
@@ -577,6 +579,67 @@ def test_preview_interaction_satisfies_visual_behavioral_and_content_modalities(
 
     assert verification_evidence_strength(event) == "standard"
     assert verification_evidence_modalities(event) == ("visual", "behavioral", "content")
+
+
+def test_verification_only_contract_uses_task_level_evidence() -> None:
+    contract = {
+        "intent": "read_only_analysis",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": True,
+        "required_verification_modalities": ["content", "behavioral"],
+        "deliverables": [{"kind": "answer", "description": "Verification summary"}],
+    }
+    read_event = {
+        "tool": "filesystem.read_file",
+        "status": "success",
+        "input": {"path": "D:/workspace/src/app.js"},
+        "output": {
+            "path": "D:/workspace/src/app.js",
+            "content": "function renderStep() {}",
+        },
+    }
+    interaction_event = {
+        "tool": "preview.interact_page",
+        "status": "success",
+        "output": {
+            "roles": ["verification"],
+            "verification_strength": "standard",
+            "artifact_kind": "screenshot",
+            "artifacts": ["screenshot", "interaction_trace", "dom_text"],
+            "path": "D:/workspace/after.png",
+            "interaction": {
+                "action_count": 2,
+                "assertion_failed_count": 0,
+            },
+            "text": "答题交互正常显示反馈",
+            "has_runtime_errors": False,
+        },
+    }
+
+    assert task_verification_events(
+        [read_event],
+        task_contract=contract,
+        workspace_path="D:/workspace",
+        mode="coding",
+    ) == [read_event]
+    assert missing_required_verification_modalities(
+        [read_event],
+        contract,
+        mode="coding",
+    ) == ("behavioral",)
+    assert sufficient_task_verification_events(
+        [read_event],
+        task_contract=contract,
+        workspace_path="D:/workspace",
+        mode="coding",
+    ) == []
+    assert sufficient_task_verification_events(
+        [read_event, interaction_event],
+        task_contract=contract,
+        workspace_path="D:/workspace",
+        mode="coding",
+    ) == [read_event, interaction_event]
 
 
 def test_preview_interaction_failed_assertion_is_not_successful_verification() -> None:

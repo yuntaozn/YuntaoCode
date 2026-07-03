@@ -13,6 +13,7 @@ This package contains stateless functions that drive the agent's decision-making
 - ``profiles``: internal assistant profiles and stage presets
 - ``policy``: request routing and deterministic planning gates
 - ``prompts``: prompt construction for each execution stage
+- ``run_finalization``: pure run-finalization gates from observable evidence
 - ``task_contract``: model task contracts plus runtime-owned hard constraints
 - ``tool_execution_guard``: pre-execution guard pipeline for resolved tools
 - ``tool_result_risks``: non-blocking, model-facing risk evidence from tool results

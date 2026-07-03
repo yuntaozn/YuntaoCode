@@ -335,6 +335,8 @@ def _task_lineage_record(
             continue
         compact_candidates.append({
             "candidate_id": candidate.get("candidate_id"),
+            "lineage_rank": candidate.get("lineage_rank"),
+            "recency_rank": candidate.get("recency_rank"),
             "goal": candidate.get("goal"),
             "intent": candidate.get("intent"),
             "status": candidate.get("status"),
@@ -342,6 +344,10 @@ def _task_lineage_record(
             "requires_state_change": bool(candidate.get("requires_state_change")),
             "deliverable_kinds": candidate.get("deliverable_kinds") or [],
             "capability_ids": candidate.get("capability_ids") or [],
+            "target_written_paths": candidate.get("target_written_paths") or [],
+            "changed_paths": candidate.get("changed_paths") or [],
+            "verified_paths": candidate.get("verified_paths") or [],
+            "actual_paths": candidate.get("actual_paths") or [],
         })
     return ContextRecord(
         kind="task_lineage",

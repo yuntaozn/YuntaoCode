@@ -61,6 +61,9 @@ def test_context_pack_includes_task_lineage_candidates_as_candidates() -> None:
                 "requires_state_change": True,
                 "deliverable_kinds": ["external_state"],
                 "capability_ids": ["mcp.blender"],
+                "target_written_paths": ["scene.blend"],
+                "changed_paths": ["scene.blend"],
+                "actual_paths": ["scene.blend"],
             }
         ],
     )
@@ -70,6 +73,7 @@ def test_context_pack_includes_task_lineage_candidates_as_candidates() -> None:
     assert lineage["source_type"] == "conversation_history"
     assert "historical task candidates" in lineage["content"].lower()
     assert lineage["metadata"]["candidates"][0]["candidate_id"] == "run-1"
+    assert lineage["metadata"]["candidates"][0]["actual_paths"] == ["scene.blend"]
 
 
 def test_context_pack_records_task_lineage_hygiene_counts() -> None:

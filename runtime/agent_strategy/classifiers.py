@@ -70,6 +70,7 @@ DELIVERABLE_VERIFICATION_TOOL_IDS: frozenset[str] = frozenset({
     "web.capture_page",
     "preview.capture_url",
     "preview.capture_local_html",
+    "preview.capture_file",
     "preview.interact_page",
 })
 

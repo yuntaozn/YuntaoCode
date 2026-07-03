@@ -493,6 +493,8 @@ class SettingsStore:
             "max_output_tokens": 0,
             "output_token_param": "",
             "supports_tools": True,
+            "supports_stream": True,
+            "supports_vision": True,
             "thinking_mode": "",
             "request_options": {},
         }
@@ -656,6 +658,14 @@ def normalize_model_config(value: dict[str, Any]) -> dict[str, Any]:
     output_token_param = str(value.get("output_token_param") or "").strip()
     if output_token_param not in {"", "max_tokens", "max_completion_tokens", "max_output_tokens"}:
         output_token_param = ""
+    if "supports_vision" in value:
+        supports_vision = bool(value.get("supports_vision"))
+    elif "supports_multimodal" in value:
+        supports_vision = bool(value.get("supports_multimodal"))
+    elif "image_input" in value:
+        supports_vision = bool(value.get("image_input"))
+    else:
+        supports_vision = True
     model = {
         "id": model_id,
         "name": str(value.get("name") or value.get("label") or model_id).strip(),
@@ -666,6 +676,7 @@ def normalize_model_config(value: dict[str, Any]) -> dict[str, Any]:
         "output_token_param": output_token_param,
         "supports_tools": bool(value.get("supports_tools", True)),
         "supports_stream": bool(value.get("supports_stream", True)),
+        "supports_vision": supports_vision,
         "thinking_mode": str(value.get("thinking_mode") or "").strip(),
         "allow_disable_thinking": bool(value.get("allow_disable_thinking", False)),
         "supports_reasoning_effort": bool(value.get("supports_reasoning_effort", False)),

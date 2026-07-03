@@ -232,6 +232,10 @@ function renderModels() {
                     <span>${t('settings_js.support_stream')}</span>
                 </label>
                 <label class="checkbox-line compact">
+                    <input data-model-field="supports_vision" type="checkbox" ${model.supports_vision !== false ? "checked" : ""}>
+                    <span>${t('settings_js.support_vision')}</span>
+                </label>
+                <label class="checkbox-line compact">
                     <input data-model-field="supports_reasoning_effort" type="checkbox" ${model.supports_reasoning_effort ? "checked" : ""}>
                     <span>${t('settings_js.support_reasoning_effort')}</span>
                 </label>
@@ -442,6 +446,7 @@ function collectModels() {
             output_token_param: item.querySelector('[data-model-field="output_token_param"]').value,
             supports_tools: item.querySelector('[data-model-field="supports_tools"]').checked,
             supports_stream: item.querySelector('[data-model-field="supports_stream"]')?.checked !== false,
+            supports_vision: item.querySelector('[data-model-field="supports_vision"]')?.checked !== false,
             supports_reasoning_effort: item.querySelector('[data-model-field="supports_reasoning_effort"]').checked,
             thinking_mode: item.querySelector('[data-model-field="thinking_mode"]').value,
             allow_disable_thinking: item.querySelector('[data-model-field="allow_disable_thinking"]')?.checked || false,
@@ -617,6 +622,7 @@ function openAddModelDialog() {
     $("add-model-api-model-input").value = "";
     $("add-model-thinking-mode-input").value = defaultThinkingModeForProvider(providerInput.value);
     $("add-model-allow-disable-thinking-input").checked = false;
+    $("add-model-supports-vision-input").checked = true;
     dialog.showModal();
 }
 
@@ -644,6 +650,7 @@ async function addModelFromDialog() {
             output_token_param: "",
             supports_tools: true,
             supports_stream: true,
+            supports_vision: $("add-model-supports-vision-input").checked,
             supports_reasoning_effort: false,
             thinking_mode: $("add-model-thinking-mode-input").value,
             allow_disable_thinking: $("add-model-allow-disable-thinking-input").checked,

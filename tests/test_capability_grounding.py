@@ -87,8 +87,9 @@ def test_grounding_converts_external_app_file_guess_to_external_state() -> None:
     assert "capability_grounded" in contract["system_overrides"]
     assert "target_deliverable_success" in contract["success_conditions"]
     assert preflight["ok"] is True
-    assert preflight["restrict_fallback"] is False
-    assert preflight["allowed_tool_ids"] is None
+    assert preflight["schema_version"] == "capability_preflight.v2"
+    assert preflight["readiness_issues"] == []
+    assert preflight["route_hint"]["policy"] == "advisory"
     assert "mcp_blender.execute_blender_code" in preflight["preferred_tool_ids"]
     assert "mcp_blender.get_scene_info" in preflight["preferred_tool_ids"]
 

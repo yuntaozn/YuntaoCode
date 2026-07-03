@@ -76,6 +76,36 @@ def test_any_model_can_declare_output_token_capability(tmp_path: Path) -> None:
     assert model["output_token_param"] == "max_tokens"
 
 
+def test_model_can_declare_visual_input_capability(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / "settings.json")
+    store.update({
+        "models": [
+            {
+                "id": "vision-model",
+                "provider": "qwen",
+                "supports_multimodal": True,
+            }
+        ],
+    })
+
+    model = store.get_model_config("vision-model")
+
+    assert model["supports_vision"] is True
+
+
+def test_model_visual_input_defaults_enabled_and_can_be_disabled(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / "settings.json")
+    store.update({
+        "models": [
+            {"id": "default-vision", "provider": "qwen"},
+            {"id": "text-only", "provider": "qwen", "supports_vision": False},
+        ],
+    })
+
+    assert store.get_model_config("default-vision")["supports_vision"] is True
+    assert store.get_model_config("text-only")["supports_vision"] is False
+
+
 def test_default_settings_include_volcengine_agent_plan_provider(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / "settings.json")
 

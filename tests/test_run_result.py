@@ -255,6 +255,99 @@ def test_build_run_result_preserves_compact_visual_and_debug_summaries() -> None
     assert result["debug_sessions"][0]["service"]["status_code"] == 200
 
 
+def test_build_run_result_tracks_verification_only_content_gap() -> None:
+    contract = {
+        "intent": "read_only_analysis",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": True,
+        "required_verification_modalities": ["content", "behavioral"],
+        "deliverables": [{"kind": "answer", "description": "Verification summary"}],
+    }
+
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="coding",
+        change_summary=None,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "filesystem.read_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/src/app.js"},
+                "output": {
+                    "path": "D:/workspace/src/app.js",
+                    "content": "function renderStep() {}",
+                },
+            }
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["counts"]["deliverable_successes"] == 0
+    assert result["counts"]["verification_successes"] == 1
+    assert result["observed_verification_modalities"] == ["content"]
+    assert result["missing_verification_modalities"] == ["behavioral"]
+    assert "required_verification_not_satisfied" in result["risks"]
+    assert "target_deliverable_not_observed" not in result["risks"]
+
+
+def test_build_run_result_succeeds_for_verification_only_behavioral_evidence() -> None:
+    contract = {
+        "intent": "read_only_analysis",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": True,
+        "required_verification_modalities": ["content", "behavioral"],
+        "deliverables": [{"kind": "answer", "description": "Verification summary"}],
+    }
+
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="coding",
+        change_summary=None,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "filesystem.read_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/src/app.js"},
+                "output": {
+                    "path": "D:/workspace/src/app.js",
+                    "content": "function renderStep() {}",
+                },
+            },
+            {
+                "tool": "preview.interact_page",
+                "status": "success",
+                "output": {
+                    "roles": ["verification"],
+                    "verification_strength": "standard",
+                    "artifact_kind": "screenshot",
+                    "artifacts": ["screenshot", "interaction_trace", "dom_text"],
+                    "path": "D:/workspace/after.png",
+                    "interaction": {
+                        "action_count": 2,
+                        "assertion_failed_count": 0,
+                    },
+                    "text": "答题交互正常显示反馈",
+                    "has_runtime_errors": False,
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "success"
+    assert result["counts"]["deliverable_successes"] == 0
+    assert result["counts"]["verification_successes"] == 2
+    assert result["observed_verification_modalities"] == [
+        "content",
+        "visual",
+        "behavioral",
+    ]
+    assert result["missing_verification_modalities"] == []
+
+
 def test_build_run_result_marks_model_error_after_write_as_partial() -> None:
     result = build_run_result(
         workspace_path="D:/workspace",
@@ -1428,6 +1521,30 @@ def test_build_run_result_surfaces_runtime_tool_result_risks() -> None:
     )
 
     assert "artifact_integrity_invalid" in result["risks"]
+
+
+def test_build_run_result_surfaces_runtime_advisory_risks() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        tool_events=[
+            {
+                "tool": "shell.run_command",
+                "status": "success",
+                "input": {"command": "python -m http.server"},
+                "output": {"exit_code": 0, "stdout": "", "stderr": ""},
+                "runtime_risks": [
+                    {
+                        "code": "verification_runtime_advisory",
+                        "blocking": False,
+                    }
+                ],
+            }
+        ],
+    )
+
+    assert "verification_runtime_advisory" in result["risks"]
 
 
 def test_build_run_result_records_all_apply_patch_paths() -> None:

@@ -153,7 +153,7 @@ def test_runtime_confirmation_message_describes_patch_targets() -> None:
     assert "目标：src/app.js, src/new.js" in message
 
 
-def test_verification_runtime_guard_blocks_long_running_server_after_write() -> None:
+def test_verification_runtime_guard_advises_on_long_running_server_after_write() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
     handler._active_task_contract = {"requires_verification": True}
     handler._active_tool_events = [
@@ -173,7 +173,8 @@ def test_verification_runtime_guard_blocks_long_running_server_after_write() -> 
 
     assert message
     assert "长驻服务" in message
-    assert "不能作为本轮目标产物完成后的自动验证" in message
+    assert "完成证据偏弱" in message
+    assert "不能作为" not in message
 
 
 def test_shell_output_preview_includes_timeout_fields() -> None:
@@ -332,6 +333,13 @@ def test_verifier_retry_prompt_uses_observed_modality_status() -> None:
                 "screenshot_path": r"C:\Users\demo\AppData\Local\YuntaoCode\task-artifacts\run\preview\index.png",
                 "title": "demo",
                 "artifacts": ["screenshot", "visual_evidence"],
+                "runtime_diagnostics": [
+                    {
+                        "code": "browser_page_error",
+                        "severity": "error",
+                        "message": "Unexpected end of input",
+                    }
+                ],
                 "page_errors": [],
                 "console_errors": [],
             },
@@ -353,6 +361,48 @@ def test_verifier_retry_prompt_uses_observed_modality_status() -> None:
 
     assert "observed_modalities=visual" in prompt
     assert "missing_modalities=behavioral, content" in prompt
+    assert "preview.interact_page" in prompt
+    assert "runtime_diagnostic=browser_page_error" in prompt
+
+
+def test_verifier_retry_prompt_uses_task_level_evidence_for_verification_only_task() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    contract = {
+        "intent": "read_only_analysis",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": True,
+        "workspace_path": r"D:\workspace\site",
+        "deliverables": [{"kind": "answer", "description": "验证结论"}],
+        "required_verification_modalities": ["content", "behavioral"],
+    }
+    events = [
+        {
+            "tool": "filesystem.read_file",
+            "status": "success",
+            "input": {"path": r"D:\workspace\site\src\app.js"},
+            "output": {
+                "path": r"D:\workspace\site\src\app.js",
+                "content": "function renderStep() {}",
+            },
+        },
+    ]
+
+    prompt = handler._verifier_retry_prompt(
+        "coding",
+        r"D:\workspace\site",
+        task_contract=contract,
+        tool_events=events,
+        capability_preflight={
+            "visual_verification_tool_ids": [
+                "preview.capture_local_html",
+                "preview.interact_page",
+            ],
+        },
+    )
+
+    assert "observed_modalities=content" in prompt
+    assert "missing_modalities=behavioral" in prompt
     assert "preview.interact_page" in prompt
 
 
@@ -644,7 +694,7 @@ async def test_model_task_contract_revision_keeps_previous_semantic_target(
     assert contract["deliverables"][0]["kind"] == "external_state"
 
 
-def test_document_contract_guard_blocks_translation_script_write() -> None:
+def test_document_contract_guard_advises_on_translation_script_write() -> None:
     handler = _handler_with_contract()
 
     message = handler._document_contract_tool_guard(
@@ -657,6 +707,8 @@ def test_document_contract_guard_blocks_translation_script_write() -> None:
 
     assert message
     assert "document.translate_docx" in message
+    assert "提示" in message
+    assert "不能" not in message
 
 
 def test_document_contract_guard_pure_helper_requires_document_coverage() -> None:
@@ -684,10 +736,11 @@ def test_document_contract_guard_pure_helper_requires_document_coverage() -> Non
     )
 
     assert "document.translate_docx" in message
+    assert "不能" not in message
     assert skipped == ""
 
 
-def test_document_contract_guard_blocks_translation_shell_fallback() -> None:
+def test_document_contract_guard_advises_on_translation_shell_fallback() -> None:
     handler = _handler_with_contract()
 
     message = handler._document_contract_tool_guard(
@@ -700,9 +753,11 @@ def test_document_contract_guard_blocks_translation_shell_fallback() -> None:
 
     assert message
     assert "document.translate_docx" in message
+    assert "提示" in message
+    assert "不能" not in message
 
 
-def test_document_contract_guard_blocks_pdf_to_word_script_write() -> None:
+def test_document_contract_guard_advises_on_pdf_to_word_script_write() -> None:
     handler = _handler_with_contract()
 
     message = handler._document_contract_tool_guard(
@@ -716,9 +771,11 @@ def test_document_contract_guard_blocks_pdf_to_word_script_write() -> None:
     assert message
     assert "document.extract_pdf_to_docx" in message
     assert "mode=text_with_images" in message
+    assert "提示" in message
+    assert "不能" not in message
 
 
-def test_document_contract_guard_blocks_pdf_to_word_shell_fallback() -> None:
+def test_document_contract_guard_advises_on_pdf_to_word_shell_fallback() -> None:
     handler = _handler_with_contract()
 
     message = handler._document_contract_tool_guard(
@@ -731,6 +788,8 @@ def test_document_contract_guard_blocks_pdf_to_word_shell_fallback() -> None:
 
     assert message
     assert "document.extract_pdf_to_docx" in message
+    assert "提示" in message
+    assert "不能" not in message
 
 
 def test_ai_plugin_draft_guard_blocks_workspace_ai_plugins_write() -> None:
