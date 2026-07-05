@@ -133,6 +133,81 @@ def test_memory_prompt_filters_other_workspace_memories(tmp_path) -> None:
     assert set(used_ids) == {"global", "current"}
 
 
+def test_memory_prompt_omits_irrelevant_workspace_memory_when_user_message_exists(tmp_path) -> None:
+    store = MemoryStore(tmp_path / "memories.json")
+    global_preference = store.add(
+        MemoryItem(
+            id="global",
+            text="User prefers concise replies",
+            tags=["user_preference"],
+        )
+    )
+    current_workspace_fact = store.add(
+        MemoryItem(
+            id="current",
+            text="Current workspace uses Blender MCP for 3D scene operations",
+            scope="workspace",
+            workspace_id="workspace-1",
+            tags=["project"],
+        )
+    )
+
+    prompt, used_ids = build_memory_prompt_from_store(
+        store,
+        workspace_id="workspace-1",
+        user_message="我要买一款低价无人机，请推荐具体型号",
+    )
+
+    assert global_preference.id in used_ids
+    assert current_workspace_fact.id not in used_ids
+    assert "concise replies" in prompt
+    assert "Blender MCP" not in prompt
+
+
+def test_memory_prompt_keeps_relevant_workspace_memory_when_user_message_matches(tmp_path) -> None:
+    store = MemoryStore(tmp_path / "memories.json")
+    current_workspace_fact = store.add(
+        MemoryItem(
+            id="current",
+            text="Current workspace uses Blender MCP for 3D scene operations",
+            scope="workspace",
+            workspace_id="workspace-1",
+            tags=["blender"],
+        )
+    )
+
+    prompt, used_ids = build_memory_prompt_from_store(
+        store,
+        workspace_id="workspace-1",
+        user_message="帮我检查 Blender 场景操作能力",
+    )
+
+    assert current_workspace_fact.id in used_ids
+    assert "Blender MCP" in prompt
+
+
+def test_memory_prompt_reports_no_relevant_memory_when_all_items_are_unrelated(tmp_path) -> None:
+    store = MemoryStore(tmp_path / "memories.json")
+    store.add(
+        MemoryItem(
+            id="current",
+            text="Current workspace uses Blender MCP for 3D scene operations",
+            scope="workspace",
+            workspace_id="workspace-1",
+            tags=["project"],
+        )
+    )
+
+    prompt, used_ids = build_memory_prompt_from_store(
+        store,
+        workspace_id="workspace-1",
+        user_message="我要买一款低价无人机，请推荐具体型号",
+    )
+
+    assert used_ids == []
+    assert prompt == "暂无与当前请求相关的已启用用户记忆。"
+
+
 def test_memory_prompt_prefers_high_usage_memory_when_relevance_ties(tmp_path) -> None:
     store = MemoryStore(tmp_path / "memories.json")
     low_usage = store.add(MemoryItem(id="low", text="User likes concise answers", usage_count=6))

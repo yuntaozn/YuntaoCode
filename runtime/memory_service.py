@@ -115,13 +115,94 @@ def build_memory_prompt(memory_settings: dict[str, Any] | None) -> str:
 
 # ----- Relevance-based prompt builder -----
 
-# Simple Chinese/English tokenization
-_WORD_PATTERN = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
+# Simple Chinese/English tokenization.  Chinese text is also represented as
+# short n-grams so "用中文回答" can match memories containing "中文回复".
+_WORD_PATTERN = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", re.UNICODE)
+
+_STABLE_GLOBAL_TAGS = frozenset({
+    "user_preference",
+    "user-preference",
+    "user preference",
+    "preference",
+    "preferences",
+    "communication",
+    "communication_preference",
+    "communication-preference",
+    "workflow_preference",
+    "workflow-preference",
+    "ui_preference",
+    "ui-preference",
+    "user_identity",
+    "user-identity",
+    "user identity",
+    "identity",
+    "role",
+    "language_preference",
+    "language-preference",
+})
+
+_STABLE_GLOBAL_TEXT_HINTS = (
+    "user prefers",
+    "user likes",
+    "user wants",
+    "prefers",
+    "likes",
+    "language preference",
+    "communication preference",
+    "用户偏好",
+    "用户喜欢",
+    "用户希望",
+    "偏好",
+    "喜欢",
+    "中文回复",
+    "英文回复",
+)
 
 
 def _tokenize(text: str) -> set[str]:
     """Extract word tokens from text (supports Chinese and English)."""
-    return set(m.lower() for m in _WORD_PATTERN.findall(text) if len(m) >= 2)
+    tokens: set[str] = set()
+    for match in _WORD_PATTERN.findall(text):
+        value = match.lower().strip()
+        if len(value) < 2:
+            continue
+        if all("\u4e00" <= char <= "\u9fff" for char in value):
+            tokens.add(value)
+            for size in (2, 3):
+                if len(value) < size:
+                    continue
+                for index in range(0, len(value) - size + 1):
+                    tokens.add(value[index:index + size])
+            continue
+        tokens.add(value)
+    return tokens
+
+
+def _normalized_tag(value: str) -> str:
+    return str(value or "").strip().lower().replace("_", " ").replace("-", " ")
+
+
+def _has_direct_relevance(
+    item: MemoryItem,
+    message_tokens: set[str],
+    message_tags: set[str],
+) -> bool:
+    item_tags = set(t.lower() for t in item.tags)
+    if item_tags & message_tags:
+        return True
+    return bool(_tokenize(item.text) & message_tokens)
+
+
+def _is_stable_global_memory(item: MemoryItem) -> bool:
+    """Return True for user-level global memories safe to show broadly."""
+    if item.scope == "workspace":
+        return False
+    normalized_tags = {_normalized_tag(tag) for tag in item.tags}
+    stable_tags = {_normalized_tag(tag) for tag in _STABLE_GLOBAL_TAGS}
+    if normalized_tags & stable_tags:
+        return True
+    text = str(item.text or "").strip().lower()
+    return any(hint in text for hint in _STABLE_GLOBAL_TEXT_HINTS)
 
 
 def _score_memory(
@@ -164,7 +245,9 @@ def _score_memory(
     elif item.usage_count > 5:
         score += 1.0
 
-    # 5. Base score for enabled memories (ensures some always show)
+    # 5. Base score for eligible memories. Eligibility is decided separately;
+    # this base score only stabilizes ordering among memories already selected
+    # for the current request.
     score += 0.5
 
     return score
@@ -202,12 +285,23 @@ def build_memory_prompt_from_store(
     # Also extract potential tags from message (words that look like tags)
     message_tags = message_tokens  # Simple: use all tokens as potential tags
 
-    # Score and sort
-    scored = [
-        (item, _score_memory(item, message_tokens, message_tags, now))
-        for item in enabled_items
-    ]
+    # Score and sort.  When a current user message exists, avoid injecting
+    # unrelated workspace facts into every model call.  Stable global
+    # preference/identity memories may still be broadly useful.
+    scored: list[tuple[MemoryItem, float]] = []
+    has_current_query = bool(message_tokens)
+    for item in enabled_items:
+        if (
+            has_current_query
+            and not _has_direct_relevance(item, message_tokens, message_tags)
+            and not _is_stable_global_memory(item)
+        ):
+            continue
+        scored.append((item, _score_memory(item, message_tokens, message_tags, now)))
     scored.sort(key=lambda x: x[1], reverse=True)
+
+    if has_current_query and not scored:
+        return "暂无与当前请求相关的已启用用户记忆。", []
 
     # Select top-N within char budget
     selected: list[MemoryItem] = []

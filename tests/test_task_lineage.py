@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from types import SimpleNamespace
 
 from runtime.agent_strategy.task_lineage import (
@@ -72,6 +74,50 @@ def test_task_lineage_extracts_runtime_observed_paths_from_run_result() -> None:
         "lesson/src/app.js",
         "artifacts/preview/index.png",
     ]
+
+
+def test_task_lineage_reference_anchor_prefers_runtime_observed_write_targets() -> None:
+    conversation = SimpleNamespace(messages=[
+        _message("user", "change lesson"),
+        _message(
+            "assistant",
+            "partial",
+            {
+                "run_id": "run-1",
+                "task_contract": {
+                    "goal": "Fix lesson interaction",
+                    "intent": "write_required",
+                    "requires_write": True,
+                    "requires_state_change": True,
+                    "requires_verification": True,
+                    "deliverables": [
+                        {
+                            "kind": "code",
+                            "path_hint": "D:/code/courseware",
+                            "path_policy": "hint",
+                            "description": "Broad project directory",
+                        }
+                    ],
+                },
+                "run_result": {
+                    "status": "partial",
+                    "target_written_paths": ["lesson/src/app.js"],
+                    "changed_paths": ["lesson/src/app.js"],
+                },
+            },
+        ),
+        _message("user", "try again"),
+    ])
+
+    candidates = collect_task_lineage_candidates(conversation, "try again")
+    anchor = referenced_candidate_contract(candidates, "run-1")
+
+    assert anchor is not None
+    assert anchor["deliverables"][0]["path_hint"] == "lesson/src/app.js"
+    assert anchor["deliverables"][0]["description"] == (
+        "Runtime-observed target path from the referenced run"
+    )
+    assert anchor["deliverables"][1]["path_hint"] == "D:/code/courseware"
 
 
 def test_task_lineage_skips_answer_only_contracts() -> None:
@@ -174,6 +220,69 @@ def test_task_lineage_candidates_are_ordered_most_recent_first_with_paths() -> N
     assert candidates[0]["actual_paths"] == ["src/app.js"]
     assert prompt.index("new-run") < prompt.index("old-run")
     assert "src/app.js" in prompt
+    payload = json.loads(prompt)
+    assert payload["active_target"]["candidate_id"] == "new-run"
+    assert payload["active_target"]["target_paths"] == ["src/app.js"]
+
+
+def test_task_lineage_target_correction_prefers_matching_observed_path_over_recency() -> None:
+    conversation = SimpleNamespace(messages=[
+        _message("user", "change target subproject"),
+        _message(
+            "assistant",
+            "right target partial",
+            {
+                "run_id": "right-target-run",
+                "task_contract": {
+                    "goal": "Fix interaction behavior in the correct subproject",
+                    "intent": "write_required",
+                    "requires_write": True,
+                    "deliverables": [{"kind": "code", "path_hint": "独立基础施工全过程/交互动画/src/app.js"}],
+                },
+                "run_result": {
+                    "status": "partial",
+                    "target_written_paths": ["独立基础施工全过程/交互动画/src/app.js"],
+                    "changed_paths": ["独立基础施工全过程/交互动画/src/app.js"],
+                },
+            },
+        ),
+        _message("user", "try again"),
+        _message(
+            "assistant",
+            "wrong target partial",
+            {
+                "run_id": "wrong-target-run",
+                "task_contract": {
+                    "goal": "Retry interaction behavior",
+                    "intent": "write_required",
+                    "requires_write": True,
+                    "deliverables": [{"kind": "code", "path_hint": "无机磨石施工工艺/2d_interactive_demo.html"}],
+                },
+                "run_result": {
+                    "status": "partial",
+                    "target_written_paths": ["无机磨石施工工艺/2d_interactive_demo.html"],
+                    "changed_paths": ["无机磨石施工工艺/2d_interactive_demo.html"],
+                },
+            },
+        ),
+        _message("user", "上一轮改错了子项目，要改的是 独立基础施工全过程 的交互动画"),
+    ])
+
+    candidates = collect_task_lineage_candidates(
+        conversation,
+        "上一轮改错了子项目，要改的是 独立基础施工全过程 的交互动画",
+    )
+    prompt = format_task_candidates_for_model(candidates)
+
+    assert [candidate["candidate_id"] for candidate in candidates[:2]] == [
+        "right-target-run",
+        "wrong-target-run",
+    ]
+    assert candidates[0]["current_target_match"] is True
+    assert candidates[0]["current_target_affinity"] > 0
+    assert candidates[1]["current_target_match"] is False
+    assert "current_target_match" in prompt
+    assert prompt.index("right-target-run") < prompt.index("wrong-target-run")
 
 
 def test_task_lineage_prioritizes_recent_target_paths_over_failed_verification_attempt() -> None:

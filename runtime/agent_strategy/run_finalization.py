@@ -12,6 +12,10 @@ COMPLETION_REVIEW = "completion_review"
 FINAL_ANSWER_VERIFIED = "final_answer_verified"
 FINAL_ANSWER_CONVERGED = "final_answer_converged"
 CONTINUE_POST_DELIVERABLE = "continue_post_deliverable"
+CONTINUE_VERIFICATION_GAP = "continue_verification_gap"
+STOP_STAGNANT_VERIFICATION_GAP = "stop_stagnant_verification_gap"
+CONTINUE_TARGET_DELIVERABLE_GAP = "continue_target_deliverable_gap"
+CHANGE_TARGET_DELIVERABLE_STRATEGY = "change_target_deliverable_strategy"
 
 
 @dataclass(frozen=True)
@@ -25,6 +29,41 @@ class FinalizationGate:
 
     action: str
     reason: str = ""
+
+
+@dataclass(frozen=True)
+class VerificationGapDecision:
+    """Progress-aware decision for missing verification evidence.
+
+    The runner should keep the model in charge of the next strategy. This
+    helper only detects whether the same verification gap has remained
+    unchanged across repeated model rounds, so the runtime can avoid infinite
+    loops without stopping after the first incomplete self-review.
+    """
+
+    action: str
+    reason: str
+    prompt_count: int
+    stagnant_rounds: int
+    key: str
+
+
+@dataclass(frozen=True)
+class TargetDeliverableGapDecision:
+    """Progress-aware advisory for missing target deliverables.
+
+    This decision intentionally has no stop action. A missing write, export, or
+    external-state deliverable is a fact the model should see, not a runtime
+    reason to terminate by itself. The runner can still stop at global safety
+    limits, but this helper only says whether the observable facts changed or
+    whether the model should choose a materially different route.
+    """
+
+    action: str
+    reason: str
+    prompt_count: int
+    stagnant_rounds: int
+    key: str
 
 
 def build_finalization_gate(
@@ -69,3 +108,87 @@ def build_finalization_gate(
     ):
         return FinalizationGate(FINAL_ANSWER_CONVERGED, "post-deliverable work converged")
     return FinalizationGate(CONTINUE_POST_DELIVERABLE, "post-deliverable work can continue")
+
+
+def build_verification_gap_decision(
+    *,
+    previous_key: str,
+    current_key: str,
+    prompt_count: int,
+    stagnant_rounds: int,
+    max_stagnant_rounds: int = 4,
+    min_prompts_before_stop: int = 6,
+) -> VerificationGapDecision:
+    """Decide whether a missing-verification loop still has room to continue.
+
+    ``current_key`` should summarize observable runtime facts such as missing
+    modalities, observed modalities, tool count, and deliverable count. If the
+    key changes, the model produced some new evidence or changed the run state,
+    so the stagnation counter resets.
+    """
+
+    next_prompt_count = max(0, prompt_count) + 1
+    if current_key and current_key == previous_key:
+        next_stagnant_rounds = max(0, stagnant_rounds) + 1
+    else:
+        next_stagnant_rounds = 0
+
+    if (
+        next_prompt_count >= max(1, min_prompts_before_stop)
+        and next_stagnant_rounds >= max(1, max_stagnant_rounds)
+    ):
+        return VerificationGapDecision(
+            STOP_STAGNANT_VERIFICATION_GAP,
+            "verification gap remained unchanged across repeated rounds",
+            next_prompt_count,
+            next_stagnant_rounds,
+            current_key,
+        )
+    return VerificationGapDecision(
+        CONTINUE_VERIFICATION_GAP,
+        "verification gap still has room for model-selected correction",
+        next_prompt_count,
+        next_stagnant_rounds,
+        current_key,
+    )
+
+
+def build_target_deliverable_gap_decision(
+    *,
+    previous_key: str,
+    current_key: str,
+    prompt_count: int,
+    stagnant_rounds: int,
+    strategy_change_stagnant_rounds: int = 3,
+) -> TargetDeliverableGapDecision:
+    """Return a non-blocking advisory for missing target deliverables.
+
+    ``current_key`` should summarize observable progress facts such as tool
+    count, read/preview evidence, failed write attempts, target paths, and
+    diagnostics. If that key changes, the model found new facts or changed the
+    run state, so the runtime should keep giving it room. If it remains
+    unchanged for several rounds, the runtime asks for a route change instead
+    of marking the task failed here.
+    """
+
+    next_prompt_count = max(0, prompt_count) + 1
+    if current_key and current_key == previous_key:
+        next_stagnant_rounds = max(0, stagnant_rounds) + 1
+    else:
+        next_stagnant_rounds = 0
+
+    if next_stagnant_rounds >= max(1, strategy_change_stagnant_rounds):
+        return TargetDeliverableGapDecision(
+            CHANGE_TARGET_DELIVERABLE_STRATEGY,
+            "target deliverable gap is stagnant; ask the model to change route",
+            next_prompt_count,
+            next_stagnant_rounds,
+            current_key,
+        )
+    return TargetDeliverableGapDecision(
+        CONTINUE_TARGET_DELIVERABLE_GAP,
+        "target deliverable still has room for model-selected correction",
+        next_prompt_count,
+        next_stagnant_rounds,
+        current_key,
+    )

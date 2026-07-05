@@ -1195,14 +1195,14 @@ def repeated_failure_action(
     """Return the convergence action for repeated failed execution routes.
 
     The first repeated route is evidence that the current route is not working,
-    not proof that the task should stop.  Give the model a small bounded
+    not proof that the task should stop.  Give the model a wider bounded
     self-correction budget in the current no-progress window, then stop only if
     it keeps returning to the same failed route without producing new evidence.
     """
     route_attempts = failure_route_attempt_count_since_progress(tool_events)
     if route_attempts < 2:
         return "none"
-    if route_attempts >= 4:
+    if route_attempts >= 7:
         return "stop"
     return "change_strategy"
 

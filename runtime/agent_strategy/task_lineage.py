@@ -86,7 +86,7 @@ def task_candidate_from_message(
         "verified_paths": verified_paths,
         "artifact_paths": artifact_paths,
         "actual_paths": actual_paths,
-        "contract_anchor": _contract_anchor(contract),
+        "contract_anchor": _contract_anchor(contract, run_result=run_result),
     }
 
 
@@ -129,7 +129,21 @@ def collect_task_lineage_candidates(
         result.append(candidate)
         if len(result) >= scan_limit:
             break
-    ranked = sorted(result, key=_candidate_sort_key)[:limit]
+    for candidate in result:
+        affinity = _candidate_target_affinity(candidate, current)
+        candidate["current_target_affinity"] = affinity
+        candidate["current_target_match"] = affinity > 0
+    has_target_match = any(
+        _safe_int(candidate.get("current_target_affinity"), default=0) > 0
+        for candidate in result
+    )
+    ranked = sorted(
+        result,
+        key=lambda candidate: _candidate_sort_key(
+            candidate,
+            target_match_active=has_target_match,
+        ),
+    )[:limit]
     for rank, candidate in enumerate(ranked, start=1):
         candidate["lineage_rank"] = rank
     return ranked
@@ -163,7 +177,7 @@ def format_task_candidates_for_model(
     for candidate in candidates or []:
         if not isinstance(candidate, dict):
             continue
-        compact.append({
+        item = {
             "candidate_id": candidate.get("candidate_id"),
             "lineage_rank": candidate.get("lineage_rank"),
             "recency_rank": candidate.get("recency_rank"),
@@ -178,7 +192,15 @@ def format_task_candidates_for_model(
             "changed_paths": candidate.get("changed_paths") or [],
             "verified_paths": candidate.get("verified_paths") or [],
             "actual_paths": candidate.get("actual_paths") or [],
-        })
+        }
+        if "current_target_match" in candidate:
+            item["current_target_match"] = bool(candidate.get("current_target_match"))
+        if _safe_int(candidate.get("current_target_affinity"), default=0) > 0:
+            item["current_target_affinity"] = _safe_int(
+                candidate.get("current_target_affinity"),
+                default=0,
+            )
+        compact.append(item)
         if len(compact) >= limit:
             break
     if not compact:
@@ -189,7 +211,10 @@ def format_task_candidates_for_model(
         "rule": (
             "These are historical task candidates, not the current goal. "
             "They are ordered by lineage_rank: recent candidates with "
-            "runtime-observed target paths first. "
+            "runtime-observed target paths first, and when the current request "
+            "names a target path or subproject, candidates with "
+            "current_target_match=true are ranked ahead of merely recent "
+            "candidates. "
             "Use one only if the current user request continues, revises, "
             "retries, or evaluates that candidate. Prefer runtime-observed "
             "actual_paths over guessed, stale, or intermediate paths when "
@@ -199,10 +224,17 @@ def format_task_candidates_for_model(
         ),
         "candidates": compact,
     }
+    active_target = _active_target_fact(candidates)
+    if active_target:
+        payload["active_target"] = active_target
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-def _contract_anchor(contract: dict[str, Any]) -> dict[str, Any]:
+def _contract_anchor(
+    contract: dict[str, Any],
+    *,
+    run_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     keys = (
         "intent",
         "goal",
@@ -216,11 +248,111 @@ def _contract_anchor(contract: dict[str, Any]) -> dict[str, Any]:
         "deliverables",
         "success_conditions",
     )
-    return {
+    anchor = {
         key: deepcopy(contract[key])
         for key in keys
         if key in contract
     }
+    if isinstance(run_result, dict):
+        _ground_anchor_deliverables_with_run_result(anchor, run_result)
+    return anchor
+
+
+def _ground_anchor_deliverables_with_run_result(
+    anchor: dict[str, Any],
+    run_result: dict[str, Any],
+) -> None:
+    """Promote runtime-observed write targets into a continuation anchor.
+
+    The model still decides whether a current request references this
+    candidate. Once it does, paths observed in the previous run are stronger
+    evidence than a broad original path hint such as the workspace root.
+    """
+    paths = _unique_strings(
+        [
+            *_string_list(run_result.get("target_written_paths"), limit=8),
+            *_string_list(run_result.get("observed_written_paths"), limit=8),
+            *_string_list(run_result.get("changed_paths"), limit=8),
+            *_string_list(run_result.get("written_paths"), limit=8),
+        ],
+        limit=8,
+    )
+    if not paths:
+        return
+
+    existing = [
+        deepcopy(item)
+        for item in anchor.get("deliverables") or []
+        if isinstance(item, dict)
+    ]
+    observed_keys = {_normalize_path_hint(path) for path in paths}
+    promoted: list[dict[str, Any]] = []
+    for path in paths:
+        key = _normalize_path_hint(path)
+        match = next(
+            (
+                item
+                for item in existing
+                if _normalize_path_hint(item.get("path_hint") or item.get("path")) == key
+            ),
+            None,
+        )
+        if match:
+            item = deepcopy(match)
+        else:
+            item = {
+                "kind": _deliverable_kind_for_path(path, existing),
+                "path_hint": path,
+                "path_policy": "hint",
+                "capability_id": "",
+                "description": "Runtime-observed target path from the referenced run",
+            }
+        item["path_hint"] = str(item.get("path_hint") or item.get("path") or path)
+        item.setdefault("path_policy", "hint")
+        item.setdefault("capability_id", "")
+        if not str(item.get("description") or "").strip():
+            item["description"] = "Runtime-observed target path from the referenced run"
+        promoted.append(item)
+
+    remaining = [
+        item
+        for item in existing
+        if _normalize_path_hint(item.get("path_hint") or item.get("path")) not in observed_keys
+    ]
+    anchor["deliverables"] = _dedupe_deliverables([*promoted, *remaining])[:8]
+
+
+def _deliverable_kind_for_path(path: str, existing: list[dict[str, Any]]) -> str:
+    for item in existing:
+        kind = str(item.get("kind") or "").strip().lower()
+        if kind in {"code", "document", "spreadsheet", "file"}:
+            return kind
+    suffix = str(path or "").strip().lower().rsplit(".", 1)
+    ext = suffix[-1] if len(suffix) == 2 else ""
+    if ext in {"py", "js", "jsx", "ts", "tsx", "vue", "html", "css", "json", "toml", "yaml", "yml", "rs", "go", "java", "cs", "cpp", "c", "h", "hpp", "php", "rb", "sh", "ps1", "bat", "sql"}:
+        return "code"
+    if ext in {"doc", "docx", "pdf", "ppt", "pptx", "md"}:
+        return "document"
+    if ext in {"xls", "xlsx", "csv", "tsv"}:
+        return "spreadsheet"
+    return "file"
+
+
+def _dedupe_deliverables(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        key = _normalize_path_hint(item.get("path_hint") or item.get("path"))
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        result.append(item)
+    return result
+
+
+def _normalize_path_hint(value: Any) -> str:
+    return str(value or "").strip().replace("\\", "/").rstrip("/").lower()
 
 
 def _status_from_metadata(metadata: dict[str, Any]) -> str:
@@ -236,7 +368,15 @@ def _status_from_metadata(metadata: dict[str, Any]) -> str:
     return str(metadata.get("status") or "historical")
 
 
-def _candidate_sort_key(candidate: dict[str, Any]) -> tuple[int, int]:
+def _candidate_sort_key(
+    candidate: dict[str, Any],
+    *,
+    target_match_active: bool = False,
+) -> tuple[int, int, int, int]:
+    affinity = _safe_int(candidate.get("current_target_affinity"), default=0)
+    target_group = 0
+    if target_match_active:
+        target_group = 0 if affinity > 0 else 1
     recency = _safe_int(candidate.get("recency_rank"), default=9999)
     has_target_path = bool(
         candidate.get("target_written_paths")
@@ -253,7 +393,113 @@ def _candidate_sort_key(candidate: dict[str, Any]) -> tuple[int, int]:
         group = 2
     else:
         group = 3
-    return (group, recency)
+    return (target_group, -affinity, group, recency)
+
+
+def _candidate_target_affinity(candidate: dict[str, Any], current_content: str) -> int:
+    """Return path/subproject affinity between current wording and a candidate.
+
+    This does not choose the task. It only ranks historical facts so a prompt
+    that explicitly names a target folder is less likely to be dominated by a
+    newer but wrong-target run.
+    """
+    text = _normalize_match_text(current_content)
+    if not text:
+        return 0
+    score = 0
+    for path in _candidate_target_paths(candidate):
+        score = max(score, _path_affinity(path, text))
+    return score
+
+
+def _candidate_target_paths(candidate: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key in (
+        "target_written_paths",
+        "changed_paths",
+        "observed_written_paths",
+        "written_paths",
+        "actual_paths",
+    ):
+        value = candidate.get(key)
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            text = str(item or "").strip()
+            if text and text not in values:
+                values.append(text)
+    return values
+
+
+def _candidate_write_target_paths(candidate: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key in (
+        "target_written_paths",
+        "changed_paths",
+        "observed_written_paths",
+        "written_paths",
+    ):
+        value = candidate.get(key)
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            text = str(item or "").strip()
+            if text and text not in values:
+                values.append(text)
+    return values
+
+
+def _active_target_fact(
+    candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
+) -> dict[str, Any]:
+    for candidate in candidates or []:
+        if not isinstance(candidate, dict):
+            continue
+        paths = _candidate_write_target_paths(candidate)
+        if not paths:
+            continue
+        return {
+            "candidate_id": candidate.get("candidate_id"),
+            "lineage_rank": candidate.get("lineage_rank"),
+            "recency_rank": candidate.get("recency_rank"),
+            "target_paths": paths[:6],
+            "goal": candidate.get("goal"),
+            "rule": (
+                "Historical candidate only. Use this as the current target "
+                "only when the user explicitly continues/retries/evaluates "
+                "the previous result, or when the current wording shares the "
+                "same path, artifact, or domain."
+            ),
+        }
+    return {}
+
+
+def _path_affinity(path: str, normalized_current: str) -> int:
+    normalized_path = _normalize_match_text(path)
+    if len(normalized_path) >= 6 and normalized_path in normalized_current:
+        return min(len(normalized_path), 120)
+    score = 0
+    for part in str(path or "").replace("\\", "/").split("/"):
+        part = part.strip()
+        if not part:
+            continue
+        candidates = {part}
+        if "." in part:
+            candidates.add(part.rsplit(".", 1)[0])
+        for candidate in candidates:
+            token = _normalize_match_text(candidate)
+            if len(token) < 5:
+                continue
+            if token in normalized_current:
+                score = max(score, min(len(token), 80))
+    return score
+
+
+def _normalize_match_text(value: Any) -> str:
+    text = str(value or "").strip().lower().replace("\\", "/")
+    for ch in (" ", "\t", "\r", "\n", "，", "。", "、", "：", ":", ";", "；", "\"", "'", "`"):
+        text = text.replace(ch, "")
+    return text
 
 
 def _safe_int(value: Any, *, default: int) -> int:

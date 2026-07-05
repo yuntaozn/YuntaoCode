@@ -87,7 +87,12 @@ def _tool_task_poll_interval(elapsed_seconds: float) -> float:
     return _TOOL_TASK_STEADY_POLL_SECONDS
 
 
-def _message_content_with_attachment_catalog(content: str, metadata: dict[str, Any]) -> str:
+def _message_content_with_attachment_catalog(
+    content: str,
+    metadata: dict[str, Any],
+    *,
+    historical: bool = False,
+) -> str:
     attachments = metadata.get("attachments") if isinstance(metadata.get("attachments"), list) else []
     rows: list[str] = []
     for item in attachments:
@@ -103,13 +108,30 @@ def _message_content_with_attachment_catalog(content: str, metadata: dict[str, A
         )
     if not rows:
         return content
-    catalog = (
-        "\n\nUser-provided immutable conversation attachments:\n"
-        + "\n".join(rows)
-        + "\nUse attachment.extract_text for text, PDF, or Word attachments. "
-        "Do not treat attachment storage as a project path."
+    if historical:
+        catalog = (
+            "\n\nHistorical message attachments from an earlier turn:\n"
+            + "\n".join(rows)
+            + "\nThese attachments are available as historical context candidates only. "
+            "Use attachment.extract_text only when the current user request clearly refers "
+            "to this earlier attachment or asks to continue/evaluate that attachment task. "
+            "Do not treat attachment storage as a project path."
+        )
+    else:
+        catalog = (
+            "\n\nCurrent user-provided immutable conversation attachments:\n"
+            + "\n".join(rows)
+            + "\nUse attachment.extract_text for text, PDF, or Word attachments when they are "
+            "relevant to the current request. Do not treat attachment storage as a project path."
     )
     return f"{content}{catalog}"
+
+
+def _latest_user_message_id(conversation: Any) -> str:
+    for item in reversed(getattr(conversation, "messages", []) or []):
+        if str(getattr(item, "role", "") or "") == "user":
+            return str(getattr(item, "id", "") or "")
+    return ""
 
 
 class ConversationsHandler(ApiHandler):
@@ -159,6 +181,7 @@ class ConversationDetailHandler(ApiHandler):
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt}
             ]
+            latest_user_message_id = _latest_user_message_id(conversation)
             for item in conversation.messages:
                 metadata = getattr(item, "metadata", {}) or {}
                 if metadata.get("guidance") and metadata.get("during_run"):
@@ -166,7 +189,14 @@ class ConversationDetailHandler(ApiHandler):
                 role = "assistant" if item.role == "assistant" else "user"
                 messages.append({
                     "role": role,
-                    "content": _message_content_with_attachment_catalog(item.content, metadata),
+                    "content": _message_content_with_attachment_catalog(
+                        item.content,
+                        metadata,
+                        historical=not (
+                            role == "user"
+                            and str(getattr(item, "id", "") or "") == latest_user_message_id
+                        ),
+                    ),
                 })
             if tokenizer_ready():
                 data["context_tokens"] = count_messages_tokens(messages)
@@ -311,6 +341,7 @@ class ConversationMessagesHandler(ApiHandler):
             capability_context=self._capability_context_prompt(mode_config),
         )
         messages = [{"role": "system", "content": system_prompt}]
+        latest_user_message_id = _latest_user_message_id(conversation)
         for item in conversation.messages:
             metadata = getattr(item, "metadata", {}) or {}
             if metadata.get("guidance") and metadata.get("during_run"):
@@ -318,7 +349,14 @@ class ConversationMessagesHandler(ApiHandler):
             role = "assistant" if item.role == "assistant" else "user"
             messages.append({
                 "role": role,
-                "content": _message_content_with_attachment_catalog(item.content, metadata),
+                "content": _message_content_with_attachment_catalog(
+                    item.content,
+                    metadata,
+                    historical=not (
+                        role == "user"
+                        and str(getattr(item, "id", "") or "") == latest_user_message_id
+                    ),
+                ),
                 "_yuntao_metadata": metadata,
             })
         messages, hygiene_report = _ctx_hygiene.sanitize_model_context(messages)
@@ -1597,8 +1635,41 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         tool_events: list[dict[str, Any]],
         code_change_intent: bool,
         reason: str,
+        *,
+        target_deliverable_observed: bool | None = None,
     ) -> str:
-        return _prp.progress_observer_prompt(workspace_path, current_stage, tool_events, code_change_intent, reason)
+        contract = getattr(self, "_active_task_contract", None)
+        required, observed, missing = self._verification_modality_status(
+            contract if isinstance(contract, dict) else None,
+            tool_events,
+            workspace_path,
+            getattr(self, "_active_mode", None),
+        )
+        runtime_diagnostics = self._verification_runtime_diagnostics(
+            contract if isinstance(contract, dict) else None,
+            tool_events,
+            workspace_path,
+            getattr(self, "_active_mode", None),
+        )
+        visual_tools = []
+        preflight = getattr(self, "_active_capability_preflight", None)
+        if isinstance(preflight, dict):
+            raw_tools = preflight.get("visual_verification_tool_ids")
+            if isinstance(raw_tools, list):
+                visual_tools = [str(item) for item in raw_tools if str(item or "").strip()]
+        return _prp.progress_observer_prompt(
+            workspace_path,
+            current_stage,
+            tool_events,
+            code_change_intent,
+            reason,
+            target_deliverable_observed=target_deliverable_observed,
+            required_modalities=required,
+            observed_modalities=observed,
+            missing_modalities=missing,
+            visual_verification_tool_ids=visual_tools,
+            runtime_diagnostics=runtime_diagnostics,
+        )
 
     def _repeated_failure_strategy_prompt(
         self,
@@ -2193,7 +2264,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         if next_calls:
             lines.append("长文件尚有后续内容；只有当当前任务确实依赖后续代码时，才继续读取下一段：")
             lines.extend(next_calls[:4])
-        lines.append("如果现有片段已足以定位修改点，请直接调用写入工具；不要因为文件很长就停止执行。")
+        lines.append("如果现有片段已足以支持当前目标，可进入编辑/写入或验证，不必因为文件尚未读完整而停止。")
         return "\n".join(lines)
 
     def _previous_write_context(self, conversation: Any | None, current_content: str) -> bool:

@@ -651,10 +651,12 @@ Current runtime-level capability guards:
   generation outside the declared safety and permission boundary.
 
 Tool execution guards have a stable pre-confirmation order for a resolved tool:
-plugin enablement, service availability, capability fallback boundary, required
-input fields, AI-built Capability Pack boundary, document contract boundary, and
-runtime verification method checks. A guard failure returns a deterministic
-reason and message before manual confirmation is requested.
+plugin enablement, service availability, required input fields, capability
+fallback advisory, AI-built Capability Pack boundary, document contract
+advisory, and runtime verification method checks. A hard guard failure returns
+a deterministic reason and message before manual confirmation is requested;
+advisory guards are recorded as risk evidence without hiding the tool route
+from the model.
 
 ## Temporary Artifacts
 

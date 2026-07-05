@@ -210,12 +210,32 @@ Memory 是 Context Runtime 的一部分，但不能和任务事实混淆。
 
 - `global` memory 只保存用户级偏好、表达习惯、稳定身份信息和跨项目习惯。
 - `workspace` memory 保存项目级事实，例如架构决策、路径、技术栈、任务约定。
-- 模型上下文只能接收 global memory 加当前 `workspace_id` 对应的 workspace
-  memory。
+- 模型上下文只能从 global memory 和当前 `workspace_id` 对应的 workspace
+  memory 中选择。选择结果还必须与当前请求相关；workspace memory 不应因为属于
+  当前项目就默认进入每次模型调用。
+- 明确的用户级偏好、身份和语言习惯这类 stable global memory 可以在无关键词命中
+  时进入上下文；项目事实、路径、技术栈和任务细节必须有当前请求相关性。
 - 自动记忆提取应保持窄范围，优先保存高置信用户级事实。
 - 项目事实应通过显式 workspace memory 路径保存。
 
 这能减少“另一台电脑、另一个项目、上一轮任务”的隐藏污染。
+
+## Attachment Context
+
+用户上传的图片、PDF、Word、数据文件等附件属于 conversation 内的不可变输入资源。
+它们应服务于当前请求，而不是在同一对话的后续所有任务中自动变成当前目标。
+
+建议边界：
+
+- 当前用户消息携带的附件可以作为当前请求附件目录进入模型上下文。
+- 历史用户消息携带的附件只能作为 historical attachment candidates 暴露。
+- 模型只有在当前请求明确提到“刚才那个文件/继续处理该附件/重新检查上次上传的
+  PDF”等上下文时，才应调用 `attachment.extract_text` 读取历史附件。
+- 历史附件目录不应作为普通用户意图写入持久压缩摘要；摘要只需保留“曾上传附件”
+  这类事实，不应长期保存 attachment_id 和工具调用提示。
+- 附件存储路径不是项目路径，不能被当作 workspace 文件产物。
+
+这保留了“继续处理刚才文件”的能力，也避免旧附件在新任务中隐性带偏模型。
 
 ## Context Snapshot
 
@@ -247,6 +267,24 @@ Memory 是 Context Runtime 的一部分，但不能和任务事实混淆。
 - 可恢复的 checkpoint 或下一步建议。
 
 Context Snapshot 是恢复和回放的事实输入，不是让模型机械重复旧策略的脚本。
+
+## Durable Summary Hygiene
+
+`runtime/context_manager.py` 中的对话压缩摘要是持久化到 conversation metadata 的
+长期上下文。它和单次模型调用中的运行时提示不是一回事。
+
+持久摘要只应吸收真实对话事实，例如用户明确表达的长期偏好、仍可能相关的结论、
+产物路径和未完成事实。以下内容只能作为单次调用的模型侧脚手架，不能写入长期摘要：
+
+- `Context hygiene` 边界提示。
+- `Current request boundary` 边界提示。
+- `Context Pack for this model call` 阶段提示。
+- 已转入 task lineage 的 historical task markers。
+- 工具调用格式示例、旧失败过程日志和临时运行时提示。
+
+这条边界的目的不是删掉历史。UI、RunEvent、诊断包和审计记录仍应保留完整事实；
+只是模型下一轮不应因为压缩摘要而反复看到旧任务边界和旧工具失败格式，从而把它们
+误当作当前目标或调用模板。
 
 ## Phase-Aware Context
 
@@ -306,6 +344,9 @@ summary
   - 持久化运行事件，为 Context Ledger 提供事实来源。
 - `runtime/run_result.py`
   - 从工具事件生成确定性结果，可作为 summary 阶段核心上下文。
+- `runtime/agent_strategy/run_finalization.py`
+  - 将目标产物缺口、验证缺口和最终收束判断显式化。
+  - 目标产物缺口只产生继续或换策略建议，不在该层直接停止任务。
 
 ## 0.1 Closeout Direction
 
@@ -326,9 +367,12 @@ Context Runtime 的 0.1 最小闭环已经成立：
 - 每个关键阶段可以生成 `Context Pack`，并以 `context.pack` 事件进入 RunEvidence、Runbook、诊断包和任务工作台。
 - Context Ledger 记录来源、信任度、新鲜度、任务归属和内容预览，使用户可以审计模型当时看到的是哪些事实。
 - Task lineage、previous contract、recovery context、tool result facts 和 final-answer candidate 都通过 Context Pack 暴露为事实，而不是隐藏路线控制。
+- Previous contract 与 task_lineage candidate 分开记录：前者只是上一任务契约的历史锚点，后者才是可由模型显式引用的历史任务候选，避免旧任务目标伪装成当前目标。
 - Memory 已区分 global 与 workspace 范围，避免跨项目记忆默认污染当前任务。
 - 视觉证据可以在模型支持时进入 image input，同时保留 `context.visual` / RunEvidence 审计记录。
 - Context Snapshot 可由 RunResult / recovery flow 生成，为暂停、恢复和显式 Replay Run 提供恢复依据。
+- 需要写入、导出或外部状态变化的任务，如果暂未观察到目标产物，会按工具事实是否变化进行进展判断；事实仍在变化时继续给模型空间，事实停滞时提示模型换路线，而不是按固定次数直接失败。
+- 搜索/读取预算只作为进展提醒：当模型长时间侦察但没有目标产物时，Runtime 将事实反馈给模型选择下一步，不再把“达到侦察预算”本身作为失败原因。
 
 0.1 之后再考虑 Evidence Index、向量检索、复杂知识库、样本库和跨设备上下文同步。它们不能成为 0.1 发布前置条件。
 

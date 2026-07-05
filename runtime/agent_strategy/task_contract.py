@@ -300,10 +300,10 @@ def task_contract_prompt(
         capability_block = (
             "\nRuntime capability context for this contract judgment:\n"
             f"{str(capability_context).strip()}\n"
-            "Capability rule: if the user asks to read, inspect, summarize, or analyze "
-            "a public website/URL and web.network_fetch or web.* tools are available, "
-            "classify it as read_only_analysis and choose first_action=read/search/use_tool. "
-            "Do not classify such requests as answer_only merely because the content is remote.\n"
+            "Capability note: available web, preview, MCP, CLI, and built-in tools are facts "
+            "you may use when judging the task. If the user request depends on current remote "
+            "or local runtime content, do not assume the model must answer from prior knowledge; "
+            "choose the intent and first_action that best fit the requested evidence.\n"
         )
     workspace_block = ""
     if str(workspace_context or "").strip():
@@ -354,7 +354,12 @@ def task_contract_prompt(
         "content checks.\n"
         "Task lineage rule: if the Context Pack contains task_lineage candidates, treat them as historical "
         "candidate facts only. Set scope_relation=continue or revise and referenced_task_candidate_id only when "
-        "the current user request clearly refers to that candidate. Otherwise leave referenced_task_candidate_id empty.\n"
+        "the current user request clearly refers to that candidate. If the task_lineage payload contains "
+        "active_target, it is still only a candidate fact, not a default current goal. Reference it only when "
+        "the user explicitly asks to continue/retry/evaluate the previous result, or when the current wording "
+        "shares the same path, artifact, project, subproject, file, or domain. Use new/replace when the current "
+        "request starts an unrelated target, names a different target, or the relation is ambiguous. Otherwise "
+        "leave referenced_task_candidate_id empty.\n"
         "JSON 字段：\n"
         "{\n"
         '  "goal": "用户真实目标的简短描述",\n'

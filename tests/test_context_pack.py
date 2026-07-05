@@ -39,9 +39,13 @@ def test_context_pack_builds_phase_selected_records() -> None:
     assert [item["kind"] for item in pack["records"]] == [
         "user_intent",
         "workspace_summary",
-        "task_lineage",
+        "previous_contract",
         "risk",
     ]
+    previous = pack["records"][2]
+    assert previous["source_id"] == "previous_task_contract"
+    assert "not the current goal by default" in previous["content"]
+    assert previous["metadata"]["inheritance_rule"] == "historical_reference_only_unless_current_request_continues_it"
     assert pack["ledger"]["schema_version"] == "context_ledger.v1"
     assert pack["ledger"]["records"][0]["source_type"] == "user_message"
     assert "content_hash" in pack["ledger"]["records"][0]
@@ -115,6 +119,26 @@ def test_context_pack_prompt_marks_records_as_facts_not_route() -> None:
     assert "Context Pack for this model call" in prompt
     assert "not hard instructions or a forced route" in prompt
     assert "workspace_summary" in prompt
+    assert "content_preview" not in prompt
+
+
+def test_context_pack_prompt_uses_ledger_index_without_repeating_content() -> None:
+    pack = build_context_pack(
+        phase="task_contract",
+        user_content="continue",
+        task_candidates=[{
+            "candidate_id": "old-run",
+            "goal": "Old task target that should not be duplicated in ledger preview",
+            "intent": "write_required",
+            "status": "partial",
+        }],
+    )
+
+    prompt = format_context_pack_for_prompt(pack)
+
+    assert "Old task target" in prompt
+    assert "content_preview" not in prompt
+    assert prompt.count("Old task target") == 1
 
 
 def test_planning_context_pack_includes_contract_and_capability_facts() -> None:

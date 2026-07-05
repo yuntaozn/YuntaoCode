@@ -30,6 +30,23 @@ def test_fast_token_estimate_is_available_without_precise_tokenizer() -> None:
     assert isinstance(context_manager.tokenizer_ready(), bool)
 
 
+def test_fallback_summary_omits_attachment_catalog_ids() -> None:
+    summary = context_manager._fallback_summary([
+        _message(
+            "user",
+            "请处理这个文件\n\n"
+            "Current user-provided immutable conversation attachments:\n"
+            "- attachment_id=att-123; name=paper.pdf; media_type=application/pdf; size=100\n"
+            "Use attachment.extract_text for text, PDF, or Word attachments when they are relevant.",
+        )
+    ])
+
+    assert "请处理这个文件" in summary
+    assert "Attachment catalog omitted" in summary
+    assert "att-123" not in summary
+    assert "attachment.extract_text" not in summary
+
+
 @pytest.mark.asyncio
 async def test_compress_context_force_builds_real_compressed_messages(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[dict[str, Any]]] = []
@@ -72,6 +89,92 @@ async def test_compress_context_force_builds_real_compressed_messages(monkeypatc
     ]
     assert meta["summary_up_to_index"] == 2
     assert meta["summary_new_message_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_compress_context_omits_runtime_scaffold_from_durable_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[dict[str, Any]]] = []
+
+    async def fake_summary(
+        older_messages: list[dict[str, Any]],
+        model: str,
+        settings: Any,
+        cached_summary: str = "",
+    ) -> str:
+        del model, settings, cached_summary
+        calls.append(older_messages)
+        return "durable summary"
+
+    monkeypatch.setattr(context_manager, "_generate_summary", fake_summary)
+    monkeypatch.setattr(context_manager, "RECENT_MESSAGES_KEEP", 2)
+
+    messages = [
+        _message("system", "system prompt"),
+        _message("system", "[Context hygiene]\nold runtime notice"),
+        _message("user", "old user fact"),
+        _message("system", "Context Pack for this model call:\n{}"),
+        _message("assistant", "old assistant fact"),
+        _message("system", "[Historical task turns moved to Context Pack]\nids=a"),
+        _message("user", "recent user"),
+        _message("assistant", "recent assistant"),
+    ]
+
+    compressed, meta = await context_manager.compress_context(
+        messages,
+        "demo-model",
+        _Settings(),
+        force=True,
+    )
+
+    assert calls == [[messages[2], messages[4]]]
+    assert meta is not None
+    assert meta["summary_new_message_count"] == 2
+    assert meta["summary_omitted_runtime_message_count"] == 3
+    assert compressed == [
+        messages[0],
+        {"role": "system", "content": "[以下是之前对话的摘要]\ndurable summary"},
+        messages[6],
+        messages[7],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_compress_context_drops_runtime_only_older_messages_without_empty_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_summary(*_args: Any, **_kwargs: Any) -> str:
+        raise AssertionError("runtime-only scaffold should not be summarized")
+
+    monkeypatch.setattr(context_manager, "_generate_summary", fail_summary)
+    monkeypatch.setattr(context_manager, "RECENT_MESSAGES_KEEP", 2)
+
+    messages = [
+        _message("system", "system prompt"),
+        _message("system", "[Context hygiene]\nold runtime notice"),
+        _message("system", "[Current request boundary]\nold boundary"),
+        _message("user", "recent user"),
+        _message("assistant", "recent assistant"),
+    ]
+
+    compressed, meta = await context_manager.compress_context(
+        messages,
+        "demo-model",
+        _Settings(),
+        force=True,
+    )
+
+    assert meta is not None
+    assert meta["context_summary"] == ""
+    assert meta["summary_up_to_index"] == 2
+    assert meta["summary_new_message_count"] == 0
+    assert meta["summary_omitted_runtime_message_count"] == 2
+    assert compressed == [
+        messages[0],
+        messages[3],
+        messages[4],
+    ]
 
 
 @pytest.mark.asyncio

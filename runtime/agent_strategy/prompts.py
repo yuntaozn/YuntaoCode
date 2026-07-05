@@ -152,23 +152,46 @@ def progress_observer_prompt(
     tool_events: list[dict[str, Any]],
     code_change_intent: bool,
     reason: str,
+    *,
+    target_deliverable_observed: bool | None = None,
+    required_modalities: list[str] | tuple[str, ...] | None = None,
+    observed_modalities: list[str] | tuple[str, ...] | None = None,
+    missing_modalities: list[str] | tuple[str, ...] | None = None,
+    visual_verification_tool_ids: list[str] | tuple[str, ...] | None = None,
+    runtime_diagnostics: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
 ) -> str:
     observations: list[str] = []
-    if code_change_intent:
+    if target_deliverable_observed is not None:
+        observations.append(
+            "observed_target_deliverable="
+            + ("present" if target_deliverable_observed else "missing")
+        )
+    elif code_change_intent:
         observations.append(
             "observed_write_evidence="
             + ("present" if has_successful_write(tool_events) else "missing")
         )
     observations.append(f"observed_tool_events={len(tool_events)}")
     observation_text = "; ".join(observations)
+    verification_context = _verification_retry_context(
+        required_modalities=required_modalities,
+        observed_modalities=observed_modalities,
+        missing_modalities=missing_modalities,
+        visual_verification_tool_ids=visual_verification_tool_ids,
+        runtime_diagnostics=runtime_diagnostics,
+    )
     return (
         "Runtime observation only. The runtime is not choosing a strategy.\n"
         f"Workspace: {workspace_path}\n"
         f"Stage: {current_stage or 'none'}\n"
         f"Reason: {reason}\n"
         f"Observed facts: {observation_text}\n"
+        f"{verification_context}"
         "Decide the next step from the task goal and observed facts. Do not "
-        "claim completion beyond evidence produced by tools or explicit user input."
+        "claim completion beyond evidence produced by tools or explicit user "
+        "input. If evidence is still missing, choose whether to verify, revise, "
+        "try a different route, or explicitly ask the user for the missing "
+        "condition instead of stopping only because one check was insufficient."
     )
 
 
@@ -212,9 +235,12 @@ def recon_budget_prompt(budget: int, workspace_path: str) -> str:
 
 def write_only_stage_prompt(workspace_path: str) -> str:
     return (
-        f"执行压力阶段：项目={workspace_path}。"
-        "读取应服务于写入目标（说明要确认哪个文件/位置/old_text）。"
-        "上下文足够时优先调用写入工具；不够时只读取最小必要片段。"
+        f"Target deliverable gap observation. Workspace={workspace_path}.\n"
+        "The runtime has not yet observed the target deliverable for this task. "
+        "Use this only as evidence, not as a forced route. Decide whether the "
+        "next useful step is a smaller read/search, a write/edit/export action, "
+        "verification of an existing artifact, a different tool, or an honest "
+        "boundary to the user."
     )
 
 
@@ -333,9 +359,12 @@ def execute_plan_prompt(plan: dict[str, Any], mode: str | None) -> str:
 
 def read_only_task_prompt(workspace_path: str) -> str:
     return (
-        f"只读模式。项目={workspace_path}。"
-        "严禁修改/创建/删除文件或运行改变状态的命令。可用扫描/搜索/读取/git status/diff 收集证据。"
-        "回答给出事实、问题判断和建议；不要声称已修改。"
+        f"User constraint: read-only requested. Workspace={workspace_path}.\n"
+        "Treat the user's no-write/no-change wording as a current-task constraint. "
+        "Prefer read/search/status/diff evidence. If you judge that the user's goal "
+        "cannot be completed without modifying local files or external state, explain "
+        "that conflict and ask for confirmation instead of silently changing state. "
+        "Do not claim changes were made unless a write/state-change tool actually ran."
     )
 
 

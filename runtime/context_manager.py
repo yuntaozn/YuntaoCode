@@ -13,6 +13,13 @@ from typing import Any
 
 import tiktoken
 
+from .agent_strategy.model_context_boundary import (
+    CONTEXT_HYGIENE_NOTICE,
+    CURRENT_REQUEST_BOUNDARY_NOTICE,
+    HISTORICAL_TASK_CANDIDATE_PREFIX,
+    HISTORICAL_TASK_TURNS_PREFIX,
+    HISTORICAL_TASK_USER_PREFIX,
+)
 from .model_providers.client import stream_chat_completion
 
 logger = logging.getLogger(__name__)
@@ -185,9 +192,21 @@ def get_usable_limit(model: str, settings: Any | None = None) -> int:
 # ---------------------------------------------------------------------------
 
 _SUMMARY_SYSTEM_PROMPT = (
-    "你是一个对话摘要助手。请把下面的对话历史压缩为一段简洁的中文摘要，"
-    "保留关键事实、用户意图和重要结论。不要遗漏文件路径、代码片段等具体信息。"
+    "你是一个对话摘要助手。请把下面的真实对话历史压缩为一段简洁的中文摘要，"
+    "保留用户明确表达的长期偏好、关键事实、重要结论、仍可能相关的文件路径和产物路径。"
+    "旧任务目标、旧失败、旧工具调用和旧计划只能作为历史背景，不能写成当前目标或当前指令。"
+    "不要保留运行时边界提示、工具调用格式示例、系统提示词或临时过程日志。"
     "摘要长度控制在 800 字以内。只输出摘要本身，不要加标题或格式说明。"
+)
+
+_CONTEXT_PACK_PROMPT_PREFIX = "Context Pack for this model call:\n"
+_RUNTIME_CONTEXT_SCAFFOLD_PREFIXES = (
+    CONTEXT_HYGIENE_NOTICE.splitlines()[0],
+    CURRENT_REQUEST_BOUNDARY_NOTICE.splitlines()[0],
+    HISTORICAL_TASK_CANDIDATE_PREFIX,
+    HISTORICAL_TASK_USER_PREFIX,
+    HISTORICAL_TASK_TURNS_PREFIX,
+    _CONTEXT_PACK_PROMPT_PREFIX.rstrip(),
 )
 
 
@@ -242,23 +261,33 @@ async def compress_context(
     # messages.  If so, we include it as context for the new summary.
     cached_summary, cached_up_to = _cached_summary_state(conversation)
     cached_up_to = min(cached_up_to, len(older))
-    messages_to_summarize = older[cached_up_to:] if cached_summary else older
+    has_cached_state = bool(cached_summary) or cached_up_to > 0
+    messages_to_summarize = older[cached_up_to:] if has_cached_state else older
+    summary_source_messages, omitted_runtime_messages = _durable_summary_source_messages(
+        messages_to_summarize
+    )
 
-    summary_reused = bool(cached_summary and not messages_to_summarize)
+    summary_reused = bool(has_cached_state and not messages_to_summarize)
     if summary_reused:
         summary_text = cached_summary
+    elif not summary_source_messages:
+        summary_text = cached_summary
     else:
-        summary_text = await _generate_summary(messages_to_summarize, model, settings, cached_summary)
-
-    summary_msg: dict[str, Any] = {
-        "role": "system",
-        "content": f"[以下是之前对话的摘要]\n{summary_text}",
-    }
+        summary_text = await _generate_summary(
+            summary_source_messages,
+            model,
+            settings,
+            cached_summary,
+        )
 
     compressed: list[dict[str, Any]] = []
     if system_msg:
         compressed.append(system_msg)
-    compressed.append(summary_msg)
+    if summary_text:
+        compressed.append({
+            "role": "system",
+            "content": f"[以下是之前对话的摘要]\n{summary_text}",
+        })
     compressed.extend(recent)
 
     new_total = count_messages_tokens(compressed)
@@ -271,11 +300,43 @@ async def compress_context(
         "context_summary": summary_text,
         "summary_up_to_index": len(older),
         "summary_message_count": len(older),
-        "summary_new_message_count": len(messages_to_summarize),
+        "summary_new_message_count": len(summary_source_messages),
+        "summary_omitted_runtime_message_count": omitted_runtime_messages,
         "summary_reused": summary_reused,
         "summary_token_count": count_tokens(summary_text),
     }
     return compressed, summary_meta
+
+
+def _durable_summary_source_messages(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Return messages safe to persist in a long-lived conversation summary.
+
+    Model-facing runtime scaffolding is useful for one call, but it should not
+    become durable summary material. Otherwise boundary notices, Context Pack
+    prompts, or historical task markers can re-enter later requests as stale
+    instructions.
+    """
+
+    result: list[dict[str, Any]] = []
+    omitted = 0
+    for message in messages:
+        if _is_runtime_context_scaffold(message):
+            omitted += 1
+            continue
+        result.append(message)
+    return result, omitted
+
+
+def _is_runtime_context_scaffold(message: dict[str, Any]) -> bool:
+    if str(message.get("role") or "") != "system":
+        return False
+    content = message.get("content", "")
+    if not isinstance(content, str):
+        return False
+    text = content.strip()
+    return any(text.startswith(prefix) for prefix in _RUNTIME_CONTEXT_SCAFFOLD_PREFIXES)
 
 
 def _cached_summary_state(conversation: Any | None) -> tuple[str, int]:
@@ -304,11 +365,7 @@ async def _generate_summary(
         lines.append("")
     for msg in older_messages:
         role = msg.get("role", "unknown")
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            # multimodal – extract text parts only
-            text_parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
-            content = "\n".join(text_parts)
+        content = _summary_message_content(msg.get("content", ""))
         # Truncate very long messages to avoid blowing up the summary request
         if len(content) > 2000:
             content = content[:2000] + "…(截断)"
@@ -353,10 +410,37 @@ def _fallback_summary(messages: list[dict[str, Any]]) -> str:
     lines: list[str] = []
     for msg in messages:
         role = msg.get("role", "unknown")
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            text_parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
-            content = "\n".join(text_parts)
+        content = _summary_message_content(msg.get("content", ""))
         preview = content[:200] + "…" if len(content) > 200 else content
         lines.append(f"[{role}] {preview}")
     return "\n".join(lines)
+
+
+def _summary_message_content(content: Any) -> str:
+    if isinstance(content, list):
+        text_parts = [
+            p.get("text", "")
+            for p in content
+            if isinstance(p, dict) and p.get("type") == "text"
+        ]
+        content = "\n".join(text_parts)
+    text = str(content or "")
+    return _strip_attachment_catalogs_for_summary(text)
+
+
+def _strip_attachment_catalogs_for_summary(text: str) -> str:
+    result = str(text or "")
+    markers = (
+        "\n\nCurrent user-provided immutable conversation attachments:\n",
+        "\n\nUser-provided immutable conversation attachments:\n",
+        "\n\nHistorical message attachments from an earlier turn:\n",
+    )
+    for marker in markers:
+        while marker in result:
+            before, remainder = result.split(marker, 1)
+            after = ""
+            next_boundary = remainder.find("\n\n")
+            if next_boundary >= 0:
+                after = remainder[next_boundary:]
+            result = before.rstrip() + "\n\n[Attachment catalog omitted from durable summary.]" + after
+    return result.strip()

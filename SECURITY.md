@@ -34,9 +34,11 @@ Current intended boundaries:
   data directory. Public MCP APIs redact environment and header values.
 - MCP service create, update, delete, and lifecycle actions reject browser
   requests whose Origin does not match the local Runtime origin.
-- MCP services never auto-start. A package-runner command such as the disabled
-  Blender `uvx blender-mcp` example may acquire external code only after the
-  user explicitly enables and starts that service.
+- MCP services do not auto-start by default. A service may opt in to
+  `lifecycle.auto_start`; auto-start attempts are limited to enabled services
+  and are reported as runtime evidence. A package-runner command such as the
+  disabled Blender `uvx blender-mcp` example may acquire external code only
+  after the user explicitly enables that service or opts it into auto-start.
 - Declared MCP network permissions are not yet enforced as process-level
   network isolation. The Blender example disables its supported telemetry by
   default, but third-party MCP services must still be treated as executable

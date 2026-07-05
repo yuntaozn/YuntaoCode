@@ -117,6 +117,9 @@ def test_task_contract_prompt_contains_only_contract_request() -> None:
     assert "requires_state_change" in prompt
     assert "referenced_task_candidate_id" in prompt
     assert "系统负责权限、工具执行和完成验收" in prompt
+    assert "active_target" in prompt
+    assert "not a default current goal" in prompt
+    assert "relation is ambiguous" in prompt
 
 
 def test_task_contract_prompt_includes_workspace_context_as_facts() -> None:
@@ -193,7 +196,8 @@ def test_task_contract_prompt_includes_runtime_capabilities_when_provided() -> N
 
     assert "Runtime capability context" in prompt
     assert "web.extract_text" in prompt
-    assert "classify it as read_only_analysis" in prompt
+    assert "available web, preview, MCP, CLI, and built-in tools are facts" in prompt
+    assert "do not assume the model must answer from prior knowledge" in prompt
     assert "required_verification_modalities" in prompt
 
 
@@ -577,6 +581,115 @@ def test_continuity_keeps_current_specific_local_target_over_broad_anchor() -> N
     assert contract["continuity_anchor"]["goal"].startswith("从其他子项目查找站立人.glb")
     assert contract["requires_write"] is True
     assert contract["requires_verification"] is True
+
+
+def test_continuity_preserves_observed_target_when_current_hint_is_broad() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "修改对应子项目代码，实现未答题也可进入下一步并添加全景展示",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual", "content", "behavioral"],
+        "capability_ids": ["filesystem.local_files", "code.edit_file"],
+        "deliverables": [
+            {
+                "kind": "code",
+                "path_hint": "独立基础施工全过程/交互动画/src/app.js",
+                "path_policy": "hint",
+                "description": "Runtime-observed target path from the referenced run",
+            },
+            {
+                "kind": "code",
+                "path_hint": "D:\\code\\demo\\教学课件",
+                "path_policy": "hint",
+                "description": "Broad project directory",
+            },
+        ],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "continue",
+            "intent": "write_required",
+            "goal": "重试实现未答题也可进入下一步的功能并添加最后一步完成后的全景展示功能",
+            "requires_write": True,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "required_verification_modalities": ["behavioral"],
+            "capability_ids": ["filesystem.local_files", "code.edit_file"],
+            "deliverables": [
+                {
+                    "kind": "code",
+                    "path_hint": "D:\\code\\demo\\教学课件",
+                    "path_policy": "hint",
+                    "description": "修改后的子项目代码",
+                }
+            ],
+            "referenced_task_candidate_id": "previous-run",
+        },
+        _fallback("answer_only"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content="没有实现目标，还得再试一次",
+    )
+
+    assert contract["deliverables"][0]["path_hint"] == "独立基础施工全过程/交互动画/src/app.js"
+    assert contract["deliverables"][1]["path_hint"] == "D:\\code\\demo\\教学课件"
+    assert contract["goal"] == previous["goal"]
+
+
+def test_continuity_keeps_exact_anchor_when_current_hint_is_parent_directory() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "修正独立基础施工全过程交互动画，实现未答题也可进入下一步和全景展示",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual", "content", "behavioral"],
+        "capability_ids": ["code.local_project", "code.text_write"],
+        "deliverables": [
+            {
+                "kind": "code",
+                "path_hint": "D:\\code\\demo\\教学课件\\独立基础施工全过程\\交互动画\\src\\app.js",
+                "path_policy": "hint",
+                "description": "Runtime-observed target path from the referenced run",
+            }
+        ],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "revise",
+            "intent": "write_required",
+            "goal": "修正独立基础施工全过程交互动画，实现未答题也可进入下一步和全景展示",
+            "requires_write": True,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "required_verification_modalities": ["visual", "behavioral"],
+            "capability_ids": ["code.local_project", "code.text_write"],
+            "deliverables": [
+                {
+                    "kind": "code",
+                    "path_hint": "D:\\code\\demo\\教学课件\\独立基础施工全过程",
+                    "path_policy": "hint",
+                    "description": "修复后的独立基础施工交互动画代码文件",
+                }
+            ],
+            "referenced_task_candidate_id": "previous-run",
+        },
+        _fallback("answer_only"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content="你上一轮改错项目了，独立基础施工全过程 的交互动画 实现未答题也可以到下一步",
+    )
+
+    assert contract["deliverables"][0]["path_hint"].endswith("交互动画\\src\\app.js")
+    assert contract["goal"] == previous["goal"]
 
 
 def test_retry_followup_still_preserves_previous_state_change_target() -> None:

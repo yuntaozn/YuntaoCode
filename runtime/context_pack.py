@@ -121,7 +121,7 @@ def format_context_pack_for_prompt(pack: dict[str, Any] | None) -> str:
         "schema_version": pack.get("schema_version"),
         "phase": pack.get("phase"),
         "records": compact_records[:12],
-        "ledger": pack.get("ledger") if isinstance(pack.get("ledger"), dict) else {},
+        "ledger": _model_facing_ledger(pack.get("ledger")),
     }
     text = json.dumps(prompt_payload, ensure_ascii=False, separators=(",", ":"))
     return (
@@ -131,6 +131,41 @@ def format_context_pack_for_prompt(pack: dict[str, Any] | None) -> str:
         "not hard instructions or a forced route. The current user request still "
         "has priority; use older context only when it is relevant."
     )
+
+
+def _model_facing_ledger(ledger: Any) -> dict[str, Any]:
+    """Return ledger metadata without repeating record content in the prompt.
+
+    The full Context Ledger remains in run events, diagnostics, and workbench
+    views.  The model prompt only needs source/trust/freshness indexes; putting
+    ``content_preview`` next to ``records`` duplicates historical facts and can
+    accidentally overweight old context.
+    """
+
+    if not isinstance(ledger, dict):
+        return {}
+    records: list[dict[str, Any]] = []
+    for item in ledger.get("records") or []:
+        if not isinstance(item, dict):
+            continue
+        records.append({
+            "index": item.get("index"),
+            "kind": item.get("kind"),
+            "source_id": item.get("source_id"),
+            "source_type": item.get("source_type"),
+            "trust": item.get("trust"),
+            "freshness": item.get("freshness"),
+            "token_estimate": item.get("token_estimate"),
+            "content_hash": item.get("content_hash"),
+            "metadata_keys": item.get("metadata_keys") or [],
+        })
+    return {
+        "schema_version": ledger.get("schema_version"),
+        "kind": ledger.get("kind"),
+        "phase": ledger.get("phase"),
+        "record_count": ledger.get("record_count"),
+        "records": records[:12],
+    }
 
 
 def is_context_pack_prompt_for_phase(value: Any, phase: str) -> bool:
@@ -296,13 +331,14 @@ def _previous_contract_record(
         if isinstance(item, dict) and str(item.get("kind") or "")
     ]
     content = (
-        f"Previous task contract candidate: {goal}; "
+        "Historical previous task contract reference, not the current goal by default: "
+        f"{goal}; "
         f"intent={previous_contract.get('intent') or ''}; "
         f"capabilities={', '.join(capability_ids[:6]) or 'none'}; "
         f"deliverables={', '.join(deliverable_kinds[:6]) or 'none'}"
     )
     return ContextRecord(
-        kind="task_lineage",
+        kind="previous_contract",
         content=content,
         source_id="previous_task_contract",
         source_type="run_event",
@@ -317,6 +353,7 @@ def _previous_contract_record(
             "requires_state_change": bool(previous_contract.get("requires_state_change")),
             "capability_ids": capability_ids[:6],
             "deliverable_kinds": deliverable_kinds[:6],
+            "inheritance_rule": "historical_reference_only_unless_current_request_continues_it",
         },
     )
 
@@ -348,6 +385,8 @@ def _task_lineage_record(
             "changed_paths": candidate.get("changed_paths") or [],
             "verified_paths": candidate.get("verified_paths") or [],
             "actual_paths": candidate.get("actual_paths") or [],
+            "current_target_match": bool(candidate.get("current_target_match")),
+            "current_target_affinity": int(candidate.get("current_target_affinity") or 0),
         })
     return ContextRecord(
         kind="task_lineage",

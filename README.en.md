@@ -403,9 +403,9 @@ Goal: stabilize the Task, Context, Capability, and Evidence foundations. YuntaoC
 
 The remaining work before tagging 0.1 is release hygiene, not more runtime scope:
 
-* [x] Final README / README.en / CHANGELOG / SECURITY synchronization
-* [x] Version, documentation encoding, full tests, frontend syntax, startup-script help, and HTTP / panel smoke checks
-* [x] Remove temporary examples, generated artifacts, caches, and local test assets that should not enter the open-source repository
+* [ ] Final README / README.en / CHANGELOG / SECURITY synchronization after code freeze
+* [ ] Run version checks, documentation encoding checks, full tests, frontend syntax checks, startup-script help checks, and HTTP / panel smoke checks
+* [ ] Remove temporary examples, generated artifacts, caches, and local test assets that should not enter the open-source repository
 * [ ] Run manual release smoke tests with one coding task, one document task, one webpage / visual-verification task, and one MCP example task
 
 ### Phase 2: Experience And Evaluation Loop

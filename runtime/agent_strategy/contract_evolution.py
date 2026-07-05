@@ -592,7 +592,13 @@ def _current_contract_changes_local_target(anchor: dict[str, Any], proposed: dic
     anchor_paths = _local_deliverable_path_hints(anchor.get("deliverables"))
     if not anchor_paths:
         return True
-    return not proposed_paths.issubset(anchor_paths)
+    for proposed_path in proposed_paths:
+        if proposed_path in anchor_paths:
+            continue
+        if any(_is_parent_path(proposed_path, anchor_path) for anchor_path in anchor_paths):
+            continue
+        return True
+    return False
 
 
 def _local_deliverable_path_hints(deliverables: Any) -> set[str]:
@@ -740,6 +746,12 @@ def _normalize_deliverable_kind(value: Any, *, path_hint: str = "") -> str:
 
 def _normalize_path_hint(value: Any) -> str:
     return str(value or "").strip().replace("\\", "/").rstrip("/").lower()
+
+
+def _is_parent_path(parent: str, child: str) -> bool:
+    parent = _normalize_path_hint(parent)
+    child = _normalize_path_hint(child)
+    return bool(parent and child and child.startswith(parent + "/"))
 
 
 def _contract_text(contract: dict[str, Any]) -> str:

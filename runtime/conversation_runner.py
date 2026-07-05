@@ -26,12 +26,16 @@ from runtime.agent_strategy.classifiers import (
 from runtime.agent_strategy.policy import deterministic_plan_gate, resolve_profile
 from runtime.agent_strategy.profiles import profile_to_public_dict
 from runtime.agent_strategy.run_finalization import (
+    CHANGE_TARGET_DELIVERABLE_STRATEGY,
     COMPLETION_REVIEW,
     FINAL_ANSWER_CONVERGED,
     FINAL_ANSWER_VERIFIED,
     NEEDS_VERIFICATION_EVIDENCE,
     POST_DELIVERABLE_STAGE,
+    STOP_STAGNANT_VERIFICATION_GAP,
     build_finalization_gate,
+    build_target_deliverable_gap_decision,
+    build_verification_gap_decision,
 )
 from runtime.context_pack import (
     build_context_pack,
@@ -112,6 +116,129 @@ class ConversationRunExecutor:
         ):
             return False
         return True
+
+    def _needs_target_deliverable_gap(
+        self,
+        task_contract: dict[str, Any] | None,
+        tool_events: list[dict[str, Any]],
+        workspace_path: str,
+        mode: str | None,
+        *,
+        code_change_intent: bool,
+    ) -> bool:
+        if self._task_requires_target_deliverable(task_contract):
+            return not self._has_successful_target_deliverable(
+                task_contract,
+                tool_events,
+                workspace_path,
+                mode,
+            )
+        if code_change_intent:
+            return not self._has_successful_write(tool_events)
+        return False
+
+    def _verification_gap_key(
+        self,
+        task_contract: dict[str, Any] | None,
+        tool_events: list[dict[str, Any]],
+        workspace_path: str,
+        mode: str | None,
+    ) -> str:
+        if not isinstance(task_contract, dict):
+            return json.dumps({"tool_count": len(tool_events)}, sort_keys=True)
+        required, observed, missing = self._verification_modality_status(
+            task_contract,
+            tool_events,
+            workspace_path,
+            mode,
+        )
+        deliverables = _event_roles.successful_deliverable_events(
+            tool_events,
+            task_contract=task_contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+        verifications = _event_roles.task_verification_events(
+            tool_events,
+            task_contract=task_contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+        return json.dumps(
+            {
+                "required": required,
+                "observed": observed,
+                "missing": missing,
+                "tool_count": len(tool_events),
+                "deliverable_count": len(deliverables),
+                "verification_count": len(verifications),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
+    def _target_deliverable_gap_key(
+        self,
+        task_contract: dict[str, Any] | None,
+        tool_events: list[dict[str, Any]],
+        workspace_path: str,
+        mode: str | None,
+    ) -> str:
+        deliverables = _event_roles.successful_deliverable_events(
+            tool_events,
+            task_contract=task_contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+        failed_deliverables = _event_roles.failed_deliverable_events(
+            tool_events,
+            task_contract=task_contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+        verifications = _event_roles.task_verification_events(
+            tool_events,
+            task_contract=task_contract,
+            workspace_path=workspace_path,
+            mode=mode,
+        )
+        evidence_count = 0
+        path_hints: set[str] = set()
+        recent_tools: list[str] = []
+        recent_failures: list[str] = []
+        for event in tool_events:
+            role = _event_roles.classify_tool_event_role(
+                event,
+                task_contract=task_contract,
+                workspace_path=workspace_path,
+                mode=mode,
+            )
+            if role in {_event_roles.EVIDENCE, _event_roles.VERIFICATION}:
+                evidence_count += 1
+            for path in _event_roles.event_path_hints(event):
+                if path:
+                    path_hints.add(str(path))
+            tool_id = str(event.get("tool") or "")
+            if tool_id:
+                recent_tools.append(tool_id)
+            if str(event.get("status") or "") == "failure":
+                output = event.get("output") if isinstance(event.get("output"), dict) else {}
+                reason = str(output.get("reason") or event.get("error") or "").strip()
+                recent_failures.append(f"{tool_id}:{reason[:120]}")
+        return json.dumps(
+            {
+                "tool_count": len(tool_events),
+                "deliverable_count": len(deliverables),
+                "failed_deliverable_count": len(failed_deliverables),
+                "verification_count": len(verifications),
+                "evidence_count": evidence_count,
+                "path_hints": sorted(path_hints)[-12:],
+                "recent_tools": recent_tools[-8:],
+                "recent_failures": recent_failures[-6:],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
 
     def _verification_retry_status_message(
         self,
@@ -270,6 +397,7 @@ class ConversationRunExecutor:
             "requested_mode": requested_mode,
             "effective_mode": effective_mode,
         }
+        self._active_mode = effective_mode
         metadata["context_hygiene"] = context_hygiene_report
         _lang = i18n.get_lang(self._helper.request) if hasattr(self._helper, "request") else ""
         mode_config = get_terminal_config(_lang)
@@ -505,7 +633,6 @@ class ConversationRunExecutor:
         missing_write_retries = 0
         tool_contract_failed = False
         max_rounds_exceeded = False
-        recon_budget_exceeded = False
         recon_tool_count = 0
         recon_refusals = 0
         recon_budget = 16 if self._looks_like_simple_code_change(content) else 24
@@ -535,6 +662,12 @@ class ConversationRunExecutor:
         final_answer_mode = False
         user_requested_final_answer = False
         verifier_retry_prompted = False
+        verification_gap_prompt_count = 0
+        verification_gap_stagnant_rounds = 0
+        last_verification_gap_key = ""
+        target_deliverable_gap_prompt_count = 0
+        target_deliverable_gap_stagnant_rounds = 0
+        last_target_deliverable_gap_key = ""
         dangling_action_retries = 0
         malformed_tool_call_retries = 0
         progress_observer_count = 0
@@ -567,6 +700,57 @@ class ConversationRunExecutor:
                     "reason": reason,
                 })
                 return True
+
+            async def prompt_target_deliverable_gap(reason: str, status_message: str) -> str:
+                nonlocal missing_write_retries
+                nonlocal target_deliverable_gap_prompt_count
+                nonlocal target_deliverable_gap_stagnant_rounds
+                nonlocal last_target_deliverable_gap_key
+                missing_write_retries += 1
+                target_gap_key = self._target_deliverable_gap_key(
+                    task_contract,
+                    tool_events,
+                    workspace.path,
+                    effective_mode,
+                )
+                gap_decision = build_target_deliverable_gap_decision(
+                    previous_key=last_target_deliverable_gap_key,
+                    current_key=target_gap_key,
+                    prompt_count=target_deliverable_gap_prompt_count,
+                    stagnant_rounds=target_deliverable_gap_stagnant_rounds,
+                )
+                target_deliverable_gap_prompt_count = gap_decision.prompt_count
+                target_deliverable_gap_stagnant_rounds = gap_decision.stagnant_rounds
+                last_target_deliverable_gap_key = gap_decision.key
+                prompt_reason = (
+                    "stagnant_missing_target_evidence"
+                    if gap_decision.action == CHANGE_TARGET_DELIVERABLE_STRATEGY
+                    else reason
+                )
+                messages.append({
+                    "role": "system",
+                    "content": self._progress_observer_prompt(
+                        workspace.path,
+                        current_stage,
+                        tool_events,
+                        code_change_intent,
+                        prompt_reason,
+                        target_deliverable_observed=False,
+                    ),
+                })
+                self.write_event({
+                    "event": "status",
+                    "status": "progress_observer",
+                    "message": status_message,
+                    "target_deliverable_gap": {
+                        "action": gap_decision.action,
+                        "prompt_count": target_deliverable_gap_prompt_count,
+                        "stagnant_rounds": target_deliverable_gap_stagnant_rounds,
+                        "reason": gap_decision.reason,
+                    },
+                })
+                await self.flush()
+                return gap_decision.action
 
             if (
                 str(task_contract.get("source") or "").startswith("model")
@@ -723,8 +907,8 @@ class ConversationRunExecutor:
                         post_deliverable_idle_rounds += 1
                     # 达到终止条件时，先发确认事件给用户，等待响应
                     if (
-                        post_deliverable_idle_rounds > 3
-                        or post_deliverable_rounds > 10
+                        post_deliverable_idle_rounds > 8
+                        or post_deliverable_rounds > 24
                     ) and post_deliverable_confirmations < 1:
                         # 发送确认事件并等待用户决策
                         post_deliverable_confirmations += 1
@@ -784,7 +968,16 @@ class ConversationRunExecutor:
                         round_tools = tools
                         round_enable_thinking = False
                         round_reasoning_effort = "low"
-                elif code_change_intent and not self._has_successful_write(tool_events) and write_only_mode:
+                elif (
+                    self._needs_target_deliverable_gap(
+                        task_contract,
+                        tool_events,
+                        workspace.path,
+                        effective_mode,
+                        code_change_intent=code_change_intent,
+                    )
+                    and write_only_mode
+                ):
                     write_only_rounds += 1
                     if write_repair_mode:
                         write_repair_rounds += 1
@@ -1224,43 +1417,18 @@ class ConversationRunExecutor:
                             if advance_stage("editor_already_wrote"):
                                 continue
                         elif current_stage == "editor":
-                            if missing_write_retries < 2:
-                                missing_write_retries += 1
-                                messages.append({
-                                    "role": "system",
-                                    "content": self._progress_observer_prompt(
-                                        workspace.path,
-                                        current_stage,
-                                        tool_events,
-                                        code_change_intent,
-                                        "editor_no_target_evidence",
-                                    ),
-                                })
-                                self.write_event({
-                                    "event": "status",
-                                    "status": "progress_observer",
-                                    "message": "执行者阶段缺少目标产物证据，已记录事实供模型继续判断。",
-                                })
-                                await self.flush()
-                                continue
-                            self.write_event({
-                                "event": "status",
-                                "status": "progress_observer",
-                                "message": "执行者阶段仍未写入，正在进行进度纠偏而不是停止任务。",
-                            })
-                            await self.flush()
-                            messages.append({
-                                "role": "system",
-                                "content": self._progress_observer_prompt(
-                                    workspace.path,
-                                    current_stage,
-                                    tool_events,
-                                    code_change_intent,
-                                    "editor_no_write_tool",
-                                ),
-                            })
+                            await prompt_target_deliverable_gap(
+                                "editor_no_target_evidence",
+                                "执行者阶段尚未观察到目标产物证据，已把事实反馈给模型继续判断。",
+                            )
                             continue
-                    if code_change_intent and not self._has_successful_write(tool_events):
+                    if self._needs_target_deliverable_gap(
+                        task_contract,
+                        tool_events,
+                        workspace.path,
+                        effective_mode,
+                        code_change_intent=code_change_intent,
+                    ):
                         self._discard_parts(content_parts, round_content_parts)
                         self._discard_parts(reasoning_parts, round_reasoning_parts)
                         self.write_event({
@@ -1268,32 +1436,11 @@ class ConversationRunExecutor:
                             "message": "".join(content_parts),
                             "clear_reasoning": True,
                         })
-                        if missing_write_retries < 2:
-                            missing_write_retries += 1
-                            self.write_event({
-                                "event": "status",
-                                "status": "progress_observer",
-                                "message": "本轮未观察到目标产物证据，已把事实反馈给模型继续判断。",
-                            })
-                            await self.flush()
-                            messages.append({
-                                "role": "system",
-                                "content": self._progress_observer_prompt(
-                                    workspace.path,
-                                    current_stage,
-                                    tool_events,
-                                    code_change_intent,
-                                    "missing_target_evidence",
-                                ),
-                            })
-                            continue
-                        self.write_event({
-                            "event": "status",
-                            "status": "tool_contract_failed",
-                            "message": "模型没有调用本地写入工具；系统记录真实失败，不再注入纠偏提示。",
-                        })
-                        await self.flush()
-                        break
+                        await prompt_target_deliverable_gap(
+                            "missing_target_evidence",
+                            "本轮未观察到目标产物证据，已把事实反馈给模型继续判断。",
+                        )
+                        continue
                     if (
                         self._needs_task_verification_evidence(
                             task_contract,
@@ -1312,6 +1459,33 @@ class ConversationRunExecutor:
                             break
                         self._discard_parts(content_parts, round_content_parts)
                         self._discard_parts(reasoning_parts, round_reasoning_parts)
+                        verification_gap_key = self._verification_gap_key(
+                            task_contract,
+                            tool_events,
+                            workspace.path,
+                            effective_mode,
+                        )
+                        gap_decision = build_verification_gap_decision(
+                            previous_key=last_verification_gap_key,
+                            current_key=verification_gap_key,
+                            prompt_count=verification_gap_prompt_count,
+                            stagnant_rounds=verification_gap_stagnant_rounds,
+                        )
+                        verification_gap_prompt_count = gap_decision.prompt_count
+                        verification_gap_stagnant_rounds = gap_decision.stagnant_rounds
+                        last_verification_gap_key = gap_decision.key
+                        if gap_decision.action == STOP_STAGNANT_VERIFICATION_GAP:
+                            self.write_event({
+                                "event": "status",
+                                "status": "verification_contract_failed",
+                                "message": "验证缺口已连续多轮无新证据变化；系统记录真实部分结果，避免空转。",
+                                "verification_gap": {
+                                    "prompt_count": verification_gap_prompt_count,
+                                    "stagnant_rounds": verification_gap_stagnant_rounds,
+                                },
+                            })
+                            await self.flush()
+                            break
                         if not verifier_retry_prompted:
                             verifier_retry_prompted = True
                             final_answer_mode = False
@@ -1342,11 +1516,25 @@ class ConversationRunExecutor:
                             continue
                         self.write_event({
                             "event": "status",
-                            "status": "verification_contract_failed",
-                            "message": "本轮没有取得足够验证证据；系统记录真实结果，不再继续空转。",
+                            "status": "verification_gap_continue",
+                            "message": "本轮没有取得足够验证证据；系统记录事实并继续把缺口交给模型判断。",
+                            "verification_gap": {
+                                "prompt_count": verification_gap_prompt_count,
+                                "stagnant_rounds": verification_gap_stagnant_rounds,
+                            },
                         })
                         await self.flush()
-                        break
+                        messages.append({
+                            "role": "system",
+                            "content": self._progress_observer_prompt(
+                                workspace.path,
+                                current_stage,
+                                tool_events,
+                                code_change_intent,
+                                "target_verification_still_missing",
+                            ),
+                        })
+                        continue
                     break
 
                 if round_content_parts:
@@ -1447,8 +1635,13 @@ class ConversationRunExecutor:
                     self._active_current_stage = current_stage or ""
                     self._active_post_deliverable_mode = post_deliverable_mode
                     if (
-                        code_change_intent
-                        and not self._has_successful_write(tool_events)
+                        self._needs_target_deliverable_gap(
+                            task_contract,
+                            tool_events,
+                            workspace.path,
+                            effective_mode,
+                            code_change_intent=code_change_intent,
+                        )
                         and self._is_recon_tool(tool_id)
                         and not write_repair_mode
                     ):
@@ -1456,7 +1649,6 @@ class ConversationRunExecutor:
                         is_duplicate = signature in seen_recon_signatures
                         if recon_tool_count >= recon_budget and not is_duplicate:
                             recon_refusals += 1
-                            recon_budget_exceeded = True
                             write_only_mode = True
                             if recon_refusals <= 3:
                                 messages.append({
@@ -1694,8 +1886,13 @@ class ConversationRunExecutor:
                     stagnant_rounds = 0
                     last_progress_key = progress_key
                 if (
-                    code_change_intent
-                    and not self._has_successful_write(tool_events)
+                    self._needs_target_deliverable_gap(
+                        task_contract,
+                        tool_events,
+                        workspace.path,
+                        effective_mode,
+                        code_change_intent=code_change_intent,
+                    )
                     and progress_observer_count < 1
                     and (
                         stagnant_rounds >= 2
@@ -1842,6 +2039,33 @@ class ConversationRunExecutor:
                         user_requested_final_answer = False
                         completion_review_pending = False
                         latest_completion_review_result = {}
+                        verification_gap_key = self._verification_gap_key(
+                            task_contract,
+                            tool_events,
+                            workspace.path,
+                            effective_mode,
+                        )
+                        gap_decision = build_verification_gap_decision(
+                            previous_key=last_verification_gap_key,
+                            current_key=verification_gap_key,
+                            prompt_count=verification_gap_prompt_count,
+                            stagnant_rounds=verification_gap_stagnant_rounds,
+                        )
+                        verification_gap_prompt_count = gap_decision.prompt_count
+                        verification_gap_stagnant_rounds = gap_decision.stagnant_rounds
+                        last_verification_gap_key = gap_decision.key
+                        if gap_decision.action == STOP_STAGNANT_VERIFICATION_GAP:
+                            self.write_event({
+                                "event": "status",
+                                "status": "verification_contract_failed",
+                                "message": "验证缺口已连续多轮无新证据变化；系统记录真实部分结果，避免空转。",
+                                "verification_gap": {
+                                    "prompt_count": verification_gap_prompt_count,
+                                    "stagnant_rounds": verification_gap_stagnant_rounds,
+                                },
+                            })
+                            await self.flush()
+                            break
                         if not verifier_retry_prompted:
                             verifier_retry_prompted = True
                             messages.append({
@@ -1986,13 +2210,18 @@ class ConversationRunExecutor:
                     })
                     self.write_event({
                         "event": "status",
-                        "status": "write_only_stage",
-                        "message": "已进入执行压力阶段，下一轮保留必要读取/搜索并要求推进到真实修改",
+                        "status": "target_deliverable_gap",
+                        "message": "目标产物仍未被观察到，已把缺口事实反馈给模型判断下一步",
                     })
                     await self.flush()
                 if (
-                    code_change_intent
-                    and not self._has_successful_write(tool_events)
+                    self._needs_target_deliverable_gap(
+                        task_contract,
+                        tool_events,
+                        workspace.path,
+                        effective_mode,
+                        code_change_intent=code_change_intent,
+                    )
                     and recon_tool_count >= recon_budget
                     and recon_refusals == 0
                 ):
@@ -2004,33 +2233,25 @@ class ConversationRunExecutor:
                     self.write_event({
                         "event": "status",
                         "status": "recon_budget_exhausted",
-                        "message": "已完成足够的搜索/读取，正在要求模型进入写入步骤",
+                        "message": "已完成较多搜索/读取，正在把目标产物缺口反馈给模型判断下一步",
                     })
                     await self.flush()
                 if (
-                    code_change_intent
-                    and not self._has_successful_write(tool_events)
+                    self._needs_target_deliverable_gap(
+                        task_contract,
+                        tool_events,
+                        workspace.path,
+                        effective_mode,
+                        code_change_intent=code_change_intent,
+                    )
                     and write_only_rounds >= 4
                     and recon_refusals >= 4
                 ):
-                    recon_budget_exceeded = True
-                    self.write_event({
-                        "event": "status",
-                        "status": "progress_observer",
-                        "message": "模型仍在重复读取/搜索，正在进行进度纠偏。",
-                    })
-                    await self.flush()
-                    messages.append({
-                        "role": "system",
-                        "content": self._progress_observer_prompt(
-                            workspace.path,
-                            current_stage,
-                            tool_events,
-                            code_change_intent,
-                            "repeated_recon_without_write",
-                        ),
-                    })
-                    break
+                    await prompt_target_deliverable_gap(
+                        "repeated_recon_without_target_deliverable",
+                        "模型仍在重复读取/搜索，已把目标产物缺口反馈给模型重新判断路线。",
+                    )
+                    continue
             else:
                 max_rounds_exceeded = True
                 self.write_event({
@@ -2085,11 +2306,6 @@ class ConversationRunExecutor:
             assistant_content = self._max_rounds_after_write_message(max_rounds, tool_events)
         elif max_rounds_exceeded:
             assistant_content = self._max_rounds_message(max_rounds, tool_events)
-        elif recon_budget_exceeded and tool_contract_failed:
-            assistant_content = (
-                "未完成需要的写入/导出：模型一直停留在读取/搜索阶段，已经超过本轮允许的侦察预算，"
-                "系统已停止继续空转。本轮没有成功生成或更新任务目标产物。"
-            )
         elif tool_contract_failed and (
             "document_output_too_short" in contract_failures
             or "document_output_length_unknown" in contract_failures
@@ -2133,14 +2349,12 @@ class ConversationRunExecutor:
         if max_rounds_exceeded:
             metadata["max_rounds_exceeded"] = True
             metadata["max_rounds"] = max_rounds
-        if recon_budget_exceeded:
-            metadata["recon_budget_exceeded"] = True
-            metadata["recon_budget"] = recon_budget
-            metadata["recon_tool_count"] = recon_tool_count
-            metadata["recon_refusals"] = recon_refusals
         if write_only_mode:
             metadata["write_only_mode_used"] = True
             metadata["write_only_rounds"] = write_only_rounds
+            metadata["recon_budget"] = recon_budget
+            metadata["recon_tool_count"] = recon_tool_count
+            metadata["recon_refusals"] = recon_refusals
             metadata["required_tool_choice_supported"] = required_tool_choice_supported
         if write_repair_mode:
             metadata["write_repair_mode_used"] = True

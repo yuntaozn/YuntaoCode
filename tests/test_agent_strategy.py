@@ -981,7 +981,7 @@ class TestConsecutiveRepeatedFailureCount:
         assert repeated_failure_action(events, strategy_change_intervened=False) == "change_strategy"
         assert repeated_failure_action(events, strategy_change_intervened=True) == "change_strategy"
 
-    def test_repeated_failure_stops_after_bounded_no_progress_route_budget(self):
+    def test_repeated_failure_stops_only_after_larger_no_progress_route_budget(self):
         event = {
             "tool": "filesystem.write_file",
             "status": "failure",
@@ -990,8 +990,8 @@ class TestConsecutiveRepeatedFailureCount:
             "output": {"reason": "invalid_tool_input"},
         }
 
-        assert repeated_failure_action([event, event, event], strategy_change_intervened=True) == "change_strategy"
-        assert repeated_failure_action([event, event, event, event], strategy_change_intervened=True) == "stop"
+        assert repeated_failure_action([event] * 6, strategy_change_intervened=True) == "change_strategy"
+        assert repeated_failure_action([event] * 7, strategy_change_intervened=True) == "stop"
 
     def test_repeated_failure_action_counts_same_route_across_failed_detours(self):
         write_failure = {
@@ -1390,6 +1390,43 @@ class TestPrompts:
         assert "stagnation" in prompt
         assert "observed_write_evidence=missing" in prompt
         assert "not choosing a strategy" in prompt
+
+    def test_progress_observer_prompt_can_report_target_deliverable_gap(self):
+        events = [{"tool": "document.extract_docx_outline", "status": "success"}]
+        prompt = progress_observer_prompt(
+            "/tmp",
+            "execution",
+            events,
+            False,
+            "missing_target_evidence",
+            target_deliverable_observed=False,
+        )
+        assert "observed_target_deliverable=missing" in prompt
+        assert "observed_write_evidence" not in prompt
+
+    def test_progress_observer_prompt_exposes_verification_gap_facts(self):
+        events = [{"tool": "preview.capture_local_html", "status": "success"}]
+        prompt = progress_observer_prompt(
+            "/tmp",
+            "verifier",
+            events,
+            True,
+            "target_verification_still_missing",
+            required_modalities=["visual", "content", "behavioral"],
+            observed_modalities=["visual"],
+            missing_modalities=["content", "behavioral"],
+            visual_verification_tool_ids=["preview.interact_page"],
+            runtime_diagnostics=[{
+                "code": "verification_script_resource_facts",
+                "severity": "info",
+                "message": "Script resources observed",
+            }],
+        )
+
+        assert "missing_modalities=content, behavioral" in prompt
+        assert "preview.interact_page" in prompt
+        assert "runtime_diagnostic=verification_script_resource_facts" in prompt
+        assert "choose whether to verify, revise, try a different route" in prompt
 
     def test_repeated_failure_strategy_prompt_requires_different_route(self):
         events = [
