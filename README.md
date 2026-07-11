@@ -399,13 +399,6 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 * [x] MCP Service Lifecycle 基础：服务配置、启动 / 重启、协议连接、工具发现、诊断和能力绑定
 * [x] Runtime Extension Contract 基础：插件 / MCP / CLI / Capability Pack 边界、权限声明、依赖声明和任务产物规范
 
-0.1 发布前剩余工作不再是新增运行时能力，而是收口卫生：
-
-* [ ] README / README.en / CHANGELOG / SECURITY 在代码冻结后做最终同步
-* [ ] 跑版本号、文档编码、完整测试、前端语法、启动脚本 help 和 HTTP / 面板冒烟检查
-* [ ] 清理临时样例、生成物、缓存和不应进入开源仓库的本机测试资产
-* [ ] 用一个代码任务、一个文档任务、一个网页/视觉验证任务、一个 MCP 示例任务做发布前人工冒烟测试
-
 ### Phase 2：Experience And Evaluation Loop
 
 目标：让 YuntaoCode 从真实任务中留下可审计证据，提取经验样本，形成可回放、可比较、可评测的任务样本。不是把每一次任务都自动变成 skill，也不是收集用户数据做排行榜。

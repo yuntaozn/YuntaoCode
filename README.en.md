@@ -401,13 +401,6 @@ Goal: stabilize the Task, Context, Capability, and Evidence foundations. YuntaoC
 * [x] MCP Service Lifecycle foundation: service configuration, start / restart actions, protocol connection, tool discovery, diagnostics, and capability binding
 * [x] Runtime Extension Contract foundation: plugin / MCP / CLI / Capability Pack boundaries, permissions, dependencies, and task artifact conventions
 
-The remaining work before tagging 0.1 is release hygiene, not more runtime scope:
-
-* [ ] Final README / README.en / CHANGELOG / SECURITY synchronization after code freeze
-* [ ] Run version checks, documentation encoding checks, full tests, frontend syntax checks, startup-script help checks, and HTTP / panel smoke checks
-* [ ] Remove temporary examples, generated artifacts, caches, and local test assets that should not enter the open-source repository
-* [ ] Run manual release smoke tests with one coding task, one document task, one webpage / visual-verification task, and one MCP example task
-
 ### Phase 2: Experience And Evaluation Loop
 
 Goal: let YuntaoCode learn from real task evidence by producing auditable samples, replayable fixtures, and comparable evaluation reports. This does not mean every task becomes a skill, and it is not a public benchmark or data-collection system.
