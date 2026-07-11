@@ -26,6 +26,7 @@ def build_context_pack(
     user_content: str,
     workspace_snapshot: dict[str, Any] | None = None,
     task_contract: dict[str, Any] | None = None,
+    active_focus: dict[str, Any] | None = None,
     previous_contract: dict[str, Any] | None = None,
     task_candidates: list[dict[str, Any]] | None = None,
     capability_snapshot: dict[str, Any] | None = None,
@@ -46,6 +47,7 @@ def build_context_pack(
         user_content=user_content,
         workspace_snapshot=workspace_snapshot,
         task_contract=task_contract,
+        active_focus=active_focus,
         previous_contract=previous_contract,
         task_candidates=task_candidates,
         capability_snapshot=capability_snapshot,
@@ -202,6 +204,7 @@ def _candidate_records(
     user_content: str,
     workspace_snapshot: dict[str, Any] | None,
     task_contract: dict[str, Any] | None,
+    active_focus: dict[str, Any] | None,
     previous_contract: dict[str, Any] | None,
     task_candidates: list[dict[str, Any]] | None,
     capability_snapshot: dict[str, Any] | None,
@@ -233,6 +236,9 @@ def _candidate_records(
     lineage_record = _task_lineage_record(task_candidates, task_id=task_id)
     if lineage_record:
         records.append(lineage_record)
+    focus_record = _active_focus_record(active_focus, task_id=task_id)
+    if focus_record:
+        records.append(focus_record)
     current_contract_record = _task_contract_record(task_contract, task_id=task_id)
     if current_contract_record:
         records.append(current_contract_record)
@@ -385,6 +391,8 @@ def _task_lineage_record(
             "changed_paths": candidate.get("changed_paths") or [],
             "verified_paths": candidate.get("verified_paths") or [],
             "actual_paths": candidate.get("actual_paths") or [],
+            "focus_relation": candidate.get("focus_relation") or "",
+            "focus": candidate.get("focus") or {},
             "current_target_match": bool(candidate.get("current_target_match")),
             "current_target_affinity": int(candidate.get("current_target_affinity") or 0),
         })
@@ -429,6 +437,8 @@ def _task_contract_record(
     ]
     content = (
         f"Current task contract: {goal}; "
+        f"task_relation={task_contract.get('scope_relation') or 'new'}; "
+        f"focus_relation={task_contract.get('focus_relation') or 'unresolved'}; "
         f"intent={task_contract.get('intent') or ''}; "
         f"requires_write={bool(task_contract.get('requires_write'))}; "
         f"requires_state_change={bool(task_contract.get('requires_state_change'))}; "
@@ -449,11 +459,62 @@ def _task_contract_record(
         metadata={
             "contract_goal": goal,
             "intent": task_contract.get("intent") or "",
+            "task_relation": task_contract.get("scope_relation") or "new",
+            "focus_relation": task_contract.get("focus_relation") or "unresolved",
+            "focus": task_contract.get("focus") if isinstance(task_contract.get("focus"), dict) else {},
             "requires_write": bool(task_contract.get("requires_write")),
             "requires_state_change": bool(task_contract.get("requires_state_change")),
             "requires_verification": bool(task_contract.get("requires_verification")),
             "capability_ids": capability_ids[:6],
             "success_conditions": success_conditions[:8],
+        },
+    )
+
+
+def _active_focus_record(
+    active_focus: dict[str, Any] | None,
+    *,
+    task_id: str,
+) -> ContextRecord | None:
+    if not isinstance(active_focus, dict):
+        return None
+    relation = str(active_focus.get("relation") or "unresolved")
+    focus = active_focus.get("focus") if isinstance(active_focus.get("focus"), dict) else {}
+    source_candidate_id = str(active_focus.get("source_candidate_id") or "")
+    evidence_paths = [
+        str(item)
+        for item in active_focus.get("evidence_paths") or []
+        if str(item or "").strip()
+    ][:12]
+    if relation == "unresolved" and not focus and not source_candidate_id:
+        return None
+    content = (
+        "Active working focus declaration, independent from the task action: "
+        f"relation={relation}; "
+        f"kind={focus.get('kind') or 'unknown'}; "
+        f"name={focus.get('name') or 'unknown'}; "
+        f"path={focus.get('path_hint') or 'unknown'}; "
+        f"source_candidate={source_candidate_id or 'none'}; "
+        f"evidence_paths={', '.join(evidence_paths) or 'none'}. "
+        "Use this to identify the working object only; do not reuse an earlier task goal or route."
+    )
+    return ContextRecord(
+        kind="project_context",
+        content=content,
+        source_id="active_focus_snapshot",
+        source_type="runtime_event",
+        trust="model_inferred",
+        task_id=task_id,
+        freshness="current",
+        token_estimate=_estimate_tokens_fast(content),
+        metadata={
+            "schema_version": active_focus.get("schema_version") or "",
+            "relation": relation,
+            "focus": focus,
+            "source_candidate_id": source_candidate_id,
+            "source_candidate_found": bool(active_focus.get("source_candidate_found")),
+            "evidence_paths": evidence_paths,
+            "resolved": bool(active_focus.get("resolved")),
         },
     )
 

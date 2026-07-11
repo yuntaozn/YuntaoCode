@@ -40,7 +40,7 @@ Task Runtime
   任务、计划、步骤、状态、Trace、验证、恢复、结果。
 
 Context Runtime
-  上下文选择、压缩、证据、记忆、可信度、上下文快照。
+  上下文选择、项目焦点、压缩、证据、记忆、可信度、上下文快照。
 
 Capability Runtime
   能力契约、工具、权限、确认、插件草案、外部能力接入。
@@ -133,6 +133,8 @@ User Request
 - `capability_router.py`：能力契约、模型路由提案和提案验证。
 - `conversation_task_context.py`：根据对话历史判断追问是否继承上一轮任务、
   写入上下文、文档输出上下文和字数目标。
+- `project_context.py`：把任务关系与当前工作对象关系分开，生成模型声明、
+  Runtime 可审计的 Active Focus Snapshot，不替模型选择目标。
 - `profiles.py`：内部执行 Profile，例如直接问答、项目分析、代码修改、外部能力执行、文档工作流、论文工作流。
 - `policy.py`：请求路由和计划执行开关；确定性规则只承担安全边界与模型不可用时的回退，不替模型决定任务目标和执行策略。
 - `prompts.py`：阶段提示、修复提示、最终回答提示等 prompt 构建。

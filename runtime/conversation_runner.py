@@ -19,6 +19,7 @@ from runtime.model_providers.client import stream_chat_completion
 from runtime.agent_strategy.capability_grounding import ground_task_contract_with_capabilities
 from runtime.agent_strategy import task_contract as _tc
 from runtime.agent_strategy import tool_event_roles as _event_roles
+from runtime.agent_strategy.project_context import build_active_focus_snapshot
 from runtime.agent_strategy.classifiers import (
     finish_reason_indicates_truncation,
     infer_requested_min_output_chars,
@@ -512,6 +513,12 @@ class ConversationRunExecutor:
                     metadata["applied_task_candidate_id"] = str(
                         task_contract.get("referenced_task_candidate_id") or ""
                     )
+        active_focus = build_active_focus_snapshot(
+            task_contract,
+            task_lineage_candidates,
+            workspace_snapshot=workspace_snapshot,
+        )
+        metadata["active_focus"] = active_focus
         capability_snapshot = self._build_capability_snapshot(mode_config)
         if ground_task_contract_with_capabilities(
             task_contract,
@@ -575,6 +582,7 @@ class ConversationRunExecutor:
             user_content=content,
             workspace_snapshot=workspace_snapshot,
             task_contract=task_contract,
+            active_focus=active_focus,
             task_candidates=task_lineage_candidates,
             capability_snapshot=capability_snapshot,
             capability_preflight=capability_preflight,
@@ -1798,6 +1806,7 @@ class ConversationRunExecutor:
                         phase="execution",
                         user_content=content,
                         task_contract=task_contract,
+                        active_focus=active_focus,
                         capability_snapshot=capability_snapshot,
                         capability_preflight=capability_preflight,
                         tool_events=tool_events,
@@ -2431,6 +2440,7 @@ class ConversationRunExecutor:
             user_content=content,
             workspace_snapshot=workspace_snapshot,
             task_contract=task_contract,
+            active_focus=active_focus,
             capability_snapshot=capability_snapshot,
             capability_preflight=capability_preflight,
             run_result=run_result,
@@ -2567,6 +2577,7 @@ class ConversationRunExecutor:
             user_content=content,
             workspace_snapshot=workspace_snapshot,
             task_contract=task_contract,
+            active_focus=active_focus,
             run_result=run_result,
             assistant_content=assistant_content,
             context_hygiene_report=context_hygiene_report,

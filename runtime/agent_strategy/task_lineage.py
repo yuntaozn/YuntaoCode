@@ -12,6 +12,8 @@ import json
 from copy import deepcopy
 from typing import Any
 
+from runtime.agent_strategy.project_context import compact_focus_for_candidate
+
 
 TASK_LINEAGE_CANDIDATE_SCHEMA_VERSION = "task_lineage_candidate.v1"
 
@@ -65,7 +67,7 @@ def task_candidate_from_message(
         ],
         limit=12,
     )
-    return {
+    candidate = {
         "schema_version": TASK_LINEAGE_CANDIDATE_SCHEMA_VERSION,
         "candidate_id": candidate_id,
         "task_id": task_id,
@@ -88,6 +90,8 @@ def task_candidate_from_message(
         "actual_paths": actual_paths,
         "contract_anchor": _contract_anchor(contract, run_result=run_result),
     }
+    candidate.update(compact_focus_for_candidate(contract))
+    return candidate
 
 
 def collect_task_lineage_candidates(
@@ -192,6 +196,8 @@ def format_task_candidates_for_model(
             "changed_paths": candidate.get("changed_paths") or [],
             "verified_paths": candidate.get("verified_paths") or [],
             "actual_paths": candidate.get("actual_paths") or [],
+            "focus_relation": candidate.get("focus_relation") or "",
+            "focus": candidate.get("focus") or {},
         }
         if "current_target_match" in candidate:
             item["current_target_match"] = bool(candidate.get("current_target_match"))
@@ -215,8 +221,8 @@ def format_task_candidates_for_model(
             "names a target path or subproject, candidates with "
             "current_target_match=true are ranked ahead of merely recent "
             "candidates. "
-            "Use one only if the current user request continues, revises, "
-            "retries, or evaluates that candidate. Prefer runtime-observed "
+            "A candidate may also provide the working focus for a new task "
+            "without making its old goal current. Prefer runtime-observed "
             "actual_paths over guessed, stale, or intermediate paths when "
             "inspecting a continued task. Read-only failed verification "
             "attempts may explain what went wrong, but should not replace the "
@@ -247,6 +253,9 @@ def _contract_anchor(
         "capability_ids",
         "deliverables",
         "success_conditions",
+        "focus_relation",
+        "focus",
+        "referenced_focus_candidate_id",
     )
     anchor = {
         key: deepcopy(contract[key])

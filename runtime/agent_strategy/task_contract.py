@@ -12,6 +12,7 @@ from typing import Any
 
 from runtime.agent_strategy import classifiers as _clf
 from runtime.agent_strategy import contract_evolution as _contract_evolution
+from runtime.agent_strategy import project_context as _project_context
 from runtime.agent_strategy.document_completion import (
     contract_expects_text_output as _document_contract_expects_text_output,
 )
@@ -122,6 +123,10 @@ def default_task_contract(
         "scope_relation": "new",
         "scope_relation_source": "default",
         "referenced_task_candidate_id": "",
+        "focus_relation": "unresolved",
+        "focus_relation_source": "default",
+        "focus": {},
+        "referenced_focus_candidate_id": "",
         "revision_request": "",
         "system_overrides": [],
         "execution_advisories": [],
@@ -215,12 +220,36 @@ def merge_model_task_contract(
                 or raw_contract.get("previous_task_candidate_id"),
                 160,
             ),
+            "focus_relation": _project_context.normalize_focus_relation(
+                raw_contract.get("focus_relation")
+            ),
+            "focus_relation_source": (
+                "model"
+                if str(raw_contract.get("focus_relation") or "").strip().lower()
+                in _project_context.VALID_FOCUS_RELATIONS
+                else "default"
+            ),
+            "focus": _project_context.normalize_focus_reference(raw_contract.get("focus")),
+            "referenced_focus_candidate_id": _clean_text(
+                raw_contract.get("referenced_focus_candidate_id")
+                or raw_contract.get("focus_candidate_id"),
+                160,
+            ),
         })
 
     contract["scope_relation"] = _normalize_scope_relation(contract.get("scope_relation"))
     contract.setdefault("scope_relation_source", "default")
     contract["referenced_task_candidate_id"] = _clean_text(
         contract.get("referenced_task_candidate_id"),
+        160,
+    )
+    contract["focus_relation"] = _project_context.normalize_focus_relation(
+        contract.get("focus_relation")
+    )
+    contract.setdefault("focus_relation_source", "default")
+    contract["focus"] = _project_context.normalize_focus_reference(contract.get("focus"))
+    contract["referenced_focus_candidate_id"] = _clean_text(
+        contract.get("referenced_focus_candidate_id"),
         160,
     )
     contract.setdefault("revision_request", "")
@@ -352,14 +381,16 @@ def task_contract_prompt(
         "runtime/API probes, service startup checks, database checks, or UI interactions; do not use behavioral "
         "for syntax-only checks such as python -m py_compile or node --check. Use content for text/document "
         "content checks.\n"
-        "Task lineage rule: if the Context Pack contains task_lineage candidates, treat them as historical "
-        "candidate facts only. Set scope_relation=continue or revise and referenced_task_candidate_id only when "
-        "the current user request clearly refers to that candidate. If the task_lineage payload contains "
-        "active_target, it is still only a candidate fact, not a default current goal. Reference it only when "
-        "the user explicitly asks to continue/retry/evaluate the previous result, or when the current wording "
-        "shares the same path, artifact, project, subproject, file, or domain. Use new/replace when the current "
-        "request starts an unrelated target, names a different target, or the relation is ambiguous. Otherwise "
-        "leave referenced_task_candidate_id empty.\n"
+        "Task and focus relation rule: task lineage candidates are historical facts, not forced goals. "
+        "scope_relation describes whether the current action/goal continues an earlier task. focus_relation "
+        "independently describes which project, subproject, file, artifact, or external object the current task "
+        "is about. A new task may use scope_relation=new together with focus_relation=inherit when the user "
+        "changes the requested action or deliverable but keeps the same working object. In that case set "
+        "referenced_focus_candidate_id, describe the inherited object in focus, and do not copy the candidate's "
+        "old goal or execution route. Short conversational follow-ups that omit the object may inherit a recent "
+        "focus when the candidate evidence supports that reading; do not silently expand an omitted subproject "
+        "to the whole workspace. Use focus_relation=unresolved when the evidence is genuinely insufficient. "
+        "Set referenced_task_candidate_id only for continue/revise of the earlier task itself.\n"
         "JSON 字段：\n"
         "{\n"
         '  "goal": "用户真实目标的简短描述",\n'
@@ -373,6 +404,9 @@ def task_contract_prompt(
         '  "deliverables": [{"kind": "file|answer|document|code|external_state", "path_hint": "", "path_policy": "hint|exact", "description": ""}],\n'
         '  "scope_relation": "new|continue|revise|replace",\n'
         '  "referenced_task_candidate_id": "",\n'
+        '  "focus_relation": "explicit|inherit|switch|unresolved",\n'
+        '  "focus": {"kind": "workspace|project|subproject|directory|file|artifact|external_state|other", "name": "", "path_hint": "", "description": ""},\n'
+        '  "referenced_focus_candidate_id": "",\n'
         '  "expected_min_output_chars": 0,\n'
         '  "execution_advisories": [{"code": "optional-short-code", "message": "non-binding execution note", "suggested_first_action": "read|write|verify|use_tool"}],\n'
         '  "first_action": "answer|read|search|plan|write|verify|ask_user|use_tool",\n'

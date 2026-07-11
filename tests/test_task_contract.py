@@ -117,9 +117,42 @@ def test_task_contract_prompt_contains_only_contract_request() -> None:
     assert "requires_state_change" in prompt
     assert "referenced_task_candidate_id" in prompt
     assert "系统负责权限、工具执行和完成验收" in prompt
-    assert "active_target" in prompt
-    assert "not a default current goal" in prompt
-    assert "relation is ambiguous" in prompt
+    assert "task lineage candidates are historical facts" in prompt
+    assert "do not copy the candidate's old goal" in prompt
+    assert "focus_relation" in prompt
+
+
+def test_model_contract_separates_new_task_from_inherited_focus() -> None:
+    contract = merge_model_task_contract(
+        {
+            "goal": "为当前子项目生成正式设计说明 Word 文档",
+            "intent": "document_export",
+            "requires_write": True,
+            "scope_relation": "new",
+            "focus_relation": "inherit",
+            "focus": {
+                "kind": "subproject",
+                "name": "大体积混凝土智能温控仿真实训平台",
+                "path_hint": r"D:\code\lesson\大体积混凝土智能温控仿真实训平台",
+            },
+            "referenced_focus_candidate_id": "run-previous",
+        },
+        _fallback(),
+    )
+
+    assert contract["scope_relation"] == "new"
+    assert contract["focus_relation"] == "inherit"
+    assert contract["focus"]["kind"] == "subproject"
+    assert contract["referenced_task_candidate_id"] == ""
+    assert contract["referenced_focus_candidate_id"] == "run-previous"
+
+
+def test_task_contract_prompt_explains_independent_focus_relation() -> None:
+    prompt = task_contract_prompt("D:\\code\\demo", _fallback())
+
+    assert "A new task may use scope_relation=new together with focus_relation=inherit" in prompt
+    assert "do not silently expand an omitted subproject to the whole workspace" in prompt
+    assert '"referenced_focus_candidate_id"' in prompt
 
 
 def test_task_contract_prompt_includes_workspace_context_as_facts() -> None:

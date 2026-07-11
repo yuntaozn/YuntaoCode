@@ -8,6 +8,10 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ### Added
 
+- Active Focus snapshots in Context Runtime, separating new/continued task
+  actions from inherited/switched project, subproject, file, artifact, or
+  external-state focus without turning historical goals into hidden routing.
+
 - Runtime-owned conversation attachments for images and files, including
   persisted previews and controlled text extraction for text, PDF, and Word
   inputs without placing uploads in project workspaces.

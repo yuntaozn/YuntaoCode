@@ -48,6 +48,10 @@ Task Context
 Task Lineage Context
   相关历史任务候选、上一任务契约、可继承目标、用户追问关系。
 
+Project Context / Active Focus
+  当前工作区包含哪些项目，以及本轮实际围绕哪个项目、子项目、文件或外部对象。
+  工作对象关系与任务关系独立。
+
 Workspace Context
   工作区路径、项目结构摘要、明显入口文件、候选产物、浅层文件事实。
 
@@ -159,6 +163,45 @@ goal 和 deliverable 仍然优先；历史锚点只补充候选路径和事实�
 - `runtime/agent_strategy/conversation_task_context.py`
 - `runtime/agent_strategy/task_contract.py`
 - `runtime/context_pack.py`
+
+## Project Context And Active Focus
+
+Task Lineage 说明“之前做过什么”，但不能单独回答“当前正在围绕哪个对象工作”。
+如果把两者混在 `scope_relation` 中，一个新的动作或产物就可能错误地清空当前子项目，
+或者反过来把上一任务的旧目标强加给新任务。
+
+当前契约将两条关系分开：
+
+```text
+scope_relation
+  new / continue / revise / replace
+  描述当前动作和旧任务之间的关系。
+
+focus_relation
+  explicit / inherit / switch / unresolved
+  描述当前工作对象从哪里来。
+```
+
+因此“分析完某个子项目后，为它编写正式设计说明”可以是：
+
+```text
+scope_relation = new
+focus_relation = inherit
+```
+
+新任务只继承项目对象，不继承旧任务的 goal、计划、工具路线或完成判断。
+
+`runtime/agent_strategy/project_context.py` 根据模型在 Task Contract 中声明的焦点和
+所引用的 task candidate，生成 `active_focus.v1` 快照。快照只包含：
+
+- 焦点关系和模型声明的对象名称、类型、路径提示。
+- 被引用的历史候选 ID。
+- 候选 Run 中真实观察到的路径证据。
+- 当前 workspace 路径和焦点是否已解析。
+
+Runtime 不通过关键词替模型选择对象，也不因为 Active Focus 存在就覆盖当前 goal。
+Context Pack 以 `project_context` 记录把快照传给规划、执行、验证和总结阶段。当证据
+不足时保持 `unresolved`，而不是默认为整个 workspace。
 
 ## Context Pack And Ledger
 
@@ -333,10 +376,12 @@ summary
   - 在不删除 UI 历史和审计记录的前提下，清洗模型侧上下文。
 - `runtime/agent_strategy/task_lineage.py`
   - 从历史消息中抽取相关任务候选。
+- `runtime/agent_strategy/project_context.py`
+  - 将任务关系与工作对象关系分离，生成可审计的 Active Focus Snapshot。
 - `runtime/workspace_snapshot.py`
   - 在不读取文件内容的前提下生成轻量项目事实快照。
 - `runtime/context_pack.py`
-  - 组合本轮请求、Workspace Snapshot、Task Lineage、Task Contract、
+  - 组合本轮请求、Workspace Snapshot、Task Lineage、Active Focus、Task Contract、
     Capability Snapshot 和 Context Hygiene 报告。
   - 生成 Context Ledger。
 - `runtime/tool_event_presentation.py`
@@ -375,6 +420,8 @@ Context Runtime 的 0.1 最小闭环已经成立：
 - Task lineage、previous contract、recovery context、tool result facts 和 final-answer candidate 都通过 Context Pack 暴露为事实，而不是隐藏路线控制。
 - Previous contract 与 task_lineage candidate 分开记录：前者只是上一任务契约的历史锚点，后者才是可由模型显式引用的历史任务候选，避免旧任务目标伪装成当前目标。
 - 续接任务保留可复用的历史路径事实，但当前模型给出的具体 goal 会更新 continuity anchor；历史 goal 不能覆盖新的明确子目标。
+- Task Relation 与 Focus Relation 已分离：新任务可以继承同一项目对象，但不能因此继承上一任务的目标和执行路线。
+- Active Focus 以 `project_context` 记录进入规划、执行、验证和总结阶段；对象不明确时保持 unresolved，不自动扩大到整个工作区。
 - Memory 已区分 global 与 workspace 范围，避免跨项目记忆默认污染当前任务。
 - 视觉证据可以在模型支持时进入 image input，同时保留 `context.visual` / RunEvidence 审计记录。
 - Context Snapshot 可由 RunResult / recovery flow 生成，为暂停、恢复和显式 Replay Run 提供恢复依据。

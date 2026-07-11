@@ -19,6 +19,7 @@ ContextKind = Literal[
     "task_contract",
     "previous_contract",
     "task_lineage",
+    "project_context",
     "workspace_summary",
     "capability",
     "evidence",
@@ -39,12 +40,12 @@ TrustLevel = Literal[
 ]
 
 PHASE_CONTEXT_KINDS: dict[str, frozenset[str]] = {
-    "understanding": frozenset({"user_intent", "memory", "task_contract", "risk"}),
-    "task_contract": frozenset({"user_intent", "workspace_summary", "previous_contract", "task_lineage", "task_contract", "memory", "recovery", "risk"}),
-    "planning": frozenset({"user_intent", "task_contract", "workspace_summary", "capability", "memory", "risk"}),
-    "execution": frozenset({"task_contract", "capability", "evidence", "tool_result", "recovery", "risk"}),
-    "verification": frozenset({"task_contract", "capability", "evidence", "tool_result", "risk"}),
-    "summary": frozenset({"user_intent", "task_contract", "tool_result", "evidence", "recovery", "risk"}),
+    "understanding": frozenset({"user_intent", "project_context", "memory", "task_contract", "risk"}),
+    "task_contract": frozenset({"user_intent", "workspace_summary", "previous_contract", "task_lineage", "project_context", "task_contract", "memory", "recovery", "risk"}),
+    "planning": frozenset({"user_intent", "task_contract", "project_context", "workspace_summary", "capability", "memory", "risk"}),
+    "execution": frozenset({"task_contract", "project_context", "capability", "evidence", "tool_result", "recovery", "risk"}),
+    "verification": frozenset({"task_contract", "project_context", "capability", "evidence", "tool_result", "risk"}),
+    "summary": frozenset({"user_intent", "task_contract", "project_context", "tool_result", "evidence", "recovery", "risk"}),
 }
 
 

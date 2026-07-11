@@ -80,6 +80,40 @@ def test_context_pack_includes_task_lineage_candidates_as_candidates() -> None:
     assert lineage["metadata"]["candidates"][0]["actual_paths"] == ["scene.blend"]
 
 
+def test_context_pack_carries_active_focus_without_copying_old_goal() -> None:
+    pack = build_context_pack(
+        phase="planning",
+        user_content="现在先写正式设计说明",
+        task_contract={
+            "goal": "Write a formal design document",
+            "intent": "document_export",
+            "scope_relation": "new",
+            "focus_relation": "inherit",
+        },
+        active_focus={
+            "schema_version": "active_focus.v1",
+            "relation": "inherit",
+            "focus": {
+                "kind": "subproject",
+                "name": "Mass concrete training platform",
+                "path_hint": "lesson/mass-concrete",
+            },
+            "source_candidate_id": "run-1",
+            "source_candidate_found": True,
+            "source_candidate_goal": "Package the previous project",
+            "evidence_paths": ["lesson/mass-concrete/design.md"],
+            "resolved": True,
+        },
+    )
+
+    kinds = [item["kind"] for item in pack["records"]]
+    assert kinds == ["user_intent", "project_context", "task_contract"]
+    focus = pack["records"][1]
+    assert "Mass concrete training platform" in focus["content"]
+    assert "Package the previous project" not in focus["content"]
+    assert focus["metadata"]["source_candidate_id"] == "run-1"
+
+
 def test_context_pack_records_task_lineage_hygiene_counts() -> None:
     pack = build_context_pack(
         phase="task_contract",

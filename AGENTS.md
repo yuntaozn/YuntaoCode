@@ -35,6 +35,9 @@ foundation easier to understand, test, and extend.
   - `model_context_boundary.py`: model-facing boundary notices and historical
     task-lineage markers. It should not classify intent or decide task
     strategy.
+  - `project_context.py`: Active Focus snapshots that keep task relation and
+    working-object relation independent. It must not infer a focus from
+    keywords or copy a historical task goal into a new task.
   - `tool_result_risks.py`: converts tool-result facts into non-blocking,
     model-facing risk evidence and audit records.
   - `profiles.py`: internal assistant profiles such as chat, analysis, coding,
