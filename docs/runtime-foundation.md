@@ -7,12 +7,9 @@ The goal is to keep the base architecture clear while the project is still in
 alpha. New features should build on these contracts instead of adding another
 hard-coded branch in the runner.
 
-## 0.1 Closeout Principle
+## Foundation Scope
 
-YuntaoCode 0.1 is a runtime direction release, not a stability promise and not
-a claim that every future scenario is already solved.
-
-The closeout goal is to make the foundation legible:
+The foundation contract keeps these boundaries explicit:
 
 - the project is a local-first AI Task Runtime, not a tool bundle, chat shell,
   MCP/CLI client, or Skill manager;
@@ -20,12 +17,7 @@ The closeout goal is to make the foundation legible:
 - providers such as built-in tools, CLI, MCP, Capability Packs, and future
   plugins must enter the same Capability Runtime boundary;
 - evidence, state, permissions, verification, and recovery must remain more
-  important than adding another scenario;
-- every near-term change should answer whether it helps 0.1 close out.
-
-If a change does not clarify task state, context boundaries, capability
-contracts, evidence, recovery, audit, or the Experience path, it should be
-treated as post-0.1 unless there is a direct user-facing defect.
+  important than adding another scenario.
 
 ## Runtime Lines
 
@@ -686,19 +678,7 @@ outputs still need explicit write tools such as `code.edit_file`,
   command must run on multiple platforms, use `command` plus `args` instead of
   embedding shell-specific syntax.
 
-## Next Foundation Work
-
-0.1 release hygiene:
-
-1. Synchronize README, README.en, CHANGELOG, SECURITY, and architecture docs.
-2. Run version, documentation encoding, backend tests, frontend syntax, and
-   startup-script checks.
-3. Remove generated artifacts, local-only examples, temporary assets, and
-   machine-specific test files from the release tree.
-4. Smoke-test one coding task, one document task, one webpage / visual
-   verification task, and one MCP provider task.
-
-Post-0.1 foundation work:
+## Future Foundation Work
 
 1. Refine product-level Task lifecycle and task-level cancellation.
 2. Connect context snapshots to compression and longer-running resume flows.

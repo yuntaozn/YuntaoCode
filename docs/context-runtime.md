@@ -399,9 +399,9 @@ summary
   - 将目标产物缺口、验证缺口和最终收束判断显式化。
   - 目标产物缺口只产生继续或换策略建议，不在该层直接停止任务。
 
-## 0.1 Closeout Direction
+## Current Scope
 
-0.1 阶段不需要一次性完成 RAG、向量检索或复杂知识库。当前更重要的是把边界做清楚：
+Context Runtime 不以一次性完成 RAG、向量检索或复杂知识库为前提。当前基础边界是：
 
 1. 模型看到的上下文必须可审计。
 2. 历史任务可以成为候选事实，但不能成为隐藏当前目标。
@@ -410,9 +410,9 @@ summary
 5. Context Pack 和 Context Ledger 必须先稳定，再考虑 Evidence Index。
 6. Runtime 提醒模型风险和事实，不替模型选择任务策略。
 
-## 0.1 Minimum Closure Status
+## Implemented Foundation
 
-Context Runtime 的 0.1 最小闭环已经成立：
+Context Runtime 当前已具备以下基础：
 
 - 当前模型上下文经过 `context_hygiene` 清理，旧工具调用格式、失败日志和历史任务噪声不会作为可模仿样本直接进入下一轮模型输入。
 - 每个关键阶段可以生成 `Context Pack`，并以 `context.pack` 事件进入 RunEvidence、Runbook、诊断包和任务工作台。
@@ -428,7 +428,7 @@ Context Runtime 的 0.1 最小闭环已经成立：
 - 需要写入、导出或外部状态变化的任务，如果暂未观察到目标产物，会按工具事实是否变化进行进展判断；事实仍在变化时继续给模型空间，事实停滞时提示模型换路线，而不是按固定次数直接失败。
 - 搜索/读取预算只作为进展提醒：当模型长时间侦察但没有目标产物时，Runtime 将事实反馈给模型选择下一步，不再把“达到侦察预算”本身作为失败原因。
 
-0.1 之后再考虑 Evidence Index、向量检索、复杂知识库、样本库和跨设备上下文同步。它们不能成为 0.1 发布前置条件。
+Evidence Index、向量检索、复杂知识库、样本库和跨设备上下文同步属于后续演进能力，不是当前 Context Runtime 的基础依赖。
 
 ## Next Steps
 

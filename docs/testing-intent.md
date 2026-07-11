@@ -1,14 +1,14 @@
 # Testing Intent
 
-This document calibrates the intent of the current test suite for the 0.1
-closeout. The goal is not to reduce the number of tests. The goal is to keep
-tests aligned with YuntaoCode as a local-first AI Task Runtime.
+This document calibrates the intent of the test suite. The goal is not to
+reduce the number of tests. The goal is to keep tests aligned with YuntaoCode
+as a local-first AI Task Runtime.
 
-## 0.1 Test Goal
+## Runtime Test Goal
 
 Tests should protect runtime contracts, not historical implementation accidents.
 
-For 0.1, a good test usually protects one of these foundations:
+A good test usually protects one of these foundations:
 
 - Task, Run, Plan, Step, lifecycle, recovery, replay, or audit state.
 - Tool-call protocol, validation, aliases, confirmation, and execution guards.
@@ -28,10 +28,9 @@ into a runtime contract.
 
 ## Current Calibration
 
-The current suite is not too large for the project stage. The latest audit
-counted about 69 test files and 14k test lines against about 48k runtime source
-lines. That is a reasonable ratio for a project whose main value is runtime
-state, permissions, verification, recovery, and audit.
+The suite is intentionally broad because the project value depends on runtime
+state, permissions, verification, recovery, and audit rather than on a single
+UI path.
 
 The suite currently has four useful layers:
 
@@ -59,7 +58,7 @@ The suite currently has four useful layers:
 
 ## High-Signal Areas
 
-These areas should stay well covered during 0.1 closeout:
+These areas should stay well covered:
 
 - `Task Contract -> Tool Events -> RunResult`: this is the main truth chain for
   deciding whether a task actually completed.
@@ -77,8 +76,9 @@ These areas should stay well covered during 0.1 closeout:
 Some tests are useful but can become too rigid if extended carelessly.
 
 - `test_agent_strategy.py` is intentionally large because it fences many pure
-  strategy helpers extracted from the runner. Keep it for 0.1, but put new
-  tests into more focused modules when the target helper already has a home.
+  strategy helpers extracted from the runner. Keep it as regression coverage,
+  but put new tests into more focused modules when the target helper already
+  has a home.
 - `test_task_contract.py` and `test_document_contract_guard.py` protect the
   important boundary between model-declared task intent and runtime-owned
   safety. Avoid adding exact prompt wording assertions unless the wording is
@@ -144,12 +144,12 @@ Use these defaults:
   `runtime/agent_strategy/classifiers.py`, `prompts.py`, `policy.py`,
   `profiles.py`, or `plan_tracker.py`.
 
-## 0.1 Closeout Rule
+## Generalization Rule
 
 Before adding a test, ask:
 
-> Does this test help 0.1 close out by clarifying task state, context boundary,
-> capability contract, evidence, recovery, audit, or completion truth?
+> Does this test clarify task state, context boundary, capability contract,
+> evidence, recovery, audit, or completion truth?
 
 If the answer is no, record the scenario in a diagnostic sample or issue first
 instead of hardening it into the test suite.

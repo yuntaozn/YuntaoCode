@@ -383,9 +383,9 @@ Current built-in local file capability split:
   `filesystem.delete_file`, with PathGuard, confirmation, backup, trace, and
   RunResult evidence.
 
-## 0.1 Provider Boundary Check
+## Current Provider Boundary
 
-Capability Runtime 的 0.1 Provider 边界已经收束到同一套原则：
+Capability Runtime 的 Provider 遵循同一套原则：
 
 - Built-in tools, CLI providers, MCP providers, and future executable plugin
   components are capability providers. Capability Packs and non-executable
@@ -424,9 +424,9 @@ Capability Runtime 的 0.1 Provider 边界已经收束到同一套原则：
   but generated executable code is not trusted runtime code until an explicit
   promotion design exists.
 
-The remaining Capability Runtime work is depth, not direction: richer
-verification rules, provider isolation, better promotion flow, and stronger
-cross-platform adapter checks can continue after 0.1.
+Capability Runtime can continue deepening richer verification rules, provider
+isolation, promotion flows, and cross-platform adapter checks without changing
+this boundary.
 
 ## Next Steps
 

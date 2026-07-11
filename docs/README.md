@@ -19,8 +19,7 @@ new architecture note belongs.
 - [persistence-model.md](persistence-model.md) describes operational data
   ownership and the JSON-to-SQLite direction.
 - [testing-intent.md](testing-intent.md) calibrates what the test suite should
-  protect during the 0.1 closeout and when a regression test should become a
-  general runtime contract.
+  protect and when a regression test should become a general runtime contract.
 - [document-encoding.md](document-encoding.md) defines UTF-8 documentation
   rules and the local encoding check.
 
