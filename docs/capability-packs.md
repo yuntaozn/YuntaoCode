@@ -119,8 +119,12 @@ a draft descriptor. It is not a permission to mutate core runtime code.
 
 - Built-in tools stay in `runtime/skills/`.
 - MCP services stay in `mcp-services/` and the MCP manager.
-- External plugins remain a future controlled provider boundary.
-- Capability Packs may describe a future provider, but they do not load it.
+- A plugin is a versioned distribution container. It may package one or more
+  Capability Packs, Skill-like methods, or provider descriptors.
+- External executable providers remain a future controlled provider boundary.
+- Capability Packs may describe a future provider, but they do not install or
+  load it. A locally learned pack also does not become an installed plugin just
+  because it can be exported.
 
 This lets YuntaoCode learn useful behavior without turning every successful
 task into code that can execute inside the main process.

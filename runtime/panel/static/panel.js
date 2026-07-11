@@ -2355,6 +2355,42 @@ async function sendMessage(event) {
                     streamingMessages[assistantIndex].metadata = metadata;
                     renderStreamMessages();
                 }
+                if (eventData.event === "tool_log") {
+                    const logMessage = eventData.message || "";
+                    if (logMessage) {
+                        touchProgress(logMessage);
+                        updateActiveStreamState("running", "tool_log", logMessage);
+                        showStatusBar(logMessage);
+                    }
+                    const metadata = streamingMessages[assistantIndex].metadata || {};
+                    const toolEvents = metadata.tool_events || [];
+                    let toolIndex = eventData.task_id
+                        ? toolEvents.findIndex((item) => item.task_id === eventData.task_id)
+                        : -1;
+                    if (toolIndex < 0) {
+                        for (let index = toolEvents.length - 1; index >= 0; index -= 1) {
+                            if (toolEvents[index].status === "running"
+                                && (!eventData.tool || toolEvents[index].tool === eventData.tool)) {
+                                toolIndex = index;
+                                break;
+                            }
+                        }
+                    }
+                    if (toolIndex >= 0) {
+                        const current = toolEvents[toolIndex];
+                        const logs = [...(current.logs || []), {
+                            level: eventData.level || "info",
+                            message: logMessage,
+                            data: eventData.data || {},
+                        }].slice(-120);
+                        toolEvents[toolIndex] = { ...current, logs };
+                    }
+                    metadata.tool_events = toolEvents;
+                    metadata.pending = true;
+                    if (logMessage) metadata.statusText = logMessage;
+                    streamingMessages[assistantIndex].metadata = metadata;
+                    renderStreamMessages();
+                }
                 if (eventData.event === "tool") {
                     const toolName = eventData.name || eventData.tool;
                     const toolLabel = eventData.status === "running"
@@ -2398,6 +2434,7 @@ async function sendMessage(event) {
                         task_id: eventData.task_id || "",
                         error: eventData.error || "",
                         output: eventData.output || null,
+                        logs: existIdx >= 0 ? (toolEvents[existIdx].logs || []) : [],
                     };
                     if (existIdx >= 0 && eventData.status !== "running") {
                         toolEvents[existIdx] = toolEntry;
@@ -3033,10 +3070,27 @@ function renderToolEvents(message) {
                         <strong>${escapeHtml(item.name || item.tool)}</strong>
                     </div>
                 `;
+                const logsHtml = renderToolLogs(item);
                 const outputHtml = renderToolOutput(item);
-                return header + outputHtml;
+                return header + logsHtml + outputHtml;
             }).join("")}
         </div>
+    `;
+}
+
+function renderToolLogs(item) {
+    const logs = item.logs || [];
+    if (!logs.length) return "";
+    const isRunning = item.status === "running";
+    const rows = logs.map((log) => {
+        const stream = log.data?.stream === "stderr" ? "stderr" : "";
+        return `<span class="tool-log-line ${stream}">${escapeHtml(log.message || "")}</span>`;
+    }).join("\n");
+    return `
+        <details class="tool-live-logs" ${isRunning ? "open" : ""}>
+            <summary>${escapeHtml(t('tools.live_output'))}<em>${logs.length}</em></summary>
+            <pre>${rows}</pre>
+        </details>
     `;
 }
 

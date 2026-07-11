@@ -1,10 +1,24 @@
 import pytest
 
+from runtime.app import RuntimeState
 from runtime.tool_registry import ToolRegistry, ToolSpec
 
 
 async def _noop_handler(input_data, context):
     return {"ok": True}
+
+
+def test_runtime_state_combines_tool_readiness_with_provider_lifecycle() -> None:
+    runtime = type("RuntimeStub", (), {"cli_providers": None, "mcp_services": None})()
+
+    assert RuntimeState.is_tool_available(
+        runtime,
+        {"id": "preview.capture_local_html", "source_type": "builtin", "available": False},
+    ) is False
+    assert RuntimeState.is_tool_available(
+        runtime,
+        {"id": "filesystem.read_file", "source_type": "builtin", "available": True},
+    ) is True
 
 
 def test_tool_registry_rejects_duplicate_tool_ids() -> None:
@@ -34,6 +48,33 @@ def test_tool_spec_reports_missing_optional_dependencies() -> None:
     assert spec.check_dependencies() == {
         "definitely_missing_yuntaocode_dependency": False,
     }
+    readiness = spec.check_readiness()
+    assert readiness["available"] is False
+    assert readiness["health"] == "unavailable"
+    assert readiness["code"] == "python_dependency_missing"
+
+
+def test_tool_spec_exposes_runtime_readiness_without_executing_tool() -> None:
+    spec = ToolSpec(
+        id="demo.degraded",
+        name="Degraded Demo",
+        description="Demo",
+        input_schema={"type": "object"},
+        readiness_probe=lambda: {
+            "available": True,
+            "health": "degraded",
+            "code": "optional_route_missing",
+            "message": "One optional route is unavailable.",
+            "details": {"route": "browser"},
+        },
+    )
+
+    public = spec.to_public_dict()
+
+    assert public["available"] is True
+    assert public["tool_health"] == "degraded"
+    assert public["readiness"]["code"] == "optional_route_missing"
+    assert public["tool_last_error"] == "One optional route is unavailable."
 
 
 def test_list_specs_includes_public_metadata() -> None:
@@ -66,6 +107,15 @@ def test_list_specs_includes_public_metadata() -> None:
             "requires_confirmation": False,
             "local_only": True,
             "dependencies": {},
+            "available": True,
+            "tool_health": "available",
+            "readiness": {
+                "available": True,
+                "health": "available",
+                "code": "ready",
+                "message": "",
+                "details": {},
+            },
             "capability": "demo.read",
             "artifacts": ["text"],
             "effects": ["external_state_change"],

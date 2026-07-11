@@ -16,12 +16,18 @@ import time
 from typing import Any
 
 from runtime.debug_session import build_debug_session
+from runtime.shell_command_facts import shell_command_facts
 from runtime.tool_registry import ToolRegistry, ToolSpec
 
-MAX_TIMEOUT = 120
+MAX_TIMEOUT = 900
 DEFAULT_TIMEOUT = 30
 MAX_STDOUT = 50_000
 MAX_STDERR = 10_000
+STREAM_READ_SIZE = 4096
+LIVE_OUTPUT_MIN_INTERVAL = 0.75
+MAX_LIVE_OUTPUT_EVENTS = 80
+MAX_LIVE_MESSAGE_CHARS = 1200
+PROGRESS_HEARTBEAT_SECONDS = 10.0
 TASK_TEMP_CWD_ALIASES = {"task_temp", "__task_temp__", "$TASK_TEMP", "{task_temp}"}
 
 # Patterns that are clearly destructive on Windows or Unix
@@ -122,6 +128,165 @@ async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
             return
 
 
+class _BoundedByteCapture:
+    def __init__(self, limit: int) -> None:
+        self.limit = max(0, int(limit))
+        self.data = bytearray()
+        self.total_bytes = 0
+
+    def add(self, chunk: bytes) -> None:
+        self.total_bytes += len(chunk)
+        remaining = self.limit - len(self.data)
+        if remaining > 0:
+            self.data.extend(chunk[:remaining])
+
+    @property
+    def value(self) -> bytes:
+        return bytes(self.data)
+
+    @property
+    def truncated(self) -> bool:
+        return self.total_bytes > len(self.data)
+
+
+class _LiveCommandObserver:
+    def __init__(self, context: Any, started_at: float) -> None:
+        self.context = context
+        self.started_at = started_at
+        self.last_output_at = started_at
+        self.last_emit_at = 0.0
+        self.output_events = 0
+        self.pending: dict[str, str] = {}
+
+    def feed(self, stream_name: str, chunk: bytes) -> None:
+        now = time.monotonic()
+        self.last_output_at = now
+        text = _live_output_text(chunk)
+        if not text:
+            return
+        self.pending[stream_name] = text
+        if (
+            self.output_events < MAX_LIVE_OUTPUT_EVENTS
+            and now - self.last_emit_at >= LIVE_OUTPUT_MIN_INTERVAL
+        ):
+            self.flush()
+
+    def flush(self, *, force: bool = False) -> bool:
+        if not self.pending:
+            return False
+        if self.output_events >= MAX_LIVE_OUTPUT_EVENTS and not force:
+            return False
+        stream_name, message = next(reversed(self.pending.items()))
+        self.pending.clear()
+        self.last_emit_at = time.monotonic()
+        self.output_events += 1
+        self._log(
+            "warning" if stream_name == "stderr" else "info",
+            message,
+            {
+                "kind": "command_output",
+                "stream": stream_name,
+                "elapsed_seconds": round(self.last_emit_at - self.started_at, 1),
+            },
+        )
+        return True
+
+    def heartbeat(self) -> None:
+        now = time.monotonic()
+        flushed = self.flush(force=self.output_events >= MAX_LIVE_OUTPUT_EVENTS)
+        silent_seconds = now - self.last_output_at
+        if flushed or silent_seconds < PROGRESS_HEARTBEAT_SECONDS:
+            return
+        self._log(
+            "info",
+            f"command still running; elapsed {int(now - self.started_at)}s; "
+            f"no new output for {int(silent_seconds)}s",
+            {
+                "kind": "command_heartbeat",
+                "elapsed_seconds": round(now - self.started_at, 1),
+                "silent_seconds": round(silent_seconds, 1),
+            },
+        )
+
+    def _log(self, level: str, message: str, data: dict[str, Any]) -> None:
+        try:
+            self.context.log(level, message, data)
+        except Exception:
+            # Progress reporting must never terminate the subprocess itself.
+            return
+
+
+def _live_output_text(chunk: bytes) -> str:
+    text = _decode_output(chunk).replace("\r", "\n")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    compact = "\n".join(lines[-4:])
+    return compact[:MAX_LIVE_MESSAGE_CHARS]
+
+
+async def _read_process_stream(
+    stream: asyncio.StreamReader | None,
+    stream_name: str,
+    capture: _BoundedByteCapture,
+    observer: _LiveCommandObserver,
+) -> None:
+    if stream is None:
+        return
+    while True:
+        chunk = await stream.read(STREAM_READ_SIZE)
+        if not chunk:
+            return
+        capture.add(chunk)
+        observer.feed(stream_name, chunk)
+
+
+async def _wait_for_process(
+    process: asyncio.subprocess.Process,
+    timeout: int,
+    observer: _LiveCommandObserver,
+) -> bool:
+    wait_task = asyncio.create_task(process.wait())
+    deadline = time.monotonic() + timeout
+    try:
+        while not wait_task.done():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+            done, _ = await asyncio.wait(
+                {wait_task},
+                timeout=min(PROGRESS_HEARTBEAT_SECONDS, remaining),
+            )
+            if done:
+                return False
+            observer.heartbeat()
+        return False
+    finally:
+        if not wait_task.done():
+            wait_task.cancel()
+
+
+async def _finish_stream_readers(readers: list[asyncio.Task[Any]]) -> None:
+    if not readers:
+        return
+    try:
+        await asyncio.wait_for(asyncio.gather(*readers), timeout=5)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        for reader in readers:
+            reader.cancel()
+        await asyncio.gather(*readers, return_exceptions=True)
+
+
+def _effective_timeout(input_data: dict[str, Any], command: str, argv: list[str]) -> int:
+    facts = shell_command_facts(command, argv)
+    default = facts.default_timeout if "timeout" not in input_data else DEFAULT_TIMEOUT
+    try:
+        requested = int(input_data.get("timeout", default))
+    except (TypeError, ValueError):
+        requested = default
+    return max(1, min(requested, MAX_TIMEOUT))
+
+
 async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
     command = (input_data.get("command") or "").strip()
     if not command:
@@ -134,16 +299,28 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
 
     cwd = _resolve_cwd(input_data, context)
 
-    timeout = min(int(input_data.get("timeout", DEFAULT_TIMEOUT)), MAX_TIMEOUT)
+    command_facts = shell_command_facts(command, argv)
+    timeout = _effective_timeout(input_data, command, argv)
 
-    context.log("info", f"running: {display_command[:200]}", {"cwd": cwd, "timeout": timeout})
+    context.log(
+        "info",
+        f"running: {display_command[:200]}",
+        {
+            "cwd": cwd,
+            "timeout": timeout,
+            "command_role": command_facts.role,
+            "observable": True,
+        },
+    )
 
     timed_out = False
-    stdout_bytes = b""
-    stderr_bytes = b""
+    stdout_capture = _BoundedByteCapture(MAX_STDOUT)
+    stderr_capture = _BoundedByteCapture(MAX_STDERR)
     process: asyncio.subprocess.Process | None = None
+    readers: list[asyncio.Task[Any]] = []
     started_at = _utc_now_iso()
     started_monotonic = time.monotonic()
+    observer = _LiveCommandObserver(context, started_monotonic)
     try:
         process_kwargs: dict[str, Any] = {}
         if argv:
@@ -190,27 +367,48 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
                 cwd=cwd,
                 **process_kwargs,
             )
-        try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            timed_out = True
+
+        readers = [
+            asyncio.create_task(
+                _read_process_stream(process.stdout, "stdout", stdout_capture, observer)
+            ),
+            asyncio.create_task(
+                _read_process_stream(process.stderr, "stderr", stderr_capture, observer)
+            ),
+        ]
+        timed_out = await _wait_for_process(process, timeout, observer)
+        if timed_out:
             await _kill_process_tree(process)
             try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    process.communicate(), timeout=5
-                )
+                await asyncio.wait_for(process.wait(), timeout=5)
             except asyncio.TimeoutError:
-                stderr_bytes = (
-                    stderr_bytes
-                    + f"\ncommand timed out after {timeout}s and the process tree was terminated".encode("utf-8")
+                pass
+            stderr_capture.add(
+                f"\ncommand timed out after {timeout}s and the process tree was terminated".encode(
+                    "utf-8"
                 )
+            )
+        await _finish_stream_readers(readers)
+        observer.flush(force=True)
+    except asyncio.CancelledError:
+        if process is not None and process.returncode is None:
+            await _kill_process_tree(process)
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                pass
+        await _finish_stream_readers(readers)
+        context.log(
+            "warning",
+            "command cancelled; child process tree termination requested",
+            {"kind": "command_cancelled"},
+        )
+        raise
     except OSError as exc:
         raise ValueError(f"failed to execute command: {exc}") from exc
 
-    stdout = _decode_output(stdout_bytes)[:MAX_STDOUT]
-    stderr = _decode_output(stderr_bytes)[:MAX_STDERR]
+    stdout = _decode_output(stdout_capture.value)
+    stderr = _decode_output(stderr_capture.value)
     exit_code = process.returncode if process is not None and process.returncode is not None else 0
     diagnostics = _shell_result_diagnostics(
         command=command,
@@ -239,9 +437,11 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
         "stderr": stderr,
         "timed_out": timed_out,
         "timeout": timeout,
+        "command_role": command_facts.role,
+        "observable": True,
         "pid": process.pid if process is not None else None,
-        "stdout_truncated": len(stdout_bytes) > MAX_STDOUT,
-        "stderr_truncated": len(stderr_bytes) > MAX_STDERR,
+        "stdout_truncated": stdout_capture.truncated,
+        "stderr_truncated": stderr_capture.truncated,
     }
     if diagnostics:
         output["diagnostics"] = diagnostics
@@ -258,8 +458,8 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
         timeout=timeout,
         stdout=stdout,
         stderr=stderr,
-        stdout_truncated=len(stdout_bytes) > MAX_STDOUT,
-        stderr_truncated=len(stderr_bytes) > MAX_STDERR,
+        stdout_truncated=stdout_capture.truncated,
+        stderr_truncated=stderr_capture.truncated,
         diagnostics=diagnostics,
         started_at=started_at,
         finished_at=_utc_now_iso(),
@@ -401,7 +601,8 @@ def register_shell_tools(registry: ToolRegistry) -> None:
                 "跨平台任务优先使用 command+args 参数数组和 python/node 等可移植入口；不要假设 bash、PowerShell、cp、rm、"
                 "Copy-Item 等平台专属语法一定可用。运行 filesystem.write_temp_file 创建的临时脚本时，"
                 "可传 cwd='task_temp' 或 use_task_temp=true。不要把 python -m http.server、npm run dev 等长驻服务命令"
-                "当作普通验证命令，除非用户明确要求启动服务。超时默认30秒，最大120秒。"
+                "当作普通验证命令，除非用户明确要求启动服务。命令输出会在运行中持续显示；无输出时会显示心跳。"
+                "普通命令超时默认30秒，依赖安装默认600秒，最大900秒。"
             ),
             input_schema={
                 "type": "object",
@@ -414,7 +615,11 @@ def register_shell_tools(registry: ToolRegistry) -> None:
                     },
                     "cwd": {"type": "string", "description": "工作目录（可选，默认当前workspace；传 task_temp 使用任务临时目录）"},
                     "use_task_temp": {"type": "boolean", "default": False, "description": "是否在任务临时目录执行命令"},
-                    "timeout": {"type": "integer", "default": 30, "description": "超时秒数（最大120）"},
+                    "timeout": {
+                        "type": "integer",
+                        "default": 30,
+                        "description": "超时秒数（普通命令默认30；依赖安装省略时默认600；最大900）",
+                    },
                 },
                 "required": ["command"],
             },

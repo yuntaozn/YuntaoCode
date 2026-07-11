@@ -204,6 +204,31 @@ async def test_edit_file_rejects_invalid_line_range_without_writing(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_edit_file_rejects_noop_replacement_without_writing(tmp_path: Path) -> None:
+    path = tmp_path / "app.js"
+    original = "const value = 1;\n"
+    path.write_text(original, encoding="utf-8")
+    context = FakeContext(PathGuard([tmp_path]))
+
+    with pytest.raises(ValueError, match="makes no content change"):
+        await edit_file(
+            {
+                "path": str(path),
+                "edits": [
+                    {
+                        "old_text": "const value = 1;",
+                        "new_text": "const value = 1;",
+                    }
+                ],
+            },
+            context,
+        )
+
+    assert path.read_text(encoding="utf-8") == original
+    assert context.backups == []
+
+
+@pytest.mark.asyncio
 async def test_edit_file_preserves_gb18030_when_non_ascii_appears_after_probe_window(tmp_path: Path) -> None:
     path = tmp_path / "app.js"
     prefix = "const filler = '" + ("a" * 9000) + "';\n"

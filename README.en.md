@@ -317,9 +317,9 @@ Create a Handler under `runtime/api/` and register it in `runtime/app.py`.
 
 ### Capability Packs and Plugin Contract
 
-The current version provides built-in plugin capability management. It groups tools by ID prefix, such as `filesystem`, `code`, `shell`, `git`, `web`, and `preview`, and displays enablement and dependency status.
+The current version provides capability-source management. It groups built-in tools by ID prefix, such as `filesystem`, `code`, `shell`, `git`, `web`, and `preview`, and displays enablement and dependency status. These groups are not installed third-party plugins.
 
-This is not a plugin marketplace or remote update system. The third-party manifest, dynamic loading, permission declarations, and isolation model remain future foundation work.
+A Plugin in YuntaoCode is a versioned, distributable package that may contain Skills, Capability Packs, MCP/CLI provider descriptors, and future controlled extensions. Installation, review, enablement, and execution are independent states. The current foundation defines manifest and local installation-state contracts only; dynamic loading, a marketplace, and remote auto-update remain out of scope.
 
 See [docs/capability-packs.md](docs/capability-packs.md) for local Capability Packs and the extension contract draft in [docs/plugin-system.md](docs/plugin-system.md). The repository does not include external plugin sample directories at this stage; capability extension examples stay in documentation so experimental artifacts are not mistaken for built-in features.
 
@@ -380,7 +380,7 @@ We believe that models will continue to change, but a stable, open, and extensib
 * YuntaoCode is not a tool collection, chat shell, MCP/CLI client, or Skill manager.
 * Its core identity is a local-first AI Task Runtime.
 * 0.1 focuses on closing the Task, Context, Capability, and Experience runtime lines.
-* MCP, CLI, built-in tools, Capability Packs, and future plugins should enter Capability Runtime as providers instead of becoming separate execution systems.
+* MCP, CLI, built-in tools, and executable components from future plugins enter Capability Runtime as providers. Capability Packs, Skills, and other non-executable assets keep their own selection path without becoming separate execution systems.
 * Document work, coding, automation, evaluation, Skill Evolution, and self-iteration can continue on top of the foundation, but 0.1 does not try to finish all of them.
 
 For every near-term change, ask first: does this help 0.1 close out? If a change only follows a new concept or adds another scenario without clarifying direction, state, evidence, or capability boundaries, it should wait for a later phase.

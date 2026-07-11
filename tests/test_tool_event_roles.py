@@ -4,6 +4,7 @@ from runtime.agent_strategy.tool_event_roles import (
     VERIFICATION,
     classify_tool_event_role,
     deliverable_verification_events,
+    event_path_hints,
     failed_tool_event_role,
     missing_required_verification_modalities,
     sufficient_deliverable_verification_events,
@@ -741,3 +742,42 @@ def test_file_write_does_not_satisfy_external_state_deliverable() -> None:
         task_contract=contract,
         workspace_path="D:/workspace",
     ) == []
+
+
+def test_multi_file_deliverables_keep_latest_structural_evidence_per_path() -> None:
+    paths = [
+        "D:/workspace/site/index.html",
+        "D:/workspace/site/style.css",
+        "D:/workspace/site/main.js",
+    ]
+    contract = {
+        "requires_write": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["structural"],
+        "deliverables": [
+            {"kind": "code", "path_hint": path, "path_policy": "exact"}
+            for path in paths
+        ],
+    }
+    events = [
+        {
+            "tool": "filesystem.finalize_text_file",
+            "status": "success",
+            "input": {"output_path": path},
+            "output": {
+                "path": path,
+                "validation": {"valid": True, "text_chars": 100 + index},
+            },
+        }
+        for index, path in enumerate(paths)
+    ]
+
+    verification = deliverable_verification_events(
+        events,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    )
+
+    assert [next(iter(event_path_hints(event))) for event in verification] == [
+        path.lower() for path in paths
+    ]

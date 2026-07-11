@@ -647,9 +647,14 @@ def edit_file_sync(path: Path, edits: list[dict[str, Any]], context: Any) -> dic
     applied = 0
     diff_parts: list[str] = []
 
-    for edit in edits:
+    for edit_index, edit in enumerate(edits, start=1):
         if "start_line" in edit or "end_line" in edit:
-            text, line_diff = _apply_line_range_edit(text, edit)
+            updated_text, line_diff = _apply_line_range_edit(text, edit)
+            if updated_text == text:
+                raise ValueError(
+                    f"edit {edit_index} makes no content change; provide a different replacement"
+                )
+            text = updated_text
             applied += 1
             diff_parts.extend(line_diff)
             if applied < len(edits):
@@ -674,7 +679,13 @@ def edit_file_sync(path: Path, edits: list[dict[str, Any]], context: Any) -> dic
             )
 
         # 使用匹配到的原始文本替换（保留原始换行和缩进）
-        text = text.replace(matched_text or old_text, new_text, 1)
+        replacement_source = matched_text or old_text
+        updated_text = text.replace(replacement_source, new_text, 1)
+        if updated_text == text:
+            raise ValueError(
+                f"edit {edit_index} makes no content change; old_text and new_text resolve to the same content"
+            )
+        text = updated_text
         applied += 1
 
         # Build a short diff preview

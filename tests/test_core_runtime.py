@@ -19,6 +19,12 @@ from runtime.core.capability_pack import (
 from runtime.core.context import ContextRecord, ContextSnapshot, EvidenceRecord, select_records_for_phase
 from runtime.core.events import build_trace_event
 from runtime.core.experience import ExperienceDigest, experience_sample_from_runbook
+from runtime.core.plugin_manifest import (
+    PluginComponent,
+    PluginInstallation,
+    PluginManifest,
+    plugin_manifest_issues,
+)
 from runtime.core.result import RUN_RESULT_SCHEMA_VERSION, RuntimeResult
 from runtime.core.task import ProductTask, TaskPlan, TaskStep, can_transition
 
@@ -213,6 +219,66 @@ def test_capability_pack_defaults_to_method_skill_not_tool_plugin() -> None:
     assert data["entry"]["kind"] == "instructions"
     assert data["permissions"]["shell"] == "false"
     assert bundle["schema_version"] == "capability_pack_export.v1"
+
+
+def test_plugin_manifest_packages_components_without_owning_runtime_state() -> None:
+    manifest = PluginManifest(
+        id="document-workflows",
+        name="Document Workflows",
+        version="0.1.0",
+        components=(
+            PluginComponent(kind="skill", id="review", path="skills/review/SKILL.md"),
+            PluginComponent(kind="mcp_provider", id="office", path="providers/office.mcp.json", optional=True),
+        ),
+        requested_permissions=PermissionSet(filesystem="workspace", network="confirm_each"),
+    )
+
+    data = manifest.to_dict()
+
+    assert data["schema_version"] == "plugin_manifest.v1"
+    assert [item["kind"] for item in data["components"]] == ["skill", "mcp_provider"]
+    assert data["requested_permissions"]["network"] == "confirm_each"
+    assert "install_state" not in data
+    assert "review_state" not in data
+    assert plugin_manifest_issues(manifest) == ()
+
+
+def test_plugin_installation_keeps_source_review_and_enablement_outside_manifest() -> None:
+    installation = PluginInstallation(
+        plugin_id="document-workflows",
+        plugin_version="0.1.0",
+        source_kind="git",
+        source_uri="https://example.invalid/document-workflows.git",
+        install_state="installed",
+        review_state="reviewed",
+        content_digest="sha256:example",
+        enabled_components=("review",),
+    )
+
+    data = installation.to_dict()
+
+    assert data["schema_version"] == "plugin_installation.v1"
+    assert data["install_state"] == "installed"
+    assert data["review_state"] == "reviewed"
+    assert data["enabled_components"] == ["review"]
+
+
+def test_plugin_manifest_rejects_non_portable_component_paths_and_duplicate_ids() -> None:
+    manifest = PluginManifest(
+        id="unsafe-package",
+        name="Unsafe Package",
+        version="0.1.0",
+        components=(
+            PluginComponent(kind="skill", id="same", path="../outside/SKILL.md"),
+            PluginComponent(kind="asset", id="same", path="C:\\temp\\asset.bin"),
+        ),
+    )
+
+    assert plugin_manifest_issues(manifest) == (
+        "invalid_component_path:../outside/SKILL.md",
+        "invalid_component_path:C:\\temp\\asset.bin",
+        "duplicate_component_id:same",
+    )
 
 
 def test_runtime_result_schema_is_core_owned() -> None:

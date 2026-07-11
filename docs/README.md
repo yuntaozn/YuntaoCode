@@ -53,8 +53,10 @@ new architecture note belongs.
 
 ## Extensions And External Providers
 
-- [plugin-system.md](plugin-system.md) describes the early extension contract,
-  external plugin direction, Capability Packs, and plugin boundaries.
+- [plugin-system.md](plugin-system.md) defines Plugin as a distributable
+  package, separates package manifests from Runtime-owned installation/review
+  state, and describes its relationship with skills, Capability Packs, MCP,
+  CLI, hooks, and future external providers.
 - [capability-packs.md](capability-packs.md) describes global user-data-level
   method skills, task templates, context packs, and tool adapter drafts.
 - [cli-providers.md](cli-providers.md) describes declarative local command

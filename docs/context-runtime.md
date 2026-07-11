@@ -142,6 +142,12 @@ UI 历史和审计记录应完整保留，但模型侧上下文需要卫生处�
 3. 由模型在 task contract 阶段决定是否引用某个 candidate。
 4. Runtime 只审计“模型引用了哪个候选任务”，不直接把旧任务目标强加给当前轮。
 
+续接关系也不等于目标冻结。模型判断当前请求为 `continue` 时，当前轮给出的具体
+goal 和 deliverable 仍然优先；历史锚点只补充候选路径和事实。只有“继续、再试一次”
+这类没有新语义目标的明确重试，或模型判断为 `revise` 且没有显式改换目标时，才保留
+上一轮的稳定目标。每轮完成归一化后都应生成新的 continuity anchor，避免旧目标在
+后续轮次中永久覆盖当前请求。
+
 这样可以避免两种极端：
 
 - 完全丢掉历史，导致追问无法理解。
@@ -368,6 +374,7 @@ Context Runtime 的 0.1 最小闭环已经成立：
 - Context Ledger 记录来源、信任度、新鲜度、任务归属和内容预览，使用户可以审计模型当时看到的是哪些事实。
 - Task lineage、previous contract、recovery context、tool result facts 和 final-answer candidate 都通过 Context Pack 暴露为事实，而不是隐藏路线控制。
 - Previous contract 与 task_lineage candidate 分开记录：前者只是上一任务契约的历史锚点，后者才是可由模型显式引用的历史任务候选，避免旧任务目标伪装成当前目标。
+- 续接任务保留可复用的历史路径事实，但当前模型给出的具体 goal 会更新 continuity anchor；历史 goal 不能覆盖新的明确子目标。
 - Memory 已区分 global 与 workspace 范围，避免跨项目记忆默认污染当前任务。
 - 视觉证据可以在模型支持时进入 image input，同时保留 `context.visual` / RunEvidence 审计记录。
 - Context Snapshot 可由 RunResult / recovery flow 生成，为暂停、恢复和显式 Replay Run 提供恢复依据。

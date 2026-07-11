@@ -16,6 +16,12 @@ from .automation import Automation, AutomationRun, AutomationTaskTemplate, Autom
 from .context import ContextRecord, ContextSnapshot, EvidenceRecord
 from .events import TraceEvent, build_trace_event
 from .experience import ExperienceDigest, ExperienceSample
+from .plugin_manifest import (
+    PluginCompatibility,
+    PluginComponent,
+    PluginInstallation,
+    PluginManifest,
+)
 from .result import RUN_RESULT_SCHEMA_VERSION, RuntimeResult
 from .skill_evolution import ReplayFixture, SkillCandidate, SkillPromotion, SkillReplayResult
 from .task import ProductTask, TaskPlan, TaskStep
@@ -36,6 +42,10 @@ __all__ = [
     "ExperienceDigest",
     "ExperienceSample",
     "PermissionSet",
+    "PluginCompatibility",
+    "PluginComponent",
+    "PluginInstallation",
+    "PluginManifest",
     "ProductTask",
     "RUN_RESULT_SCHEMA_VERSION",
     "ReplayFixture",

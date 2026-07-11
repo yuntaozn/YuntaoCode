@@ -134,6 +134,7 @@ def _tool_summary(runtime: Any) -> dict[str, Any]:
         tool_id = str(spec.get("id") or "")
         enabled = settings.is_tool_enabled(tool_id) if settings and hasattr(settings, "is_tool_enabled") else True
         available = runtime.is_tool_available(spec) if hasattr(runtime, "is_tool_available") else True
+        readiness = spec.get("readiness") if isinstance(spec.get("readiness"), dict) else {}
         tools.append({
             "id": tool_id,
             "name": str(spec.get("name") or ""),
@@ -141,6 +142,14 @@ def _tool_summary(runtime: Any) -> dict[str, Any]:
             "source_id": str(spec.get("source_id") or ""),
             "enabled": bool(enabled),
             "available": bool(available),
+            "tool_health": str(spec.get("tool_health") or readiness.get("health") or "available"),
+            "readiness": {
+                "code": str(readiness.get("code") or ""),
+                "message": str(readiness.get("message") or ""),
+                "details": dict(readiness.get("details") or {})
+                if isinstance(readiness.get("details"), dict)
+                else {},
+            },
             "requires_confirmation": bool(spec.get("requires_confirmation", False)),
             "long_running": bool(spec.get("long_running", False)),
             "retry_safe": bool(spec.get("retry_safe", False)),

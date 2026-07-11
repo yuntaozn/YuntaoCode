@@ -19,6 +19,13 @@ class FakeRegistry:
                 "artifacts": ["text"],
                 "effects": ["read"],
                 "roles": ["inspection"],
+                "available": False,
+                "tool_health": "unavailable",
+                "readiness": {
+                    "code": "runtime_dependency_missing",
+                    "message": "A runtime dependency is missing.",
+                    "details": {"dependency": "demo"},
+                },
             }
         ]
 
@@ -164,7 +171,7 @@ def test_diagnostic_export_is_sanitized_and_not_a_fixture(monkeypatch) -> None:
         registry=FakeRegistry(),
         settings=FakeSettings(),
         mcp_services=FakeMcpServices(),
-        is_tool_available=lambda spec: True,
+        is_tool_available=lambda spec: bool(spec.get("available", True)),
     )
 
     exported = build_diagnostic_export(runtime, run)
@@ -182,6 +189,9 @@ def test_diagnostic_export_is_sanitized_and_not_a_fixture(monkeypatch) -> None:
     assert "generated story content should not appear" not in text
     assert exported["settings"]["providers"]["demo"]["base_url_origin"] == "https://example.com"
     assert exported["tools"]["count"] == 1
+    assert exported["tools"]["available_count"] == 0
+    assert exported["tools"]["tools"][0]["tool_health"] == "unavailable"
+    assert exported["tools"]["tools"][0]["readiness"]["code"] == "runtime_dependency_missing"
     assert exported["mcp_services"]["services"][0]["session"]["state"] == "connected"
     assert exported["model_errors"]["count"] == 1
     assert exported["model_errors"]["latest"]["recoverable"] is True

@@ -314,9 +314,9 @@ def register_my_tools(registry: ToolRegistry):
 
 ### 本机能力包与插件契约
 
-当前版本提供的是内置插件能力管理：系统会按工具 ID 前缀展示 `filesystem`、`code`、`shell`、`git`、`web`、`preview` 等能力分组，并支持启停和依赖状态展示。
+当前版本提供的是能力来源管理：系统会按工具 ID 前缀展示 `filesystem`、`code`、`shell`、`git`、`web`、`preview` 等内置能力分组，并支持启停和依赖状态展示。这些分组不是已安装的第三方插件。
 
-这还不是插件市场，也不是远程更新系统。真正面向第三方扩展的插件 manifest、动态加载、权限声明和隔离机制仍属于后续基座工作。
+Plugin 在 YuntaoCode 中定义为可版本化、可分发的能力包容器，可包含 Skill、Capability Pack、MCP/CLI provider 描述和未来受控扩展。安装、审查、启用与实际执行彼此独立；当前只建立 manifest 和本机安装状态的数据契约，不提供动态加载、插件市场或远程自动更新。
 
 本机能力包见 [docs/capability-packs.md](docs/capability-packs.md)，插件契约草案见 [docs/plugin-system.md](docs/plugin-system.md)。当前仓库不包含外部插件样板目录；能力扩展示例只保留在文档中，避免把实验产物误认为已内置功能。
 
@@ -378,7 +378,7 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 * YuntaoCode 不是工具集合、聊天壳、MCP/CLI 客户端或 Skill 管理器。
 * 它的核心定位是本地优先的 AI Task Runtime。
 * 0.1 优先收束 Task / Context / Capability / Experience 四条主线。
-* MCP、CLI、内置工具、Capability Pack 和未来插件都应作为 Provider 接入 Capability Runtime，而不是各自形成一套执行体系。
+* MCP、CLI、内置工具和未来插件中的可执行组件作为 Provider 接入 Capability Runtime；Capability Pack、Skill 等非执行资产进入各自的选择路径，不另建执行体系。
 * 文档、代码、自动化、评测、Skill Evolution 和自我迭代都可以在基座上继续深化，但不压进 0.1 作为“必须完成的一切”。
 
 近期每一次调整都应先问一句：它是否帮助 0.1 收口？如果只是追逐新概念或新增场景，而不能让方向、状态、证据、能力边界更清楚，就应先放到后续阶段。

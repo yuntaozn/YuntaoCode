@@ -11,6 +11,7 @@ from .tool_aliases import TOOL_ID_ALIASES, normalize_tool_id, normalize_tool_syn
 
 
 ToolHandler = Callable[[dict[str, Any], Any], Awaitable[dict[str, Any]]]
+ToolReadinessProbe = Callable[[], dict[str, Any]]
 
 
 DEFAULT_TOOL_ID_ALIASES: dict[str, str] = TOOL_ID_ALIASES
@@ -33,6 +34,7 @@ class ToolSpec:
     long_running: bool = False
     retry_safe: bool = False
     idempotent: bool = False
+    readiness_probe: ToolReadinessProbe | None = None
 
     def check_dependencies(self) -> dict[str, bool]:
         if not self.optional_dependencies:
@@ -49,6 +51,8 @@ class ToolSpec:
         return result
 
     def to_public_dict(self) -> dict[str, Any]:
+        dependencies = self.check_dependencies()
+        readiness = self.check_readiness(dependencies=dependencies)
         data = {
             "id": self.id,
             "name": self.name,
@@ -56,7 +60,10 @@ class ToolSpec:
             "input_schema": self.input_schema,
             "requires_confirmation": self.requires_confirmation,
             "local_only": self.local_only,
-            "dependencies": self.check_dependencies(),
+            "dependencies": dependencies,
+            "available": bool(readiness.get("available", True)),
+            "tool_health": str(readiness.get("health") or "available"),
+            "readiness": readiness,
             "capability": self.capability,
             "artifacts": list(self.artifacts or []),
             "effects": list(self.effects or []),
@@ -67,7 +74,64 @@ class ToolSpec:
         }
         if self.verification_strength:
             data["verification_strength"] = self.verification_strength
+        message = str(readiness.get("message") or "").strip()
+        if message:
+            data["tool_last_error"] = message
         return data
+
+    def check_readiness(
+        self,
+        *,
+        dependencies: dict[str, bool] | None = None,
+    ) -> dict[str, Any]:
+        """Return runtime-readiness facts without executing the tool."""
+
+        dependency_state = dependencies if dependencies is not None else self.check_dependencies()
+        missing = sorted(name for name, ready in dependency_state.items() if not ready)
+        if missing:
+            return {
+                "available": False,
+                "health": "unavailable",
+                "code": "python_dependency_missing",
+                "message": f"Missing Python dependencies: {', '.join(missing)}",
+                "details": {"missing_dependencies": missing},
+            }
+        if self.readiness_probe is None:
+            return {
+                "available": True,
+                "health": "available",
+                "code": "ready",
+                "message": "",
+                "details": {},
+            }
+        try:
+            raw = self.readiness_probe()
+        except Exception as exc:
+            return {
+                "available": False,
+                "health": "unavailable",
+                "code": "readiness_probe_failed",
+                "message": f"Capability readiness probe failed: {exc}",
+                "details": {},
+            }
+        if not isinstance(raw, dict):
+            return {
+                "available": False,
+                "health": "unknown",
+                "code": "invalid_readiness_result",
+                "message": "Capability readiness probe returned an invalid result.",
+                "details": {},
+            }
+        health = str(raw.get("health") or "").strip().lower()
+        if health not in {"available", "degraded", "unavailable", "unknown"}:
+            health = "available" if bool(raw.get("available", True)) else "unavailable"
+        return {
+            "available": bool(raw.get("available", health != "unavailable")),
+            "health": health,
+            "code": str(raw.get("code") or "ready"),
+            "message": str(raw.get("message") or ""),
+            "details": dict(raw.get("details") or {}) if isinstance(raw.get("details"), dict) else {},
+        }
 
 
 @dataclass(frozen=True)

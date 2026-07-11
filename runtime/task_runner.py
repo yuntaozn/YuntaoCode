@@ -72,6 +72,7 @@ class TaskRunner:
         self.backup_store = backup_store
         self.settings = settings
         self.attachment_store = attachment_store
+        self._active_tasks: dict[str, asyncio.Task[None]] = {}
 
     async def submit(
         self,
@@ -117,8 +118,30 @@ class TaskRunner:
         if wait:
             await coro
         else:
-            asyncio.create_task(coro)
+            active_task = asyncio.create_task(coro)
+            self._active_tasks[task.id] = active_task
+            active_task.add_done_callback(
+                lambda completed, task_id=task.id: self._discard_active_task(
+                    task_id,
+                    completed,
+                )
+            )
         return self.store.get(task.id) or task
+
+    def cancel(self, task_id: str) -> bool:
+        active_task = self._active_tasks.get(task_id)
+        if active_task is None or active_task.done():
+            return False
+        active_task.cancel()
+        return True
+
+    def _discard_active_task(
+        self,
+        task_id: str,
+        completed: asyncio.Task[None],
+    ) -> None:
+        if self._active_tasks.get(task_id) is completed:
+            self._active_tasks.pop(task_id, None)
 
     async def _run(
         self,
@@ -233,6 +256,18 @@ class TaskRunner:
             else:
                 self.store.update(task_id, status="success", output=output)
                 self.store.append_log(task_id, "info", "task completed")
+        except asyncio.CancelledError:
+            self.store.update(
+                task_id,
+                status="cancelled",
+                error="tool task cancelled",
+            )
+            self.store.append_log(
+                task_id,
+                "warning",
+                "tool task cancelled; child process cleanup requested",
+                {"reason": "run_cancelled"},
+            )
         except Exception as exc:
             if backup_session:
                 try:

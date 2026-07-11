@@ -86,17 +86,22 @@ def apply_task_continuity(
         or retargets_read_only_anchor_to_state_change
         or current_explicit_local_target
     )
+    preserve_anchor_semantics = preserve_anchor_target and (
+        relation == "revise"
+        or looks_like_task_revision_followup(current_user_content)
+        or not _clean_text(result.get("goal"), 240)
+    )
 
-    if "goal" in anchor and preserve_anchor_target:
+    if "goal" in anchor and preserve_anchor_semantics:
         result["goal"] = deepcopy(anchor["goal"])
-    if "capability_ids" in anchor and preserve_anchor_target:
+    if "capability_ids" in anchor and preserve_anchor_semantics:
         result["capability_ids"] = _merge_capability_ids(
             anchor.get("capability_ids"),
             result.get("capability_ids"),
         )
     if (
         anchored_deliverables
-        and preserve_anchor_target
+        and preserve_anchor_semantics
         and not _deliverables_are_answer_only(anchored_deliverables)
     ):
         result["deliverables"] = deepcopy(anchored_deliverables)
@@ -152,7 +157,7 @@ def apply_task_continuity(
         else anchor.get("required_verification_modalities"),
         result.get("required_verification_modalities"),
     )
-    if preserve_anchor_target and not retargets_read_only_answer:
+    if preserve_anchor_semantics and not retargets_read_only_answer:
         result["expected_document_coverage"] = (
             bool(anchor.get("expected_document_coverage"))
             or bool(result.get("expected_document_coverage"))
@@ -161,14 +166,8 @@ def apply_task_continuity(
             _safe_int(anchor.get("expected_min_output_chars")),
             _safe_int(result.get("expected_min_output_chars")),
         )
-    result["continuity_anchor"] = (
-        task_continuity_anchor(result)
-        if retargets_local_file_state
-        or retargets_read_only_answer
-        or retargets_read_only_anchor_to_state_change
-        or current_explicit_local_target
-        else anchor
-    )
+    result.pop("continuity_anchor", None)
+    result["continuity_anchor"] = task_continuity_anchor(result)
     result["revision_request"] = _clean_text(current_user_content, 500)
     result["source"] = "model_with_task_anchor"
     result["success_conditions"] = success_conditions_for_contract(result)

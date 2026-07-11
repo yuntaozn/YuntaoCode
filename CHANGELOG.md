@@ -74,6 +74,24 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ### Changed
 
+- Context continuity now keeps runtime-observed history as candidate evidence
+  without replacing a specific current model goal with the previous goal.
+  Successful no-op code edits are rejected as correctable tool failures, and
+  verification prompts distinguish earlier attempts from evidence gathered
+  after the latest state change.
+- Shell ToolTasks now stream bounded stdout/stderr into live tool logs, emit
+  heartbeats while silent, preserve those logs in the conversation process
+  record, and terminate child process trees when a stopped Run cancels the
+  tool. Dependency-install commands use a longer default timeout while
+  explicit timeouts and the existing confirmation policy remain authoritative.
+- Tool availability now combines Python dependency checks with optional
+  runtime readiness probes. Browser-backed capabilities distinguish the
+  Playwright package from its managed Chromium binary, expose degraded or
+  unavailable reasons to capability preflight, and include those facts in
+  diagnostic exports.
+- Multi-artifact RunResult verification now preserves structural evidence for
+  the latest successful write of each target path instead of discarding
+  earlier files when a later deliverable is written.
 - Scoped composer submission, send-button, and streaming-status state to the
   current conversation so separate conversations can run in parallel without
   occupying each other's controls.

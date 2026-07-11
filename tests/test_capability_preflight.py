@@ -355,6 +355,15 @@ def test_preflight_adds_soft_visual_advisory_when_no_healthy_visual_tool() -> No
         item["code"] == "visual_verification_path_uncertain"
         for item in result["advisories"]
     )
+    readiness = next(
+        item for item in result["advisories"]
+        if item["code"] == "visual_verification_provider_unavailable"
+    )
+    assert readiness["tools"] == [{
+        "tool_id": "mcp_blender.get_viewport_screenshot",
+        "health": "degraded",
+        "message": "Unknown command type: get_viewport_screenshot",
+    }]
 
 
 def test_preflight_exposes_visual_verification_tools_for_code_task() -> None:

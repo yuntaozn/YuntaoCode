@@ -132,6 +132,8 @@ class RuntimeState:
     capability_packs: CapabilityPackStore | None
 
     def is_tool_available(self, spec: dict[str, Any]) -> bool:
+        if not bool(spec.get("available", True)):
+            return False
         if spec.get("source_type") != "mcp":
             if spec.get("source_type") == "cli" or spec.get("provider_kind") == "cli":
                 if self.cli_providers is None:

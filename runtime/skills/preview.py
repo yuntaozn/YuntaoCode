@@ -14,6 +14,10 @@ from typing import Any
 from urllib.parse import quote
 
 from runtime.debug_session import build_debug_session
+from runtime.browser_runtime import (
+    playwright_chromium_readiness,
+    playwright_optional_html_readiness,
+)
 from runtime.tool_registry import ToolRegistry, ToolSpec
 from runtime.visual_evidence import build_visual_evidence
 
@@ -1815,6 +1819,7 @@ def register_preview_tools(registry: ToolRegistry) -> None:
             roles=["verification"],
             verification_strength="standard",
             retry_safe=True,
+            readiness_probe=playwright_chromium_readiness,
         ),
         capture_url,
     )
@@ -1851,6 +1856,7 @@ def register_preview_tools(registry: ToolRegistry) -> None:
             roles=["verification"],
             verification_strength="standard",
             retry_safe=True,
+            readiness_probe=playwright_chromium_readiness,
         ),
         capture_local_html,
     )
@@ -1888,6 +1894,7 @@ def register_preview_tools(registry: ToolRegistry) -> None:
             roles=["verification"],
             verification_strength="standard",
             retry_safe=True,
+            readiness_probe=playwright_optional_html_readiness,
         ),
         capture_file,
     )
@@ -1957,6 +1964,7 @@ def register_preview_tools(registry: ToolRegistry) -> None:
             roles=["verification"],
             verification_strength="standard",
             retry_safe=True,
+            readiness_probe=playwright_chromium_readiness,
         ),
         interact_page,
     )

@@ -641,6 +641,48 @@ def test_continuity_preserves_observed_target_when_current_hint_is_broad() -> No
     assert contract["goal"] == previous["goal"]
 
 
+def test_continue_with_specific_current_goal_does_not_restore_stale_anchor_goal() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "Change the step selector background to dark",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual"],
+        "capability_ids": ["code.text_write"],
+        "deliverables": [
+            {"kind": "code", "path_hint": "lesson/styles.css"}
+        ],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "continue",
+            "intent": "write_required",
+            "goal": "Update all camera and target coordinates in the lesson configuration",
+            "requires_write": True,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "required_verification_modalities": ["visual", "behavioral"],
+            "capability_ids": ["code.text_write"],
+            "deliverables": [
+                {"kind": "code", "path_hint": "lesson"}
+            ],
+            "referenced_task_candidate_id": "previous-run",
+        },
+        _fallback("answer_only"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content='{"activeStep":"abnormal","stepViews":{"layout":{}}}',
+    )
+
+    assert contract["goal"].startswith("Update all camera")
+    assert contract["deliverables"] == proposed["deliverables"]
+    assert contract["continuity_anchor"]["goal"] == contract["goal"]
+
+
 def test_continuity_keeps_exact_anchor_when_current_hint_is_parent_directory() -> None:
     previous = {
         "intent": "write_required",

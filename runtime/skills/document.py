@@ -20,6 +20,7 @@ from runtime.document_drafts import (
     load_draft,
     save_draft,
 )
+from runtime.browser_runtime import playwright_chromium_readiness
 from runtime.tool_registry import ToolRegistry, ToolSpec
 
 
@@ -2430,6 +2431,7 @@ def register_document_tools(registry: ToolRegistry) -> None:
             artifacts=["pdf"],
             long_running=True,
             idempotent=True,
+            readiness_probe=playwright_chromium_readiness,
         ),
         export_pdf,
     )

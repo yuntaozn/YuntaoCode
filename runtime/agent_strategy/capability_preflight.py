@@ -399,6 +399,21 @@ def preflight_task_capabilities(
         if "visual" in _required_verification_modalities(contract)
         else []
     )
+    if "visual" in _required_verification_modalities(contract) and not visual_verification_tool_ids:
+        visual_readiness = _visual_readiness_issues(snapshot)
+        if visual_readiness:
+            details = "; ".join(
+                f"{item['tool_id']} ({item['health']}): {item['message']}"
+                for item in visual_readiness[:4]
+            )
+            advisories.append({
+                "code": "visual_verification_provider_unavailable",
+                "message": (
+                    "Visual verification providers are currently unavailable or degraded. "
+                    f"Known readiness facts: {details}"
+                ),
+                "tools": visual_readiness[:4],
+            })
     preferred_tool_ids = _preferred_tool_ids(
         contract,
         snapshot,
@@ -575,6 +590,31 @@ def _visual_verification_tool_ids(snapshot: dict[str, Any]) -> list[str]:
         if _tool_snapshot_roles(snapshot, tool_id) & {"verification", "evidence"}
     ]
     return sorted(dict.fromkeys(candidates), key=_visual_tool_prompt_order)
+
+
+def _visual_readiness_issues(snapshot: dict[str, Any]) -> list[dict[str, str]]:
+    health = snapshot.get("tool_health") if isinstance(snapshot.get("tool_health"), dict) else {}
+    last_errors = (
+        snapshot.get("tool_last_errors")
+        if isinstance(snapshot.get("tool_last_errors"), dict)
+        else {}
+    )
+    tool_ids = set(_string_list(snapshot.get("tool_ids")))
+    result: list[dict[str, str]] = []
+    for tool_id in sorted(tool_ids, key=_visual_tool_prompt_order):
+        tool_health = str(health.get(tool_id) or "available").strip().lower()
+        if tool_health == "available":
+            continue
+        if not _tool_supports_visual_artifact(snapshot, tool_id):
+            continue
+        if not (_tool_snapshot_roles(snapshot, tool_id) & {"verification", "evidence"}):
+            continue
+        result.append({
+            "tool_id": tool_id,
+            "health": tool_health,
+            "message": str(last_errors.get(tool_id) or "runtime dependency is not ready"),
+        })
+    return result
 
 
 def _visual_tool_prompt_order(tool_id: str) -> tuple[int, str]:

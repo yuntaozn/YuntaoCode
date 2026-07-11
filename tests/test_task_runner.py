@@ -59,6 +59,12 @@ async def _backup_then_success_handler(input_data: dict[str, Any], context: Any)
     return {"ok": True}
 
 
+async def _long_running_handler(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
+    context.log("info", "long task started")
+    await asyncio.sleep(30)
+    return {"ok": True}
+
+
 def _build_runner(
     tmp_path: Path,
     *,
@@ -114,6 +120,15 @@ def _build_runner(
             input_schema={"type": "object"},
         ),
         _temp_dir_handler,
+    )
+    registry.register(
+        ToolSpec(
+            id="demo.long_running",
+            name="Long Running",
+            description="Long-running tool used for cancellation tests",
+            input_schema={"type": "object"},
+        ),
+        _long_running_handler,
     )
     return TaskRunner(
         registry=registry,
@@ -238,6 +253,35 @@ def test_task_runner_reuses_artifact_scope_across_tool_tasks(tmp_path: Path) -> 
     assert first.id != second.id
     assert first.output["temp_dir"] == second.output["temp_dir"]
     assert Path(first.output["temp_dir"]).name == "run-123"
+
+
+@pytest.mark.asyncio
+async def test_task_runner_cancels_background_tool_task(tmp_path: Path) -> None:
+    runner = _build_runner(tmp_path)
+    task = await runner.submit(
+        "demo.long_running",
+        {},
+        wait=False,
+        confirmed=True,
+    )
+
+    for _ in range(50):
+        current = runner.store.get(task.id)
+        if current and current.status == "running":
+            break
+        await asyncio.sleep(0.01)
+
+    assert runner.cancel(task.id) is True
+    for _ in range(100):
+        current = runner.store.get(task.id)
+        if current and current.status == "cancelled":
+            break
+        await asyncio.sleep(0.01)
+
+    current = runner.store.get(task.id)
+    assert current is not None
+    assert current.status == "cancelled"
+    assert current.error == "tool task cancelled"
 
 
 def test_ai_plugin_workspace_guard_blocks_write_file_to_workspace_draft(tmp_path: Path) -> None:

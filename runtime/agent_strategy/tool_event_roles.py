@@ -192,17 +192,45 @@ def deliverable_verification_events(
         return []
 
     deliverable_ids = {id(event) for event in deliverables}
-    latest_index = max(index for index, event in enumerate(tool_events) if id(event) in deliverable_ids)
+    deliverable_indexes = [
+        index for index, event in enumerate(tool_events)
+        if id(event) in deliverable_ids
+    ]
+    latest_index = max(deliverable_indexes)
     deliverable_paths = contract_deliverable_paths(task_contract)
     for event in deliverables:
         deliverable_paths.update(event_path_hints(event))
 
-    scoped = tool_events[latest_index:]
-    return [
-        event
-        for event in scoped
-        if _is_verification_event(event, mode, written_paths=deliverable_paths)
-    ]
+    latest_deliverables = _latest_deliverables_by_path(tool_events, deliverable_ids)
+    candidates = [*latest_deliverables, *tool_events[latest_index:]]
+    result: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for event in candidates:
+        event_id = id(event)
+        if event_id in seen:
+            continue
+        seen.add(event_id)
+        if _is_verification_event(event, mode, written_paths=deliverable_paths):
+            result.append(event)
+    return result
+
+
+def _latest_deliverables_by_path(
+    tool_events: list[dict[str, Any]],
+    deliverable_ids: set[int],
+) -> list[dict[str, Any]]:
+    """Keep the latest deliverable event for every observed artifact path."""
+
+    latest: dict[str, tuple[int, dict[str, Any]]] = {}
+    for index, event in enumerate(tool_events):
+        if id(event) not in deliverable_ids:
+            continue
+        paths = event_path_hints(event)
+        keys = paths or {"__pathless_deliverable__"}
+        for path in keys:
+            latest[path] = (index, event)
+    unique = {id(event): (index, event) for index, event in latest.values()}
+    return [event for index, event in sorted(unique.values(), key=lambda item: item[0])]
 
 
 def sufficient_deliverable_verification_events(
@@ -275,6 +303,31 @@ def task_verification_events(
         for event in tool_events
         if _is_verification_event(event, mode, written_paths=event_path_hints(event))
     ]
+
+
+def verification_attempt_events(
+    tool_events: list[dict[str, Any]],
+    *,
+    mode: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return attempted verification actions, including unsuccessful evidence.
+
+    Attempt history is diagnostic evidence only. It must not be used as proof
+    that the task was verified.
+    """
+
+    result: list[dict[str, Any]] = []
+    for event in tool_events:
+        output = event.get("output") if isinstance(event.get("output"), dict) else {}
+        if (
+            VERIFICATION in event_declared_roles(event)
+            or _event_has_visual_artifact(event)
+            or bool(output.get("runtime_diagnostics"))
+            or is_test_verification_event(event)
+            or is_structural_verification_event(event)
+        ):
+            result.append(event)
+    return result
 
 
 def sufficient_task_verification_events(

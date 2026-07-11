@@ -15,6 +15,7 @@ from urllib.parse import urljoin, urlparse
 
 import tornado.httpclient
 
+from runtime.browser_runtime import playwright_chromium_readiness
 from runtime.tool_registry import ToolRegistry, ToolSpec
 
 
@@ -853,6 +854,7 @@ def register_web_tools(registry: ToolRegistry) -> None:
             },
             local_only=False,
             optional_dependencies=["playwright"],
+            readiness_probe=playwright_chromium_readiness,
         ),
         render_page,
     )
@@ -920,6 +922,7 @@ def register_web_tools(registry: ToolRegistry) -> None:
             artifacts=["pdf", "screenshot"],
             long_running=True,
             retry_safe=True,
+            readiness_probe=playwright_chromium_readiness,
         ),
         capture_page,
     )

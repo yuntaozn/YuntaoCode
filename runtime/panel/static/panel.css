@@ -1202,6 +1202,57 @@ button {
     border-color: rgba(245, 158, 11, 0.22);
 }
 
+.tool-live-logs {
+    margin: 0 0 8px;
+    border: 1px solid rgba(47, 111, 98, 0.16);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #1e1e1e;
+}
+
+.tool-live-logs summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+    color: #c9d5d1;
+    cursor: pointer;
+    font-size: 12px;
+    list-style: none;
+}
+
+.tool-live-logs summary::-webkit-details-marker {
+    display: none;
+}
+
+.tool-live-logs summary em {
+    color: #8ba29a;
+    font-style: normal;
+}
+
+.tool-live-logs pre {
+    margin: 0;
+    padding: 9px 10px;
+    max-height: 240px;
+    overflow: auto;
+    color: #d4d4d4;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.tool-log-line {
+    display: block;
+}
+
+.tool-log-line.stderr {
+    color: #f48771;
+}
+
 /* Tool output: shell */
 .tool-output-shell {
     margin: 4px 0 8px;

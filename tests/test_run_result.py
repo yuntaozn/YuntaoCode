@@ -855,6 +855,42 @@ def test_build_run_result_audits_alternative_hinted_deliverable_path() -> None:
     ]
 
 
+def test_build_run_result_keeps_verification_for_each_written_artifact() -> None:
+    paths = ["index.html", "style.css", "main.js"]
+    contract = {
+        "requires_write": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["structural"],
+        "deliverables": [
+            {"kind": "code", "path_hint": f"D:/workspace/{path}", "path_policy": "exact"}
+            for path in paths
+        ],
+    }
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="coding",
+        change_summary={"files": [{"path": path} for path in paths]},
+        requires_code_write=True,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "filesystem.finalize_text_file",
+                "status": "success",
+                "input": {"output_path": f"D:/workspace/{path}"},
+                "output": {
+                    "path": f"D:/workspace/{path}",
+                    "validation": {"valid": True, "text_chars": 1000},
+                },
+            }
+            for path in paths
+        ],
+    )
+
+    assert result["counts"]["verification_successes"] == 3
+    assert [item["path"] for item in result["verification_evidence"]] == paths
+    assert result["missing_verification_modalities"] == []
+
+
 def test_build_run_result_accepts_verified_external_state_deliverable() -> None:
     contract = {
         "requires_write": False,

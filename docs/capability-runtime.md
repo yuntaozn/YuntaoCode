@@ -257,6 +257,24 @@ Evidence Context 的增强，不是任务路由、验证替代品或系统级自
 RunResult 理解“实际运行过什么、运行到哪里、失败在哪里”，而不是让 Runtime 替模型
 决定下一步策略。
 
+子进程可观察性属于 ToolTask 执行契约，而不是某个安装器的特例：
+
+- stdout/stderr 在进程运行中增量写入 ToolTask 日志，并通过现有 `tool_log` 事件显示；
+- 输出需要节流和有界保留，避免高频日志拖垮本地任务存储；
+- 长时间无输出时发送带已运行时间和静默时间的心跳，但不据此判断任务策略；
+- 普通命令保持较短默认超时，已识别的依赖安装使用较长默认超时，显式 timeout 仍由调用者决定；
+- 停止 Run 时取消应传播到 ToolTask，并请求终止其子进程树；
+- 命令角色只用于超时、确认文案和审计展示，不应成为隐藏任务路由器。
+
+工具成功也必须代表真实的可观察变化。文件编辑中 `old_text` 与 `new_text` 最终解析为
+相同内容、行范围替换没有改变文件等 no-op 情况，应返回可纠正的工具失败，不能生成
+虚假 diff、备份或写入证据。这样模型可以修正参数，进展判断也不会因为一次空操作被
+错误重置。
+
+验证证据具有时间关系：发生在最新写入或外部状态变化之前的截图、测试或查询，只能
+作为历史验证尝试和错误诊断，不能证明当前状态。Runtime 应把“证据已过期”和原验证
+错误一起反馈给模型，由模型决定重新验证、继续修复、换路线或如实收束。
+
 ## Cross-platform Baseline
 
 YuntaoCode 宣称支持 Windows、macOS 和 Linux 时，默认含义不是所有外部工具在三端都天然存在，而是 Runtime 核心和基础能力在三端都有清晰边界：
@@ -295,7 +313,8 @@ User Request
 - 内置工具属于内置 capability provider。
 - 受控 CLI 属于 `cli` provider，而不是裸 shell 能力。
 - AI-built Capability Pack 属于未加载 pack asset；其中的 tool adapter 草稿仍是未加载 draft provider。
-- 外部插件未来属于本地或受控 provider。
+- 外部插件是可分发包；其中的可执行组件未来作为本地或受控 provider 接入，
+  Skill、Capability Pack 等非执行组件仍走各自的选择与上下文路径。
 - MCP 工具属于外部 capability provider。
 所有 provider 都需要走同样的能力声明、权限、确认、Trace、RunResult。
 
@@ -368,18 +387,31 @@ Current built-in local file capability split:
 
 Capability Runtime 的 0.1 Provider 边界已经收束到同一套原则：
 
-- Built-in tools, CLI providers, MCP providers, Capability Packs, and future
-  plugins are capability providers. None of them owns task state, planning,
-  completion, replay, or audit.
+- Built-in tools, CLI providers, MCP providers, and future executable plugin
+  components are capability providers. Capability Packs and non-executable
+  plugin components are capability assets. None of them owns task state,
+  planning, completion, replay, or audit.
 - Provider metadata must normalize into ToolSpec / Capability facts:
   artifacts, effects, roles, permissions, verification strength, provider kind,
   provider id, availability, health, and last error.
+- Tool availability is layered runtime evidence, not a package-import shortcut:
+  dependency installed -> provider/runtime dependency ready -> tool available
+  or degraded -> capability snapshot. `ToolSpec.readiness_probe` reports
+  `available`, `health`, `code`, `message`, and bounded details without
+  executing the task or choosing its strategy. Browser-backed tools use this
+  to distinguish the Playwright Python package from its managed Chromium
+  binary; CLI and MCP lifecycle facts combine with the same boundary.
 - `capability_preflight.v2` is advisory. It provides readiness issues,
   preferred tools, visual verification tools, and route hints, but it does not
   hide tools, stop runs, or force fallback rules.
 - Tool execution guards remain the hard boundary for PathGuard, permissions,
   confirmation, disabled providers, unavailable services, malformed arguments,
   and unsafe state changes.
+- Multi-artifact verification is owned per target artifact. The latest
+  successful write for each path may contribute structural evidence; writing a
+  later file must not erase evidence for earlier files. Task-level verification
+  aggregates those facts with later tests, visual captures, and behavioral
+  checks.
 - MCP lifecycle state is a provider health fact: stopped, process running,
   protocol disconnected, connected, discovered, degraded, or unavailable. It
   must flow into capability evidence instead of creating Blender-specific or
@@ -404,7 +436,7 @@ cross-platform adapter checks can continue after 0.1.
 2. 在 task_contract 之后增加可选 RouteProposal 验证事件。
 3. 继续把 artifact、capability_id 和验证规则沉淀为可测试的 evidence schema。
 4. 将 CLI provider 设计为声明式能力来源，而不是开放任意 shell。
-5. 前端插件页区分 built-in capability、CLI provider、MCP provider、AI draft、future external provider。
+5. 前端能力页区分 built-in capability、CLI provider、MCP provider、Capability Pack、AI draft 和 future external provider；不要把这些来源都标成已安装插件。
 
 中期建议：
 

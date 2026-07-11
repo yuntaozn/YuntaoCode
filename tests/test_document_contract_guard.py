@@ -110,6 +110,26 @@ def test_runtime_confirmation_message_describes_file_overwrite(tmp_path: Path) -
     assert f"目标：{target}" in message
 
 
+def test_runtime_confirmation_message_describes_dependency_install() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    handler._tool_display_name = lambda _tool_id: "执行终端命令"
+
+    message = handler._runtime_confirmation_message(
+        "shell.run_command",
+        {
+            "command": "python",
+            "args": ["-m", "playwright", "install", "chromium"],
+            "cwd": r"D:\code\demo",
+        },
+    )
+
+    assert "操作：安装或更新运行依赖" in message
+    assert "命令：python" in message
+    assert "参数：-m playwright install chromium" in message
+    assert r"工作目录：D:\code\demo" in message
+    assert "最长运行：600 秒" in message
+
+
 def test_runtime_confirmation_message_describes_external_mcp_operation() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
     handler._tool_display_name = lambda _tool_id: "execute_blender_code"
@@ -404,6 +424,62 @@ def test_verifier_retry_prompt_uses_task_level_evidence_for_verification_only_ta
     assert "observed_modalities=content" in prompt
     assert "missing_modalities=behavioral" in prompt
     assert "preview.interact_page" in prompt
+
+
+def test_verifier_retry_prompt_marks_evidence_stale_after_later_write() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    path = r"D:\workspace\site\index.html"
+    contract = {
+        "requires_write": True,
+        "requires_verification": True,
+        "workspace_path": r"D:\workspace\site",
+        "deliverables": [{"kind": "code", "path_hint": path}],
+        "required_verification_modalities": ["visual"],
+    }
+    events = [
+        {
+            "tool": "code.edit_file",
+            "status": "success",
+            "input": {"path": path},
+            "output": {"path": path},
+        },
+        {
+            "tool": "preview.capture_local_html",
+            "status": "success",
+            "declared_roles": ["verification"],
+            "input": {"path": path},
+            "output": {
+                "path": r"D:\runtime\before.png",
+                "artifact_kind": "screenshot",
+                "has_runtime_errors": True,
+                "runtime_diagnostics": [
+                    {
+                        "code": "browser_page_error",
+                        "severity": "error",
+                        "message": "Unexpected identifier 'time'",
+                    }
+                ],
+            },
+        },
+        {
+            "tool": "code.edit_file",
+            "status": "success",
+            "input": {"path": path},
+            "output": {"path": path},
+        },
+    ]
+
+    prompt = handler._verifier_retry_prompt(
+        "coding",
+        r"D:\workspace\site",
+        task_contract=contract,
+        tool_events=events,
+        capability_preflight={"visual_verification_tool_ids": ["preview.capture_local_html"]},
+    )
+
+    assert "verification_evidence_stale_after_state_change" in prompt
+    assert "Earlier verification attempt before the latest state change" in prompt
+    assert "Unexpected identifier 'time'" in prompt
 
 
 def test_execution_notice_reports_invalid_verification_method() -> None:

@@ -489,6 +489,7 @@ const LOCALES = {
         "tools.stopped_reason": "停止原因：",
         "tools.exit_code_0": "✓ 退出码 0",
         "tools.exit_code": "✗ 退出码 {code}",
+        "tools.live_output": "运行输出",
 
         // === Plugins (JS) ===
         "plugins.enabled": "已启用",
@@ -1290,6 +1291,7 @@ const LOCALES = {
         "tools.stopped_reason": "Stopped reason: ",
         "tools.exit_code_0": "Exit code 0",
         "tools.exit_code": "Exit code {code}",
+        "tools.live_output": "Live output",
 
         // === Plugins ===
         "plugins.enabled": "Enabled",

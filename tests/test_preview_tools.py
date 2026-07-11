@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from runtime.browser_runtime import _find_chromium_executable
 from runtime.security import PathGuard
 from runtime.skills.preview import (
     _build_preview_diagnostics,
@@ -22,6 +23,19 @@ from runtime.tool_registry import ToolRegistry
 GOTO_URLS: list[str] = []
 EMIT_CONSOLE_ERROR = True
 FAIL_CLICK_SELECTORS: set[str] = set()
+
+
+def test_browser_readiness_finds_managed_chromium_binary(tmp_path: Path) -> None:
+    executable = (
+        tmp_path
+        / "chromium_headless_shell-1234"
+        / "chrome-headless-shell-win64"
+        / "chrome-headless-shell.exe"
+    )
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"browser")
+
+    assert _find_chromium_executable((tmp_path,)) == executable
 
 
 @dataclass

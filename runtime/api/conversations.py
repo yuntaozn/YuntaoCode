@@ -58,6 +58,7 @@ from runtime.run_result_presenter import (
     synthesize_final_answer,
     synthesize_partial_answer,
 )
+from runtime.shell_command_facts import shell_command_facts
 from runtime.task_runner import ToolContext
 from runtime import tool_event_presentation as _tool_present
 
@@ -1793,6 +1794,18 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             lines.append(f"风险类型：{decision.risk}")
         if target:
             lines.append(f"目标：{target}")
+        if tool_id == "shell.run_command":
+            command = str(arguments.get("command") or "").strip()
+            args = arguments.get("args")
+            argv = [str(item) for item in args] if isinstance(args, (list, tuple)) else []
+            facts = shell_command_facts(command, argv)
+            if command:
+                lines.append(f"命令：{command}")
+            if argv:
+                lines.append(f"参数：{' '.join(argv)[:500]}")
+            if arguments.get("cwd"):
+                lines.append(f"工作目录：{arguments['cwd']}")
+            lines.append(f"最长运行：{arguments.get('timeout', facts.default_timeout)} 秒")
         if tool_id == "filesystem.write_file" and isinstance(arguments.get("content"), str):
             lines.append(f"内容大小：{len(arguments['content'])} 字符")
         lines.append("确认后会在本地工作区执行；5 分钟内未响应将自动取消。")
@@ -1825,6 +1838,11 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     ) -> str:
         if tool_id == "code.apply_patch":
             return "应用代码补丁"
+        if tool_id == "shell.run_command":
+            return shell_command_facts(
+                arguments.get("command"),
+                arguments.get("args"),
+            ).operation_label
         if tool_id == "filesystem.delete_file":
             return "Delete file"
         if tool_id.startswith("mcp_"):
@@ -1969,51 +1987,55 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         last_log_count = len(task.logs)
         last_progress_at = started_at
         last_heartbeat_at = started_at
-        while task.status in {"queued", "running"}:
-            elapsed_before_poll = asyncio.get_running_loop().time() - started_at
-            await asyncio.sleep(_tool_task_poll_interval(elapsed_before_poll))
-            current = self.runtime.tool_tasks.get(task.id) or task
-            new_logs = current.logs[last_log_count:]
-            emitted_progress = False
-            if new_logs:
-                last_log_count = len(current.logs)
-                last_progress_at = asyncio.get_running_loop().time()
-                for log_event in new_logs[-3:]:
+        try:
+            while task.status in {"queued", "running"}:
+                elapsed_before_poll = asyncio.get_running_loop().time() - started_at
+                await asyncio.sleep(_tool_task_poll_interval(elapsed_before_poll))
+                current = self.runtime.tool_tasks.get(task.id) or task
+                new_logs = current.logs[last_log_count:]
+                emitted_progress = False
+                if new_logs:
+                    last_log_count = len(current.logs)
+                    last_progress_at = asyncio.get_running_loop().time()
+                    for log_event in new_logs[-3:]:
+                        self.write_event({
+                            "event": "tool_log",
+                            "tool": tool_id,
+                            "name": self._tool_display_name(tool_id),
+                            "task_id": task.id,
+                            "level": log_event.get("level"),
+                            "message": log_event.get("message"),
+                            "data": log_event.get("data") or {},
+                        })
+                    emitted_progress = True
+                task = current
+                if task.status not in {"queued", "running"}:
+                    if emitted_progress:
+                        await self.flush()
+                    break
+                now = asyncio.get_running_loop().time()
+                if now - last_heartbeat_at >= _TOOL_TASK_HEARTBEAT_SECONDS:
+                    last_heartbeat_at = now
+                    elapsed = int(now - started_at)
+                    stale_seconds = int(now - last_progress_at)
+                    progress = self._tool_progress_snapshot(tool_id, task)
                     self.write_event({
-                        "event": "tool_log",
+                        "event": "heartbeat",
+                        "message": self._tool_progress_message(tool_id, task, elapsed, stale_seconds, progress),
+                        "idle_seconds": elapsed,
                         "tool": tool_id,
                         "name": self._tool_display_name(tool_id),
                         "task_id": task.id,
-                        "level": log_event.get("level"),
-                        "message": log_event.get("message"),
-                        "data": log_event.get("data") or {},
+                        "task_status": task.status,
+                        "stale_seconds": stale_seconds,
+                        "progress": progress,
                     })
-                emitted_progress = True
-            task = current
-            if task.status not in {"queued", "running"}:
+                    emitted_progress = True
                 if emitted_progress:
                     await self.flush()
-                break
-            now = asyncio.get_running_loop().time()
-            if now - last_heartbeat_at >= _TOOL_TASK_HEARTBEAT_SECONDS:
-                last_heartbeat_at = now
-                elapsed = int(now - started_at)
-                stale_seconds = int(now - last_progress_at)
-                progress = self._tool_progress_snapshot(tool_id, task)
-                self.write_event({
-                    "event": "heartbeat",
-                    "message": self._tool_progress_message(tool_id, task, elapsed, stale_seconds, progress),
-                    "idle_seconds": elapsed,
-                    "tool": tool_id,
-                    "name": self._tool_display_name(tool_id),
-                    "task_id": task.id,
-                    "task_status": task.status,
-                    "stale_seconds": stale_seconds,
-                    "progress": progress,
-                })
-                emitted_progress = True
-            if emitted_progress:
-                await self.flush()
+        except asyncio.CancelledError:
+            self.runtime.runner.cancel(task.id)
+            raise
         task = self.runtime.tool_tasks.get(task.id) or task
         output_preview = self._tool_output_preview(tool_id, task.output)
         task_error = task.error
@@ -2547,26 +2569,60 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         if not isinstance(task_contract, dict):
             return []
         workspace = str(workspace_path or task_contract.get("workspace_path") or "")
-        verifications = _event_roles.task_verification_events(
-            tool_events or [],
+        events = tool_events or []
+        verifications = _event_roles.verification_attempt_events(events, mode=mode)
+        deliverables = _event_roles.successful_deliverable_events(
+            events,
             task_contract=task_contract,
             workspace_path=workspace,
             mode=mode,
         )
+        event_indexes = {id(event): index for index, event in enumerate(events)}
+        latest_deliverable_index = max(
+            (event_indexes.get(id(event), -1) for event in deliverables),
+            default=-1,
+        )
+        latest_verification_index = max(
+            (event_indexes.get(id(event), -1) for event in verifications),
+            default=-1,
+        )
         result: list[dict[str, Any]] = []
         seen: set[str] = set()
+        if (
+            latest_verification_index >= 0
+            and latest_deliverable_index > latest_verification_index
+        ):
+            result.append({
+                "code": "verification_evidence_stale_after_state_change",
+                "severity": "warning",
+                "message": (
+                    "The latest deliverable change happened after the most recent "
+                    "verification attempt. Earlier evidence does not verify the current state."
+                ),
+                "source": "tool_event_timeline",
+            })
         for event in verifications[-4:]:
+            stale_after_change = (
+                latest_deliverable_index > event_indexes.get(id(event), -1)
+            )
             output = event.get("output") if isinstance(event.get("output"), dict) else {}
             diagnostics = output.get("runtime_diagnostics")
             if isinstance(diagnostics, list):
                 for item in diagnostics[:8]:
                     if not isinstance(item, dict):
                         continue
-                    key = json.dumps(item, ensure_ascii=False, sort_keys=True)[:600]
+                    diagnostic = dict(item)
+                    if stale_after_change:
+                        diagnostic["stale_after_state_change"] = True
+                        diagnostic["message"] = (
+                            "Earlier verification attempt before the latest state change: "
+                            + str(item.get("message") or "runtime diagnostic")
+                        )
+                    key = json.dumps(diagnostic, ensure_ascii=False, sort_keys=True)[:600]
                     if key in seen:
                         continue
                     seen.add(key)
-                    result.append(item)
+                    result.append(diagnostic)
                     if len(result) >= 10:
                         return result
             dom_snapshot = output.get("dom_snapshot") if isinstance(output.get("dom_snapshot"), dict) else {}
