@@ -445,6 +445,7 @@ class ConversationRunExecutor:
             phase="task_contract",
             user_content=content,
             workspace_snapshot=workspace_snapshot,
+            previous_contract=inherited_contract,
             task_candidates=task_lineage_candidates,
             context_hygiene_report=context_hygiene_report,
             task_id=str(getattr(run, "task_id", "") or ""),
@@ -458,11 +459,7 @@ class ConversationRunExecutor:
             "event": "context_pack",
             "pack": context_pack,
         })
-        direct_contract_inheritance = _tc.looks_like_execute_contract_followup(content)
-        if inherited_contract and direct_contract_inheritance and not user_no_write_hint:
-            task_contract = _tc.inherit_task_contract_for_followup(inherited_contract, task_contract)
-            metadata["inherited_task_contract"] = True
-        elif self._should_use_model_task_contract(
+        if self._should_use_model_task_contract(
             content,
             task_intent,
             user_no_write_hint,

@@ -157,6 +157,10 @@ goal 和 deliverable 仍然优先；历史锚点只补充候选路径和事实�
 - 完全丢掉历史，导致追问无法理解。
 - 把旧任务目标当成当前目标，导致跨项目或跨任务污染。
 
+Task Lineage 的审计记录可以保留完整候选元数据，但模型侧表示必须按候选独立限长，
+确保有限预算内仍能看到所有入选候选的 ID、目标、焦点和真实路径。不能先拼成一段很长
+的 JSON，再统一截断到只剩第一个候选。
+
 相关代码：
 
 - `runtime/agent_strategy/task_lineage.py`
@@ -228,6 +232,10 @@ Context Pack 以 `project_context` 记录把快照传给规划、执行、验证
 
 Context Pack 以 `context.pack` 事件进入 RunEvidence、Runbook 和诊断包。它是可
 审计事实包，不是任务路由器。
+
+模型侧记录按语义分配预算，而不是对所有记录使用相同字符上限。记录顺序优先保持：
+当前请求、相关历史候选、Active Focus、当前 Task Contract、Workspace 摘要和能力/
+证据事实，避免多子项目 Workspace 先于明确焦点形成宽泛锚定。
 
 ## Visual Evidence Context
 
@@ -366,7 +374,8 @@ summary
 - `runtime/context_manager.py`
   - 上下文 token 计算、自动/手动压缩入口。
   - 保留最近消息，将旧消息压缩为摘要。
-  - `summary_up_to_index` 支持增量摘要。
+  - 使用 durable summary source 的数量与内容摘要指纹验证缓存前缀，再增量生成摘要。
+  - `summary_up_to_index` 只保留为观察字段，不再作为清洗后消息列表的复用游标。
 - `runtime/agent_strategy/context_noise.py`
   - 识别历史工具调用文本、失败日志和过程日志。
   - 生成可回填给模型的紧凑历史摘要。
@@ -422,6 +431,8 @@ Context Runtime 当前已具备以下基础：
 - 续接任务保留可复用的历史路径事实，但当前模型给出的具体 goal 会更新 continuity anchor；历史 goal 不能覆盖新的明确子目标。
 - Task Relation 与 Focus Relation 已分离：新任务可以继承同一项目对象，但不能因此继承上一任务的目标和执行路线。
 - Active Focus 以 `project_context` 记录进入规划、执行、验证和总结阶段；对象不明确时保持 unresolved，不自动扩大到整个工作区。
+- 压缩摘要缓存只有在 durable source 前缀摘要指纹一致时才能复用；Context Hygiene 改变历史 marker 数量后不会继续沿用失配的消息索引。
+- 执行式追问的 Task Contract 判断由模型完成；“执行”“按计划执行”等短语不再触发 Runner 直接继承旧契约的旁路。
 - Memory 已区分 global 与 workspace 范围，避免跨项目记忆默认污染当前任务。
 - 视觉证据可以在模型支持时进入 image input，同时保留 `context.visual` / RunEvidence 审计记录。
 - Context Snapshot 可由 RunResult / recovery flow 生成，为暂停、恢复和显式 Replay Run 提供恢复依据。

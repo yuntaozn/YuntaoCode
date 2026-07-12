@@ -112,9 +112,10 @@ def format_context_pack_for_prompt(pack: dict[str, Any] | None) -> str:
     for record in pack.get("records") or []:
         if not isinstance(record, dict):
             continue
+        kind = str(record.get("kind") or "")
         compact_records.append({
-            "kind": record.get("kind"),
-            "content": _truncate(record.get("content"), 1000),
+            "kind": kind,
+            "content": _truncate(record.get("content"), _model_record_char_limit(kind)),
             "source_type": record.get("source_type"),
             "trust": record.get("trust"),
             "freshness": record.get("freshness"),
@@ -230,21 +231,21 @@ def _candidate_records(
             token_estimate=_estimate_tokens_fast(user_content),
         )
     ]
-    workspace_record = _workspace_record(workspace_snapshot, task_id=task_id)
-    if workspace_record:
-        records.append(workspace_record)
     lineage_record = _task_lineage_record(task_candidates, task_id=task_id)
     if lineage_record:
         records.append(lineage_record)
+    previous_record = _previous_contract_record(previous_contract, task_id=task_id)
+    if previous_record:
+        records.append(previous_record)
     focus_record = _active_focus_record(active_focus, task_id=task_id)
     if focus_record:
         records.append(focus_record)
     current_contract_record = _task_contract_record(task_contract, task_id=task_id)
     if current_contract_record:
         records.append(current_contract_record)
-    previous_record = _previous_contract_record(previous_contract, task_id=task_id)
-    if previous_record:
-        records.append(previous_record)
+    workspace_record = _workspace_record(workspace_snapshot, task_id=task_id)
+    if workspace_record:
+        records.append(workspace_record)
     capability_record = _capability_record(
         capability_snapshot,
         capability_preflight,
@@ -286,6 +287,12 @@ def _workspace_record(snapshot: dict[str, Any] | None, *, task_id: str) -> Conte
     extension_counts = summary.get("extension_counts") if isinstance(summary.get("extension_counts"), dict) else {}
     patterns = summary.get("observed_patterns") if isinstance(summary.get("observed_patterns"), list) else []
     notable_paths = summary.get("notable_paths") if isinstance(summary.get("notable_paths"), list) else []
+    top_level_entries = summary.get("top_level_entries") if isinstance(summary.get("top_level_entries"), list) else []
+    top_level_names = [
+        str(item.get("name") or "")
+        for item in top_level_entries
+        if isinstance(item, dict) and str(item.get("name") or "")
+    ][:20]
     pattern_ids = [
         str(item.get("id") or "")
         for item in patterns
@@ -300,6 +307,7 @@ def _workspace_record(snapshot: dict[str, Any] | None, *, task_id: str) -> Conte
         f"files={summary.get('file_count') or 0}; dirs={summary.get('directory_count') or 0}; "
         f"file_types={extension_text or 'none'}; "
         f"signals={', '.join(pattern_ids[:8]) or 'none'}; "
+        f"top_level={', '.join(top_level_names) or 'none'}; "
         f"notable_paths={', '.join(str(item) for item in notable_paths[:12]) or 'none'}"
     )
     return ContextRecord(
@@ -900,6 +908,17 @@ def _content_hash(value: str) -> str:
 def _truncate(value: Any, limit: int) -> str:
     text = str(value or "").strip()
     return text if len(text) <= limit else f"{text[:limit].rstrip()}..."
+
+
+def _model_record_char_limit(kind: str) -> int:
+    return {
+        "user_intent": 1200,
+        "workspace_summary": 1600,
+        "task_lineage": 2800,
+        "project_context": 1400,
+        "task_contract": 1800,
+        "tool_result": 1800,
+    }.get(str(kind or ""), 1000)
 
 
 def _safe_int(value: Any) -> int:

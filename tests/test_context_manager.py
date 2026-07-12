@@ -194,10 +194,6 @@ async def test_compress_context_summarizes_only_new_older_messages(monkeypatch: 
     monkeypatch.setattr(context_manager, "_generate_summary", fake_summary)
     monkeypatch.setattr(context_manager, "get_usable_limit", lambda model, settings: 10)
     monkeypatch.setattr(context_manager, "RECENT_MESSAGES_KEEP", 2)
-    conversation = SimpleNamespace(metadata={
-        "context_summary": "old summary",
-        "summary_up_to_index": 2,
-    })
     messages = [
         _message("system", "system"),
         _message("user", "old user 1 " * 80),
@@ -207,6 +203,12 @@ async def test_compress_context_summarizes_only_new_older_messages(monkeypatch: 
         _message("user", "recent user " * 80),
         _message("assistant", "recent assistant " * 80),
     ]
+    prior_sources = messages[1:3]
+    conversation = SimpleNamespace(metadata={
+        "context_summary": "old summary",
+        "summary_source_message_count": len(prior_sources),
+        "summary_source_digest": context_manager._summary_source_digest(prior_sources),
+    })
 
     compressed, meta = await context_manager.compress_context(
         messages,
@@ -222,6 +224,7 @@ async def test_compress_context_summarizes_only_new_older_messages(monkeypatch: 
     assert meta["summary_up_to_index"] == 4
     assert meta["summary_new_message_count"] == 2
     assert meta["summary_reused"] is False
+    assert meta["summary_cache_valid"] is True
 
 
 @pytest.mark.asyncio
@@ -234,10 +237,6 @@ async def test_compress_context_reuses_cached_summary_when_no_new_older_messages
     monkeypatch.setattr(context_manager, "_generate_summary", fail_summary)
     monkeypatch.setattr(context_manager, "get_usable_limit", lambda model, settings: 10)
     monkeypatch.setattr(context_manager, "RECENT_MESSAGES_KEEP", 2)
-    conversation = SimpleNamespace(metadata={
-        "context_summary": "old summary",
-        "summary_up_to_index": 4,
-    })
     messages = [
         _message("system", "system"),
         _message("user", "old user 1 " * 80),
@@ -247,6 +246,12 @@ async def test_compress_context_reuses_cached_summary_when_no_new_older_messages
         _message("user", "recent user " * 80),
         _message("assistant", "recent assistant " * 80),
     ]
+    prior_sources = messages[1:5]
+    conversation = SimpleNamespace(metadata={
+        "context_summary": "old summary",
+        "summary_source_message_count": len(prior_sources),
+        "summary_source_digest": context_manager._summary_source_digest(prior_sources),
+    })
 
     compressed, meta = await context_manager.compress_context(
         messages,
@@ -259,3 +264,54 @@ async def test_compress_context_reuses_cached_summary_when_no_new_older_messages
     assert compressed[1]["content"] == "[以下是之前对话的摘要]\nold summary"
     assert meta["summary_reused"] is True
     assert meta["summary_new_message_count"] == 0
+    assert meta["summary_cache_valid"] is True
+
+
+@pytest.mark.asyncio
+async def test_compress_context_invalidates_cached_summary_when_source_prefix_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[dict[str, Any]], str]] = []
+
+    async def fake_summary(
+        older_messages: list[dict[str, Any]],
+        model: str,
+        settings: Any,
+        cached_summary: str = "",
+    ) -> str:
+        del model, settings
+        calls.append((older_messages, cached_summary))
+        return "rebuilt summary"
+
+    monkeypatch.setattr(context_manager, "_generate_summary", fake_summary)
+    monkeypatch.setattr(context_manager, "get_usable_limit", lambda model, settings: 10)
+    monkeypatch.setattr(context_manager, "RECENT_MESSAGES_KEEP", 2)
+    old_sources = [
+        _message("user", "old user target"),
+        _message("assistant", "old assistant result"),
+    ]
+    messages = [
+        _message("system", "system"),
+        _message("user", "different user fact " * 80),
+        _message("assistant", "different assistant fact " * 80),
+        _message("user", "recent user " * 80),
+        _message("assistant", "recent assistant " * 80),
+    ]
+    conversation = SimpleNamespace(metadata={
+        "context_summary": "stale summary",
+        "summary_source_message_count": len(old_sources),
+        "summary_source_digest": context_manager._summary_source_digest(old_sources),
+    })
+
+    compressed, meta = await context_manager.compress_context(
+        messages,
+        "demo-model",
+        _Settings(),
+        conversation=conversation,
+    )
+
+    assert calls == [(messages[1:3], "")]
+    assert compressed[1]["content"] == "[以下是之前对话的摘要]\nrebuilt summary"
+    assert meta is not None
+    assert meta["summary_cache_valid"] is False
+    assert meta["summary_cache_invalidated"] is True

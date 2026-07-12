@@ -23,8 +23,8 @@ Windows 首次开发需要安装：
 - Rust MSVC 工具链和 Cargo。
 - Microsoft C++ Build Tools。
 - WebView2 Runtime。
-- Python 3.11+，并安装 `requirements.txt`。
-- PyInstaller，用于把 Python runtime 打成 sidecar。
+- Python 3.10+，并安装项目的 documents、web 和 build 可选依赖。
+- `build` 可选依赖中的 PyInstaller，用于把 Python runtime 打成 sidecar。
 
 Rust/Cargo 当前机器如果还没装，先按 Tauri 官方 prerequisites 安装。
 
@@ -32,8 +32,7 @@ Rust/Cargo 当前机器如果还没装，先按 Tauri 官方 prerequisites 安�
 
 ```powershell
 cd YuntaoCode
-python -m pip install -r requirements.txt
-python -m pip install -r requirements-build.txt
+python -m pip install -e ".[documents,web,build]"
 
 cd desktop-shell
 npm ci

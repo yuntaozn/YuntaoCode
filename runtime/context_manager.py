@@ -7,6 +7,7 @@ into a compact digest when the total context exceeds the model's limit.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from typing import Any
@@ -257,27 +258,35 @@ async def compress_context(
         return messages, None
 
     # --- Build summary of older messages ---------------------------------
-    # Check if we already have a cached summary that covers part of the older
-    # messages.  If so, we include it as context for the new summary.
-    cached_summary, cached_up_to = _cached_summary_state(conversation)
-    cached_up_to = min(cached_up_to, len(older))
-    has_cached_state = bool(cached_summary) or cached_up_to > 0
-    messages_to_summarize = older[cached_up_to:] if has_cached_state else older
-    summary_source_messages, omitted_runtime_messages = _durable_summary_source_messages(
-        messages_to_summarize
+    # Hygiene compacts historical task turns dynamically, so an index into the
+    # cleaned message list is not a stable summary cursor. Reuse a cached
+    # summary only when the durable source prefix still has the same digest.
+    summary_source_messages, omitted_runtime_messages = _durable_summary_source_messages(older)
+    cached_summary, cached_source_count, cached_source_digest = _cached_summary_state(conversation)
+    cache_valid = bool(
+        cached_summary
+        and cached_source_digest
+        and 0 <= cached_source_count <= len(summary_source_messages)
+        and _summary_source_digest(summary_source_messages[:cached_source_count])
+        == cached_source_digest
     )
-
-    summary_reused = bool(has_cached_state and not messages_to_summarize)
+    messages_to_summarize = (
+        summary_source_messages[cached_source_count:]
+        if cache_valid
+        else summary_source_messages
+    )
+    summary_seed = cached_summary if cache_valid else ""
+    summary_reused = bool(cache_valid and not messages_to_summarize)
     if summary_reused:
         summary_text = cached_summary
-    elif not summary_source_messages:
-        summary_text = cached_summary
+    elif not messages_to_summarize:
+        summary_text = ""
     else:
         summary_text = await _generate_summary(
-            summary_source_messages,
+            messages_to_summarize,
             model,
             settings,
-            cached_summary,
+            summary_seed,
         )
 
     compressed: list[dict[str, Any]] = []
@@ -300,9 +309,13 @@ async def compress_context(
         "context_summary": summary_text,
         "summary_up_to_index": len(older),
         "summary_message_count": len(older),
-        "summary_new_message_count": len(summary_source_messages),
+        "summary_new_message_count": len(messages_to_summarize),
+        "summary_source_message_count": len(summary_source_messages),
+        "summary_source_digest": _summary_source_digest(summary_source_messages),
         "summary_omitted_runtime_message_count": omitted_runtime_messages,
         "summary_reused": summary_reused,
+        "summary_cache_valid": cache_valid,
+        "summary_cache_invalidated": bool(cached_summary and not cache_valid),
         "summary_token_count": count_tokens(summary_text),
     }
     return compressed, summary_meta
@@ -339,16 +352,35 @@ def _is_runtime_context_scaffold(message: dict[str, Any]) -> bool:
     return any(text.startswith(prefix) for prefix in _RUNTIME_CONTEXT_SCAFFOLD_PREFIXES)
 
 
-def _cached_summary_state(conversation: Any | None) -> tuple[str, int]:
+def _cached_summary_state(conversation: Any | None) -> tuple[str, int, str]:
     if not conversation or not hasattr(conversation, "metadata"):
-        return "", 0
+        return "", 0, ""
     metadata = conversation.metadata if isinstance(conversation.metadata, dict) else {}
     summary = str(metadata.get("context_summary") or "").strip()
     try:
-        up_to = int(metadata.get("summary_up_to_index") or 0)
+        source_count = int(metadata.get("summary_source_message_count") or 0)
     except (TypeError, ValueError):
-        up_to = 0
-    return summary, max(0, up_to)
+        source_count = 0
+    source_digest = str(metadata.get("summary_source_digest") or "").strip()
+    return summary, max(0, source_count), source_digest
+
+
+def _summary_source_digest(messages: list[dict[str, Any]]) -> str:
+    """Return a stable digest for the durable summary source sequence."""
+    digest = hashlib.sha256()
+    for message in messages:
+        payload = json.dumps(
+            {
+                "role": str(message.get("role") or ""),
+                "content": _summary_message_content(message.get("content", "")),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
+    return digest.hexdigest()
 
 
 async def _generate_summary(

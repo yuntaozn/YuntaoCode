@@ -38,11 +38,11 @@ def test_context_pack_builds_phase_selected_records() -> None:
     assert pack["phase"] == "task_contract"
     assert [item["kind"] for item in pack["records"]] == [
         "user_intent",
-        "workspace_summary",
         "previous_contract",
+        "workspace_summary",
         "risk",
     ]
-    previous = pack["records"][2]
+    previous = pack["records"][1]
     assert previous["source_id"] == "previous_task_contract"
     assert "not the current goal by default" in previous["content"]
     assert previous["metadata"]["inheritance_rule"] == "historical_reference_only_unless_current_request_continues_it"
@@ -175,6 +175,53 @@ def test_context_pack_prompt_uses_ledger_index_without_repeating_content() -> No
     assert prompt.count("Old task target") == 1
 
 
+def test_context_pack_prompt_preserves_all_bounded_task_candidates() -> None:
+    candidates = [
+        {
+            "candidate_id": f"run-{index}",
+            "lineage_rank": index,
+            "recency_rank": index,
+            "goal": f"Historical candidate {index} " + ("detail " * 30),
+            "status": "partial",
+            "actual_paths": [f"project-{index}/src/app.js", f"project-{index}/index.html"],
+        }
+        for index in range(1, 5)
+    ]
+    pack = build_context_pack(
+        phase="task_contract",
+        user_content="现在先为它写正式说明",
+        task_candidates=candidates,
+    )
+
+    prompt = format_context_pack_for_prompt(pack)
+
+    for index in range(1, 5):
+        assert f"run-{index}" in prompt
+        assert f"project-{index}/src/app.js" in prompt
+
+
+def test_workspace_context_lists_top_level_project_boundaries() -> None:
+    pack = build_context_pack(
+        phase="task_contract",
+        user_content="analyze this project",
+        workspace_snapshot={
+            "schema_version": "workspace_snapshot.v1",
+            "name": "lesson",
+            "path": r"D:\code\lesson",
+            "exists": True,
+            "readable": True,
+            "top_level_entries": [
+                {"name": "project-a", "path": "project-a", "type": "directory"},
+                {"name": "project-b", "path": "project-b", "type": "directory"},
+            ],
+            "notable_paths": ["project-a/index.html"],
+        },
+    )
+
+    workspace = pack["records"][1]
+    assert "top_level=project-a, project-b" in workspace["content"]
+
+
 def test_planning_context_pack_includes_contract_and_capability_facts() -> None:
     pack = build_context_pack(
         phase="planning",
@@ -212,7 +259,7 @@ def test_planning_context_pack_includes_contract_and_capability_facts() -> None:
     )
 
     kinds = [item["kind"] for item in pack["records"]]
-    assert kinds == ["user_intent", "workspace_summary", "task_contract", "capability"]
+    assert kinds == ["user_intent", "task_contract", "workspace_summary", "capability"]
     assert pack["ledger"]["records"][-1]["kind"] == "capability"
     assert "code.edit_file" in pack["records"][-1]["content"]
     assert "preview.interact_page" in pack["records"][-1]["content"]

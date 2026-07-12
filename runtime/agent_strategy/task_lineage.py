@@ -185,18 +185,9 @@ def format_task_candidates_for_model(
             "candidate_id": candidate.get("candidate_id"),
             "lineage_rank": candidate.get("lineage_rank"),
             "recency_rank": candidate.get("recency_rank"),
-            "goal": candidate.get("goal"),
-            "intent": candidate.get("intent"),
+            "goal": _truncate(candidate.get("goal"), 180),
             "status": candidate.get("status"),
-            "requires_write": bool(candidate.get("requires_write")),
-            "requires_state_change": bool(candidate.get("requires_state_change")),
-            "deliverable_kinds": candidate.get("deliverable_kinds") or [],
-            "capability_ids": candidate.get("capability_ids") or [],
-            "target_written_paths": candidate.get("target_written_paths") or [],
-            "changed_paths": candidate.get("changed_paths") or [],
-            "verified_paths": candidate.get("verified_paths") or [],
-            "actual_paths": candidate.get("actual_paths") or [],
-            "focus_relation": candidate.get("focus_relation") or "",
+            "actual_paths": list(candidate.get("actual_paths") or [])[:4],
             "focus": candidate.get("focus") or {},
         }
         if "current_target_match" in candidate:
@@ -215,18 +206,10 @@ def format_task_candidates_for_model(
         "schema_version": "task_lineage_context.v1",
         "kind": "task_lineage",
         "rule": (
-            "These are historical task candidates, not the current goal. "
-            "They are ordered by lineage_rank: recent candidates with "
-            "runtime-observed target paths first, and when the current request "
-            "names a target path or subproject, candidates with "
-            "current_target_match=true are ranked ahead of merely recent "
-            "candidates. "
-            "A candidate may also provide the working focus for a new task "
-            "without making its old goal current. Prefer runtime-observed "
-            "actual_paths over guessed, stale, or intermediate paths when "
-            "inspecting a continued task. Read-only failed verification "
-            "attempts may explain what went wrong, but should not replace the "
-            "target paths from a prior write/change run."
+            "Historical task candidates, not current goals. A new task may "
+            "inherit a candidate's working focus without inheriting its old "
+            "goal. Prefer runtime-observed actual_paths. Failed verification "
+            "attempts should not replace the target paths from a prior write run."
         ),
         "candidates": compact,
     }

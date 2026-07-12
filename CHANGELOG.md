@@ -78,6 +78,16 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ### Changed
 
+- Desktop sidecar build dependencies now use the `pyproject.toml` `build`
+  optional dependency group; the duplicate `requirements-build.txt` entrypoint
+  has been removed.
+
+- Context compression now validates cached summaries against a digest of the
+  durable source-message prefix instead of reusing an index into dynamically
+  sanitized history. Model-facing task-lineage facts preserve all bounded
+  candidates, Active Focus and task facts precede broad workspace context, and
+  execute-style follow-ups no longer bypass model task-contract judgment.
+
 - Context continuity now keeps runtime-observed history as candidate evidence
   without replacing a specific current model goal with the previous goal.
   Successful no-op code edits are rejected as correctable tool failures, and
