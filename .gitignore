@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.egg-info/
 *.sqlite
 *.db
 .pytest_cache/
@@ -10,6 +11,7 @@ __pycache__/
 htmlcov/
 .env/
 .venv/
+.venv-sidecar-build/
 venv/
 
 # Node / Tauri

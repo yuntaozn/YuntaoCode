@@ -7,14 +7,12 @@ from runtime.agent_strategy.task_contract import (
     looks_like_execute_contract_followup,
     looks_like_task_revision_followup,
     merge_model_task_contract,
-    promote_task_contract_for_write_intent,
     should_apply_task_continuity,
     should_use_model_task_contract,
     task_continuity_anchor,
     task_contract_context_messages,
     task_contract_prompt,
 )
-from runtime.conversation_runner import ConversationRunExecutor
 from runtime.run_events import canonical_run_event_name, compact_run_event
 
 
@@ -38,7 +36,7 @@ def test_extract_task_contract_json_from_fenced_response() -> None:
     }
 
 
-def test_model_contract_can_raise_write_requirement() -> None:
+def test_model_contract_write_fact_does_not_rewrite_model_intent() -> None:
     contract = merge_model_task_contract(
         {
             "goal": "创建 HTML 示例页",
@@ -55,33 +53,13 @@ def test_model_contract_can_raise_write_requirement() -> None:
     )
 
     assert contract["source"] == "model"
-    assert contract["intent"] == "write_required"
+    assert contract["intent"] == "answer_only"
     assert contract["requires_write"] is True
     assert contract["requires_state_change"] is True
     assert contract["requires_verification"] is True
     assert contract["first_action"] == "write"
     assert contract["deliverables"][0]["path_hint"] == "model-viewer.html"
     assert "target_deliverable_success" in contract["success_conditions"]
-
-
-def test_no_write_hint_does_not_override_model_contract() -> None:
-    contract = merge_model_task_contract(
-        {
-            "intent": "write_required",
-            "requires_write": True,
-            "deliverables": [{"kind": "file", "path_hint": "demo.html"}],
-        },
-        _fallback("answer_only"),
-        user_no_write_hint=True,
-    )
-
-    assert contract["intent"] == "write_required"
-    assert contract["requires_write"] is True
-    assert contract["requires_state_change"] is True
-    assert contract["requires_verification"] is True
-    assert contract["deliverables"][0]["path_hint"] == "demo.html"
-    assert contract["user_no_write_hint"] is True
-    assert "user_no_write_hint" in contract["system_overrides"]
 
 
 def test_invalid_model_contract_falls_back_to_policy_contract() -> None:
@@ -116,9 +94,9 @@ def test_task_contract_prompt_contains_only_contract_request() -> None:
     assert "requires_write" in prompt
     assert "requires_state_change" in prompt
     assert "referenced_task_candidate_id" in prompt
-    assert "系统负责权限、工具执行和完成验收" in prompt
-    assert "task lineage candidates are historical facts" in prompt
-    assert "do not copy the candidate's old goal" in prompt
+    assert "系统不会根据关键词替你改写这些字段" in prompt
+    assert "当前用户请求是任务语义的第一依据" in prompt
+    assert "系统回退契约" not in prompt
     assert "focus_relation" in prompt
 
 
@@ -150,8 +128,8 @@ def test_model_contract_separates_new_task_from_inherited_focus() -> None:
 def test_task_contract_prompt_explains_independent_focus_relation() -> None:
     prompt = task_contract_prompt("D:\\code\\demo", _fallback())
 
-    assert "A new task may use scope_relation=new together with focus_relation=inherit" in prompt
-    assert "do not silently expand an omitted subproject to the whole workspace" in prompt
+    assert "scope_relation 描述当前目标与历史任务的关系" in prompt
+    assert "focus_relation 独立描述当前工作对象的来源" in prompt
     assert '"referenced_focus_candidate_id"' in prompt
 
 
@@ -229,17 +207,17 @@ def test_task_contract_prompt_includes_runtime_capabilities_when_provided() -> N
 
     assert "Runtime capability context" in prompt
     assert "web.extract_text" in prompt
-    assert "available web, preview, MCP, CLI, and built-in tools are facts" in prompt
-    assert "do not assume the model must answer from prior knowledge" in prompt
+    assert "current capability facts" in prompt
+    assert "not a required execution route" in prompt
     assert "required_verification_modalities" in prompt
 
 
-def test_task_contract_prompt_allows_analysis_first_repair_advisory() -> None:
+def test_task_contract_prompt_does_not_embed_scenario_repair_policy() -> None:
     prompt = task_contract_prompt("D:\\code\\demo", _fallback())
 
-    assert "analysis-first repairable task" in prompt
+    assert "analysis-first repairable task" not in prompt
     assert "execution_advisories" in prompt
-    assert "evidence_may_require_repair" in prompt
+    assert "evidence_may_require_repair" not in prompt
 
 
 def test_model_contract_preserves_execution_advisories_as_non_binding_context() -> None:
@@ -306,19 +284,17 @@ def test_short_action_request_still_uses_model_contract() -> None:
     assert should_use_model_task_contract(
         "在 Blender 中建个二层小楼",
         "answer_only",
-        False,
     )
 
 
 def test_obvious_chat_can_skip_model_contract_without_recent_task() -> None:
-    assert not should_use_model_task_contract("你好", "answer_only", False)
+    assert not should_use_model_task_contract("你好", "answer_only")
 
 
 def test_no_write_hint_still_uses_model_contract_for_semantic_judgment() -> None:
     assert should_use_model_task_contract(
         "Only analyze the current issue; do not modify files yet.",
         "answer_only",
-        True,
     )
 
 
@@ -326,7 +302,6 @@ def test_non_chat_recommendation_uses_model_contract_for_semantic_judgment() -> 
     assert should_use_model_task_contract(
         "Compare several options for a low-cost programmable consumer device and recommend a concrete model.",
         "answer_only",
-        False,
     )
 
 
@@ -334,7 +309,6 @@ def test_obvious_chat_uses_model_contract_when_it_may_be_task_follow_up() -> Non
     assert should_use_model_task_contract(
         "好",
         "answer_only",
-        False,
         has_recent_task_context=True,
     )
 
@@ -344,7 +318,6 @@ def test_diagnostic_feedback_uses_model_contract_even_if_fallback_is_chat() -> N
         "home.js:1 Uncaught TypeError: Cannot set properties of null "
         "(setting 'onclick')",
         "answer_only",
-        False,
     )
 
 
@@ -415,7 +388,7 @@ def test_execute_followup_does_not_inherit_text_length_from_code_contract() -> N
     assert "document_min_output_chars" not in contract["success_conditions"]
 
 
-def test_revision_followup_preserves_previous_external_state_target() -> None:
+def test_retry_wording_does_not_override_current_model_target() -> None:
     previous = {
         "intent": "write_required",
         "goal": "Create a two-story house in the current Blender scene",
@@ -446,12 +419,12 @@ def test_revision_followup_preserves_previous_external_state_target() -> None:
     )
 
     assert looks_like_task_revision_followup("not good enough, try again")
-    assert contract["scope_relation"] == "revise"
-    assert contract["goal"] == previous["goal"]
-    assert contract["requires_write"] is False
+    assert contract["scope_relation"] == "new"
+    assert contract["goal"] == "Improve the Blender Python script"
+    assert contract["requires_write"] is True
     assert contract["requires_state_change"] is True
-    assert contract["deliverables"][0]["kind"] == "external_state"
-    assert contract["revision_request"] == "not good enough, try again"
+    assert contract["deliverables"][0]["kind"] == "code"
+    assert contract["revision_request"] == ""
 
 
 def test_task_continuity_applies_only_after_model_continuation_judgment() -> None:
@@ -488,13 +461,13 @@ def test_task_continuity_applies_only_after_model_continuation_judgment() -> Non
         explicit_new,
         current_user_content="try again",
     )
-    assert should_apply_task_continuity(
+    assert not should_apply_task_continuity(
         fallback_retry,
         current_user_content="try again",
     )
 
 
-def test_observation_followup_over_previous_state_task_adds_soft_advisory() -> None:
+def test_observation_wording_does_not_add_runtime_strategy_advisory() -> None:
     previous = {
         "intent": "write_required",
         "goal": "Create a two-story house in the current Blender scene",
@@ -542,8 +515,7 @@ def test_observation_followup_over_previous_state_task_adds_soft_advisory() -> N
     assert contract["first_action"] != "verify"
     assert contract["capability_ids"] == ["mcp.blender"]
     assert contract["deliverables"][0]["kind"] == "external_state"
-    assert contract["continuity_advisories"][0]["code"] == "possible_observation_followup"
-    assert contract["continuity_advisories"][0]["suggested_first_action"] == "verify"
+    assert "continuity_advisories" not in contract
     assert "observation_followup_read_only" not in contract.get("system_overrides", [])
 
 
@@ -616,7 +588,7 @@ def test_continuity_keeps_current_specific_local_target_over_broad_anchor() -> N
     assert contract["requires_verification"] is True
 
 
-def test_continuity_preserves_observed_target_when_current_hint_is_broad() -> None:
+def test_continuity_keeps_current_model_target_when_hint_is_broad() -> None:
     previous = {
         "intent": "write_required",
         "goal": "修改对应子项目代码，实现未答题也可进入下一步并添加全景展示",
@@ -669,9 +641,8 @@ def test_continuity_preserves_observed_target_when_current_hint_is_broad() -> No
         current_user_content="没有实现目标，还得再试一次",
     )
 
-    assert contract["deliverables"][0]["path_hint"] == "独立基础施工全过程/交互动画/src/app.js"
-    assert contract["deliverables"][1]["path_hint"] == "D:\\code\\demo\\教学课件"
-    assert contract["goal"] == previous["goal"]
+    assert contract["deliverables"] == proposed["deliverables"]
+    assert contract["goal"].startswith("重试实现未答题")
 
 
 def test_continue_with_specific_current_goal_does_not_restore_stale_anchor_goal() -> None:
@@ -716,7 +687,7 @@ def test_continue_with_specific_current_goal_does_not_restore_stale_anchor_goal(
     assert contract["continuity_anchor"]["goal"] == contract["goal"]
 
 
-def test_continuity_keeps_exact_anchor_when_current_hint_is_parent_directory() -> None:
+def test_continuity_does_not_replace_current_parent_path_with_old_exact_path() -> None:
     previous = {
         "intent": "write_required",
         "goal": "修正独立基础施工全过程交互动画，实现未答题也可进入下一步和全景展示",
@@ -763,8 +734,9 @@ def test_continuity_keeps_exact_anchor_when_current_hint_is_parent_directory() -
         current_user_content="你上一轮改错项目了，独立基础施工全过程 的交互动画 实现未答题也可以到下一步",
     )
 
-    assert contract["deliverables"][0]["path_hint"].endswith("交互动画\\src\\app.js")
-    assert contract["goal"] == previous["goal"]
+    assert contract["deliverables"] == proposed["deliverables"]
+    assert contract["deliverables"][0]["path_hint"].endswith("独立基础施工全过程")
+    assert contract["goal"] == proposed["goal"]
 
 
 def test_retry_followup_still_preserves_previous_state_change_target() -> None:
@@ -812,7 +784,7 @@ def test_retry_followup_still_preserves_previous_state_change_target() -> None:
     assert "observation_followup_read_only" not in contract.get("system_overrides", [])
 
 
-def test_local_file_delete_contract_is_not_external_state() -> None:
+def test_runtime_does_not_reclassify_model_selected_delete_contract() -> None:
     contract = merge_model_task_contract(
         {
             "intent": "write_required",
@@ -830,16 +802,45 @@ def test_local_file_delete_contract_is_not_external_state() -> None:
             "expected_min_output_chars": 500,
         },
         _fallback("answer_only"),
-        expected_min_output_chars=500,
     )
 
     assert contract["intent"] == "write_required"
-    assert contract["requires_write"] is True
+    assert contract["requires_write"] is False
     assert contract["requires_state_change"] is True
-    assert contract["deliverables"][0]["kind"] == "file"
-    assert contract["capability_ids"][0] == "filesystem.local_state"
-    assert contract["expected_min_output_chars"] == 0
+    assert contract["deliverables"][0]["kind"] == "external_state"
+    assert contract["capability_ids"] == ["filesystem.local_files"]
+    assert contract["expected_min_output_chars"] == 500
+    assert "normalized_local_file_state" not in contract["system_overrides"]
     assert "document_min_output_chars" not in contract["success_conditions"]
+
+
+def test_local_file_delete_safety_analysis_remains_read_only_answer() -> None:
+    contract = merge_model_task_contract(
+        {
+            "intent": "read_only_analysis",
+            "goal": "Confirm whether files in the current driver directory can be deleted safely",
+            "requires_write": False,
+            "requires_state_change": False,
+            "requires_verification": True,
+            "capability_ids": ["filesystem.local_files"],
+            "deliverables": [
+                {
+                    "kind": "answer",
+                    "description": "Explain the purpose and deletion risk of the local files",
+                }
+            ],
+            "first_action": "ask_user",
+        },
+        _fallback("answer_only"),
+    )
+
+    assert contract["intent"] == "read_only_analysis"
+    assert contract["requires_write"] is False
+    assert contract["requires_state_change"] is False
+    assert contract["deliverables"][0]["kind"] == "answer"
+    assert contract["capability_ids"] == ["filesystem.local_files"]
+    assert "normalized_local_file_state" not in contract["system_overrides"]
+    assert "target_deliverable_success" not in contract["success_conditions"]
 
 
 def test_revision_followup_can_retarget_from_document_to_local_file_delete() -> None:
@@ -889,7 +890,7 @@ def test_revision_followup_can_retarget_from_document_to_local_file_delete() -> 
     assert contract["goal"].startswith("\u5220\u9664")
     assert contract["deliverables"][0]["kind"] == "file"
     assert contract["deliverables"][0]["path_policy"] == "exact"
-    assert contract["capability_ids"][0] == "filesystem.local_state"
+    assert contract["capability_ids"] == ["filesystem.local_files"]
     assert contract["continuity_anchor"]["goal"].startswith("\u5220\u9664")
 
 
@@ -980,41 +981,6 @@ def test_revision_followup_promotes_current_write_requirement_over_read_only_anc
     assert "target_deliverable_verification" in contract["success_conditions"]
 
 
-def test_runtime_write_promotion_turns_answer_contract_into_verifiable_code_target() -> None:
-    contract = {
-        "intent": "read_only_analysis",
-        "requires_write": False,
-        "requires_state_change": False,
-        "requires_verification": False,
-        "deliverables": [
-            {
-                "kind": "answer",
-                "path_hint": "D:/workspace/app",
-                "description": "Analysis only",
-            }
-        ],
-        "system_overrides": [],
-    }
-
-    changed = promote_task_contract_for_write_intent(
-        contract,
-        reason="model_selected_write_tool",
-        deliverable_kind="code",
-        description="Model selected a write tool",
-    )
-
-    assert changed is True
-    assert contract["intent"] == "write_required"
-    assert contract["requires_write"] is True
-    assert contract["requires_state_change"] is True
-    assert contract["requires_verification"] is True
-    assert contract["deliverables"][0]["kind"] == "code"
-    assert contract["deliverables"][0]["path_hint"] == "D:/workspace/app"
-    assert "model_selected_write_tool" in contract["system_overrides"]
-    assert "target_deliverable_success" in contract["success_conditions"]
-    assert "target_deliverable_verification" in contract["success_conditions"]
-
-
 def test_write_followup_keeps_model_target_over_old_read_only_anchor() -> None:
     previous = {
         "intent": "read_only_analysis",
@@ -1057,32 +1023,6 @@ def test_write_followup_keeps_model_target_over_old_read_only_anchor() -> None:
     assert contract["continuity_anchor"]["goal"] == "Modify web/home.js to call the local FastAPI backend"
 
 
-def test_model_selected_write_tool_can_promote_analysis_contract_without_scenario_rule() -> None:
-    contract = {
-        "intent": "read_only_analysis",
-        "requires_write": False,
-        "requires_state_change": False,
-        "requires_verification": False,
-        "deliverables": [{"kind": "answer", "description": "Analysis"}],
-        "system_overrides": [],
-    }
-
-    changed = promote_task_contract_for_write_intent(
-        contract,
-        reason="model_selected_write_tool",
-        path_hint="viewer/index.html",
-        deliverable_kind="code",
-        description="Model selected a write tool",
-    )
-
-    assert changed is True
-    assert contract["requires_write"] is True
-    assert contract["requires_verification"] is True
-    assert contract["deliverables"][0]["kind"] == "code"
-    assert contract["deliverables"][0]["path_hint"] == "viewer/index.html"
-    assert "model_selected_write_tool" in contract["system_overrides"]
-
-
 def test_model_code_contract_clears_fallback_text_length_goal() -> None:
     fallback = default_task_contract(
         task_intent="write_required",
@@ -1106,13 +1046,12 @@ def test_model_code_contract_clears_fallback_text_length_goal() -> None:
             ],
         },
         fallback,
-        expected_min_output_chars=2000,
     )
 
     assert contract["expected_min_output_chars"] == 0
     assert contract_expects_text_output(contract) is False
     assert "document_min_output_chars" not in contract["success_conditions"]
-    assert "cleared_non_text_min_output_chars" in contract["system_overrides"]
+    assert "cleared_non_text_min_output_chars" not in contract["system_overrides"]
 
 
 def test_text_file_contract_preserves_declared_min_output_chars() -> None:
@@ -1137,7 +1076,6 @@ def test_text_file_contract_preserves_declared_min_output_chars() -> None:
             ],
         },
         fallback,
-        expected_min_output_chars=50000,
     )
 
     assert contract_expects_text_output(contract) is True
@@ -1252,7 +1190,6 @@ def test_continuity_preserves_text_file_size_target() -> None:
             "scope_relation": "continue",
             "intent": "write_required",
             "requires_write": True,
-            "expected_min_output_chars": 0,
             "deliverables": [{"kind": "file", "path_hint": "novel.txt"}],
         },
         _fallback("write_required"),
@@ -1269,7 +1206,70 @@ def test_continuity_preserves_text_file_size_target() -> None:
     assert task_continuity_anchor(contract)["expected_min_output_chars"] == 50000
 
 
-def test_continuity_preserves_model_contract_with_no_write_hint() -> None:
+def test_continuity_keeps_explicit_current_size_over_old_target() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "Write a novel to novel.txt",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "expected_min_output_chars": 50000,
+        "deliverables": [{"kind": "file", "path_hint": "novel.txt"}],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "continue",
+            "intent": "write_required",
+            "requires_write": True,
+            "expected_min_output_chars": 0,
+            "deliverables": [{"kind": "file", "path_hint": "novel.txt"}],
+        },
+        _fallback("write_required"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content="Continue with a shorter draft",
+    )
+
+    assert contract["expected_min_output_chars"] == 0
+
+
+def test_continuity_keeps_explicit_empty_model_fields() -> None:
+    previous = {
+        "intent": "write_required",
+        "goal": "Modify the previous file",
+        "requires_write": True,
+        "capability_ids": ["code.text_write"],
+        "deliverables": [{"kind": "code", "path_hint": "old.py"}],
+    }
+    proposed = merge_model_task_contract(
+        {
+            "scope_relation": "revise",
+            "intent": "answer_only",
+            "goal": "",
+            "requires_write": False,
+            "capability_ids": [],
+            "deliverables": [],
+        },
+        _fallback("answer_only"),
+    )
+
+    contract = apply_task_continuity(
+        proposed,
+        previous_contract=previous,
+        current_user_content="Re-evaluate without carrying the old target",
+    )
+
+    assert contract["intent"] == "answer_only"
+    assert contract["goal"] == ""
+    assert contract["requires_write"] is False
+    assert contract["capability_ids"] == []
+    assert contract["deliverables"] == []
+
+
+def test_continuity_preserves_current_model_contract_over_user_text_heuristics() -> None:
     previous = {
         "intent": "write_required",
         "goal": "Modify the project",
@@ -1280,7 +1280,6 @@ def test_continuity_preserves_model_contract_with_no_write_hint() -> None:
     locked = merge_model_task_contract(
         {"scope_relation": "revise", "requires_write": True},
         _fallback("write_required"),
-        user_no_write_hint=True,
     )
 
     contract = apply_task_continuity(
@@ -1292,7 +1291,6 @@ def test_continuity_preserves_model_contract_with_no_write_hint() -> None:
     assert contract["requires_write"] is True
     assert contract["requires_state_change"] is True
     assert contract["deliverables"][0]["path_hint"] == "app.py"
-    assert contract["user_no_write_hint"] is True
 
 
 def test_deliverable_path_policy_defaults_to_hint_and_accepts_exact() -> None:
@@ -1342,62 +1340,6 @@ def test_model_contract_preserves_referenced_task_candidate_id() -> None:
 
     assert contract["scope_relation"] == "revise"
     assert contract["referenced_task_candidate_id"] == "run-1"
-
-
-def test_runtime_guidance_can_raise_document_size_contract() -> None:
-    executor = object.__new__(ConversationRunExecutor)
-    contract = default_task_contract(
-        task_intent="document_export",
-        mode="terminal",
-        planning_policy="auto",
-        confirmation_policy="auto",
-        workspace_path=r"D:\code\demo",
-        access_scope="workspace",
-        expected_min_output_chars=30000,
-    )
-
-    changed = executor._apply_guidance_contract_updates(contract, "raise the target to 50000 words")
-
-    assert changed is True
-    assert contract["expected_min_output_chars"] == 50000
-    assert "document_min_output_chars" in contract["success_conditions"]
-    assert "expected_min_output_chars" in contract["system_overrides"]
-
-
-def test_runtime_guidance_replaces_document_size_contract_with_latest_explicit_target() -> None:
-    executor = object.__new__(ConversationRunExecutor)
-    contract = default_task_contract(
-        task_intent="document_export",
-        mode="terminal",
-        planning_policy="auto",
-        confirmation_policy="auto",
-        workspace_path=r"D:\code\demo",
-        access_scope="workspace",
-        expected_min_output_chars=50000,
-    )
-
-    changed = executor._apply_guidance_contract_updates(contract, "30000 words is enough")
-
-    assert changed is True
-    assert contract["expected_min_output_chars"] == 30000
-
-
-def test_runtime_guidance_does_not_apply_document_size_to_code_contract() -> None:
-    executor = object.__new__(ConversationRunExecutor)
-    contract = default_task_contract(
-        task_intent="write_required",
-        mode="terminal",
-        planning_policy="auto",
-        confirmation_policy="auto",
-        workspace_path=r"D:\code\demo",
-        access_scope="workspace",
-    )
-    contract["deliverables"] = [{"kind": "code", "path_hint": "src/app.js"}]
-
-    changed = executor._apply_guidance_contract_updates(contract, "raise the target to 50000 words")
-
-    assert changed is False
-    assert contract["expected_min_output_chars"] == 0
 
 
 def test_model_declared_document_size_is_preserved_by_contract_normalization() -> None:

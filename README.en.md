@@ -112,7 +112,7 @@ Compatible with OpenAI-style APIs:
 
 ### Recoverable Execution
 
-* Task plans and stage transitions
+* Task plans, model decisions, and execution progress
 * Tool calls, confirmations, and errors
 * Pre-write backups and result verification
 * Foundations for task pause, resume, replay, and audit
@@ -159,9 +159,9 @@ The Python Runtime is the core of the system.
 
 The Tauri desktop application is only one possible interface layer. The Runtime itself can operate independently.
 
-The current implementation already includes tool calling, plan generation, stage progression, confirmation, pre-write backups, execution records, and experience sample export. The next focus is to consolidate these capabilities into clearer Task, Context, and Capability Runtime foundations plus an evidence-based Experience Layer.
+The current implementation already includes tool calling, model-decided planning, confirmation, pre-write backups, execution records, context snapshots, and experience sample export. The Runtime no longer drives tasks through preset role stages: the model continuously judges the goal, visible capabilities, and observed facts, while the system owns safety, protocol, state, evidence, and audit boundaries.
 
-The Agent Runtime strategy layer lives in `runtime/agent_strategy/`. It owns intent classification, internal profiles, planning policy, stage prompts, and execution-plan lifecycle helpers so that `conversation_runner.py` can remain an orchestration layer.
+The Agent Runtime strategy layer lives in `runtime/agent_strategy/`. It owns model task contracts, internal profile descriptions, planning policy, factual advisories, and execution-plan lifecycle helpers so that `conversation_runner.py` can remain an orchestration layer.
 
 Start from the documentation map in [docs/README.md](docs/README.md). The core foundation contract is [docs/runtime-foundation.md](docs/runtime-foundation.md), the Task / Context / Capability lines are described in [docs/task-model.md](docs/task-model.md), [docs/context-runtime.md](docs/context-runtime.md), and [docs/capability-runtime.md](docs/capability-runtime.md), and the Experience Layer is described in [docs/experience-runtime.md](docs/experience-runtime.md).
 

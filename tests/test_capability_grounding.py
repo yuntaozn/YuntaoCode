@@ -3,7 +3,6 @@ from runtime.agent_strategy.capability_preflight import (
     build_capability_snapshot,
     preflight_task_capabilities,
 )
-from runtime.agent_strategy.task_contract import success_conditions_for_contract
 
 
 def _snapshot() -> dict:
@@ -40,7 +39,7 @@ def _snapshot() -> dict:
     )
 
 
-def test_grounding_converts_external_app_file_guess_to_external_state() -> None:
+def test_grounding_does_not_convert_file_target_from_text_match() -> None:
     contract = {
         "intent": "write_required",
         "goal": "使用Blender创建一个二层小楼的3D模型",
@@ -67,41 +66,23 @@ def test_grounding_converts_external_app_file_guess_to_external_state() -> None:
         _snapshot(),
         user_content="帮我用blender建个二层小楼",
     )
-    contract["success_conditions"] = success_conditions_for_contract(contract)
-    preflight = preflight_task_capabilities(contract, _snapshot())
-
-    assert changed is True
-    assert contract["capability_ids"] == ["mcp.blender"]
-    assert contract["requires_write"] is False
+    assert changed is False
+    assert contract["capability_ids"] == []
+    assert contract["requires_write"] is True
     assert contract["requires_state_change"] is True
-    assert contract["deliverables"] == [
-        {
-            "kind": "external_state",
-            "path_hint": "",
-            "path_policy": "hint",
-            "capability_id": "mcp.blender",
-            "description": "使用Blender创建一个二层小楼的3D模型",
-        }
-    ]
-    assert contract["blockers"] == []
-    assert "capability_grounded" in contract["system_overrides"]
-    assert "target_deliverable_success" in contract["success_conditions"]
-    assert preflight["ok"] is True
-    assert preflight["schema_version"] == "capability_preflight.v2"
-    assert preflight["readiness_issues"] == []
-    assert preflight["route_hint"]["policy"] == "advisory"
-    assert "mcp_blender.execute_blender_code" in preflight["preferred_tool_ids"]
-    assert "mcp_blender.get_scene_info" in preflight["preferred_tool_ids"]
+    assert contract["deliverables"][0]["kind"] == "file"
+    assert contract["blockers"] == ["缺少Blender相关的操作能力，无法直接在Blender中创建3D模型"]
+    assert "capability_grounded" not in contract["system_overrides"]
 
 
-def test_grounding_preserves_explicit_file_artifact_request() -> None:
+def test_grounding_preserves_model_selected_capability_and_file_artifact() -> None:
     contract = {
         "intent": "write_required",
         "goal": "Create and export a Blender model",
         "requires_write": True,
         "requires_state_change": True,
         "requires_verification": True,
-        "capability_ids": [],
+        "capability_ids": ["mcp.blender"],
         "deliverables": [
             {
                 "kind": "file",
@@ -121,11 +102,11 @@ def test_grounding_preserves_explicit_file_artifact_request() -> None:
         user_content="Use Blender to create a small house and save as house.blend",
     )
 
-    assert changed is True
+    assert changed is False
     assert contract["capability_ids"] == ["mcp.blender"]
     assert contract["requires_write"] is True
     assert contract["deliverables"][0]["kind"] == "file"
-    assert contract["deliverables"][0]["capability_id"] == "mcp.blender"
+    assert "capability_id" not in contract["deliverables"][0]
 
 
 def test_grounding_does_not_promote_answer_only_question() -> None:
@@ -151,7 +132,7 @@ def test_grounding_does_not_promote_answer_only_question() -> None:
     assert contract["deliverables"][0]["kind"] == "answer"
 
 
-def test_grounding_uses_mcp_issue_when_dynamic_tools_are_unavailable() -> None:
+def test_grounding_does_not_select_missing_external_capability_from_text() -> None:
     snapshot = build_capability_snapshot(
         [
             {
@@ -175,16 +156,16 @@ def test_grounding_uses_mcp_issue_when_dynamic_tools_are_unavailable() -> None:
     contract = {
         "intent": "write_required",
         "goal": "Use Blender to create a two-story house",
-        "requires_write": True,
+        "requires_write": False,
         "requires_state_change": True,
         "requires_verification": True,
         "capability_ids": [],
         "deliverables": [
             {
-                "kind": "file",
-                "path_hint": "two_story_house.blend",
+                "kind": "external_state",
+                "path_hint": "",
                 "path_policy": "hint",
-                "description": "A guessed Blender file",
+                "description": "Current Blender scene",
             }
         ],
         "first_action": "plan",
@@ -199,20 +180,66 @@ def test_grounding_uses_mcp_issue_when_dynamic_tools_are_unavailable() -> None:
     )
     preflight = preflight_task_capabilities(contract, snapshot)
 
-    assert changed is True
-    assert contract["capability_ids"] == ["mcp.blender"]
+    assert changed is False
+    assert contract["capability_ids"] == []
     assert contract["requires_write"] is False
     assert contract["deliverables"] == [
         {
             "kind": "external_state",
             "path_hint": "",
             "path_policy": "hint",
-            "capability_id": "mcp.blender",
-            "description": "Use Blender to create a two-story house",
+            "description": "Current Blender scene",
         }
     ]
-    assert contract["blockers"] == []
-    assert preflight["target_capability_ids"] == ["mcp.blender"]
+    assert contract["blockers"] == ["Missing Blender capability"]
+    assert preflight["target_capability_ids"] == []
     assert preflight["advisories"][0]["code"] == "service_stopped"
     assert preflight["advisories"][0]["recommended_action"] == "start"
     assert preflight["preferred_tool_ids"] is None
+
+
+def test_grounding_normalizes_model_selected_external_capability_reference() -> None:
+    contract = {
+        "intent": "write_required",
+        "goal": "Create a house in the current Blender scene",
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "capability_ids": ["mcp.blender"],
+        "deliverables": [
+            {
+                "kind": "external_state",
+                "description": "Current Blender scene",
+            }
+        ],
+        "system_overrides": [],
+    }
+
+    changed = ground_task_contract_with_capabilities(contract, _snapshot())
+
+    assert changed is True
+    assert contract["capability_ids"] == ["mcp.blender"]
+    assert contract["deliverables"][0]["capability_id"] == "mcp.blender"
+    assert "capability_reference_normalized" in contract["system_overrides"]
+
+
+def test_grounding_leaves_multi_capability_target_mapping_to_model() -> None:
+    snapshot = _snapshot()
+    snapshot["capabilities"].append({
+        "id": "mcp.scene_editor",
+        "source": "mcp",
+        "effects": ["external_state_change"],
+        "available": True,
+    })
+    contract = {
+        "intent": "write_required",
+        "requires_state_change": True,
+        "capability_ids": ["mcp.blender", "mcp.scene_editor"],
+        "deliverables": [{"kind": "external_state", "description": "Edited scene"}],
+        "system_overrides": [],
+    }
+
+    changed = ground_task_contract_with_capabilities(contract, snapshot)
+
+    assert changed is False
+    assert "capability_id" not in contract["deliverables"][0]

@@ -8,6 +8,10 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ### Added
 
+- Auditable memory selection in Context Runtime: relevant global/workspace
+  memories now enter task-contract and planning Context Packs with source IDs,
+  trust, freshness, and workspace scope instead of being hidden in the base
+  system prompt.
 - Active Focus snapshots in Context Runtime, separating new/continued task
   actions from inherited/switched project, subproject, file, artifact, or
   external-state focus without turning historical goals into hidden routing.
@@ -78,9 +82,33 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ### Changed
 
+- Provider-facing model-round streaming now runs through a dedicated
+  `ToolCallLoop` boundary. It records deltas, heartbeats, request budgets,
+  tool-call chunks, provider errors, and runtime-guidance interruption without
+  choosing task semantics or execution routes. A first idle timeout now
+  performs the retry already described by the UI; a second consecutive timeout
+  stops the run.
+- Model-proposed tool calls now run through a dedicated `ToolExecutionBatch`
+  boundary with explicit recon, write-repair, and read-range state. All tool
+  responses in a batch are appended before runtime recovery advisories, keeping
+  provider tool-call message ordering valid without constraining model choice.
+- Post-loop result handling now runs through a dedicated `RunFinalizer`
+  boundary. It builds RunResult and recovery evidence, persists the final
+  assistant message, and publishes the terminal event without deciding task
+  strategy or whether the model/tool loop should continue.
+- Cross-round lifecycle facts now live in an explicit `RunExecutionState`
+  instead of scattered runner locals. Round budgets, guidance resets,
+  completion review, transport counters, and stagnation evidence share one
+  tested state contract that does not choose model strategy.
+- Removed an unreachable target-deliverable-gap prompt path and its unused
+  strategy-change classifier instead of carrying dead intervention policy into
+  the new lifecycle state.
 - Desktop sidecar build dependencies now use the `pyproject.toml` `build`
   optional dependency group; the duplicate `requirements-build.txt` entrypoint
   has been removed.
+- Windows desktop sidecar builds now use an isolated Python environment, clean
+  stale outputs before packaging, stop on native command failures, and keep
+  cargo-check placeholders out of the release build path.
 
 - Context compression now validates cached summaries against a digest of the
   durable source-message prefix instead of reusing an index into dynamically

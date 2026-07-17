@@ -146,11 +146,11 @@ UI 历史和审计记录应完整保留，但模型侧上下文需要卫生处�
 3. 由模型在 task contract 阶段决定是否引用某个 candidate。
 4. Runtime 只审计“模型引用了哪个候选任务”，不直接把旧任务目标强加给当前轮。
 
-续接关系也不等于目标冻结。模型判断当前请求为 `continue` 时，当前轮给出的具体
-goal 和 deliverable 仍然优先；历史锚点只补充候选路径和事实。只有“继续、再试一次”
-这类没有新语义目标的明确重试，或模型判断为 `revise` 且没有显式改换目标时，才保留
-上一轮的稳定目标。每轮完成归一化后都应生成新的 continuity anchor，避免旧目标在
-后续轮次中永久覆盖当前请求。
+续接关系也不等于目标冻结。只有模型在当前 Task Contract 中显式选择 `continue` 或
+`revise` 时，Runtime 才允许历史锚点补充当前模型遗漏的字段。当前轮明确给出的 goal、
+deliverable、capability、状态变化和验证要求始终优先；“继续”“再试一次”等关键词本身
+不能触发 Runtime 继承旧目标。每轮完成归一化后都应生成新的 continuity anchor，避免
+旧目标在后续轮次中永久覆盖当前请求。
 
 这样可以避免两种极端：
 
@@ -160,6 +160,11 @@ goal 和 deliverable 仍然优先；历史锚点只补充候选路径和事实�
 Task Lineage 的审计记录可以保留完整候选元数据，但模型侧表示必须按候选独立限长，
 确保有限预算内仍能看到所有入选候选的 ID、目标、焦点和真实路径。不能先拼成一段很长
 的 JSON，再统一截断到只剩第一个候选。
+
+候选按时间顺序展示，不根据当前文字与历史路径的关键词重合度重新排序，也不生成
+`active_target`。历史 Run 的真实写入路径保留在 `actual_paths` 证据中，不会被提升为
+当前合同的 deliverable。模型显式给出的空 goal、空 capability 或空 deliverable 也是
+当前判断，不能被旧锚点重新填回。
 
 相关代码：
 
@@ -217,6 +222,7 @@ Context Pack 以 `project_context` 记录把快照传给规划、执行、验证
 - Workspace Snapshot。
 - Task Lineage。
 - 当前 Task Contract。
+- 与当前请求相关的 Memory Selection。
 - Capability Snapshot。
 - 最近工具结果、风险和验证事实。
 - Context Hygiene 报告。
@@ -270,10 +276,15 @@ Memory 是 Context Runtime 的一部分，但不能和任务事实混淆。
 - 模型上下文只能从 global memory 和当前 `workspace_id` 对应的 workspace
   memory 中选择。选择结果还必须与当前请求相关；workspace memory 不应因为属于
   当前项目就默认进入每次模型调用。
-- 明确的用户级偏好、身份和语言习惯这类 stable global memory 可以在无关键词命中
-  时进入上下文；项目事实、路径、技术栈和任务细节必须有当前请求相关性。
+- 只有语言和沟通方式这类窄范围 stable global memory 可以在无关键词命中时少量进入
+  上下文；身份、领域偏好、UI 偏好、技术栈、路径和任务细节必须与当前请求直接相关。
 - 自动记忆提取应保持窄范围，优先保存高置信用户级事实。
 - 项目事实应通过显式 workspace memory 路径保存。
+
+记忆选择结果以 `memory` Context Record 进入 `task_contract` 和 `planning` 阶段，
+Context Ledger 保留被选中的 memory ID、范围和来源。基础 system prompt 不再隐式混入
+记忆文本。模型仍可判断记忆是否相关；Runtime 只提供带 `memory` trust 标记的存储事实，
+不会把记忆当成新的用户指令。
 
 这能减少“另一台电脑、另一个项目、上一轮任务”的隐藏污染。
 
@@ -428,12 +439,15 @@ Context Runtime 当前已具备以下基础：
 - Context Ledger 记录来源、信任度、新鲜度、任务归属和内容预览，使用户可以审计模型当时看到的是哪些事实。
 - Task lineage、previous contract、recovery context、tool result facts 和 final-answer candidate 都通过 Context Pack 暴露为事实，而不是隐藏路线控制。
 - Previous contract 与 task_lineage candidate 分开记录：前者只是上一任务契约的历史锚点，后者才是可由模型显式引用的历史任务候选，避免旧任务目标伪装成当前目标。
-- 续接任务保留可复用的历史路径事实，但当前模型给出的具体 goal 会更新 continuity anchor；历史 goal 不能覆盖新的明确子目标。
+- 续接契约只有在模型显式选择 continue/revise 后才可补充遗漏字段；历史 goal、路径和能力不能覆盖当前模型已经声明的目标。
 - Task Relation 与 Focus Relation 已分离：新任务可以继承同一项目对象，但不能因此继承上一任务的目标和执行路线。
 - Active Focus 以 `project_context` 记录进入规划、执行、验证和总结阶段；对象不明确时保持 unresolved，不自动扩大到整个工作区。
 - 压缩摘要缓存只有在 durable source 前缀摘要指纹一致时才能复用；Context Hygiene 改变历史 marker 数量后不会继续沿用失配的消息索引。
 - 执行式追问的 Task Contract 判断由模型完成；“执行”“按计划执行”等短语不再触发 Runner 直接继承旧契约的旁路。
-- Memory 已区分 global 与 workspace 范围，避免跨项目记忆默认污染当前任务。
+- 运行中插话会重新触发模型 Task Contract 判断；Runtime 不再用字数、文件类型或关键词正则单独修改当前契约。
+- Memory 已区分 global 与 workspace 范围；相关性选择结果通过可审计的 `memory`
+  Context Record 进入任务契约和规划阶段，不再作为无来源文本隐式混入基础提示词。
+- 无直接相关性的 global memory 仅允许少量语言/沟通偏好进入当前请求，领域、工具和项目偏好不会作为普遍背景注入。
 - 视觉证据可以在模型支持时进入 image input，同时保留 `context.visual` / RunEvidence 审计记录。
 - Context Snapshot 可由 RunResult / recovery flow 生成，为暂停、恢复和显式 Replay Run 提供恢复依据。
 - 需要写入、导出或外部状态变化的任务，如果暂未观察到目标产物，会按工具事实是否变化进行进展判断；事实仍在变化时继续给模型空间，事实停滞时提示模型换路线，而不是按固定次数直接失败。
@@ -445,11 +459,13 @@ Evidence Index、向量检索、复杂知识库、样本库和跨设备上下文
 
 短期建议：
 
-1. 将关键 Context Pack 汇总写入 ContextSnapshot，支持暂停、恢复和回放复用。
-2. 为已读取文件建立轻量 EvidenceRecord，记录路径、摘要、范围和 hash。
-3. 在任务记录中展示 Context Ledger 摘要，让用户知道模型当时看到了哪些事实。
-4. 增强 workspace memory 的显式保存和清理路径，避免跨项目污染。
-5. 让 `compress_context()` 输出结构化摘要草案，而不只是文本。
+1. 建立独立的 Run Context Window：在长工具循环中按完整工具调用轮次治理窗口，保留
+   最近执行证据和结构化运行事实，不能按消息条数切断 tool-call/result 配对。
+2. 将关键 Context Pack 汇总写入 ContextSnapshot，支持暂停、恢复和回放复用。
+3. 为已读取文件建立轻量 EvidenceRecord，记录路径、摘要、范围和 hash。
+4. 在任务记录中展示 Context Ledger 摘要，让用户知道模型当时看到了哪些事实。
+5. 增强 workspace memory 的显式保存和清理路径，并让用户可查看单次 Run 选中了哪些记忆。
+6. 让历史对话压缩输出结构化摘要草案；它与运行中工具循环窗口保持独立。
 
 中期建议：
 

@@ -10,7 +10,7 @@ TERMINAL_CONFIG: dict[str, object] = {
     "icon": "terminal",
     "description_key": "system_prompt.description",
     "max_rounds": 40,
-    "system_prompt_key": "system_prompt.identity",
+    "system_prompt_key": "system_prompt.runtime",
     "placeholder_key": "system_prompt.placeholder",
 }
 
@@ -22,4 +22,5 @@ def get_terminal_config(lang: str = "") -> dict[str, object]:
     resolved["system_prompt"] = i18n.t(str(config["system_prompt_key"]), lang)
     resolved["description"] = i18n.t(str(config["description_key"]), lang)
     resolved["placeholder"] = i18n.t(str(config["placeholder_key"]), lang)
+    resolved["prompt_language"] = "en" if str(lang or "").lower().startswith("en") else "zh-CN"
     return resolved

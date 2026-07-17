@@ -23,11 +23,30 @@ foundation easier to understand, test, and extend.
 - `runtime/conversation_runner.py`
   - Orchestrates one model/tool run.
   - Avoid adding new policy branches here when a pure helper can own the rule.
+- `runtime/run_execution_state.py`
+  - Owns mutable cross-round lifecycle facts such as round budgets, model
+    transport counters, guidance resets, completion review, and stagnation.
+  - It must not classify task intent, select tools, or become a hidden planner.
+- `runtime/tool_call_loop.py`
+  - Owns provider-facing model-round streaming facts: deltas, heartbeats,
+    tool-call chunks, request budgets, provider errors, and interruption.
+  - It must not decide task intent, tool routes, completion, or verification.
+- `runtime/tool_execution_batch.py`
+  - Executes one model-proposed tool-call batch, preserves provider response
+    ordering, and returns explicit execution bookkeeping state.
+  - It must not select tools or reinterpret the task contract.
+- `runtime/run_finalizer.py`
+  - Owns post-loop RunResult construction, recovery checkpoints, final-answer
+    presentation, assistant-message persistence, and the terminal done event.
+  - It must not decide whether execution should continue or choose a task,
+    tool, provider, or verification strategy.
 - `runtime/agent_strategy/`
   - Owns agent runtime strategy.
-  - `classifiers.py`: intent, tool, progress, and stage classification helpers.
-  - `conversation_task_context.py`: follow-up task inheritance from conversation
-    history, including previous write/document context and output-length goals.
+  - `classifiers.py`: tool facts, progress observation, and protocol helpers;
+    it must not infer user intent or execution routes.
+  - `conversation_task_context.py`: recent-conversation detection and task
+    candidate access. It must not infer intent, write mode, document scope, or
+    output-length goals from historical keywords.
   - `context_hygiene.py`: model-context cleanup before execution; keeps noisy
     history from becoming examples for the model.
   - `context_noise.py`: pure classification and summaries for historical
@@ -43,7 +62,8 @@ foundation easier to understand, test, and extend.
   - `profiles.py`: internal assistant profiles such as chat, analysis, coding,
     document, and paper workflows.
   - `policy.py`: request routing and deterministic planning gates.
-  - `prompts.py`: stage and intervention prompt construction.
+  - `prompts.py`: factual advisory, recovery, verification, and finalization
+    prompt construction.
   - `plan_tracker.py`: execution plan lifecycle helpers.
 - `runtime/core/`
   - Owns product-level runtime schemas.
@@ -115,8 +135,8 @@ foundation easier to understand, test, and extend.
   modes unless there is a product decision to do so.
 - Internal profiles belong in `runtime/agent_strategy/profiles.py`.
 - Plan and routing decisions belong in `runtime/agent_strategy/policy.py`.
-- Stage sequences and round limits should flow through profiles instead of
-  ad-hoc branches in the runner.
+- Profiles describe model task contracts. Do not turn them into fixed stage
+  sequences, tool routes, or profile-specific round budgets.
 - Model-context cleanup belongs in `runtime/agent_strategy/context_hygiene.py`.
   Do not remove visible chat history to fix model pollution; sanitize only the
   model-facing context and keep audit records intact.
@@ -184,7 +204,7 @@ Run the checks that match your change:
 python scripts/sync_release_version.py --check
 python scripts/check_doc_encoding.py
 pytest
-python -m py_compile runtime/api/conversations.py runtime/conversation_runner.py
+python -m py_compile runtime/api/conversations.py runtime/conversation_runner.py runtime/run_execution_state.py runtime/tool_call_loop.py runtime/tool_execution_batch.py runtime/run_finalizer.py
 node --check runtime/panel/static/panel.js
 node --check runtime/panel/static/i18n.js
 ```
@@ -192,7 +212,7 @@ node --check runtime/panel/static/i18n.js
 For strategy changes, run:
 
 ```bash
-pytest tests/test_agent_strategy.py tests/test_agent_strategy_behaviour.py
+pytest tests/test_agent_strategy.py
 ```
 
 For desktop shell changes, run:

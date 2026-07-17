@@ -76,7 +76,7 @@ def test_task_lineage_extracts_runtime_observed_paths_from_run_result() -> None:
     ]
 
 
-def test_task_lineage_reference_anchor_prefers_runtime_observed_write_targets() -> None:
+def test_task_lineage_reference_anchor_keeps_model_declared_deliverables() -> None:
     conversation = SimpleNamespace(messages=[
         _message("user", "change lesson"),
         _message(
@@ -113,11 +113,15 @@ def test_task_lineage_reference_anchor_prefers_runtime_observed_write_targets() 
     anchor = referenced_candidate_contract(candidates, "run-1")
 
     assert anchor is not None
-    assert anchor["deliverables"][0]["path_hint"] == "lesson/src/app.js"
-    assert anchor["deliverables"][0]["description"] == (
-        "Runtime-observed target path from the referenced run"
-    )
-    assert anchor["deliverables"][1]["path_hint"] == "D:/code/courseware"
+    assert anchor["deliverables"] == [
+        {
+            "kind": "code",
+            "path_hint": "D:/code/courseware",
+            "path_policy": "hint",
+            "description": "Broad project directory",
+        }
+    ]
+    assert candidates[0]["actual_paths"] == ["lesson/src/app.js"]
 
 
 def test_task_lineage_skips_answer_only_contracts() -> None:
@@ -221,11 +225,10 @@ def test_task_lineage_candidates_are_ordered_most_recent_first_with_paths() -> N
     assert prompt.index("new-run") < prompt.index("old-run")
     assert "src/app.js" in prompt
     payload = json.loads(prompt)
-    assert payload["active_target"]["candidate_id"] == "new-run"
-    assert payload["active_target"]["target_paths"] == ["src/app.js"]
+    assert "active_target" not in payload
 
 
-def test_task_lineage_target_correction_prefers_matching_observed_path_over_recency() -> None:
+def test_task_lineage_does_not_rank_historical_tasks_from_current_keywords() -> None:
     conversation = SimpleNamespace(messages=[
         _message("user", "change target subproject"),
         _message(
@@ -275,17 +278,15 @@ def test_task_lineage_target_correction_prefers_matching_observed_path_over_rece
     prompt = format_task_candidates_for_model(candidates)
 
     assert [candidate["candidate_id"] for candidate in candidates[:2]] == [
-        "right-target-run",
         "wrong-target-run",
+        "right-target-run",
     ]
-    assert candidates[0]["current_target_match"] is True
-    assert candidates[0]["current_target_affinity"] > 0
-    assert candidates[1]["current_target_match"] is False
-    assert "current_target_match" in prompt
-    assert prompt.index("right-target-run") < prompt.index("wrong-target-run")
+    assert all("current_target_match" not in candidate for candidate in candidates)
+    assert "current_target_match" not in prompt
+    assert prompt.index("wrong-target-run") < prompt.index("right-target-run")
 
 
-def test_task_lineage_prioritizes_recent_target_paths_over_failed_verification_attempt() -> None:
+def test_task_lineage_keeps_recency_and_exposes_status_for_model_judgment() -> None:
     conversation = SimpleNamespace(messages=[
         _message("user", "change lesson"),
         _message(
@@ -333,11 +334,11 @@ def test_task_lineage_prioritizes_recent_target_paths_over_failed_verification_a
     prompt = format_task_candidates_for_model(candidates)
 
     assert [candidate["candidate_id"] for candidate in candidates] == [
-        "write-run",
         "verify-run",
+        "write-run",
     ]
-    assert candidates[0]["recency_rank"] == 2
+    assert candidates[0]["recency_rank"] == 1
     assert candidates[0]["lineage_rank"] == 1
-    assert candidates[0]["actual_paths"] == ["src/app.js"]
-    assert candidates[1]["actual_paths"] == ["src/app_optimized.js"]
+    assert candidates[0]["actual_paths"] == ["src/app_optimized.js"]
+    assert candidates[1]["actual_paths"] == ["src/app.js"]
     assert "should not replace the target paths" in prompt

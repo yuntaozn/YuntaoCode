@@ -414,14 +414,6 @@ def preflight_task_capabilities(
                 ),
                 "tools": visual_readiness[:4],
             })
-    preferred_tool_ids = _preferred_tool_ids(
-        contract,
-        snapshot,
-        target_tool_ids,
-        requires_external_state=requires_external_state,
-        target_has_external_state=target_has_external_state,
-    )
-
     return {
         "schema_version": CAPABILITY_PREFLIGHT_SCHEMA_VERSION,
         "ok": True,
@@ -429,7 +421,9 @@ def preflight_task_capabilities(
         "readiness_issues": advisories,
         "target_capability_ids": target_capability_ids,
         "requires_external_state_capability": requires_external_state,
-        "preferred_tool_ids": preferred_tool_ids,
+        # Compatibility field for older diagnostics. New preflight records do
+        # not rank tools or select a route for the model.
+        "preferred_tool_ids": None,
         "visual_verification_tool_ids": visual_verification_tool_ids,
         "route_hint": {
             "policy": "advisory",
@@ -530,51 +524,6 @@ def _required_verification_modalities(contract: dict[str, Any]) -> set[str]:
     }
 
 
-def _preferred_tool_ids(
-    contract: dict[str, Any],
-    snapshot: dict[str, Any],
-    target_tool_ids: set[str],
-    *,
-    requires_external_state: bool,
-    target_has_external_state: bool,
-) -> list[str] | None:
-    if not target_tool_ids or not (requires_external_state or target_has_external_state):
-        return None
-    healthy_targets = sorted(
-        tool_id for tool_id in target_tool_ids
-        if _tool_snapshot_health(snapshot, tool_id) == "available"
-    )
-    if not healthy_targets:
-        return None
-
-    required_modalities = _required_verification_modalities(contract)
-    requires_verification = bool(contract.get("requires_verification"))
-    preferred: list[str] = []
-
-    if "visual" in required_modalities:
-        preferred.extend(_healthy_visual_tool_ids(snapshot, set(healthy_targets)))
-
-    deliverable_tools = [
-        tool_id for tool_id in healthy_targets
-        if "deliverable" in _tool_snapshot_roles(snapshot, tool_id)
-    ]
-    preferred.extend(deliverable_tools)
-
-    if not deliverable_tools:
-        preferred.extend(
-            tool_id for tool_id in healthy_targets
-            if "external_state_change" in _tool_snapshot_effects(snapshot, tool_id)
-        )
-
-    if requires_verification:
-        preferred.extend(
-            tool_id for tool_id in healthy_targets
-            if _tool_snapshot_roles(snapshot, tool_id) & {"verification", "evidence"}
-        )
-
-    return _dedupe(preferred)[:12] or None
-
-
 def _healthy_visual_tool_ids(snapshot: dict[str, Any], tool_ids: set[str]) -> list[str]:
     return [
         tool_id for tool_id in sorted(tool_ids)
@@ -647,10 +596,6 @@ def _tool_snapshot_roles(snapshot: dict[str, Any], tool_id: str) -> set[str]:
     return _tool_snapshot_string_set(snapshot, "tool_roles", tool_id)
 
 
-def _tool_snapshot_effects(snapshot: dict[str, Any], tool_id: str) -> set[str]:
-    return _tool_snapshot_string_set(snapshot, "tool_effects", tool_id)
-
-
 def _tool_snapshot_artifacts(snapshot: dict[str, Any], tool_id: str) -> set[str]:
     return _tool_snapshot_string_set(snapshot, "tool_artifacts", tool_id)
 
@@ -662,18 +607,6 @@ def _tool_snapshot_string_set(snapshot: dict[str, Any], key: str, tool_id: str) 
         for item in values.get(tool_id, [])
         if str(item or "").strip()
     }
-
-
-def _dedupe(values: list[str]) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        text = str(value or "").strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        result.append(text)
-    return result
 
 
 def _normalize_capability_issues(value: list[dict[str, Any]] | None) -> list[dict[str, Any]]:

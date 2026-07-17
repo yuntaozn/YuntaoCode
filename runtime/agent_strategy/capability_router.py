@@ -358,10 +358,10 @@ def order_tool_specs_for_model_prompt(tool_specs: list[dict[str, Any]]) -> list[
 def format_capability_catalog_for_prompt(
     catalog: list[CapabilityContract],
     *,
-    max_items: int = 16,
+    max_items: int | None = None,
     compact: bool = False,
 ) -> str:
-    visible = catalog[:max_items]
+    visible = catalog if max_items is None else catalog[:max(0, max_items)]
     if compact:
         lines = [
             "",

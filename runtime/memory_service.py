@@ -120,43 +120,32 @@ def build_memory_prompt(memory_settings: dict[str, Any] | None) -> str:
 _WORD_PATTERN = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", re.UNICODE)
 
 _STABLE_GLOBAL_TAGS = frozenset({
-    "user_preference",
-    "user-preference",
-    "user preference",
-    "preference",
-    "preferences",
     "communication",
     "communication_preference",
     "communication-preference",
-    "workflow_preference",
-    "workflow-preference",
-    "ui_preference",
-    "ui-preference",
-    "user_identity",
-    "user-identity",
-    "user identity",
-    "identity",
-    "role",
+    "communication_style",
+    "communication-style",
+    "language",
     "language_preference",
     "language-preference",
 })
 
 _STABLE_GLOBAL_TEXT_HINTS = (
-    "user prefers",
-    "user likes",
-    "user wants",
-    "prefers",
-    "likes",
+    "concise replies",
+    "concise answers",
+    "structured summaries",
     "language preference",
     "communication preference",
-    "用户偏好",
-    "用户喜欢",
-    "用户希望",
-    "偏好",
-    "喜欢",
     "中文回复",
     "英文回复",
+    "使用中文",
+    "使用英文",
+    "交流语言",
+    "简洁回复",
+    "简洁回答",
 )
+
+MAX_BROAD_GLOBAL_MEMORIES = 2
 
 
 def _tokenize(text: str) -> set[str]:
@@ -261,6 +250,7 @@ def build_memory_prompt_from_store(
     user_message: str = "",
     workspace_id: str = "",
     max_prompt_chars: int = MAX_MEMORY_PROMPT_CHARS,
+    record_usage: bool = True,
 ) -> tuple[str, list[str]]:
     """Build memory prompt with relevance filtering.
 
@@ -289,14 +279,19 @@ def build_memory_prompt_from_store(
     # unrelated workspace facts into every model call.  Stable global
     # preference/identity memories may still be broadly useful.
     scored: list[tuple[MemoryItem, float]] = []
+    broad_global_ids: set[str] = set()
     has_current_query = bool(message_tokens)
     for item in enabled_items:
+        direct_relevance = _has_direct_relevance(item, message_tokens, message_tags)
+        stable_global = _is_stable_global_memory(item)
         if (
             has_current_query
-            and not _has_direct_relevance(item, message_tokens, message_tags)
-            and not _is_stable_global_memory(item)
+            and not direct_relevance
+            and not stable_global
         ):
             continue
+        if has_current_query and not direct_relevance and stable_global:
+            broad_global_ids.add(item.id)
         scored.append((item, _score_memory(item, message_tokens, message_tags, now)))
     scored.sort(key=lambda x: x[1], reverse=True)
 
@@ -307,10 +302,15 @@ def build_memory_prompt_from_store(
     selected: list[MemoryItem] = []
     selected_ids: list[str] = []
     total_chars = 0
+    broad_global_count = 0
 
     for item, _ in scored:
         if len(selected) >= max_active:
             break
+        if item.id in broad_global_ids:
+            if broad_global_count >= MAX_BROAD_GLOBAL_MEMORIES:
+                continue
+            broad_global_count += 1
         line = item.text
         if item.tags:
             line = f"[{', '.join(item.tags)}] {line}"
@@ -338,6 +338,7 @@ def build_memory_prompt_from_store(
         prompt = prompt[:max_prompt_chars] + "\n- ...记忆过长，已截断"
 
     # Record usage for selected memories
-    store.batch_record_usage(selected_ids)
+    if record_usage:
+        store.batch_record_usage(selected_ids)
 
     return prompt, selected_ids

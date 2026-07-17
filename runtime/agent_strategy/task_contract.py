@@ -138,12 +138,13 @@ def default_task_contract(
 def merge_model_task_contract(
     raw_contract: dict[str, Any] | None,
     fallback_contract: dict[str, Any],
-    *,
-    user_no_write_hint: bool = False,
-    expected_document_coverage: bool = False,
-    expected_min_output_chars: int = 0,
 ) -> dict[str, Any]:
-    """Normalize a model contract and apply runtime-owned hard constraints."""
+    """Normalize a model contract without replacing its semantic judgment.
+
+    The runtime owns field shape and safe defaults.  It does not turn one
+    intent, deliverable, target, or first action into another after the model
+    has selected them.
+    """
     if not isinstance(raw_contract, dict):
         contract = dict(fallback_contract)
         contract["source"] = fallback_contract.get("source") or "policy"
@@ -152,28 +153,24 @@ def merge_model_task_contract(
         contract = dict(fallback_contract)
         contract["source"] = "model"
         contract["raw_model_contract"] = _truncate_raw_contract(raw_contract)
+        contract["model_explicit_fields"] = sorted(str(key) for key in raw_contract)
         intent = _intent_or_default(raw_contract.get("intent"), fallback_contract.get("intent"))
         requires_write = _bool_or_default(
             raw_contract.get("requires_write"),
-            bool(fallback_contract.get("requires_write")),
+            bool(fallback_contract.get("requires_write")) or intent in WRITE_INTENTS,
         )
         requires_state_change = _bool_or_default(
             raw_contract.get("requires_state_change"),
-            requires_write or intent in WRITE_INTENTS,
+            requires_write,
         )
+        # A local write is observably a state change.  This is field ontology,
+        # not a task-routing decision; intent and first_action remain untouched.
         if requires_write:
-            requires_state_change = True
-        if requires_state_change and intent not in {"document_export", "paper_workflow"}:
-            intent = "write_required"
-        if intent == "document_export":
-            requires_write = True
             requires_state_change = True
         requires_verification = _bool_or_default(
             raw_contract.get("requires_verification"),
             requires_state_change,
         )
-        if requires_state_change:
-            requires_verification = True
 
         contract.update({
             "intent": intent,
@@ -189,6 +186,10 @@ def merge_model_task_contract(
             "requires_plan": _bool_or_default(
                 raw_contract.get("requires_plan"),
                 bool(fallback_contract.get("requires_plan")),
+            ),
+            "expected_document_coverage": _bool_or_default(
+                raw_contract.get("expected_document_coverage"),
+                False,
             ),
             "expected_min_output_chars": _safe_int(raw_contract.get("expected_min_output_chars")),
             "capability_ids": _normalize_string_list(
@@ -253,19 +254,16 @@ def merge_model_task_contract(
         160,
     )
     contract.setdefault("revision_request", "")
+    contract.setdefault("model_explicit_fields", [])
     contract["execution_advisories"] = _normalize_advisories(contract.get("execution_advisories"))
-    contract["expected_document_coverage"] = (
-        bool(contract.get("expected_document_coverage")) or bool(expected_document_coverage)
+    contract["expected_document_coverage"] = bool(
+        contract.get("expected_document_coverage")
     )
-    contract["expected_min_output_chars"] = max(
-        _safe_int(contract.get("expected_min_output_chars")),
-        _safe_int(expected_min_output_chars),
+    contract["expected_min_output_chars"] = _safe_int(
+        contract.get("expected_min_output_chars")
     )
 
     overrides = list(contract.get("system_overrides") or [])
-    if user_no_write_hint:
-        contract["user_no_write_hint"] = True
-        overrides.append("user_no_write_hint")
 
     if contract.get("expected_document_coverage"):
         overrides.append("expected_document_coverage")
@@ -280,8 +278,6 @@ def merge_model_task_contract(
         contract["required_verification_modalities"] = []
 
     contract["system_overrides"] = list(dict.fromkeys(str(item) for item in overrides if item))
-    _normalize_local_file_state_contract(contract)
-    _normalize_output_length_contract(contract)
     contract["success_conditions"] = success_conditions_for_contract(contract)
     return contract
 
@@ -323,16 +319,17 @@ def task_contract_prompt(
     workspace_context: str = "",
     previous_contract: dict[str, Any] | None = None,
 ) -> str:
-    """Prompt used for the model-side task contract judgment."""
+    """Prompt used for the model-side task contract judgment.
+
+    Keep this prompt schema-oriented. Scenario playbooks belong to model
+    judgment or optional capability packs, not the runtime contract layer.
+    """
     capability_block = ""
     if str(capability_context or "").strip():
         capability_block = (
             "\nRuntime capability context for this contract judgment:\n"
             f"{str(capability_context).strip()}\n"
-            "Capability note: available web, preview, MCP, CLI, and built-in tools are facts "
-            "you may use when judging the task. If the user request depends on current remote "
-            "or local runtime content, do not assume the model must answer from prior knowledge; "
-            "choose the intent and first_action that best fit the requested evidence.\n"
+            "These are current capability facts, not a required execution route.\n"
         )
     workspace_block = ""
     if str(workspace_context or "").strip():
@@ -345,52 +342,21 @@ def task_contract_prompt(
         continuity_block = (
             "\nPrevious task semantic anchor:\n"
             f"{json.dumps(task_continuity_anchor(previous_contract), ensure_ascii=False)}\n"
-            "This anchor is candidate context only, not the default current goal. "
-            "The current user request has priority. Use continue/revise only when "
-            "the current wording clearly refers to the same target, retries it, "
-            "or evaluates its result; use replace/new when the target, artifact, "
-            "or domain has changed.\n"
-            "Decide scope_relation for the current request: continue/revise keeps "
-            "the previous target and changes how it should be completed; replace/new "
-            "changes the target. Do not turn an external-state goal into a script or "
-            "other intermediate artifact merely because execution previously fell back. "
-            "If the current request asks to look at, inspect, evaluate, or judge the "
-            "current result, consider read/verify/answer first unless the user clearly "
-            "asks to change state again.\n"
+            "This is historical evidence only. The current request has priority; decide "
+            "the relationship and target yourself.\n"
         )
     return capability_block + workspace_block + continuity_block + (
         "请先判断本轮用户请求的任务契约，只输出 JSON，不要调用工具，不要解释。\n"
         f"当前项目目录：{workspace_path}\n"
-        "你负责判断任务语义；系统负责权限、工具执行和完成验收。\n"
-        "请结合最近对话理解本轮请求。短句可能是在延续上一轮任务或修改上一轮产物；"
-        "requires_write 只表示必须创建或修改本地文件；requires_state_change 表示必须改变文件、"
-        "外部应用、数据库、浏览器会话或其他可观察状态。"
-        "如果用户只要求在 Blender、CAD 或其他外部应用中修改当前状态，而没有要求保存文件，"
-        "requires_state_change 应为 true，requires_write 应为 false。"
-        "只有确实不需要任何本地动作的问答才使用 answer_only。\n"
-        "请不要因为不确定就默认只聊天。如果用户要求产物、修改、导出、转换、生成文件或执行本地任务，"
-        "应正确区分文件写入与外部状态修改；如果只是解释、建议或分析，两者都应为 false。\n"
-        "如果用户描述的是某个本地产物、页面、应用、脚本、文档或外部状态“不能访问、不能运行、出错、"
-        "效果不对、有问题”，且没有明确说只分析，这通常是 analysis-first repairable task："
-        "你可以先设为 read_only_analysis + first_action=read，并在 execution_advisories 中说明"
-        " evidence_may_require_repair；如果用户已明确要求修复或目标产物必须改变，则设为 write_required。"
-        "execution_advisories 只是给执行阶段的非硬约束提醒，不能替代 requires_write/requires_state_change。\n"
-        "Verification modality rule: use required_verification_modalities=[] for ordinary structural checks. "
-        "Include visual when the user cares about appearance, layout, UI rendering, screenshots, rendered images, "
-        "model quality, whether something looks right, or any visual artifact. Use behavioral for real tests, "
-        "runtime/API probes, service startup checks, database checks, or UI interactions; do not use behavioral "
-        "for syntax-only checks such as python -m py_compile or node --check. Use content for text/document "
-        "content checks.\n"
-        "Task and focus relation rule: task lineage candidates are historical facts, not forced goals. "
-        "scope_relation describes whether the current action/goal continues an earlier task. focus_relation "
-        "independently describes which project, subproject, file, artifact, or external object the current task "
-        "is about. A new task may use scope_relation=new together with focus_relation=inherit when the user "
-        "changes the requested action or deliverable but keeps the same working object. In that case set "
-        "referenced_focus_candidate_id, describe the inherited object in focus, and do not copy the candidate's "
-        "old goal or execution route. Short conversational follow-ups that omit the object may inherit a recent "
-        "focus when the candidate evidence supports that reading; do not silently expand an omitted subproject "
-        "to the whole workspace. Use focus_relation=unresolved when the evidence is genuinely insufficient. "
-        "Set referenced_task_candidate_id only for continue/revise of the earlier task itself.\n"
+        "当前用户请求是任务语义的第一依据；工作区快照、历史任务、记忆和能力清单都只是证据。\n"
+        "你负责选择 goal、intent、目标产物、能力、关系、首动作、计划和验证需求。"
+        "系统不会根据关键词替你改写这些字段。请让字段彼此一致："
+        "requires_write 仅表示需要创建、修改或删除本地文件；requires_state_change 表示需要改变任何"
+        "可观察状态；requires_verification 表示目标完成后仍需要证据。\n"
+        "scope_relation 描述当前目标与历史任务的关系；focus_relation 独立描述当前工作对象的来源。"
+        "只有确实沿用历史目标或工作对象时才引用候选 id；证据不足时使用 unresolved。\n"
+        "required_verification_modalities 可使用 structural、visual、behavioral、content；"
+        "由目标所需证据决定，不绑定具体工具。execution_advisories 只能记录非约束性提醒。\n"
         "JSON 字段：\n"
         "{\n"
         '  "goal": "用户真实目标的简短描述",\n'
@@ -400,20 +366,20 @@ def task_contract_prompt(
         '  "requires_verification": true,\n'
         '  "required_verification_modalities": [],\n'
         '  "requires_plan": false,\n'
-        '  "capability_ids": ["optional runtime capability id from <available_capabilities>, e.g. mcp.blender"],\n'
-        '  "deliverables": [{"kind": "file|answer|document|code|external_state", "path_hint": "", "path_policy": "hint|exact", "description": ""}],\n'
+        '  "capability_ids": ["optional capability id from the runtime facts"],\n'
+        '  "deliverables": [{"kind": "file|answer|document|code|external_state", "path_hint": "", "path_policy": "hint|exact", "capability_id": "", "description": ""}],\n'
         '  "scope_relation": "new|continue|revise|replace",\n'
         '  "referenced_task_candidate_id": "",\n'
         '  "focus_relation": "explicit|inherit|switch|unresolved",\n'
         '  "focus": {"kind": "workspace|project|subproject|directory|file|artifact|external_state|other", "name": "", "path_hint": "", "description": ""},\n'
         '  "referenced_focus_candidate_id": "",\n'
+        '  "expected_document_coverage": false,\n'
         '  "expected_min_output_chars": 0,\n'
         '  "execution_advisories": [{"code": "optional-short-code", "message": "non-binding execution note", "suggested_first_action": "read|write|verify|use_tool"}],\n'
         '  "first_action": "answer|read|search|plan|write|verify|ask_user|use_tool",\n'
         '  "blockers": [],\n'
         '  "confidence": 0.0\n'
         "}\n"
-        f"系统回退契约：{json.dumps(_contract_prompt_fallback(fallback_contract), ensure_ascii=False)}"
     )
 
 
@@ -463,7 +429,6 @@ def task_contract_context_messages(
 def should_use_model_task_contract(
     content: str,
     fallback_intent: str,
-    user_no_write_hint: bool,
     *,
     has_recent_task_context: bool = False,
 ) -> bool:
@@ -558,30 +523,6 @@ def inherit_task_contract_for_followup(
 ) -> dict[str, Any]:
     """Carry a previous task contract into an explicit execute-follow-up turn."""
     return _contract_evolution.inherit_task_contract_for_followup(previous_contract, fallback_contract)
-
-
-def promote_task_contract_for_write_intent(
-    contract: dict[str, Any],
-    *,
-    reason: str,
-    path_hint: str = "",
-    deliverable_kind: str = "code",
-    description: str = "",
-) -> bool:
-    """Promote a contract when runtime facts show a write is now intended.
-
-    The model owns the initial task judgment, but plan/tool facts may reveal a
-    stronger requirement than the initial contract.  This helper only promotes
-    toward stricter write+verification semantics; it never weakens a contract
-    and respects hard no-write locks.
-    """
-    return _contract_evolution.promote_task_contract_for_write_intent(
-        contract,
-        reason=reason,
-        path_hint=path_hint,
-        deliverable_kind=deliverable_kind,
-        description=description,
-    )
 
 
 def success_conditions_for_contract(contract: dict[str, Any]) -> list[str]:
@@ -720,176 +661,8 @@ def _normalize_path_policy(value: Any) -> str:
     return policy if policy in VALID_PATH_POLICIES else "hint"
 
 
-def _normalize_local_file_state_contract(contract: dict[str, Any]) -> None:
-    """Normalize local file deletion into the local file-state capability.
-
-    External state is reserved for applications such as browsers, Blender, CAD,
-    databases, or MCP services. Deleting a workspace file is a local file state
-    change and should route to filesystem.local_state / filesystem.delete_file.
-    """
-    if not _looks_like_local_file_delete_contract(contract):
-        return
-
-    contract["intent"] = "write_required"
-    contract["requires_write"] = True
-    contract["requires_state_change"] = True
-    contract["requires_verification"] = True
-    contract["first_action"] = "write"
-    contract["expected_min_output_chars"] = 0
-
-    capabilities = _normalize_string_list(contract.get("capability_ids"), limit=6, item_limit=120)
-    capabilities = [item for item in capabilities if item != "filesystem.local_files"]
-    capabilities.insert(0, "filesystem.local_state")
-    contract["capability_ids"] = list(dict.fromkeys(capabilities))[:6]
-
-    deliverables = contract.get("deliverables") if isinstance(contract.get("deliverables"), list) else []
-    normalized: list[dict[str, str]] = []
-    for item in deliverables:
-        if not isinstance(item, dict):
-            continue
-        copy = dict(item)
-        kind = str(copy.get("kind") or "").strip().lower()
-        if kind in {"external_state", "answer", ""}:
-            copy["kind"] = "file"
-        copy.setdefault("path_policy", "hint")
-        normalized.append({
-            "kind": _clean_text(copy.get("kind") or "file", 40) or "file",
-            "path_hint": _clean_text(copy.get("path_hint") or copy.get("path"), 180),
-            "path_policy": _normalize_path_policy(copy.get("path_policy")),
-            "capability_id": _clean_text(copy.get("capability_id") or "filesystem.local_state", 120),
-            "description": _clean_text(copy.get("description") or contract.get("goal"), 240),
-        })
-    if not normalized:
-        normalized.append({
-            "kind": "file",
-            "path_hint": "",
-            "path_policy": "hint",
-            "capability_id": "filesystem.local_state",
-            "description": _clean_text(contract.get("goal") or "Local file deletion", 240),
-        })
-    contract["deliverables"] = normalized[:6]
-
-    overrides = [
-        str(item)
-        for item in contract.get("system_overrides") or []
-        if str(item or "").strip() != "expected_min_output_chars"
-    ]
-    overrides.append("normalized_local_file_state")
-    contract["system_overrides"] = list(dict.fromkeys(item for item in overrides if item))
-
-
-def _normalize_output_length_contract(contract: dict[str, Any]) -> None:
-    """Keep output-length checks scoped to document/text deliverables.
-
-    Character-count goals are completion criteria for prose documents, reports,
-    papers, and similar text artifacts. They are not a useful correctness
-    signal for code, local file state, or external application state.
-    """
-    if _safe_int(contract.get("expected_min_output_chars")) <= 0:
-        return
-    if _contract_expects_text_output(contract):
-        return
-
-    contract["expected_min_output_chars"] = 0
-    overrides = [
-        str(item)
-        for item in contract.get("system_overrides") or []
-        if str(item or "").strip() != "expected_min_output_chars"
-    ]
-    overrides.append("cleared_non_text_min_output_chars")
-    contract["system_overrides"] = list(dict.fromkeys(item for item in overrides if item))
-
-
-def _looks_like_local_file_delete_contract(contract: dict[str, Any]) -> bool:
-    text = _contract_text(contract)
-    if not _has_delete_term(text):
-        return False
-    capability_ids = set(_normalize_string_list(contract.get("capability_ids"), limit=12, item_limit=160))
-    if any(item.startswith("mcp.") or item.startswith("mcp_") for item in capability_ids):
-        return False
-    deliverables = contract.get("deliverables") if isinstance(contract.get("deliverables"), list) else []
-    kinds = {
-        str(item.get("kind") or "").strip().lower()
-        for item in deliverables
-        if isinstance(item, dict)
-    }
-    has_path_hint = any(
-        isinstance(item, dict)
-        and bool(str(item.get("path_hint") or item.get("path") or "").strip())
-        for item in deliverables
-    )
-    has_local_capability = bool(
-        capability_ids
-        & {
-            "filesystem.local_files",
-            "filesystem.local_state",
-            "code.local_project",
-            "code.text_write",
-            "document.local_documents",
-        }
-    )
-    return bool(
-        has_path_hint
-        or has_local_capability
-        or kinds & {"file", "code", "document"}
-        or _has_local_file_term(text)
-    )
-
-
 def _contract_expects_text_output(contract: dict[str, Any]) -> bool:
     return _document_contract_expects_text_output(contract)
-
-
-def _contract_text(contract: dict[str, Any]) -> str:
-    parts = [
-        str(contract.get("goal") or ""),
-        str(contract.get("first_action") or ""),
-    ]
-    raw = contract.get("raw_model_contract")
-    if isinstance(raw, dict):
-        parts.append(str(raw.get("goal") or ""))
-    for source in (contract, raw if isinstance(raw, dict) else {}):
-        deliverables = source.get("deliverables") if isinstance(source.get("deliverables"), list) else []
-        for item in deliverables:
-            if not isinstance(item, dict):
-                continue
-            parts.extend(
-                str(item.get(key) or "")
-                for key in ("kind", "path_hint", "path", "description")
-            )
-    return " ".join(parts).lower()
-
-
-def _has_delete_term(text: str) -> bool:
-    terms = (
-        "delete",
-        "remove",
-        "unlink",
-        "\u5220\u9664",
-        "\u5220\u6389",
-        "\u79fb\u9664",
-        "\u53bb\u6389",
-    )
-    return any(term in text for term in terms)
-
-
-def _has_local_file_term(text: str) -> bool:
-    terms = (
-        "file",
-        "document",
-        "workspace",
-        "project",
-        "repo",
-        "repository",
-        "github",
-        "\u6587\u4ef6",
-        "\u6587\u6863",
-        "\u5de5\u4f5c\u533a",
-        "\u9879\u76ee",
-        "\u4ed3\u5e93",
-        "\u76ee\u5f55",
-    )
-    return any(term in text for term in terms)
 
 
 def _safe_int(value: Any) -> int:
@@ -953,16 +726,3 @@ def _truncate_raw_contract(value: dict[str, Any]) -> dict[str, Any]:
     if len(text) <= 4000:
         return value
     return {"truncated": True, "preview": text[:4000]}
-
-
-def _contract_prompt_fallback(contract: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "intent": contract.get("intent"),
-        "requires_write": bool(contract.get("requires_write")),
-        "requires_state_change": bool(contract.get("requires_state_change")),
-        "requires_verification": bool(contract.get("requires_verification")),
-        "required_verification_modalities": _normalize_verification_modalities(
-            contract.get("required_verification_modalities")
-        ),
-        "requires_plan": bool(contract.get("requires_plan")),
-    }

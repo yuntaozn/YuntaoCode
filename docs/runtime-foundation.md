@@ -391,17 +391,18 @@ or quality requirements. `replace` and `new` establish a different target.
 The runtime preserves a compact `continuity_anchor` for continued/revised
 tasks, preventing an intermediate fallback from silently becoming the next
 turn's product goal.
-Conversation-history inheritance is implemented in
-`runtime/agent_strategy/conversation_task_context.py` so follow-up routing,
-previous write context, document export context, and inherited output-length
-goals can be tested without Tornado handlers.
+Conversation history is exposed as bounded task candidates by
+`runtime/agent_strategy/conversation_task_context.py` and `task_lineage.py`.
+The runtime does not infer a previous write mode, document workflow, or output
+length from keywords. Continuity is applied only after the model explicitly
+references a candidate and declares `continue` or `revise`.
 
 Contract evolution after the initial judgment belongs in
-`runtime/agent_strategy/contract_evolution.py`. That layer handles follow-up
-continuity, explicit execute-follow-up inheritance, and runtime promotion when
-plan or tool facts reveal a stricter write target. The base `task_contract`
-module should keep owning schema normalization and hard constraints, not every
-runtime fact that can strengthen a contract.
+`runtime/agent_strategy/contract_evolution.py`. That layer handles explicit
+follow-up continuity without turning observed tool effects into new semantic
+requirements. Tool writes and paths remain Run evidence; they do not rewrite
+the declared target. The base `task_contract` module owns schema normalization,
+not scenario routing.
 
 Deliverable paths are soft hints by default. A successful artifact of the same
 declared kind may use another path and still satisfy the contract; the path
@@ -561,7 +562,7 @@ chat messages.
 
 Context is a runtime resource, not just chat history. It should track:
 
-- task goals and hard constraints;
+- task goals and explicit user constraints;
 - context source and trust level;
 - tool-verified evidence;
 - summaries and memory;
@@ -686,7 +687,13 @@ outputs still need explicit write tools such as `code.edit_file`,
    coverage_check, syntax_check, and visual_observation.
 4. Persist confirmation requests and outcomes as richer first-class trace
    records.
-5. Split `conversation_runner.execute()` by controller responsibility.
+5. Keep `conversation_runner.execute()` as lifecycle orchestration. Provider
+   streaming lives in `runtime/tool_call_loop.py`, model-proposed tool batches
+   run through `runtime/tool_execution_batch.py`, and post-loop result
+   finalization lives in `runtime/run_finalizer.py`. Cross-round mutable facts
+   now live in `runtime/run_execution_state.py`; future lifecycle changes should
+   extend that tested state contract instead of adding local flags or another
+   task-decision layer.
 6. Add checkpoint rollback and policy-controlled unattended Runbook execution.
 7. Connect selected Experience Samples to local Replay/Evaluation without
    automatic collection or promotion.

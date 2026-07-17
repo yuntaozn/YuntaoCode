@@ -46,9 +46,11 @@ The suite currently has four useful layers:
   `test_mcp_service_manager.py`, `test_security.py`,
   `test_filesystem_tool.py`, `test_code_tool.py`, and `test_shell_tool.py`.
 - **Context and strategy tests** protect model-facing context hygiene and the
-  extracted strategy helpers. Examples: `test_context_hygiene.py`,
+  extracted strategy and lifecycle boundaries. Examples: `test_context_hygiene.py`,
   `test_context_manager.py`, `test_conversation_task_context.py`,
-  `test_agent_strategy.py`, and `test_agent_strategy_behaviour.py`.
+  `test_agent_strategy.py`, `test_run_execution_state.py`,
+  `test_tool_call_loop.py`, `test_tool_execution_batch.py`, and
+  `test_run_finalizer.py`.
 - **Experience and operational tests** protect diagnostics, samples,
   evaluation, plugins, settings, automation, and update behavior. Examples:
   `test_diagnostic_export.py`, `test_experience_sample_export.py`,

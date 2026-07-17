@@ -183,9 +183,6 @@ def test_verification_runtime_guard_advises_on_long_running_server_after_write()
             "input": {"path": r"D:\ifctool\viewer.html"},
         }
     ]
-    handler._active_current_stage = "verifier"
-    handler._active_post_deliverable_mode = True
-
     message = handler._verification_runtime_tool_guard(
         "shell.run_command",
         {"command": "python -m http.server 8080", "timeout": 5},
@@ -548,7 +545,6 @@ def test_short_follow_up_uses_model_contract_when_conversation_has_task_context(
     assert handler._should_use_model_task_contract(
         "现在想加能选构件的能力",
         "answer_only",
-        False,
         conversation,
     )
 
@@ -562,7 +558,6 @@ def test_short_action_request_uses_model_contract_without_task_context() -> None
     assert handler._should_use_model_task_contract(
         "在 Blender 中建个二层小楼",
         "answer_only",
-        False,
         conversation,
     )
 
@@ -576,95 +571,7 @@ def test_short_greeting_without_task_context_skips_model_contract() -> None:
     assert not handler._should_use_model_task_contract(
         "你好",
         "answer_only",
-        False,
         conversation,
-    )
-
-
-def test_previous_task_contract_context_finds_external_state_contract() -> None:
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    previous_contract = {
-        "intent": "write_required",
-        "goal": "在 Blender 中创建一个二层小楼的 3D 模型",
-        "requires_write": False,
-        "requires_state_change": True,
-        "deliverables": [{"kind": "external_state"}],
-    }
-    conversation = SimpleNamespace(messages=[
-        SimpleNamespace(role="user", content="在blender中建个二层小楼", metadata={}),
-        SimpleNamespace(
-            role="assistant",
-            content="确认: 立即执行以上计划？[Y/n]",
-            metadata={"task_contract": previous_contract},
-        ),
-        SimpleNamespace(role="user", content="立即执行", metadata={}),
-    ])
-
-    assert (
-        handler._previous_task_contract_context(conversation, "立即执行")
-        == previous_contract
-    )
-
-
-def test_previous_task_contract_context_skips_unanchored_retry_contract() -> None:
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    external_contract = {
-        "intent": "write_required",
-        "goal": "Create the model in Blender",
-        "requires_write": False,
-        "requires_state_change": True,
-        "deliverables": [{"kind": "external_state"}],
-    }
-    fallback_script_contract = {
-        "intent": "write_required",
-        "goal": "Write a Blender script",
-        "requires_write": True,
-        "requires_state_change": True,
-        "deliverables": [{"kind": "code", "path_hint": "house.py"}],
-    }
-    conversation = SimpleNamespace(messages=[
-        SimpleNamespace(role="user", content="Create a house in Blender", metadata={}),
-        SimpleNamespace(role="assistant", content="done", metadata={"task_contract": external_contract}),
-        SimpleNamespace(role="user", content="not good enough, try again", metadata={}),
-        SimpleNamespace(role="assistant", content="wrote a script", metadata={"task_contract": fallback_script_contract}),
-        SimpleNamespace(role="user", content="try again", metadata={}),
-    ])
-
-    assert (
-        handler._previous_task_contract_context(conversation, "try again")
-        == external_contract
-    )
-
-
-def test_previous_task_contract_context_keeps_model_declared_replacement() -> None:
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    original_contract = {
-        "intent": "write_required",
-        "goal": "Create the model in Blender",
-        "requires_write": False,
-        "requires_state_change": True,
-        "deliverables": [{"kind": "external_state"}],
-    }
-    replacement_contract = {
-        "intent": "write_required",
-        "goal": "Write a reusable script instead",
-        "requires_write": True,
-        "requires_state_change": True,
-        "deliverables": [{"kind": "code", "path_hint": "house.py"}],
-        "scope_relation": "replace",
-        "scope_relation_source": "model",
-    }
-    conversation = SimpleNamespace(messages=[
-        SimpleNamespace(role="user", content="Create a house in Blender", metadata={}),
-        SimpleNamespace(role="assistant", content="done", metadata={"task_contract": original_contract}),
-        SimpleNamespace(role="user", content="not good enough, write a script instead", metadata={}),
-        SimpleNamespace(role="assistant", content="script ready", metadata={"task_contract": replacement_contract}),
-        SimpleNamespace(role="user", content="try again", metadata={}),
-    ])
-
-    assert (
-        handler._previous_task_contract_context(conversation, "try again")
-        == replacement_contract
     )
 
 
@@ -702,9 +609,6 @@ async def test_model_task_contract_receives_current_request_not_raw_history(monk
             confirmation_policy="auto",
             workspace_path=r"D:\ifctool",
         ),
-        user_no_write_hint=False,
-        expected_document_coverage=False,
-        expected_min_output_chars=0,
     )
 
     assert contract["intent"] == "write_required"
@@ -717,7 +621,7 @@ async def test_model_task_contract_receives_current_request_not_raw_history(monk
 
 
 @pytest.mark.asyncio
-async def test_model_task_contract_revision_keeps_previous_semantic_target(
+async def test_model_task_contract_does_not_infer_revision_from_retry_wording(
     monkeypatch: Any,
 ) -> None:
     async def fake_generate_chat_completion(**kwargs: Any) -> tuple[str, dict[str, Any]]:
@@ -758,16 +662,13 @@ async def test_model_task_contract_revision_keeps_previous_semantic_target(
             confirmation_policy="auto",
             workspace_path=r"D:\blender",
         ),
-        user_no_write_hint=False,
-        expected_document_coverage=False,
-        expected_min_output_chars=0,
         previous_contract=previous,
     )
 
-    assert contract["scope_relation"] == "revise"
-    assert contract["goal"] == previous["goal"]
-    assert contract["requires_write"] is False
-    assert contract["deliverables"][0]["kind"] == "external_state"
+    assert contract["scope_relation"] == "new"
+    assert contract["goal"] == "Improve the generated script"
+    assert contract["requires_write"] is True
+    assert contract["deliverables"][0]["kind"] == "code"
 
 
 def test_document_contract_guard_advises_on_translation_script_write() -> None:
@@ -782,9 +683,10 @@ def test_document_contract_guard_advises_on_translation_script_write() -> None:
     )
 
     assert message
-    assert "document.translate_docx" in message
-    assert "提示" in message
-    assert "不能" not in message
+    assert "辅助脚本" in message
+    assert "运行时不指定后续路线" in message
+    assert "document.translate_docx" not in message
+    assert "禁止" not in message
 
 
 def test_document_contract_guard_pure_helper_requires_document_coverage() -> None:
@@ -811,8 +713,9 @@ def test_document_contract_guard_pure_helper_requires_document_coverage() -> Non
         },
     )
 
-    assert "document.translate_docx" in message
-    assert "不能" not in message
+    assert "辅助脚本" in message
+    assert "document.translate_docx" not in message
+    assert "禁止" not in message
     assert skipped == ""
 
 
@@ -828,9 +731,9 @@ def test_document_contract_guard_advises_on_translation_shell_fallback() -> None
     )
 
     assert message
-    assert "document.translate_docx" in message
-    assert "提示" in message
-    assert "不能" not in message
+    assert "shell 调用本身不能证明" in message
+    assert "document.translate_docx" not in message
+    assert "禁止" not in message
 
 
 def test_document_contract_guard_advises_on_pdf_to_word_script_write() -> None:
@@ -845,10 +748,10 @@ def test_document_contract_guard_advises_on_pdf_to_word_script_write() -> None:
     )
 
     assert message
-    assert "document.extract_pdf_to_docx" in message
-    assert "mode=text_with_images" in message
-    assert "提示" in message
-    assert "不能" not in message
+    assert "全文覆盖" in message
+    assert "document.extract_pdf_to_docx" not in message
+    assert "mode=text_with_images" not in message
+    assert "禁止" not in message
 
 
 def test_document_contract_guard_advises_on_pdf_to_word_shell_fallback() -> None:
@@ -863,9 +766,9 @@ def test_document_contract_guard_advises_on_pdf_to_word_shell_fallback() -> None
     )
 
     assert message
-    assert "document.extract_pdf_to_docx" in message
-    assert "提示" in message
-    assert "不能" not in message
+    assert "全文覆盖" in message
+    assert "document.extract_pdf_to_docx" not in message
+    assert "禁止" not in message
 
 
 def test_ai_plugin_draft_guard_blocks_workspace_ai_plugins_write() -> None:

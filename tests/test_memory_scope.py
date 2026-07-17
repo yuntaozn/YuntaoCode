@@ -133,6 +133,20 @@ def test_memory_prompt_filters_other_workspace_memories(tmp_path) -> None:
     assert set(used_ids) == {"global", "current"}
 
 
+def test_memory_selection_can_skip_usage_accounting(tmp_path) -> None:
+    store = MemoryStore(tmp_path / "memories.json")
+    store.add(MemoryItem(id="global", text="User prefers concise replies"))
+
+    _prompt, used_ids = build_memory_prompt_from_store(
+        store,
+        user_message="Please answer concisely",
+        record_usage=False,
+    )
+
+    assert used_ids == ["global"]
+    assert store.get("global").usage_count == 0
+
+
 def test_memory_prompt_omits_irrelevant_workspace_memory_when_user_message_exists(tmp_path) -> None:
     store = MemoryStore(tmp_path / "memories.json")
     global_preference = store.add(
@@ -206,6 +220,26 @@ def test_memory_prompt_reports_no_relevant_memory_when_all_items_are_unrelated(t
 
     assert used_ids == []
     assert prompt == "暂无与当前请求相关的已启用用户记忆。"
+
+
+def test_memory_prompt_limits_broad_global_context_and_excludes_domain_preferences(tmp_path) -> None:
+    store = MemoryStore(tmp_path / "memories.json")
+    store.add(MemoryItem(id="language", text="用户使用中文作为交流语言", tags=["language"]))
+    store.add(MemoryItem(id="style", text="User prefers concise replies", tags=["communication_style"]))
+    store.add(MemoryItem(id="blender", text="用户偏好使用 Blender 建模", tags=["user_preference"]))
+    store.add(MemoryItem(id="fastapi", text="用户开发后端时偏好 FastAPI", tags=["workflow_preference"]))
+    store.add(MemoryItem(id="ui", text="用户偏好紧凑按钮", tags=["ui_preference"]))
+
+    prompt, used_ids = build_memory_prompt_from_store(
+        store,
+        user_message="可以删除这个驱动目录吗",
+        max_active=20,
+    )
+
+    assert set(used_ids) == {"language", "style"}
+    assert "Blender" not in prompt
+    assert "FastAPI" not in prompt
+    assert "紧凑按钮" not in prompt
 
 
 def test_memory_prompt_prefers_high_usage_memory_when_relevance_ties(tmp_path) -> None:

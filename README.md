@@ -112,7 +112,7 @@ YuntaoCode 把一次请求看作一个可管理的任务，而不是一次普通
 
 ### 可恢复执行（Recoverable Execution）
 
-* 记录任务计划和阶段推进
+* 记录任务计划、模型判断和执行进展
 * 记录工具调用、确认和错误
 * 支持写入前备份和结果验证
 * 为后续任务暂停、恢复、回放和审计预留扩展能力
@@ -159,9 +159,9 @@ Python Runtime 是系统核心。
 
 Tauri 桌面端只是其中一种界面形式，Runtime 本身可以独立运行。
 
-当前实现已经包含工具调用、计划生成、阶段推进、确认、写入备份、执行记录和经验样本导出。下一阶段的重点是把这些能力收束成更明确的 Task / Context / Capability Runtime，以及基于证据的 Experience Layer。
+当前实现已经包含工具调用、模型决定的计划、确认、写入备份、执行记录、上下文快照和经验样本导出。Runtime 不再用预设角色阶段驱动任务，而是把任务目标、可见能力和运行事实交给模型持续判断；系统只负责安全、协议、状态、证据和审计边界。
 
-Agent Runtime 的策略层位于 `runtime/agent_strategy/`。它负责意图分类、内部 Profile、计划策略、阶段提示和执行计划生命周期，让 `conversation_runner.py` 尽量保持为编排层。
+Agent Runtime 的策略层位于 `runtime/agent_strategy/`。它负责模型任务契约、内部 Profile 描述、计划策略、事实提示和执行计划生命周期，让 `conversation_runner.py` 尽量保持为编排层。
 
 文档入口见 [docs/README.md](docs/README.md)。核心基座契约见 [docs/runtime-foundation.md](docs/runtime-foundation.md)，Task / Context / Capability 三条主线分别见 [docs/task-model.md](docs/task-model.md)、[docs/context-runtime.md](docs/context-runtime.md) 和 [docs/capability-runtime.md](docs/capability-runtime.md)，Experience Layer 见 [docs/experience-runtime.md](docs/experience-runtime.md)。
 

@@ -178,6 +178,7 @@ class ConversationDetailHandler(ApiHandler):
                 mode_config=mode_config,
                 workspace_path=workspace.path,
                 workspace_id=workspace.id,
+                user_memory="",
             )
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt}
@@ -325,6 +326,8 @@ class ConversationMessagesHandler(ApiHandler):
         self,
         conversation: Any,
         workspace: dict[str, Any],
+        *,
+        record_memory_usage: bool = True,
     ) -> list[dict[str, Any]]:
         mode_config = get_terminal_config(self.get_lang())
         # Extract the latest user message for memory relevance scoring
@@ -333,12 +336,18 @@ class ConversationMessagesHandler(ApiHandler):
             if getattr(msg, "role", "") == "user":
                 latest_user_message = msg.content or ""
                 break
+        memory_context = self.runtime.settings.get_memory_context(
+            user_message=latest_user_message,
+            workspace_id=str(workspace.get("id") or ""),
+            record_usage=record_memory_usage,
+        )
         system_prompt = build_system_prompt(
             settings=self.runtime.settings,
             mode_config=mode_config,
             workspace_path=workspace["path"],
             workspace_id=str(workspace.get("id") or ""),
             user_message=latest_user_message,
+            user_memory="",
             capability_context=self._capability_context_prompt(mode_config),
         )
         messages = [{"role": "system", "content": system_prompt}]
@@ -362,6 +371,7 @@ class ConversationMessagesHandler(ApiHandler):
             })
         messages, hygiene_report = _ctx_hygiene.sanitize_model_context(messages)
         self._last_context_hygiene_report = hygiene_report
+        self._last_memory_context = memory_context
         return messages
 
     def _capability_context_prompt(self, mode_config: dict[str, Any] | None = None) -> str:
@@ -482,27 +492,11 @@ class ConversationMessagesHandler(ApiHandler):
             "explain the observable reason."
         )
 
-    def _capability_preflight_failure_message(self, preflight: dict[str, Any]) -> str:
-        messages = _cap_preflight.preflight_advisory_messages(preflight)
-        lines = [
-            "未完成：当前任务触发了运行时安全边界，模型和工具尚未继续执行。",
-        ]
-        if messages:
-            lines.append("")
-            lines.append("边界原因：")
-            lines.extend(f"- {message}" for message in messages[:6])
-        lines.extend([
-            "",
-            "这类停止只应由明确的安全或权限策略触发；普通能力缺失会作为提示交给模型自主处理。",
-        ])
-        return "\n".join(lines)
-
     def _capability_boundary_prompt(self, preflight: dict[str, Any]) -> str:
         if not isinstance(preflight, dict):
             return ""
         advisory_messages = _cap_preflight.preflight_advisory_messages(preflight)
-        preferred = preflight.get("preferred_tool_ids")
-        if not advisory_messages and not isinstance(preferred, list):
+        if not advisory_messages:
             return ""
         targets = ", ".join(preflight.get("target_capability_ids") or [])
         lines = [
@@ -518,12 +512,9 @@ class ConversationMessagesHandler(ApiHandler):
         if advisory_messages:
             lines.append("Current capability notes:")
             lines.extend(f"- {message}" for message in advisory_messages[:6])
-        if isinstance(preferred, list) and preferred:
-            lines.append("Preferred tools when they fit the goal: " + ", ".join(str(item) for item in preferred[:12]) + ".")
         if str(preflight.get("requires_external_state_capability") or "").lower() == "true":
             lines.append(
-                "For external application or MCP state changes, prefer a small roundtrip check before a large script, "
-                "and split complex actions into smaller verifiable tool calls when the provider has recent failures."
+                "External application or MCP state changes need provider evidence before the runtime can record them as observed."
             )
         lines.append(
             "This is not a hard blocker and it does not restrict the visible tool list. "
@@ -772,14 +763,12 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         self,
         content: str,
         fallback_intent: str,
-        user_no_write_hint: bool,
         conversation: Any | None = None,
     ) -> bool:
         text = str(content or "").strip()
         return _tc.should_use_model_task_contract(
             text,
             fallback_intent,
-            user_no_write_hint,
             has_recent_task_context=self._has_recent_task_context(conversation, text),
         )
 
@@ -791,9 +780,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         workspace_path: str,
         user_content: str,
         fallback_contract: dict[str, Any],
-        user_no_write_hint: bool,
-        expected_document_coverage: bool,
-        expected_min_output_chars: int,
         previous_contract: dict[str, Any] | None = None,
         workspace_context: str = "",
     ) -> dict[str, Any]:
@@ -830,9 +816,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             contract = _tc.merge_model_task_contract(
                 parsed,
                 fallback_contract,
-                user_no_write_hint=user_no_write_hint,
-                expected_document_coverage=expected_document_coverage,
-                expected_min_output_chars=expected_min_output_chars,
             )
             return _tc.apply_task_continuity(
                 contract,
@@ -843,9 +826,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             contract = _tc.merge_model_task_contract(
                 None,
                 fallback_contract,
-                user_no_write_hint=user_no_write_hint,
-                expected_document_coverage=expected_document_coverage,
-                expected_min_output_chars=expected_min_output_chars,
             )
             contract["source"] = "policy_fallback"
             contract["model_contract_error"] = str(exc)[:500]
@@ -1148,43 +1128,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _execute_plan_prompt(self, plan: dict[str, Any], mode: str | None) -> str:
         return _prp.execute_plan_prompt(plan, mode)
 
-    def _execution_stage_sequence(
-        self,
-        mode: str | None,
-        code_change_intent: bool,
-        task_intent: str = "",
-    ) -> list[str]:
-        return _clf.execution_stage_sequence(mode, code_change_intent, task_intent)
-
-    def _stage_round_limit(self, stage: str, mode: str | None, code_change_intent: bool) -> int:
-        return _clf.stage_round_limit(stage, mode, code_change_intent)
-
-    def _stage_tools(
-        self,
-        stage: str,
-        tools: list[dict[str, Any]],
-        tool_name_map: dict[str, str],
-        mode: str | None,
-        code_change_intent: bool,
-    ) -> list[dict[str, Any]] | None:
-        # 阶段不再收窄工具集。Planner / Explorer / Editor / Verifier
-        # 只是角色提示和 UI 状态，真实安全边界由执行层决定。
-        return tools
-
     def _explorer_tool_ids(self, mode: str | None) -> set[str]:
         return _clf.explorer_tool_ids(mode)
-
-    def _stage_status_message(self, stage: str) -> str:
-        return _prp.stage_status_message(stage)
-
-    def _stage_prompt(
-        self,
-        stage: str,
-        workspace_path: str,
-        mode: str | None,
-        code_change_intent: bool,
-    ) -> str:
-        return _prp.stage_prompt(stage, workspace_path, mode, code_change_intent)
 
     def _mark_next_plan_step_running(
         self,
@@ -1263,7 +1208,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         note = f"Runtime health: {health}."
         if last_error:
             note += f" Last error: {last_error[:240]}."
-        note += " Prefer a small roundtrip test, restart the service, or choose another safe strategy before relying on this tool."
+        note += " This is a readiness fact; the model decides whether and how to use this capability."
         return f"{description}\n\n{note}" if description else note
 
     def _messages_for_model_round(
@@ -1272,12 +1217,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         tools: list[dict[str, Any]] | None,
     ) -> list[dict[str, Any]]:
         return _clf.messages_for_model_round(messages, tools)
-
-    def _merge_tool_call_chunks(self, calls: list[dict[str, Any]], chunks: list[dict[str, Any]]) -> None:
-        _clf.merge_tool_call_chunks(calls, chunks)
-
-    def _tool_call_arguments_size(self, calls: list[dict[str, Any]]) -> int:
-        return _clf.tool_call_arguments_size(calls)
 
     def _complete_tool_calls(self, calls: list[dict[str, Any]], round_index: int) -> list[dict[str, Any]]:
         return _clf.complete_tool_calls(calls, round_index)
@@ -1338,28 +1277,12 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             }
         return ids
 
-    def _post_deliverable_tool_ids(self) -> set[str]:
-        return self._write_tool_ids() | self._deliverable_verification_tool_ids() | self._deliverable_read_tool_ids()
-
     def _execution_pressure_tool_ids(self, mode: str | None) -> set[str]:
         return (
             self._write_tool_ids()
             | self._explorer_tool_ids(mode)
             | {"git.status", "git.diff"}
         )
-
-    def _editor_repair_tool_ids(self, mode: str | None, *, force_full_file_rewrite: bool = False) -> set[str]:
-        if force_full_file_rewrite:
-            return {
-                "filesystem.read_file",
-                "filesystem.read_text_preview",
-                "filesystem.write_file",
-            }
-        return self._write_tool_ids() | self._explorer_tool_ids(mode)
-
-    def _deliverable_read_tool_ids(self) -> set[str]:
-        """允许在目标产物出现后读取必要证据或参考。"""
-        return {"filesystem.read_file", "filesystem.read_text_preview", "filesystem.scan_folder"}
 
     def _is_write_tool(self, tool_id: str) -> bool:
         return _clf.is_write_tool(tool_id)
@@ -1373,14 +1296,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return False
         return "external_state_change" in set(spec.effects or [])
 
-    def _is_deliverable_verification_tool(self, tool_id: str) -> bool:
-        return tool_id in self._deliverable_verification_tool_ids()
-
     def _is_verification_tool(self, tool_id: str, mode: str | None) -> bool:
         return tool_id in self._verification_tool_ids(mode)
-
-    def _is_post_deliverable_tool(self, tool_id: str) -> bool:
-        return tool_id in self._post_deliverable_tool_ids()
 
     def _filter_tools_by_ids(
         self,
@@ -1448,39 +1365,14 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _repeated_failure_action(
         self,
         tool_events: list[dict[str, Any]],
-        *,
-        strategy_change_intervened: bool,
     ) -> str:
-        return _clf.repeated_failure_action(
-            tool_events,
-            strategy_change_intervened=strategy_change_intervened,
-        )
-
-    def _looks_like_dangling_action(self, content: str) -> bool:
-        return _clf.looks_like_dangling_action(content)
+        return _clf.repeated_failure_action(tool_events)
 
     def _has_unresolved_tool_call_markup(self, content: str) -> bool:
         return _clf.has_unresolved_tool_call_markup(content)
 
     def _strip_native_tool_call_blocks(self, content: str) -> str:
         return _clf.strip_native_tool_call_blocks(content)
-
-    def _dangling_action_prompt(
-        self,
-        workspace_path: str,
-        unfinished_text: str,
-        tool_events: list[dict[str, Any]],
-        mode: str | None,
-        *,
-        allow_state_change: bool = True,
-    ) -> str:
-        return _prp.dangling_action_prompt(
-            workspace_path,
-            unfinished_text,
-            tool_events,
-            mode,
-            allow_state_change=allow_state_change,
-        )
 
     def _malformed_tool_call_prompt(self, workspace_path: str, unfinished_text: str) -> str:
         return _prp.malformed_tool_call_prompt(workspace_path, unfinished_text)
@@ -1500,8 +1392,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return "model did not return a final answer"
         if _clf.strip_native_tool_call_blocks(text) != text:
             return "model returned unresolved tool call markup instead of a final answer"
-        if self._looks_like_dangling_action(text):
-            return "model stopped at a pending action instead of answering"
         return ""
 
     def _needs_synthesized_final_answer(
@@ -1517,7 +1407,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return True
         if _clf.strip_native_tool_call_blocks(text) != text:
             return True
-        return self._looks_like_dangling_action(text)
+        return False
 
     def _run_status_from_result(self, run_result: dict[str, Any]) -> str:
         status = str(run_result.get("status") or "")
@@ -1632,7 +1522,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _progress_observer_prompt(
         self,
         workspace_path: str,
-        current_stage: str,
         tool_events: list[dict[str, Any]],
         code_change_intent: bool,
         reason: str,
@@ -1660,7 +1549,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 visual_tools = [str(item) for item in raw_tools if str(item or "").strip()]
         return _prp.progress_observer_prompt(
             workspace_path,
-            current_stage,
             tool_events,
             code_change_intent,
             reason,
@@ -1675,16 +1563,9 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _repeated_failure_strategy_prompt(
         self,
         workspace_path: str,
-        current_stage: str,
         tool_events: list[dict[str, Any]],
     ) -> str:
-        return _prp.repeated_failure_strategy_prompt(workspace_path, current_stage, tool_events)
-
-    def _recon_budget_prompt(self, budget: int, workspace_path: str) -> str:
-        return _prp.recon_budget_prompt(budget, workspace_path)
-
-    def _write_only_stage_prompt(self, workspace_path: str) -> str:
-        return _prp.write_only_stage_prompt(workspace_path)
+        return _prp.repeated_failure_strategy_prompt(workspace_path, tool_events)
 
     def _runtime_confirmation_decision(self, tool_id: str) -> _cp.ConfirmationDecision:
         try:
@@ -1718,14 +1599,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         if not isinstance(contract, dict) or not contract.get("requires_verification"):
             return ""
         tool_events = getattr(self, "_active_tool_events", [])
-        current_stage = str(getattr(self, "_active_current_stage", "") or "")
-        post_deliverable_mode = bool(
-            getattr(self, "_active_post_deliverable_mode", False)
-        )
-        verification_context = (
-            _clf.has_successful_write(tool_events if isinstance(tool_events, list) else [])
-            or current_stage == "verifier"
-            or post_deliverable_mode
+        verification_context = _clf.has_successful_write(
+            tool_events if isinstance(tool_events, list) else []
         )
         if not verification_context:
             return ""
@@ -2289,18 +2164,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         lines.append("如果现有片段已足以支持当前目标，可进入编辑/写入或验证，不必因为文件尚未读完整而停止。")
         return "\n".join(lines)
 
-    def _previous_write_context(self, conversation: Any | None, current_content: str) -> bool:
-        return _task_ctx.previous_write_context(conversation, current_content)
-
     def _has_recent_task_context(self, conversation: Any | None, current_content: str) -> bool:
         return _task_ctx.has_recent_task_context(conversation, current_content)
-
-    def _previous_task_contract_context(
-        self,
-        conversation: Any | None,
-        current_content: str,
-    ) -> dict[str, Any] | None:
-        return _task_ctx.previous_task_contract_context(conversation, current_content)
 
     def _task_lineage_candidates(
         self,
@@ -2316,41 +2181,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     ) -> dict[str, Any] | None:
         return _task_ctx.referenced_task_candidate_contract(candidates, candidate_id)
 
-    def _previous_document_export_context(self, conversation: Any | None, current_content: str) -> bool:
-        return _task_ctx.previous_document_export_context(conversation, current_content)
-
-    def _previous_full_document_output_context(self, conversation: Any | None, current_content: str) -> bool:
-        return _task_ctx.previous_full_document_output_context(conversation, current_content)
-
-    def _expects_full_document_output(self, content: str, conversation: Any | None = None) -> bool:
-        return _task_ctx.expects_full_document_output(content, conversation)
-
-    def _expected_min_output_chars(self, content: str, conversation: Any | None = None) -> int:
-        return _task_ctx.expected_min_output_chars(content, conversation)
     def _plan_has_pending_write_step(self, execution_plan: Any) -> bool:
         return _clf.plan_has_pending_write_step(execution_plan)
-
-    def _classify_task_intent(
-        self,
-        content: str,
-        mode: str | None,
-        conversation: Any | None = None,
-    ) -> str:
-        return _task_ctx.classify_task_intent(content, mode, conversation)
-    def _has_no_write_instruction(self, content: str) -> bool:
-        return _clf.has_no_write_instruction(content)
-
-    def _looks_like_read_only_request(self, content: str) -> bool:
-        return _clf.looks_like_read_only_request(content)
-
-    def _looks_like_document_export_request(self, content: str) -> bool:
-        return _clf.looks_like_document_export_request(content)
-
-    def _looks_like_full_document_output_request(self, content: str) -> bool:
-        return _clf.looks_like_full_document_output_request(content)
-
-    def _has_explicit_write_instruction(self, content: str) -> bool:
-        return _clf.has_explicit_write_instruction(content)
 
     def _effective_mode(
         self,
@@ -2361,26 +2193,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         if requested_mode in {"coding", "paper", "document"}:
             return requested_mode
         return requested_mode or "terminal"
-
-    def _looks_like_paper_task(self, content: str) -> bool:
-        return _clf.looks_like_paper_task(content)
-
-    def _looks_like_follow_up_execution(self, content: str) -> bool:
-        return _clf.looks_like_follow_up_execution(content)
-
-    def _looks_like_code_change_request(self, content: str) -> bool:
-        return _clf.looks_like_code_change_request(content)
-
-    def _looks_like_simple_code_change(self, content: str) -> bool:
-        return _clf.looks_like_simple_code_change(content)
-
-    def _code_change_intent(
-        self,
-        content: str,
-        mode: str | None,
-        conversation: Any | None = None,
-    ) -> bool:
-        return _task_ctx.code_change_intent(content, mode, conversation)
 
     def _has_successful_write(self, tool_events: list[dict[str, Any]]) -> bool:
         return _clf.has_successful_write(tool_events)
@@ -2438,9 +2250,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         arguments: dict[str, Any],
         event: dict[str, Any],
         workspace_path: str,
-        force_full_file_rewrite: bool = False,
     ) -> str:
-        return _prp.write_repair_prompt(tool_id, arguments, event, workspace_path, force_full_file_rewrite)
+        return _prp.write_repair_prompt(tool_id, arguments, event, workspace_path)
 
     async def _auto_read_failed_target(
         self,
@@ -2506,11 +2317,10 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _runtime_intervention_prompt(
         self,
         workspace_path: str,
-        current_stage: str,
         tool_events: list[dict[str, Any]],
         execution_plan: dict[str, Any] | None,
     ) -> str:
-        return _prp.runtime_intervention_prompt(workspace_path, current_stage, tool_events, execution_plan)
+        return _prp.runtime_intervention_prompt(workspace_path, tool_events, execution_plan)
 
     def _pop_runtime_guidance(self, conversation_id: str) -> tuple[str, str]:
         guidance_items = _runtime_guidance.pop(conversation_id, [])
@@ -2708,15 +2518,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             visual_verification_tool_ids=visual_tools,
             runtime_diagnostics=runtime_diagnostics,
         )
-
-    def _read_only_task_prompt(self, workspace_path: str) -> str:
-        return _prp.read_only_task_prompt(workspace_path)
-
-    def _analysis_first_task_prompt(self, workspace_path: str) -> str:
-        return _prp.analysis_first_task_prompt(workspace_path)
-
-    def _post_deliverable_prompt(self, workspace_path: str) -> str:
-        return _prp.post_deliverable_prompt(workspace_path)
 
     def _completion_review_prompt(
         self,
@@ -2974,7 +2775,11 @@ class ConversationCompressHandler(ConversationMessagesHandler):
             raise tornado.web.HTTPError(404, reason="workspace not found")
 
         model = self.runtime.settings.get_default_model()
-        messages = self._build_model_messages(conversation, workspace.to_public_dict())
+        messages = self._build_model_messages(
+            conversation,
+            workspace.to_public_dict(),
+            record_memory_usage=False,
+        )
         before_tokens = count_messages_tokens(messages)
 
         compressed, summary_meta = await compress_context(

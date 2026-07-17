@@ -109,7 +109,6 @@ const LOCALES = {
         "status.waiting_phase_no_output": "暂无新输出，仍在运行",
         "status.no_progress_for": "最近 {time} 暂无新进展",
         "status.repeated_tool_failures": "正在纠偏：{tool} 已连续失败 {count} 次",
-        "status.strategy_change_required": "重复失败，正在要求模型更换执行策略",
         "status.unknown_tool": "工具",
 
         // === Settings dialog (HTML) ===
@@ -911,7 +910,6 @@ const LOCALES = {
         "status.waiting_phase_no_output": "No new output yet; still running",
         "status.no_progress_for": "No new progress for {time}",
         "status.repeated_tool_failures": "Correcting: {tool} failed {count} times in a row",
-        "status.strategy_change_required": "Repeated failure; asking the model to change strategy",
         "status.unknown_tool": "tool",
 
         // === Settings dialog ===

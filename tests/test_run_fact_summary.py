@@ -76,7 +76,6 @@ def test_tool_failure_fact_summary_detects_repeated_route() -> None:
     ]
     summary = build_tool_failure_fact_summary(
         workspace_path=r"D:\demo",
-        current_stage="editor",
         tool_events=events,
     )
 

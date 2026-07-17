@@ -19,30 +19,6 @@ _context_limit_cache: dict[str, tuple[float, int]] = {}
 _encoding: tiktoken.Encoding | None = None
 
 
-ESSENTIAL_TOOL_ORDER: tuple[str, ...] = (
-    "filesystem__scan_folder",
-    "filesystem__read_file",
-    "filesystem__read_text_preview",
-    "code__search_text",
-    "code__list_project_files",
-    "git__status",
-    "git__diff",
-    "filesystem__write_file",
-    "filesystem__apply_changes",
-    "code__apply_patch",
-    "code__edit_file",
-    "code__replace_text",
-    "shell__run_command",
-    "filesystem__create_text_draft",
-    "filesystem__append_text_chunk",
-    "filesystem__finalize_text_file",
-    "web__fetch_url",
-    "web__extract_text",
-    "memory__recall",
-)
-ESSENTIAL_TOOL_RANK = {name: index for index, name in enumerate(ESSENTIAL_TOOL_ORDER)}
-
-
 async def generate_chat_completion(
     *,
     settings: SettingsStore,
@@ -628,39 +604,27 @@ def fit_request_body_to_context(
         }
 
     fitted = dict(body)
-    ranked_tools = sorted(
-        tools,
-        key=lambda tool: _tool_rank(tool),
-    )
-    kept: list[dict[str, Any]] = []
-    for tool in ranked_tools:
-        trial = dict(fitted)
-        trial["tools"] = [*kept, tool]
-        trial["tool_choice"] = fitted.get("tool_choice") or "auto"
-        if estimate_request_tokens(trial) <= usable:
-            kept.append(tool)
-    if kept:
-        fitted["tools"] = kept
-        fitted["tool_choice"] = fitted.get("tool_choice") or "auto"
-    else:
-        fitted.pop("tools", None)
-        fitted.pop("tool_choice", None)
+    compacted_tools = [_compact_tool_for_context(tool) for tool in tools]
+    fitted["tools"] = compacted_tools
+    fitted["tool_choice"] = fitted.get("tool_choice") or "auto"
 
     fitted_estimate = estimate_request_tokens(fitted)
     info = {
         "context_limit": context_limit,
         "estimated_request_tokens": fitted_estimate,
         "original_estimated_request_tokens": estimated,
-        "tool_count": len(kept),
+        "tool_count": len(compacted_tools),
         "original_tool_count": len(tools),
-        "tools_pruned": max(0, len(tools) - len(kept)),
+        "tools_pruned": 0,
+        "tools_compacted": len(compacted_tools),
     }
     if fitted_estimate > usable:
         info.update({
             "blocked": True,
             "message": (
                 f"模型请求约 {fitted_estimate} tokens，超过当前模型服务上下文 {context_limit} tokens；"
-                "已尝试裁剪工具目录但仍不足。请清理对话历史或用更大的 --ctx-size 启动本地模型。"
+                "已压缩工具描述但仍不足；运行时不会按固定偏好隐藏部分工具。"
+                "请清理对话历史或用更大的 --ctx-size 启动本地模型。"
             ),
         })
     return fitted, info
@@ -720,10 +684,29 @@ def _is_local_base_url(base_url: str) -> bool:
     return host in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
 
 
-def _tool_rank(tool: dict[str, Any]) -> tuple[int, str]:
-    fn = tool.get("function") if isinstance(tool.get("function"), dict) else {}
-    name = str(fn.get("name") or tool.get("name") or "")
-    return (ESSENTIAL_TOOL_RANK.get(name, 10_000), name)
+def _compact_tool_for_context(tool: dict[str, Any]) -> dict[str, Any]:
+    compact = json.loads(json.dumps(tool, ensure_ascii=False))
+    function = compact.get("function") if isinstance(compact.get("function"), dict) else None
+    if function is not None:
+        description = str(function.get("description") or "").strip()
+        if description:
+            function["description"] = description[:240]
+        parameters = function.get("parameters")
+        if isinstance(parameters, dict):
+            function["parameters"] = _compact_json_schema(parameters)
+    return compact
+
+
+def _compact_json_schema(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_compact_json_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    return {
+        key: _compact_json_schema(item)
+        for key, item in value.items()
+        if key not in {"description", "examples", "$comment", "title"}
+    }
 
 
 def _safe_positive_int(value: Any) -> int:

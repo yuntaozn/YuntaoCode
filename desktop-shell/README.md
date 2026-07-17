@@ -23,8 +23,8 @@ Windows 首次开发需要安装：
 - Rust MSVC 工具链和 Cargo。
 - Microsoft C++ Build Tools。
 - WebView2 Runtime。
-- Python 3.10+，并安装项目的 documents、web 和 build 可选依赖。
-- `build` 可选依赖中的 PyInstaller，用于把 Python runtime 打成 sidecar。
+- Python 3.10+。sidecar 构建脚本会创建独立的 `.venv-sidecar-build`
+  环境，避免把日常 Python 环境中的大型可选库误打进安装包。
 
 Rust/Cargo 当前机器如果还没装，先按 Tauri 官方 prerequisites 安装。
 
@@ -32,8 +32,6 @@ Rust/Cargo 当前机器如果还没装，先按 Tauri 官方 prerequisites 安�
 
 ```powershell
 cd YuntaoCode
-python -m pip install -e ".[documents,web,build]"
-
 cd desktop-shell
 npm ci
 ```
@@ -59,6 +57,16 @@ npm run sidecar:windows
 desktop-shell/src-tauri/binaries/local-runtime-x86_64-pc-windows-msvc.exe
 ```
 
+临时 PyInstaller 文件在成功后会自动删除。需要清理失败构建留下的
+sidecar、spec、dist 和安装包中间产物时，运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\clean_desktop_build.ps1
+```
+
+追加 `-Full` 会同时删除隔离构建环境和 Cargo `target` 缓存，下次构建会
+重新下载或编译依赖。
+
 ## 开发运行
 
 ```powershell
@@ -80,6 +88,12 @@ npm run build:windows
 ```text
 desktop-shell/src-tauri/target/release/bundle/nsis/
 ```
+
+Windows 首次生成 NSIS 安装包时，Tauri 还会从其官方 GitHub Release
+下载并校验 NSIS 工具链，缓存到 `%LOCALAPPDATA%\tauri\NSIS`。网络无法
+访问 GitHub Release 时，verbose 构建日志会停在 `Verifying NSIS package`；
+这不表示 Rust 主程序或 Python sidecar 构建失败。后续可在可访问 GitHub
+的网络或 CI 中完成首次缓存/打包。
 
 首版优先走 NSIS `.exe` 安装器。MSI 可以后续再补 WiX 配置。
 

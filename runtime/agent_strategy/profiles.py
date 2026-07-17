@@ -1,9 +1,8 @@
-"""Agent profiles and stage presets.
+"""Agent profiles used to describe model-decided task contracts.
 
 Profiles are internal execution personalities.  The UI can stay unified while
-the runtime routes each request through a small, explicit profile contract.
-Adding a new assistant family should start here instead of adding more
-mode-specific branches to the conversation runner.
+the task-contract model selects a small, explicit profile description. Profiles
+do not impose stage sequences, tool routes, or round budgets on execution.
 """
 
 from __future__ import annotations
@@ -99,54 +98,6 @@ def profile_for_task_intent(
     if mode == "coding":
         return CODING_PROFILE
     return ANALYSIS_PROFILE
-
-
-def stage_sequence_for_profile(
-    profile_id: str | None,
-    *,
-    task_intent: str = "",
-    code_change_intent: bool = False,
-) -> list[str]:
-    profile = get_profile(profile_id)
-    if profile.id == "coding" or code_change_intent:
-        return ["explorer", "editor", "verifier", "reviewer"]
-    if profile.id == "execution":
-        return ["explorer", "executor", "verifier", "reviewer"]
-    if profile.id == "paper":
-        if task_intent == "read_only_analysis":
-            return ["explorer", "reviewer"]
-        return ["explorer", "writer", "integrity_gate", "reviewer"]
-    if profile.id == "document":
-        if task_intent == "document_export":
-            return ["explorer", "creator", "verifier", "reviewer"]
-        return ["explorer", "reviewer"]
-    return ["explorer", "reviewer"]
-
-
-def round_limit_for_profile(
-    profile_id: str | None,
-    stage: str,
-    *,
-    code_change_intent: bool = False,
-) -> int:
-    profile = get_profile(profile_id)
-    if stage == "explorer":
-        if profile.id == "coding" or code_change_intent:
-            return 5
-        if profile.id == "paper":
-            return 5
-        if profile.id == "document":
-            return 4
-        return 5
-    if stage in {"editor", "creator", "executor"}:
-        return 5
-    if stage == "writer":
-        return 3
-    if stage == "integrity_gate":
-        return 1
-    if stage == "verifier":
-        return 2
-    return 1
 
 
 def profile_to_public_dict(profile: AgentProfile) -> dict[str, str]:

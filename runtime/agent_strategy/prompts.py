@@ -22,133 +22,11 @@ from runtime.run_fact_summary import (
 
 
 # ---------------------------------------------------------------------------
-# Stage prompts
-# ---------------------------------------------------------------------------
-
-def stage_status_message(stage: str) -> str:
-    return {
-        "writer": "写作者正在形成论文产出",
-        "integrity_gate": "学术质量门正在检查事实与引用风险",
-        "explorer": "侦察者正在收集必要证据",
-        "editor": "执行者正在基于证据执行修改",
-        "verifier": "验证者正在检查变更结果",
-        "creator": "创作者正在生成或导出文档",
-        "reviewer": "审查者正在收束任务并形成结论",
-    }.get(stage, "正在执行阶段任务")
-
-
-def stage_prompt(
-    stage: str,
-    workspace_path: str,
-    mode: str | None,
-    code_change_intent: bool,
-) -> str:
-    if stage == "explorer":
-        if mode == "paper":
-            return (
-                "你现在是 Explorer（论文侦察者）。职责重点是收集论文任务所需的最小可靠证据。\n"
-                f"当前项目目录：{workspace_path}\n"
-                "阶段只是参考，不会限制工具；如发现必须写入、验证或换工具，可以基于证据调整计划。\n"
-                "优先避免：编造文献、补造实验结果、把推测说成事实、反复读取同一材料。\n"
-                "请形成 Material Passport：已读材料、材料类型、Data Access 层级（raw/redacted/verified）、已确认事实、缺失证据、需要用户确认的关键决策。\n"
-                "推进条件：已确认足够支撑本轮回答的材料后，进入写作、验证或总结。"
-            )
-        return (
-            "你现在是 Explorer（侦察者）。职责重点是收集完成任务所需的最小证据。\n"
-            f"当前项目目录：{workspace_path}\n"
-            "阶段只是参考，不会限制工具；如证据已足够，应主动进入写入、验证或总结，而不是机械继续搜索。\n"
-            "优先避免：运行无关命令、反复搜索同一关键词、重复读取同一范围。"
-        )
-    if stage == "editor":
-        return (
-            "你现在是 Editor（执行者）。职责：基于已收集的证据执行真实修改。\n"
-            f"当前项目目录：{workspace_path}\n"
-            "所有工具仍然可用；请选择完成修改所需的最合适工具。\n"
-            "规则：\n"
-            "1. 编辑前应基于本轮已读取的真实文件内容确认目标片段、缩进和 old_text；如果尚未读取目标片段，优先调用 filesystem.read_file。\n"
-            "2. 构造 old_text 时，直接复制从 read_file 结果中看到的原文，不要调整空格或缩进。\n"
-            "3. 如果 old_text 难以稳定匹配，可在重新读取目标位置后，使用 code.edit_file 的 start_line/end_line/new_text 做有界行号替换。\n"
-            "4. 如果写入失败（如 old_text not found），应重新读取文件对应位置，基于真实内容换一种可靠写入策略，不要凭记忆猜测。\n"
-            "5. 不要伪造修改结果，不要声称已完成但未实际调用写入工具。"
-        )
-    if stage == "writer":
-        return (
-            "你现在是 Writer（论文写作者）。职责：只基于 Planner 和 Explorer 已确认的材料形成论文产出。\n"
-            f"当前项目目录：{workspace_path}\n"
-            "默认在对话中输出，不要私自写文件。只有用户明确要求保存、生成草稿文件或导出时，才调用写入/导出工具。\n"
-            "所有工具仍然可用；如发现材料不足，可以补读；如用户要求保存或导出，可以写入或导出。\n"
-            "输出必须区分：事实提取、推断、建议、可直接使用的草稿文本。不要编造引用、作者、DOI、实验结果、统计显著性或方法细节。\n"
-            "遇到选题方向、研究假设、章节大纲、投稿目标、审稿回复策略等关键决策时，给出可选方案并标注需要用户确认。"
-        )
-    if stage == "integrity_gate":
-        return (
-            "你现在是 Integrity Gate（学术质量门）。职责重点是检查本轮论文输出是否存在学术可靠性风险。\n"
-            f"当前项目目录：{workspace_path}\n"
-            "阶段只是参考，不会限制工具；如证据不足，可以补充读取必要材料。\n"
-            "请按以下失败模式逐项判断 CLEAR / SUSPECTED / INSUFFICIENT EVIDENCE：\n"
-            "1. 实现或事实错误被 AI 自审放过；2. 幻觉引用；3. 幻觉实验结果；4. 依赖捷径或证据不足；"
-            "5. 把缺陷包装成创新；6. 方法论捏造；7. 早期框架过度锁定。\n"
-            "如果出现 SUSPECTED，必须明确风险和需要补充的证据；如果证据不足，不要强行通过。"
-        )
-    if stage == "creator":
-        return (
-            "你现在是 Creator（文档创作者）。职责：基于 Explorer 阶段收集的材料，调用文档生成/导出工具完成产出。\n"
-            f"当前项目目录：{workspace_path}\n"
-            "所有工具仍然可用；优先使用最贴近目标的文档生成、导出或写入工具。\n"
-            "规则：\n"
-            "1. 如果材料足够，直接调用导出工具；如果材料不足，只补充读取最小必要内容。\n"
-            "2. generate_ppt 需要 slides 数组（每项含 title 和 content），path 可省略（会自动生成）。\n"
-            "3. export_docx / export_markdown 需要 content（Markdown 格式文本）。\n"
-            "4. Word 全文翻译、生成中文版时，优先调用 document.translate_docx，不要临时写 shell 翻译脚本。\n"
-            "5. PDF 转 Word / PDF 文本转存 Word 时，优先直接调用 document.extract_pdf_to_docx；用户要求保留图片、图文顺序或近似排版时，传 mode=text_with_images；只有用户需要先审阅文本时，才调用 document.extract_pdf_text_preview。\n"
-            "6. 如果工具调用成功，简短确认产出路径和文件大小即可。\n"
-            "7. 如果工具调用失败或只完成部分段落，说明失败原因和已完成范围，不要伪造成功结果。"
-        )
-    if stage == "executor":
-        return (
-            "你现在是 Executor（能力执行者）。职责：使用已注册能力完成真实的外部状态修改或任务动作。\n"
-            f"当前项目目录：{workspace_path}\n"
-            "工具是执行手段，任务契约是目标；根据实际结果调整后续动作，不要把外部状态修改误当成本地代码写入。\n"
-            "执行后应使用可用的读取、检查、截图或查询能力取得验证证据；工具失败时根据真实错误换策略。"
-        )
-    if stage == "verifier":
-        return (
-            "你现在是 Verifier（验证者）。职责：写入成功后只做一次必要验证。\n"
-            f"当前项目目录：{workspace_path}\n"
-            "所有工具仍然可用；优先运行测试/语法检查、查看 git.status 或 git.diff。"
-            "如果验证失败，可以读取必要上下文并继续修复；如果验证通过，进入总结。"
-        )
-    if stage == "reviewer":
-        if mode == "paper":
-            return (
-                "你现在是 Reviewer（论文审查者）。职责重点是检查是否满足用户目标并形成最终答复。\n"
-                f"当前项目目录：{workspace_path}\n"
-                "阶段只是参考，不会限制工具；如果发现关键证据缺失，可以补充最小必要工具调用。\n"
-                "最终答复请包含：Material Passport 简表、主要产出或结论、质量门结果、仍需用户确认的决策、建议下一步。\n"
-                "必须保留证据边界：哪些来自已读材料，哪些只是推断或建议。不要声称已经核验未读取的文献或结果。"
-            )
-        write_rule = (
-            "如果代码写入没有成功，必须明确说明本轮没有完成真实修改。"
-            if mode == "coding" and code_change_intent
-            else ""
-        )
-        return (
-            "你现在是 Reviewer（审查者）。职责重点是检查任务是否满足用户目标并形成最终答复。\n"
-            f"当前项目目录：{workspace_path}\n"
-            "阶段只是参考，不会限制工具；如果发现关键验证或证据缺失，可以补充最小必要工具调用。"
-            "最终答复请包含：已完成内容、依据/变更文件、验证情况、遗漏或剩余风险。"
-            f"{write_rule}"
-        )
-    return ""
-
-
-# ---------------------------------------------------------------------------
 # Intervention / nudge prompts
 # ---------------------------------------------------------------------------
 
 def progress_observer_prompt(
     workspace_path: str,
-    current_stage: str,
     tool_events: list[dict[str, Any]],
     code_change_intent: bool,
     reason: str,
@@ -183,7 +61,6 @@ def progress_observer_prompt(
     return (
         "Runtime observation only. The runtime is not choosing a strategy.\n"
         f"Workspace: {workspace_path}\n"
-        f"Stage: {current_stage or 'none'}\n"
         f"Reason: {reason}\n"
         f"Observed facts: {observation_text}\n"
         f"{verification_context}"
@@ -197,7 +74,6 @@ def progress_observer_prompt(
 
 def repeated_failure_strategy_prompt(
     workspace_path: str,
-    current_stage: str,
     tool_events: list[dict[str, Any]],
 ) -> str:
     """Ask the model to choose a materially different route after repetition."""
@@ -208,7 +84,6 @@ def repeated_failure_strategy_prompt(
     reason = str(output.get("reason") or "").strip()
     facts = build_tool_failure_fact_summary(
         workspace_path=workspace_path,
-        current_stage=current_stage,
         tool_events=tool_events,
     )
     return (
@@ -219,50 +94,6 @@ def repeated_failure_strategy_prompt(
         "verify an existing result, ask the user, or finalize with an honest "
         "boundary. Avoid repeating the same tool with the same missing or oversized "
         "arguments when no new progress was observed."
-    )
-
-
-def recon_budget_prompt(budget: int, workspace_path: str) -> str:
-    return (
-        "Runtime observation only. Reconnaissance budget has been reached.\n"
-        f"Workspace: {workspace_path}\n"
-        f"Recon reads/searches observed: {budget}\n"
-        "Decide whether the available evidence is enough to act, whether a "
-        "different evidence source is needed, or whether the task should be "
-        "finalized with an honest boundary."
-    )
-
-
-def write_only_stage_prompt(workspace_path: str) -> str:
-    return (
-        f"Target deliverable gap observation. Workspace={workspace_path}.\n"
-        "The runtime has not yet observed the target deliverable for this task. "
-        "Use this only as evidence, not as a forced route. Decide whether the "
-        "next useful step is a smaller read/search, a write/edit/export action, "
-        "verification of an existing artifact, a different tool, or an honest "
-        "boundary to the user."
-    )
-
-
-def dangling_action_prompt(
-    workspace_path: str,
-    unfinished_text: str,
-    tool_events: list[dict[str, Any]],
-    mode: str | None,
-    *,
-    allow_state_change: bool = True,
-) -> str:
-    snippet = unfinished_text[-200:]
-    capability_boundary = (
-        "当前任务契约允许产生本地变更；需要执行时请选择与目标最接近的工具。"
-        if allow_state_change
-        else "当前任务契约没有声明本地变更；可继续读取或直接回答，不要创建或修改文件。"
-    )
-    return (
-        f"悬空动作：项目={workspace_path}。未完成：{snippet}\n"
-        f"{capability_boundary}\n"
-        "请调用本地工具执行动作，或直接输出最终总结（变更文件+验证结果+风险）。"
-        "不要只说'我先验证/我将检查/接下来处理'。"
     )
 
 
@@ -283,7 +114,6 @@ def write_repair_prompt(
     arguments: dict[str, Any],
     event: dict[str, Any],
     workspace_path: str,
-    force_full_file_rewrite: bool = False,
 ) -> str:
     target = arguments.get("path") or arguments.get("output_path") or workspace_path
     error = str(event.get("error") or "")
@@ -291,7 +121,6 @@ def write_repair_prompt(
     reason = str(output.get("reason") or "")
     facts = build_tool_failure_fact_summary(
         workspace_path=workspace_path,
-        current_stage="write_repair",
         tool_events=[event],
     )
     return (
@@ -354,38 +183,6 @@ def execute_plan_prompt(plan: dict[str, Any], mode: str | None) -> str:
         "需要读取本地资料或代码时应调用本地工具；每次工具返回后继续推进下一步。"
         f"{code_rule}"
         "最终回答要说明：完成了哪些步骤、使用了哪些文件或工具、结果和未完成/不确定项。"
-    )
-
-
-def read_only_task_prompt(workspace_path: str) -> str:
-    return (
-        f"User constraint: read-only requested. Workspace={workspace_path}.\n"
-        "Treat the user's no-write/no-change wording as a current-task constraint. "
-        "Prefer read/search/status/diff evidence. If you judge that the user's goal "
-        "cannot be completed without modifying local files or external state, explain "
-        "that conflict and ask for confirmation instead of silently changing state. "
-        "Do not claim changes were made unless a write/state-change tool actually ran."
-    )
-
-
-def analysis_first_task_prompt(workspace_path: str) -> str:
-    return (
-        f"分析优先任务。项目={workspace_path}。"
-        "先用工具定位事实；若确需修改可直接调用写入工具。"
-        "高风险操作（大范围覆盖/提交/删除）请先说明风险；普通编辑可按需推进并验证。"
-    )
-
-
-def post_deliverable_prompt(workspace_path: str) -> str:
-    return (
-        f"已有目标产物成功出现。项目={workspace_path}。"
-        "现在优先调用真实验证工具，然后总结。除非验证返回了新的失败证据，或任务契约明确还有未生成的产物，"
-        "不要重复执行已经成功完成的同一状态变更。代码/HTML/脚本任务优先运行可行的语法检查、构建、测试或 lint；"
-        "外部应用/MCP/浏览器/数据库等非文件产物，优先调用只读查询、状态读取、截图、检查或 evidence/verification 能力取证；"
-        "不要把 dir/ls/os.listdir/Get-Item 这类目录或存在性检查当作测试通过。"
-        "不要把 python -m http.server、npm run dev 等长驻服务命令当作普通验证命令。"
-        "如果只能读取生成文件做内容检查，最终必须说明未运行测试。"
-        "最终回复须列出目标产物、验证情况和剩余风险。"
     )
 
 
@@ -579,42 +376,28 @@ def verifier_retry_prompt(
             "Verification evidence advisory, not a hard tool constraint.\n"
             f"Workspace: {workspace_path}\n"
             f"{context}"
-            "If you plan to claim the document or paper task is complete, gather "
-            "real evidence first. Prefer a read/check tool that fits the artifact: "
-            "filesystem.read_file for .md/.txt, document.extract_docx_outline for "
-            ".docx, document.extract_pdf_text_preview for .pdf, "
-            "spreadsheet.inspect_workbook for .xlsx/.csv/.tsv, or another available "
-            "tool that returns content or artifact facts. If no suitable evidence "
-            "path is available, do not keep retrying blindly; summarize what is "
-            "done and explicitly say what could not be verified."
+            "The current evidence does not yet satisfy the model-declared "
+            "verification modalities. Visible read, inspect, render, or other "
+            "artifact-aware tools may provide additional facts. The model decides "
+            "whether to gather more evidence, choose another route, ask the user, "
+            "or finalize with an explicit verification limitation."
         )
     return (
         "Verification evidence advisory, not a hard tool constraint.\n"
         f"Workspace: {workspace_path}\n"
         f"{context}"
-        "If you plan to claim the target is complete, gather real evidence first. "
-        "For external applications, MCP services, browsers, databases, or other "
-        "non-file state, prefer a read-only state query, inspection, screenshot, "
-        "render, capture, or any available tool that returns evidence/artifact "
-        "facts. A state-changing call by itself is not verification unless it "
-        "also returns meaningful evidence.\n"
-        "For code, HTML, or script tasks, prefer an available shell.run_command "
-        "check that matches the task. Syntax/static checks such as python -m "
-        "py_compile, node --check, tsc, lint, or build commands are structural "
-        "verification. For services, APIs, UI behavior, databases, or generated "
-        "backends, also gather behavioral evidence such as a unit test, import/"
-        "startup probe, TestClient/request/curl call, or other runtime/API check "
-        "when practical. Avoid treating directory listings or long running dev "
-        "servers as proof of correctness.\n"
-        "If the available tools cannot provide suitable evidence, choose another "
-        "safe strategy, ask the user, or finalize with an honest verification "
-        "limitation instead of repeating the same failing call."
+        "The current evidence does not yet satisfy the model-declared verification "
+        "modalities. State queries, inspections, captures, tests, static checks, "
+        "and behavioral probes provide different evidence strengths when their "
+        "tools are visible. A state-changing call alone is not independent proof "
+        "unless its result contains meaningful observation facts. The model decides "
+        "whether to gather more evidence, change route, ask the user, or finalize "
+        "with an explicit limitation."
     )
 
 
 def runtime_intervention_prompt(
     workspace_path: str,
-    current_stage: str,
     tool_events: list[dict[str, Any]],
     execution_plan: dict[str, Any] | None,
 ) -> str:
@@ -626,23 +409,14 @@ def runtime_intervention_prompt(
             recent_tools.append(f"{tool}:{status}")
     plan_hint = ""
     if execution_plan:
-        plan_hint = (
-            "当前计划已被标记为需要重新审视。不要机械继续旧计划；"
-            "如果插话改变目标、约束、文件范围或发现原路线错误，请调整下一步。"
-        )
+        plan_hint = "此前计划已标记为 interrupted；它仍是历史记录，不是当前路线。"
     return (
-        "运行中干预：用户在任务执行过程中追加了新信息或纠偏要求。\n"
+        "运行中用户指令事实：用户在当前 Run 中追加了新信息。\n"
         f"当前项目目录：{workspace_path}\n"
-        f"当前阶段：{current_stage or '未锁定阶段'}\n"
         f"最近工具事件：{', '.join(recent_tools) if recent_tools else '暂无'}\n"
         f"{plan_hint}\n"
-        "处理规则：\n"
-        "1. 最新插话优先于此前计划、此前推理和此前未完成输出；\n"
-        "2. 先重新判断用户真实意图：这是补充信息、纠正方向、要求停止某动作，还是新增约束；\n"
-        "3. 如果插话与旧方案冲突，放弃旧方案中冲突部分，不要继续沿旧思路执行；\n"
-        "4. 如果已有工具结果仍有用，可以复用；如果不足，请只读取最小必要上下文；\n"
-          "5. 下一步应优先基于插话重新选择：继续、调整计划、补读证据、写入、验证或停止说明原因。\n"
-        "不要把插话当作普通聊天补充，也不要忽略它继续执行旧路径。"
+        "最新用户指令优先于与它冲突的旧计划和旧推理；已有工具结果仍作为事实保留。"
+        "运行时不指定新的执行策略，请结合刚刚更新的任务契约自行决定下一步。"
     )
 
 

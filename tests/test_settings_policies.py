@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from runtime.settings_store import SettingsStore, default_settings_path
+from runtime.memory_store import MemoryItem
 
 
 def test_legacy_execution_mode_migrates_to_independent_policies(tmp_path: Path) -> None:
@@ -38,6 +39,27 @@ def test_planning_and_confirmation_policies_update_independently(tmp_path: Path)
     assert public["planning_policy"] == "off"
     assert public["confirmation_policy"] == "conservative"
     assert "execution_mode" not in public
+
+
+def test_memory_context_returns_selected_memory_identity(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / "settings.json")
+    store.memory_store.add(MemoryItem(
+        id="memory-1",
+        text="User prefers concise replies",
+        tags=["preference"],
+        scope="global",
+    ))
+
+    context = store.get_memory_context(
+        user_message="Please review this concisely",
+        workspace_id="workspace-1",
+    )
+
+    assert context["schema_version"] == "memory_context.v1"
+    assert context["used_memory_ids"] == ["memory-1"]
+    assert context["selected_count"] == 1
+    assert context["workspace_id"] == "workspace-1"
+    assert "concise replies" in context["prompt"]
 
 
 def test_legacy_assistant_mode_is_removed_on_migration(tmp_path: Path) -> None:

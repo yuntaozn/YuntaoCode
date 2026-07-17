@@ -92,7 +92,7 @@ RouteProposal 是模型对任务的结构化理解，Capability 是 Runtime 对�
 
 当前基座开始引入 Task Contract 作为 RouteProposal 前的入口层。
 
-模型先判断用户目标，输出结构化契约；Runtime 再规范字段、应用硬约束，并基于契约验收结果。这样可以避免把“写 HTML”“生成视频”“转换 Word”等场景都固化成系统关键词。
+模型先判断用户目标，输出结构化契约；Runtime 再规范字段形状、执行安全与协议边界，并基于契约记录验收证据。这样可以避免把“写 HTML”“生成视频”“转换 Word”等场景都固化成系统关键词。
 
 示例：
 
@@ -311,6 +311,10 @@ Task Template 是比 prompt 更稳定的复用单元。
 - `runtime/core/events.py`：TraceEvent 初始 schema 和稳定事件名方向。
 - `runtime/core/result.py`：RunResult 公共 schema 常量和结果事实结构。
 - `runtime/conversation_runner.py`：当前主编排层。
+- `runtime/run_execution_state.py`：单个 Run 的跨轮次生命周期状态，不承担任务理解或路线选择。
+- `runtime/tool_call_loop.py`：单轮模型流与工具调用协议边界，只返回传输和协议事实，不决定任务策略。
+- `runtime/tool_execution_batch.py`：执行模型提出的工具批次，维护执行状态与消息协议顺序，不选择工具。
+- `runtime/run_finalizer.py`：循环结束后的结果收束边界，负责 RunResult、恢复点、最终展示和消息持久化，不决定是否继续执行。
 - `runtime/agent_strategy/profiles.py`：内部任务 Profile。
 - `runtime/agent_strategy/policy.py`：计划执行策略。
 - `runtime/agent_strategy/plan_tracker.py`：计划生命周期辅助函数。

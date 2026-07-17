@@ -12,7 +12,7 @@ def test_raw_toolcall_text_triggers_synthesized_final_answer() -> None:
     )
 
 
-def test_answer_only_dangling_text_without_tools_is_invalid_final_answer() -> None:
+def test_answer_only_text_is_not_rejected_by_runtime_style_classifier() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
     contract = {
         "intent": "answer_only",
@@ -21,8 +21,8 @@ def test_answer_only_dangling_text_without_tools_is_invalid_final_answer() -> No
     }
     content = "I will first check the current project directory."
 
-    assert handler._answer_only_final_answer_error(content, [], contract)
-    assert handler._needs_synthesized_final_answer(content, [], task_contract=contract)
+    assert handler._answer_only_final_answer_error(content, [], contract) == ""
+    assert not handler._needs_synthesized_final_answer(content, [], task_contract=contract)
 
 
 def test_tool_failure_message_prefers_shell_timeout() -> None:

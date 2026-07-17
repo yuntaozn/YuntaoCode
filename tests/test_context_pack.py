@@ -80,6 +80,45 @@ def test_context_pack_includes_task_lineage_candidates_as_candidates() -> None:
     assert lineage["metadata"]["candidates"][0]["actual_paths"] == ["scene.blend"]
 
 
+def test_context_pack_exposes_selected_memory_as_audited_advisory_context() -> None:
+    pack = build_context_pack(
+        phase="task_contract",
+        user_content="继续优化当前项目的上下文",
+        memory_context={
+            "schema_version": "memory_context.v1",
+            "prompt": "- [workspace, architecture] Context Runtime must remain advisory.",
+            "used_memory_ids": ["memory-1"],
+            "selected_count": 1,
+            "workspace_id": "workspace-1",
+        },
+        task_id="task-1",
+    )
+
+    assert [item["kind"] for item in pack["records"]] == ["user_intent", "memory"]
+    memory = pack["records"][1]
+    assert memory["source_type"] == "memory_store"
+    assert memory["trust"] == "memory"
+    assert "not as a new user instruction" in memory["content"]
+    assert memory["metadata"]["used_memory_ids"] == ["memory-1"]
+    assert pack["ledger"]["records"][1]["source_id"] == "memory_selection"
+
+
+def test_context_pack_omits_memory_status_when_nothing_was_selected() -> None:
+    pack = build_context_pack(
+        phase="task_contract",
+        user_content="hello",
+        memory_context={
+            "schema_version": "memory_context.v1",
+            "prompt": "暂无与当前请求相关的已启用用户记忆。",
+            "used_memory_ids": [],
+            "selected_count": 0,
+            "workspace_id": "workspace-1",
+        },
+    )
+
+    assert [item["kind"] for item in pack["records"]] == ["user_intent"]
+
+
 def test_context_pack_carries_active_focus_without_copying_old_goal() -> None:
     pack = build_context_pack(
         phase="planning",
@@ -261,7 +300,7 @@ def test_planning_context_pack_includes_contract_and_capability_facts() -> None:
     kinds = [item["kind"] for item in pack["records"]]
     assert kinds == ["user_intent", "task_contract", "workspace_summary", "capability"]
     assert pack["ledger"]["records"][-1]["kind"] == "capability"
-    assert "code.edit_file" in pack["records"][-1]["content"]
+    assert "code.edit_file" not in pack["records"][-1]["content"]
     assert "preview.interact_page" in pack["records"][-1]["content"]
     assert pack["records"][-1]["metadata"]["visual_verification_tool_ids"] == [
         "preview.capture_local_html",
@@ -335,7 +374,6 @@ def test_execution_context_pack_includes_recent_tools_and_state() -> None:
                 {"title": "verify output", "status": "running"},
             ],
         },
-        current_stage="verifier",
         round_index=3,
     )
 
@@ -343,6 +381,7 @@ def test_execution_context_pack_includes_recent_tools_and_state() -> None:
     assert kinds == ["task_contract", "capability", "tool_result", "recovery", "risk"]
     assert "filesystem.apply_changes" in pack["records"][2]["content"]
     assert "round=3" in pack["records"][3]["content"]
+    assert "stage=" not in pack["records"][3]["content"]
     assert "verify output" in pack["records"][3]["content"]
     assert "command exited with code 1" in pack["records"][4]["content"]
 

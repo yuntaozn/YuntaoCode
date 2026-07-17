@@ -207,7 +207,7 @@ class RunStore:
                 run.status = "running"
             elif run.stage in {"tool_contract_failed", "error"}:
                 run.status = "failure"
-            elif run.stage in {"max_tool_rounds", "recon_budget_exhausted", "stopped", "cancelled"}:
+            elif run.stage in {"max_tool_rounds", "stopped", "cancelled"}:
                 run.status = "stopped"
             elif run.status == "waiting_confirmation" and run.stage in {"resumed", "stopping"}:
                 run.status = "running"

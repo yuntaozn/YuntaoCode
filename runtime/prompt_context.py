@@ -23,71 +23,34 @@ One-off analysis scripts, intermediate JSON, probe outputs, and files that shoul
 
 _WEB_ACCESS_CAPABILITY_ADDENDUM = """
 
-## Web Access Capability Addendum
-When web.* tools are available and the user asks to view, read, inspect,
-summarize, or analyze a public website/URL, try web.extract_text first. Use
-web.render_page when the page depends on JavaScript rendering or ordinary HTTP
-text extraction is insufficient. Do not claim that websites cannot be accessed
-until the appropriate web tool has been tried or the capability is unavailable.
-If the tool fails, explain the actual tool failure instead of guessing.
-When the user asks to collect website materials/assets for redesign or archival,
-use web.collect_site_assets instead of generating crawler scripts or writing
-large gathered content with filesystem.write_file. When the user asks to save a
-webpage as a screenshot or PDF, use web.capture_page.
+## Web Capability Facts
+The visible web.* tools can fetch text, render JavaScript pages, collect site
+assets, and capture screenshots or PDFs. Their exact descriptions and schemas
+define the available operations. A failed call is evidence about that route,
+not proof that all network access is unavailable. Choose any visible capability
+that fits the goal and report the actual result.
 """
 
 _PREVIEW_CAPABILITY_ADDENDUM = """
 
-## Preview Capability Addendum
-When preview.* tools are available and the task involves HTML, CSS,
-JavaScript, UI layout, visual appearance, local pages, localhost, screenshots,
-PDF/image file previews, or whether a rendered result looks correct, use
-preview tools as visual verification evidence. For a local HTML file inside the
-workspace, prefer preview.capture_local_html after the write. For a generic
-workspace file that should be visually observed, use preview.capture_file. For
-a running local or public URL, use preview.capture_url. Treat console errors,
-page errors, failed requests, file preview diagnostics, and runtime diagnostics
-as evidence for the model to decide whether to repair, continue, or report the
-remaining risk. If no preview was captured, keep visual correctness marked as
-unobserved instead of treating source-only inspection as visual verification.
-Local HTML preview is served through a short-lived 127.0.0.1 static server by
-default so module scripts, import maps, relative assets, and Three.js pages are
-closer to real browser execution than file:// loading.
-When the result depends on user interaction, such as click flows, form input,
-quiz answering, reveal-after-answer behavior, or UI feedback after an action,
-use preview.interact_page to run bounded Playwright actions and assertions. It
-returns screenshot, DOM text, interaction trace, console/page/network facts,
-visual evidence, and debug-session evidence. Do not start a long-lived local
-server yourself just to preview a workspace HTML file; preview.capture_local_html
-and preview.interact_page can serve local HTML through a short-lived localhost
-preview server.
+## Preview Capability Facts
+The visible preview.* tools can capture local HTML, workspace files, and URLs,
+or run bounded page interactions. Results may include screenshots, DOM text,
+console/page/network diagnostics, interaction traces, and visual evidence.
+Local HTML capture uses a short-lived 127.0.0.1 server. Source inspection alone
+does not create visual evidence; when no capture exists, visual correctness
+remains unobserved. The model decides whether and how these facts are needed.
 """
 
 _TEXT_WRITE_ROUTE_ADDENDUM = """
 
-## Text Write Route Addendum
-Use one text/code write capability for HTML, CSS, JavaScript, Python, Markdown,
-JSON, configuration files, and similar text artifacts. Choose the route by
-artifact shape, not by file extension:
-
-1. Existing local file, small targeted change: read the relevant snippet, then
-   use code.edit_file, code.replace_text, or code.apply_patch.
-2. New or rewritten complete text/code artifact with non-trivial length,
-   multiple sections, UI/CSS/JS, long prose, reports, novels, translated
-   documents, or any risk of exceeding one model output: default to
-   filesystem.create_text_draft first, append complete bounded chunks in
-   multiple filesystem.append_text_chunk calls, inspect when useful, then write
-   once with filesystem.finalize_text_file.
-3. New tiny complete file only: filesystem.write_file with path and content is
-   acceptable when the full content is comfortably small and can fit in one
-   complete tool call.
-
-Do not use draft chunks when a precise edit or small patch is enough, and do
-not use filesystem.write_file or a large filesystem.apply_changes payload as
-the first route for large complete artifacts. Plan chunk boundaries before the
-first write call; do not wait for truncation before switching to draft chunks.
-Never retry oversized filesystem.write_file/apply_changes calls after
-truncation.
+## Text Write Capability Facts
+The visible write tools support targeted edits, complete file writes, patches,
+and draft/chunk/finalize workflows. Large single-call arguments can be truncated
+by a model or provider before the runtime receives valid JSON; draft tools keep
+bounded chunks as Run artifacts before finalization. Targeted edit tools avoid
+rewriting unrelated content. These are route tradeoffs, not a prescribed
+workflow: the model chooses the method from the artifact and observed results.
 """
 
 def build_system_prompt(
@@ -97,11 +60,20 @@ def build_system_prompt(
     workspace_path: str,
     workspace_id: str = "",
     user_message: str = "",
+    user_memory: str | None = None,
     capability_context: str = "",
 ) -> str:
+    memory_prompt = (
+        settings.get_memory_prompt(
+            user_message=user_message,
+            workspace_id=workspace_id,
+        )
+        if user_memory is None
+        else str(user_memory)
+    )
     prompt = str(mode_config["system_prompt"]).format(
         workspace_path=workspace_path,
-        user_memory=settings.get_memory_prompt(user_message=user_message, workspace_id=workspace_id),
+        user_memory=memory_prompt,
     )
     if capability_context:
         prompt += "\n" + capability_context
@@ -111,7 +83,7 @@ def build_system_prompt(
             prompt += _PREVIEW_CAPABILITY_ADDENDUM
         if _has_text_write_context(capability_context):
             prompt += _TEXT_WRITE_ROUTE_ADDENDUM
-    if "Capability Extension Rules" in prompt:
+    if str(mode_config.get("prompt_language") or "").lower().startswith("en"):
         return prompt + _PLUGIN_DRAFT_BOUNDARY_EN
     return prompt + _PLUGIN_DRAFT_BOUNDARY_ZH
 

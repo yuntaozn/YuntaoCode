@@ -195,7 +195,7 @@ def test_preflight_reports_degraded_target_tool_as_advisory() -> None:
     assert result["advisories"][0]["tool_id"] == "mcp_blender.execute_blender_code"
 
 
-def test_preflight_allows_normalized_local_file_delete_contract() -> None:
+def test_preflight_reports_mismatched_delete_contract_without_rewriting_it() -> None:
     snapshot = build_capability_snapshot([
         {
             "id": "filesystem.delete_file",
@@ -229,13 +229,16 @@ def test_preflight_allows_normalized_local_file_delete_contract() -> None:
 
     result = preflight_task_capabilities(contract, snapshot)
 
-    assert contract["capability_ids"] == ["filesystem.local_state"]
-    assert contract["deliverables"][0]["kind"] == "file"
+    assert contract["capability_ids"] == ["filesystem.local_files"]
+    assert contract["deliverables"][0]["kind"] == "external_state"
     assert result["ok"] is True
-    assert result["readiness_issues"] == []
+    assert {item["code"] for item in result["readiness_issues"]} == {
+        "unknown_capability",
+        "missing_external_state_capability",
+    }
 
 
-def test_preflight_prefers_external_state_capability_without_restricting_fallback() -> None:
+def test_preflight_exposes_external_state_capability_without_ranking_tools() -> None:
     snapshot = build_capability_snapshot([
         {
             "id": "filesystem.scan_folder",
@@ -266,11 +269,12 @@ def test_preflight_prefers_external_state_capability_without_restricting_fallbac
     result = preflight_task_capabilities(contract, snapshot)
 
     assert result["ok"] is True
-    assert result["preferred_tool_ids"] == ["mcp_blender.execute_blender_code"]
+    assert result["preferred_tool_ids"] is None
+    assert result["target_capability_ids"] == ["mcp.blender"]
     assert result["route_hint"]["safety_owner"] == "tool_execution_guard"
 
 
-def test_preflight_prefers_role_relevant_tools_instead_of_entire_mcp_service() -> None:
+def test_preflight_does_not_rank_role_relevant_mcp_tools() -> None:
     snapshot = build_capability_snapshot([
         {
             "id": "mcp_blender.execute_blender_code",
@@ -309,11 +313,8 @@ def test_preflight_prefers_role_relevant_tools_instead_of_entire_mcp_service() -
 
     result = preflight_task_capabilities(contract, snapshot)
 
-    assert result["preferred_tool_ids"] == [
-        "mcp_blender.execute_blender_code",
-        "mcp_blender.get_scene_info",
-    ]
-    assert "mcp_blender.download_sketchfab_model" not in result["preferred_tool_ids"]
+    assert result["preferred_tool_ids"] is None
+    assert result["target_capability_ids"] == ["mcp.blender"]
 
 
 def test_preflight_adds_soft_visual_advisory_when_no_healthy_visual_tool() -> None:
@@ -350,7 +351,7 @@ def test_preflight_adds_soft_visual_advisory_when_no_healthy_visual_tool() -> No
     result = preflight_task_capabilities(contract, snapshot)
 
     assert result["ok"] is True
-    assert result["preferred_tool_ids"] == ["mcp_blender.execute_blender_code"]
+    assert result["preferred_tool_ids"] is None
     assert any(
         item["code"] == "visual_verification_path_uncertain"
         for item in result["advisories"]

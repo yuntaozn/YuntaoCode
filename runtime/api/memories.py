@@ -123,6 +123,7 @@ class MemoryPromptHandler(ApiHandler):
             max_active=mem_settings.get("max_active", 30),
             user_message=user_message,
             workspace_id=workspace_id,
+            record_usage=False,
         )
         self.finish_json({
             "success": True,

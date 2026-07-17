@@ -1,11 +1,7 @@
 """Behaviour-driven tests for the agent_strategy modules.
 
-Covers:
-- 5a: intent classifiers
-- 5b: tool classification
-- 5c: tool-call processing
-- 5d: stage management
-- 5e: plan tracking
+Covers intent hints, tool classification, tool-call processing, progress
+observation, planning policy, profiles, and prompt construction.
 """
 
 from __future__ import annotations
@@ -16,28 +12,15 @@ import pytest
 
 # ── classifiers ───────────────────────────────────────────────────────────
 from runtime.agent_strategy.classifiers import (
-    # Intent classifiers
-    classify_task_intent,
-    code_change_intent,
-    has_explicit_write_instruction,
-    has_no_write_instruction,
-    looks_like_code_change_request,
-    looks_like_dangling_action,
+    # Context classifiers
     looks_like_diagnostic_feedback,
-    looks_like_document_export_request,
     looks_like_follow_up_execution,
-    looks_like_full_document_output_request,
-    looks_like_paper_task,
-    looks_like_read_only_request,
-    looks_like_simple_code_change,
-    user_requests_code_change,
     # Tool classification
     WRITE_TOOL_IDS,
     RECON_TOOL_IDS,
     canonical_tool_id,
     explorer_tool_ids,
     has_unresolved_tool_call_markup,
-    infer_requested_min_output_chars,
     is_recon_tool,
     is_invalid_verification_method_event,
     is_long_running_service_command,
@@ -67,33 +50,21 @@ from runtime.agent_strategy.classifiers import (
     repeated_failure_action,
     round_has_only_non_progress,
     finish_reason_indicates_truncation,
-    # Stage management
-    execution_stage_sequence,
     plan_has_pending_write_step,
-    stage_round_limit,
 )
 
 # ── prompts ───────────────────────────────────────────────────────────────
 from runtime.agent_strategy.prompts import (
-    analysis_first_task_prompt,
     completion_review_prompt,
-    dangling_action_prompt,
     execute_plan_prompt,
     final_answer_prompt,
     format_execution_plan_for_context,
     max_rounds_message,
-    post_deliverable_prompt,
     progress_observer_prompt,
     oversized_tool_arguments_prompt,
     repeated_failure_strategy_prompt,
-    read_only_task_prompt,
-    recon_budget_prompt,
     result_synthesis_prompt,
-    runtime_intervention_prompt,
-    stage_prompt,
-    stage_status_message,
     verifier_retry_prompt,
-    write_only_stage_prompt,
     write_repair_prompt,
 )
 
@@ -106,120 +77,11 @@ from runtime.agent_strategy.policy import (
 from runtime.agent_strategy.profiles import (
     get_profile,
     profile_for_task_intent,
-    round_limit_for_profile,
-    stage_sequence_for_profile,
 )
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 5a: Intent classifiers
 # ═══════════════════════════════════════════════════════════════════════════
-
-class TestHasNoWriteInstruction:
-    def test_chinese_no_write(self):
-        assert has_no_write_instruction("只分析，不要改代码")
-
-    def test_english_no_write(self):
-        assert has_no_write_instruction("read only, no code changes")
-
-    def test_write_requested(self):
-        assert not has_no_write_instruction("帮我修改 main.py")
-
-    def test_empty(self):
-        assert not has_no_write_instruction("")
-
-
-class TestHasExplicitWriteInstruction:
-    def test_fix(self):
-        assert has_explicit_write_instruction("帮我修复这个 bug")
-
-    def test_implement(self):
-        assert has_explicit_write_instruction("implement the login page")
-
-    def test_readonly(self):
-        assert not has_explicit_write_instruction("分析这段代码")
-
-
-class TestLooksLikeReadOnlyRequest:
-    def test_analyze(self):
-        assert looks_like_read_only_request("分析一下这段代码")
-
-    def test_review(self):
-        assert looks_like_read_only_request("review the architecture")
-
-    def test_write_request(self):
-        assert not looks_like_read_only_request("帮我改 main.py")
-
-    def test_no_write_overrides(self):
-        assert looks_like_read_only_request("只分析，不要改代码")
-
-
-class TestLooksLikeDocumentExportRequest:
-    def test_export_pdf(self):
-        assert looks_like_document_export_request("帮我导出为 PDF")
-
-    def test_generate_docx(self):
-        assert looks_like_document_export_request("生成 docx 文件")
-
-    def test_pdf_text_to_word(self):
-        assert looks_like_document_export_request("将pdf文件中文字提取出来转存word")
-
-    def test_pdf_to_docx(self):
-        assert looks_like_document_export_request("把 PDF 转成 docx")
-
-    def test_pdf_images_and_text_to_word(self):
-        assert looks_like_document_export_request("重新将PDF导一个图片加文字的word")
-
-    def test_translate_chinese_version(self):
-        assert looks_like_document_export_request("帮我再翻译个中文版的")
-
-    def test_not_export(self):
-        assert not looks_like_document_export_request("修改 main.py 的内容")
-
-
-class TestLooksLikeFullDocumentOutputRequest:
-    def test_translate_chinese_version(self):
-        assert looks_like_full_document_output_request("帮我再翻译个中文版的")
-
-    def test_full_document_terms(self):
-        assert looks_like_full_document_output_request("把这个 PDF 完整转成 Word")
-
-    def test_pdf_images_and_text_to_word(self):
-        assert looks_like_full_document_output_request("重新将PDF导一个图片加文字的word")
-
-    def test_small_report_not_full_document(self):
-        assert not looks_like_full_document_output_request("根据文档生成一个摘要报告")
-
-
-class TestInferRequestedMinOutputChars:
-    def test_few_ten_thousand_chars(self):
-        assert infer_requested_min_output_chars("我想这也应提供个几万字的内容吧") == 20000
-
-    def test_numeric_wan_chars(self):
-        assert infer_requested_min_output_chars("请写 3 万字左右") == 30000
-
-    def test_plain_numeric_chars(self):
-        assert infer_requested_min_output_chars("至少15000字") == 15000
-
-    def test_english_numeric_characters(self):
-        assert infer_requested_min_output_chars("at least 50000 characters") == 50000
-
-    def test_english_numeric_words_as_length_floor(self):
-        assert infer_requested_min_output_chars("raise the target to 50000 words") == 50000
-
-    def test_english_thousand_words_as_length_floor(self):
-        assert infer_requested_min_output_chars("write around 50k words") == 50000
-
-
-class TestLooksLikePaperTask:
-    def test_chinese_paper(self):
-        assert looks_like_paper_task("帮我写一篇文献综述")
-
-    def test_english_paper(self):
-        assert looks_like_paper_task("write a literature review")
-
-    def test_not_paper(self):
-        assert not looks_like_paper_task("修改登录页面")
-
 
 class TestLooksLikeFollowUpExecution:
     def test_continue(self):
@@ -258,106 +120,6 @@ class TestLooksLikeDiagnosticFeedback:
         )
 
         assert looks_like_diagnostic_feedback(log)
-
-
-class TestLooksLikeCodeChangeRequest:
-    def test_fix_bug(self):
-        assert looks_like_code_change_request("帮我修复 main.py 的 bug")
-
-    def test_analysis_only(self):
-        assert not looks_like_code_change_request("分析代码逻辑")
-
-    def test_analysis_with_fix(self):
-        assert looks_like_code_change_request("分析代码并修复问题")
-
-    def test_broad_with_context(self):
-        assert looks_like_code_change_request("修改文件中的配置")
-
-
-class TestLooksLikeSimpleCodeChange:
-    def test_font_size(self):
-        assert looks_like_simple_code_change("字太大了")
-
-    def test_complex(self):
-        assert not looks_like_simple_code_change("重构整个项目的架构")
-
-
-class TestLooksLikeDanglingAction:
-    def test_dangling_with_colon(self):
-        assert looks_like_dangling_action("让我先验证一下：")
-
-    def test_dangling_preface_with_view_action(self):
-        assert looks_like_dangling_action(
-            "我来帮你了解 Blender MCP 的安装方法。首先让我查看一下当前项目目录的情况。"
-        )
-
-    def test_completed_statement(self):
-        assert not looks_like_dangling_action("修改已完成。")
-
-    def test_instructional_answer_is_not_dangling(self):
-        assert not looks_like_dangling_action(
-            "我来说明一下安装方式：使用 uvx blender-mcp 启动 MCP server。"
-        )
-
-    def test_empty(self):
-        assert not looks_like_dangling_action("")
-
-
-class TestUserRequestsCodeChange:
-    def test_coding_mode_write(self):
-        assert user_requests_code_change("帮我修复 bug", "coding")
-
-    def test_non_coding_mode(self):
-        assert not user_requests_code_change("帮我修复 bug", "document")
-
-    def test_inquiry_in_coding(self):
-        assert not user_requests_code_change("建议怎么优化", "coding")
-
-    def test_broad_write_with_code_context(self):
-        assert user_requests_code_change("修改 main.py 文件", "coding")
-
-
-class TestCodeChangeIntent:
-    def test_direct_write(self):
-        assert code_change_intent("帮我修复 bug", "coding")
-
-    def test_no_write_instruction(self):
-        assert not code_change_intent("只分析，不要改代码", "coding")
-
-    def test_follow_up_with_previous_write(self):
-        assert code_change_intent("继续", "coding", has_previous_write=True)
-
-    def test_follow_up_without_previous(self):
-        assert not code_change_intent("继续", "coding", has_previous_write=False)
-
-
-class TestClassifyTaskIntent:
-    def test_read_only_analysis(self):
-        assert classify_task_intent("分析一下这段代码", None) == "read_only_analysis"
-
-    def test_write_required(self):
-        assert classify_task_intent("帮我修复这个 bug", "coding") == "write_required"
-
-    def test_document_export(self):
-        assert classify_task_intent("导出为 PDF", None) == "document_export"
-
-    def test_pdf_to_word_is_document_export(self):
-        assert classify_task_intent("将pdf文件中文字提取出来转存word", None) == "document_export"
-
-    def test_pdf_images_and_text_to_word_is_document_export(self):
-        assert classify_task_intent("重新将PDF导一个图片加文字的word", None) == "document_export"
-
-    def test_translate_chinese_version_is_document_export(self):
-        assert classify_task_intent("帮我再翻译个中文版的", None) == "document_export"
-
-    def test_paper_workflow(self):
-        assert classify_task_intent("写文献综述", None) == "paper_workflow"
-
-    def test_answer_only(self):
-        assert classify_task_intent("你好", "coding") == "answer_only"
-
-    def test_no_write_overrides_all(self):
-        assert classify_task_intent("只分析不要改代码", "coding") == "read_only_analysis"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -400,20 +162,11 @@ class TestAgentProfiles:
     def test_unknown_profile_falls_back_to_analysis(self):
         assert get_profile("missing").id == "analysis"
 
-    def test_profile_stage_sequence_for_coding(self):
-        assert stage_sequence_for_profile("coding", task_intent="write_required") == [
-            "explorer", "editor", "verifier", "reviewer",
-        ]
-
-    def test_profile_round_limit_for_document_explorer(self):
-        assert round_limit_for_profile("document", "explorer") == 4
-
-
 class TestPlanningPolicy:
-    def test_answer_only_skips_model_plan_judge(self):
+    def test_answer_only_auto_uses_model_plan_judge(self):
         decision = deterministic_plan_gate("你好", "answer_only", "terminal", "auto")
-        assert decision.enabled is False
-        assert not decision.needs_model_judge
+        assert decision.enabled is None
+        assert decision.needs_model_judge
 
     def test_always_plan_respects_user_setting(self):
         decision = deterministic_plan_gate("你好", "answer_only", "terminal", "always")
@@ -425,19 +178,19 @@ class TestPlanningPolicy:
         assert decision.enabled is False
         assert decision.source == "user"
 
-    def test_project_analysis_uses_plan_without_model_judge(self):
+    def test_project_analysis_does_not_trigger_keyword_plan_rule(self):
         decision = deterministic_plan_gate("分析当前项目架构并输出风险清单", "read_only_analysis", "terminal", "auto")
-        assert decision.enabled is True
-        assert decision.source == "policy"
+        assert decision.enabled is None
+        assert decision.source == "model"
 
-    def test_document_export_uses_plan_without_model_judge(self):
+    def test_document_export_does_not_trigger_scenario_plan_rule(self):
         decision = deterministic_plan_gate("重新将PDF导一个图片加文字的word", "document_export", "terminal", "auto")
-        assert decision.enabled is True
-        assert decision.source == "policy"
+        assert decision.enabled is None
+        assert decision.source == "model"
 
-    def test_simple_read_only_skips_plan(self):
+    def test_simple_read_only_still_uses_model_plan_judge(self):
         decision = deterministic_plan_gate("解释一下这个函数的作用", "read_only_analysis", "terminal", "auto")
-        assert decision.enabled is False
+        assert decision.enabled is None
 
     def test_ambiguous_analysis_can_use_model_judge(self):
         decision = deterministic_plan_gate("看一下这个项目", "read_only_analysis", "terminal", "auto")
@@ -447,8 +200,9 @@ class TestPlanningPolicy:
     def test_resolve_profile_uses_policy_entrypoint(self):
         assert resolve_profile("document_export", "terminal").id == "document"
 
-    def test_heuristic_plan_execution_skips_greeting(self):
+    def test_neutral_plan_fallback_does_not_route_by_keywords(self):
         assert not heuristic_plan_execution("你好", "terminal")
+        assert not heuristic_plan_execution("重构整个项目并生成报告", "paper")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -968,7 +722,7 @@ class TestConsecutiveRepeatedFailureCount:
 
         assert failure_route_attempt_count_since_progress([first, second]) == 1
 
-    def test_repeated_failure_first_requests_strategy_change(self):
+    def test_repeated_failure_reports_route_repetition(self):
         event = {
             "tool": "filesystem.write_file",
             "status": "failure",
@@ -978,8 +732,7 @@ class TestConsecutiveRepeatedFailureCount:
         }
         events = [event, event]
 
-        assert repeated_failure_action(events, strategy_change_intervened=False) == "change_strategy"
-        assert repeated_failure_action(events, strategy_change_intervened=True) == "change_strategy"
+        assert repeated_failure_action(events) == "report_repetition"
 
     def test_repeated_failure_stops_only_after_larger_no_progress_route_budget(self):
         event = {
@@ -990,8 +743,8 @@ class TestConsecutiveRepeatedFailureCount:
             "output": {"reason": "invalid_tool_input"},
         }
 
-        assert repeated_failure_action([event] * 6, strategy_change_intervened=True) == "change_strategy"
-        assert repeated_failure_action([event] * 7, strategy_change_intervened=True) == "stop"
+        assert repeated_failure_action([event] * 6) == "report_repetition"
+        assert repeated_failure_action([event] * 7) == "stop"
 
     def test_repeated_failure_action_counts_same_route_across_failed_detours(self):
         write_failure = {
@@ -1011,8 +764,7 @@ class TestConsecutiveRepeatedFailureCount:
 
         assert repeated_failure_action(
             [write_failure, detour_failure, write_failure],
-            strategy_change_intervened=False,
-        ) == "change_strategy"
+        ) == "report_repetition"
 
     def test_repeated_failure_action_resets_after_progress(self):
         failure = {
@@ -1028,15 +780,15 @@ class TestConsecutiveRepeatedFailureCount:
             "input": {"path_hint": "viewer/index.html"},
         }
 
-        assert repeated_failure_action([failure, progress, failure], strategy_change_intervened=True) == "none"
+        assert repeated_failure_action([failure, progress, failure]) == "none"
 
-    def test_different_strategy_resets_intervention_state(self):
+    def test_progress_resets_repetition_window(self):
         events = [
             {"tool": "filesystem.write_file", "status": "failure", "error": "missing path"},
             {"tool": "filesystem.read_file", "status": "success", "input": {"path": "viewer.html"}},
         ]
 
-        assert repeated_failure_action(events, strategy_change_intervened=True) == "none"
+        assert repeated_failure_action(events) == "none"
 
 
 class TestHasSuccessfulWrite:
@@ -1278,50 +1030,6 @@ class TestIsRecoverableWriteFailure:
         assert is_recoverable_write_failure("filesystem.append_text_chunk", event)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 5d: Stage management
-# ═══════════════════════════════════════════════════════════════════════════
-
-class TestExecutionStageSequence:
-    def test_code_change(self):
-        assert execution_stage_sequence("coding", True) == ["explorer", "editor", "verifier", "reviewer"]
-
-    def test_terminal_code_change(self):
-        assert execution_stage_sequence("terminal", True) == ["explorer", "editor", "verifier", "reviewer"]
-
-    def test_paper_analysis(self):
-        assert execution_stage_sequence("paper", False, "read_only_analysis") == ["explorer", "reviewer"]
-
-    def test_paper_write(self):
-        assert execution_stage_sequence("paper", False, "write_required") == ["explorer", "writer", "integrity_gate", "reviewer"]
-
-    def test_document_export(self):
-        assert execution_stage_sequence("document", False, "document_export") == ["explorer", "creator", "verifier", "reviewer"]
-
-    def test_default(self):
-        assert execution_stage_sequence(None, False) == ["explorer", "reviewer"]
-
-
-class TestStageRoundLimit:
-    def test_explorer_coding(self):
-        assert stage_round_limit("explorer", "coding", True) == 5
-
-    def test_editor(self):
-        assert stage_round_limit("editor", None, False) == 5
-
-    def test_verifier(self):
-        assert stage_round_limit("verifier", None, False) == 2
-
-    def test_writer(self):
-        assert stage_round_limit("writer", "paper", False) == 3
-
-    def test_integrity_gate(self):
-        assert stage_round_limit("integrity_gate", "paper", False) == 1
-
-    def test_document_explorer(self):
-        assert stage_round_limit("explorer", "document", False) == 4
-
-
 class TestPlanHasPendingWriteStep:
     def test_pending_write(self):
         plan = {"steps": [{"title": "修改代码", "description": "", "tool_hint": "code.edit_file", "status": "pending"}]}
@@ -1370,32 +1078,17 @@ class TestPlanHasPendingWriteStep:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestPrompts:
-    def test_stage_status_message(self):
-        assert "侦察者" in stage_status_message("explorer")
-        assert "执行" in stage_status_message("unknown_stage")
-
-    def test_stage_prompt_explorer(self):
-        prompt = stage_prompt("explorer", "/tmp/project", "coding", True)
-        assert "/tmp/project" in prompt
-        assert "Explorer" in prompt
-
-    def test_stage_prompt_editor(self):
-        prompt = stage_prompt("editor", "/tmp", None, True)
-        assert "Editor" in prompt
-        assert "filesystem.read_file" in prompt
-
     def test_progress_observer_prompt(self):
         events = [{"tool": "filesystem.read_file", "status": "success"}]
-        prompt = progress_observer_prompt("/tmp", "explorer", events, True, "stagnation")
+        prompt = progress_observer_prompt("/tmp", events, True, "stagnation")
         assert "stagnation" in prompt
         assert "observed_write_evidence=missing" in prompt
         assert "not choosing a strategy" in prompt
 
-    def test_progress_observer_prompt_can_report_target_deliverable_gap(self):
+    def test_progress_observer_prompt_can_report_target_deliverable_facts(self):
         events = [{"tool": "document.extract_docx_outline", "status": "success"}]
         prompt = progress_observer_prompt(
             "/tmp",
-            "execution",
             events,
             False,
             "missing_target_evidence",
@@ -1408,7 +1101,6 @@ class TestPrompts:
         events = [{"tool": "preview.capture_local_html", "status": "success"}]
         prompt = progress_observer_prompt(
             "/tmp",
-            "verifier",
             events,
             True,
             "target_verification_still_missing",
@@ -1444,16 +1136,12 @@ class TestPrompts:
             },
         ]
 
-        prompt = repeated_failure_strategy_prompt("/tmp", "editor", events)
+        prompt = repeated_failure_strategy_prompt("/tmp", events)
 
         assert "Repeated failure recovery advisory" in prompt
         assert "runtime is not choosing the next strategy" in prompt
         assert "filesystem.write_file" in prompt
         assert "missing required" in prompt
-
-    def test_recon_budget_prompt(self):
-        prompt = recon_budget_prompt(5, "/tmp")
-        assert "5" in prompt
 
     def test_write_repair_prompt(self):
         prompt = write_repair_prompt(
@@ -1496,11 +1184,13 @@ class TestPrompts:
 
     def test_verifier_retry_prompt_coding(self):
         prompt = verifier_retry_prompt("coding", "/tmp")
-        assert "shell.run_command" in prompt
+        assert "model-declared verification modalities" in prompt
+        assert "model decides" in prompt
 
     def test_verifier_retry_prompt_paper(self):
         prompt = verifier_retry_prompt("paper", "/tmp")
-        assert "document.extract_docx_outline" in prompt
+        assert "artifact-aware tools" in prompt
+        assert "model decides" in prompt
 
     def test_verifier_retry_prompt_exposes_missing_modalities(self):
         prompt = verifier_retry_prompt(
@@ -1542,12 +1232,6 @@ class TestPrompts:
         assert "Unexpected end of input" in prompt
         assert "https://cdn.example/app.js" in prompt
         assert "bounded page actions and assertions" in prompt
-
-    def test_post_deliverable_prompt_is_not_file_write_only(self):
-        prompt = post_deliverable_prompt("/tmp")
-
-        assert "目标产物" in prompt
-        assert "外部应用" in prompt
 
     def test_completion_review_prompt_exposes_facts_without_forcing_strategy(self):
         prompt = completion_review_prompt(
@@ -1598,7 +1282,6 @@ class TestPrompts:
     def test_repeated_failure_strategy_prompt_stays_strategy_neutral_after_truncation(self):
         prompt = repeated_failure_strategy_prompt(
             "/tmp/project",
-            "editor",
             [
                 {
                     "tool": "filesystem.write_file",

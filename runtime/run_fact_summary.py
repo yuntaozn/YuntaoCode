@@ -84,7 +84,6 @@ def build_run_fact_summary(
 def build_tool_failure_fact_summary(
     *,
     workspace_path: str,
-    current_stage: str,
     tool_events: list[dict[str, Any]] | None,
     limit: int = 6,
 ) -> dict[str, Any]:
@@ -111,7 +110,6 @@ def build_tool_failure_fact_summary(
         "schema_version": RUN_FACT_SUMMARY_VERSION,
         "kind": "tool_failure_fact_summary",
         "workspace_path": str(workspace_path or ""),
-        "current_stage": str(current_stage or ""),
         "latest_failure": latest,
         "recent_failures": failed[-limit:],
         "repeated_route": repeated_route,
@@ -175,10 +173,7 @@ def format_run_fact_summary(summary: dict[str, Any]) -> str:
 
 
 def format_tool_failure_fact_summary(summary: dict[str, Any]) -> str:
-    lines = [
-        "Runtime failure facts:",
-        f"- current stage: {summary.get('current_stage') or 'unknown'}",
-    ]
+    lines = ["Runtime failure facts:"]
     latest = summary.get("latest_failure")
     if isinstance(latest, dict) and latest:
         label = str(latest.get("tool") or "unknown")

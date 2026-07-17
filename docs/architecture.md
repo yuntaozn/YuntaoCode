@@ -129,20 +129,32 @@ User Request
 
 这层策略目前集中在 `runtime/agent_strategy/`：
 
-- `classifiers.py`：意图分类、工具分类、进度观察和阶段判断。
+- `classifiers.py`：工具事实分类、进度观察和协议辅助；不承担用户意图或执行路线判断。
 - `capability_router.py`：能力契约、模型路由提案和提案验证。
-- `conversation_task_context.py`：根据对话历史判断追问是否继承上一轮任务、
-  写入上下文、文档输出上下文和字数目标。
+- `conversation_task_context.py`：判断是否存在近期任务上下文，并暴露 Task Lineage
+  候选；只有模型显式引用 candidate 后，Runtime 才允许应用连续任务锚点。
 - `project_context.py`：把任务关系与当前工作对象关系分开，生成模型声明、
   Runtime 可审计的 Active Focus Snapshot，不替模型选择目标。
-- `profiles.py`：内部执行 Profile，例如直接问答、项目分析、代码修改、外部能力执行、文档工作流、论文工作流。
-- `policy.py`：请求路由和计划执行开关；确定性规则只承担安全边界与模型不可用时的回退，不替模型决定任务目标和执行策略。
-- `prompts.py`：阶段提示、修复提示、最终回答提示等 prompt 构建。
+- `profiles.py`：模型任务契约可选的内部 Profile 描述，例如直接问答、项目分析、代码修改、外部能力执行、文档工作流、论文工作流；Profile 不生成固定阶段序列。
+- `policy.py`：只处理用户显式的计划开关；自动模式由模型任务契约或模型计划判断器决定，不使用关键词和请求长度路由。
+- `prompts.py`：运行事实提示、修复建议、验证建议和最终回答提示等 prompt 构建；提示不替模型指定工具路线。
 - `plan_tracker.py`：执行计划的提取、归一化、推进和收尾。
 
 新增能力时优先扩展这些模块，而不是继续向 `conversation_runner.py`
 主循环里堆分支。`conversation_runner.py` 应尽量保持为编排层：
-它负责串起上下文压缩、计划、模型流、工具调用、确认机制和最终消息落库。
+它负责串起上下文压缩、计划、模型循环、工具执行和确认机制。
+`runtime/run_execution_state.py` 集中保存跨轮次生命周期事实，包括轮次预算、
+模型传输计数、插话复位、完成自审和停滞观察。它只是显式状态容器，不根据这些
+事实推断任务意图，也不选择工具或执行路线。
+`runtime/tool_call_loop.py` 负责单轮模型流协议，把内容与推理增量、heartbeat、
+工具调用参数片段、请求预算、模型错误和插话中断整理成可审计事实；它不判断
+任务意图、工具路线、完成状态或验证策略。
+`runtime/tool_execution_batch.py` 执行模型已经提出的一个工具调用批次，维护
+侦察签名、写入修复状态和读取范围等执行账本，并保证所有 tool response 先于
+运行时事实提示返回模型；它不替模型选工具或改写任务契约。
+`runtime/run_finalizer.py` 在模型/工具循环结束后，把已观察事实收束为
+`RunResult`、恢复 Checkpoint、最终答复、摘要 Context Pack、持久化消息和
+`done` 事件；它不判断是否继续循环，也不替模型选择任务、工具或验证路线。
 工具事件的前端预览、进度摘要和回填给模型的压缩 payload 由
 `runtime/tool_event_presentation.py` 负责，避免 API Handler 直接承载展示规则。
 

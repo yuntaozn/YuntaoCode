@@ -430,7 +430,7 @@ def test_provider_root_url_strips_openai_v1_suffix() -> None:
     assert provider_root_url({"base_url": "http://127.0.0.1:8080/v1"}) == "http://127.0.0.1:8080"
 
 
-def test_fit_request_body_to_context_prunes_tools_by_request_budget() -> None:
+def test_fit_request_body_to_context_compacts_all_tools_without_ranking() -> None:
     def tool(name: str, description: str = "") -> dict:
         return {
             "type": "function",
@@ -444,25 +444,23 @@ def test_fit_request_body_to_context_prunes_tools_by_request_budget() -> None:
             },
         }
 
-    essential = tool("filesystem__read_file", "Read a file.")
+    first = tool("filesystem__read_file", "Read a file.")
     oversized = tool("custom__very_large_optional_tool", "x" * 12000)
     body = {
         "model": "local",
         "messages": [{"role": "user", "content": "read the file"}],
         "stream": True,
-        "tools": [oversized, essential],
+        "tools": [oversized, first],
         "tool_choice": "auto",
     }
-    essential_only = dict(body)
-    essential_only["tools"] = [essential]
-    context_limit = estimate_request_tokens(essential_only) + 300
 
-    fitted, info = fit_request_body_to_context(body, context_limit=context_limit)
+    fitted, info = fit_request_body_to_context(body, context_limit=1024)
 
     names = [item["function"]["name"] for item in fitted.get("tools", [])]
     assert "filesystem__read_file" in names
-    assert "custom__very_large_optional_tool" not in names
-    assert info["tools_pruned"] == 1
+    assert "custom__very_large_optional_tool" in names
+    assert info["tools_pruned"] == 0
+    assert info["tools_compacted"] == 2
     assert not info.get("blocked")
 
 

@@ -543,17 +543,47 @@ class SettingsStore:
     def get_memory_settings(self) -> dict[str, Any]:
         return normalize_memory_settings(self._settings.get("memories", {}))
 
-    def get_memory_prompt(self, *, user_message: str = "", workspace_id: str = "") -> str:
+    def get_memory_prompt(
+        self,
+        *,
+        user_message: str = "",
+        workspace_id: str = "",
+        record_usage: bool = True,
+    ) -> str:
         """Build memory prompt with optional relevance filtering."""
+        return str(
+            self.get_memory_context(
+                user_message=user_message,
+                workspace_id=workspace_id,
+                record_usage=record_usage,
+            ).get("prompt")
+            or ""
+        )
+
+    def get_memory_context(
+        self,
+        *,
+        user_message: str = "",
+        workspace_id: str = "",
+        record_usage: bool = True,
+    ) -> dict[str, Any]:
+        """Return the selected memory text together with its audit identity."""
         mem_settings = self.get_memory_settings()
-        prompt, _ = build_memory_prompt_from_store(
+        prompt, used_ids = build_memory_prompt_from_store(
             self.memory_store,
             enabled=mem_settings.get("enabled", True),
             max_active=mem_settings.get("max_active", 30),
             user_message=user_message,
             workspace_id=workspace_id,
+            record_usage=record_usage,
         )
-        return prompt
+        return {
+            "schema_version": "memory_context.v1",
+            "prompt": prompt,
+            "used_memory_ids": list(used_ids),
+            "selected_count": len(used_ids),
+            "workspace_id": str(workspace_id or ""),
+        }
 
     def is_memory_auto_extract_enabled(self) -> bool:
         mem_settings = self.get_memory_settings()

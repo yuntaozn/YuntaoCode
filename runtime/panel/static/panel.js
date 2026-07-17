@@ -578,9 +578,8 @@ function renderWorkbenchContextEvidence(summary) {
         `);
     }
 
-    if (capability.target_capability_ids || capability.preferred_tool_ids || capability.visual_verification_tool_ids) {
+    if (capability.target_capability_ids || capability.visual_verification_tool_ids) {
         const targets = Array.isArray(capability.target_capability_ids) ? capability.target_capability_ids : [];
-        const preferred = Array.isArray(capability.preferred_tool_ids) ? capability.preferred_tool_ids : [];
         const visualTools = Array.isArray(capability.visual_verification_tool_ids) ? capability.visual_verification_tool_ids : [];
         rows.push(`
             <li>
@@ -589,7 +588,6 @@ function renderWorkbenchContextEvidence(summary) {
                     `${t('tasks.available_tools')}：${Number(capability.available_tool_count || 0)}`,
                     `${t('tasks.unavailable_tools')}：${Number(capability.unavailable_tool_count || 0)}`,
                     targets.length ? `${t('tasks.target_capabilities')}：${targets.slice(0, 8).join(" · ")}` : "",
-                    preferred.length ? `${t('tasks.preferred_tools')}：${preferred.slice(0, 8).join(" · ")}` : "",
                     visualTools.length ? `${t('tasks.visual_tools')}：${visualTools.slice(0, 8).join(" · ")}` : "",
                     Number(capability.advisory_count || 0) ? `${t('tasks.advisories')}：${Number(capability.advisory_count || 0)}` : "",
                 ].filter(Boolean).join(" · "))}</span>
@@ -2179,8 +2177,6 @@ async function sendMessage(event) {
         if (metadata.waitingConfirmation) {
             metadata.statusText = baseStatusText;
             setStatusBarElapsed("");
-        } else if (metadata.strategyChangeRequired) {
-            metadata.statusText = metadata.strategyChangeText || t('status.strategy_change_required');
         } else if ((metadata.consecutiveToolFailures || 0) >= 2) {
             metadata.statusText = t('status.repeated_tool_failures', {
                 tool: metadata.lastFailedTool || t('status.unknown_tool'),
@@ -2261,10 +2257,6 @@ async function sendMessage(event) {
                     touchProgress(eventData.message || t('status.thinking'));
                     updateActiveStreamState("running", eventData.status || "status", eventData.message || t('status.thinking'));
                     showStatusBar(eventData.message || t('status.thinking'));
-                    if (eventData.status === "strategy_change_required") {
-                        currentMetadata.strategyChangeRequired = true;
-                        currentMetadata.strategyChangeText = eventData.message || t('status.strategy_change_required');
-                    }
                     streamingMessages[assistantIndex].metadata = {
                         ...currentMetadata,
                         pending: true,

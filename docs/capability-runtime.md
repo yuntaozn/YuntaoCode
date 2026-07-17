@@ -298,12 +298,14 @@ Capability Contract 描述“系统有什么能力可以满足目标”。
 ```text
 User Request
   -> Model Task Contract
-  -> Route Proposal
-  -> Capability Contract Validation
+  -> Model-selected Capability / Deliverable
+  -> Capability Snapshot And Advisory Preflight
   -> Tool Execution
   -> RunResult
 ```
 
+Runtime 不根据用户文本自动选择 Provider，也不把文件产物改写成外部状态或反向改写。
+模型可以引用 Capability Snapshot 中的能力；Preflight 只说明可用性、健康状态和证据边界。
 这可以避免继续用关键词补丁处理“生成视频”“PDF 转 Word”“创建 HTML 示例页”等表达差异。
 
 ## Relation To Plugins
@@ -341,8 +343,9 @@ Additional runtime guards now exist in `runtime/agent_strategy/capability_prefli
   from "a specific MCP/CLI provider is unhealthy".
 - Model-declared `task_contract.capability_ids` are validated against that
   snapshot.
-- External-state tasks require an available capability with
-  `external_state_change`.
+- External-state contracts are checked against capabilities that advertise
+  `external_state_change`; missing or unhealthy providers become advisory
+  readiness facts rather than a hidden route decision.
 - Fallback from a target external-state capability to shell scripts or ordinary
   file generation is surfaced as capability-boundary evidence. The Runtime may
   require normal safety confirmation, but the model remains responsible for
@@ -353,8 +356,10 @@ Additional runtime guards now exist in `runtime/agent_strategy/capability_prefli
   RunResult, diagnostics, and future replay/evaluation can audit them without
   turning capability fit into a hidden route lock.
 - New runs emit `capability_preflight.v2`. The contract contains
-  `advisories`, `readiness_issues`, `preferred_tool_ids`,
-  `visual_verification_tool_ids`, and a `route_hint` whose policy is advisory.
+  `advisories`, `readiness_issues`, `visual_verification_tool_ids`, and a
+  `route_hint` whose policy is advisory. `preferred_tool_ids` is retained only
+  as a null compatibility field for older diagnostic readers; new runs do not
+  rank tools for the model.
   It intentionally does not emit `blockers`, `allowed_tool_ids`,
   `restrict_fallback`, or `enforce_*` fields. Readers may still normalize older
   diagnostic records, but new runtime behavior must not reintroduce those

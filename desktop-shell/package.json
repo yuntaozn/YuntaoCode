@@ -13,7 +13,7 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "sidecar:windows": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\build_sidecar_windows.ps1",
-    "build:windows": "npm run sidecar:windows && npm run build"
+    "build:windows": "npm run sidecar:windows && tauri build --verbose"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

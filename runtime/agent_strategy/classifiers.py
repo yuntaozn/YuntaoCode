@@ -14,11 +14,6 @@ from typing import Any
 
 from runtime.tool_aliases import TOOL_ID_ALIASES, normalize_tool_id
 
-from .profiles import (
-    profile_for_task_intent,
-    round_limit_for_profile,
-    stage_sequence_for_profile,
-)
 from .tool_result_risks import shell_success_has_stderr_warning
 
 
@@ -235,182 +230,6 @@ def is_invalid_verification_method_event(event: dict[str, Any]) -> bool:
 # Intent classification — user message
 # ---------------------------------------------------------------------------
 
-def has_no_write_instruction(content: str) -> bool:
-    text = content.lower()
-    if not text:
-        return False
-    no_write_terms = (
-        "不要改代码", "不用改代码", "先不要改代码", "先别改代码", "别改代码", "不改代码",
-        "不要修改代码", "不要改文件", "不要修改文件", "不要动文件", "不要动代码",
-        "不要写入", "不要执行修改", "不要改动", "不需要改动", "不需要修改", "无需修改",
-        "先不改", "只分析", "仅分析", "只看", "只检查", "只给建议", "给出建议",
-        "调整建议", "改进建议", "不要改",
-        "no code changes", "do not modify", "don't modify", "read only", "analysis only",
-    )
-    return any(term in text for term in no_write_terms)
-
-
-def has_explicit_write_instruction(content: str) -> bool:
-    text = content.lower()
-    if not text:
-        return False
-    explicit_write_terms = (
-        "帮我改", "帮我修", "帮我加", "帮我删", "开始改", "直接改", "继续改", "继续做",
-        "继续优化", "优化网站", "优化页面", "优化其他页",
-        "创建robots", "生成robots", "创建sitemap", "生成sitemap",
-        "按你说的继续改进", "按你说的改",
-        "修复", "改成", "改造", "改造成", "改为", "替换", "新增", "添加", "添加路由",
-        "删除", "移除", "去掉", "实现", "创建页面", "创建逻辑", "独立页面",
-        "修改导航", "接入", "更新", "重构", "补上", "写入", "生成文件", "变更",
-        "恢复", "回退",
-        "apply", "implement", "fix", "update", "modify", "change", "refactor",
-        "remove", "delete", "add",
-    )
-    return any(term in text for term in explicit_write_terms)
-
-
-def looks_like_read_only_request(content: str) -> bool:
-    text = content.lower()
-    if not text:
-        return False
-    if has_no_write_instruction(content):
-        return True
-    if has_explicit_write_instruction(content):
-        return False
-    read_only_terms = (
-        "分析", "检查", "查看", "看下", "看看", "梳理", "评估", "审查", "建议",
-        "方案", "思路", "解释", "说明", "为什么", "如何", "是否", "可行性",
-        "状态", "现状", "风险", "问题", "原因", "定位", "排查",
-        "review", "analyze", "analyse", "explain", "suggest", "recommend",
-    )
-    return any(term in text for term in read_only_terms)
-
-
-def looks_like_document_export_request(content: str) -> bool:
-    text = content.lower()
-    pdf_word_pair = "pdf" in text and any(term in text for term in ("word", "docx"))
-    document_transform_action = any(
-        term in text
-        for term in (
-            "导", "转", "生成", "输出", "保存", "提取", "重做", "重新", "做成", "做一个", "做个",
-            "convert", "export", "extract", "generate", "save",
-        )
-    )
-    pdf_layout_terms = any(
-        term in text
-        for term in ("图文", "图片", "文字", "带图", "保留图片", "排版", "image", "text", "layout")
-    )
-    if pdf_word_pair and (document_transform_action or pdf_layout_terms):
-        return True
-    if "pdf" in text and pdf_layout_terms and document_transform_action:
-        return True
-    export_terms = (
-        "导出", "生成word", "生成 word", "生成docx", "生成 docx",
-        "生成pdf", "生成 pdf", "生成ppt", "生成 ppt",
-        "保存为", "写成文件", "输出文件", "转存word", "转存 word",
-        "转成word", "转成 word", "转为word", "转为 word",
-        "转换成word", "转换成 word", "转换为word", "转换为 word",
-        "转存docx", "转存 docx", "转成docx", "转成 docx",
-        "转为docx", "转为 docx", "转换成docx", "转换成 docx",
-        "转换为docx", "转换为 docx",
-        "pdf转word", "pdf 转 word", "pdf转docx", "pdf 转 docx",
-        "pdf文字提取", "pdf 文本提取", "提取pdf", "提取 pdf",
-        "中文版", "翻译成中文", "翻译为中文", "翻译成中文版", "翻译为中文版",
-        "翻译中文版", "翻译个中文版", "转成中文", "转为中文", "中文翻译",
-        ".docx", ".pdf", ".pptx", ".md",
-    )
-    return any(term in text for term in export_terms)
-
-
-def looks_like_full_document_output_request(content: str) -> bool:
-    text = content.lower()
-    if not text:
-        return False
-    pdf_word_pair = "pdf" in text and any(term in text for term in ("word", "docx"))
-    document_transform_action = any(
-        term in text
-        for term in (
-            "导", "转", "生成", "输出", "保存", "提取", "重做", "重新", "做成", "做一个", "做个",
-            "convert", "export", "extract", "generate", "save",
-        )
-    )
-    pdf_layout_terms = any(
-        term in text
-        for term in ("图文", "图片", "文字", "带图", "保留图片", "排版", "image", "text", "layout")
-    )
-    if pdf_word_pair and (document_transform_action or pdf_layout_terms):
-        return True
-    if "pdf" in text and pdf_layout_terms and document_transform_action:
-        return True
-    transform_terms = (
-        "翻译", "中文版", "转成中文", "转为中文", "中文翻译",
-        "pdf转word", "pdf 转 word", "pdf转docx", "pdf 转 docx",
-        "转存word", "转存 word", "转换成word", "转换为word",
-        "转换成 docx", "转换为 docx", "提取pdf", "提取 pdf",
-    )
-    full_terms = ("全文", "完整", "全部", "整本", "全书", "全篇", "每页", "所有")
-    return any(term in text for term in transform_terms) or (
-        any(term in text for term in full_terms)
-        and any(term in text for term in ("文档", "文件", "docx", "pdf", "word"))
-    )
-
-
-def infer_requested_min_output_chars(content: str) -> int:
-    """Infer an explicit long-form output size requirement from user text.
-
-    This is only an audit/completion hint. It does not decide how the model
-    should write or which document workflow to use.
-    """
-    text = str(content or "").lower()
-    if not text:
-        return 0
-    if re.search(r"(几|數|数)\s*万\s*字", text):
-        return 20000
-    match = re.search(r"(\d+(?:\.\d+)?)\s*万\s*字", text)
-    if match:
-        return max(0, int(float(match.group(1)) * 10000))
-    match = re.search(r"([一二两三四五六七八九十])\s*万\s*字", text)
-    if match:
-        values = {
-            "一": 1,
-            "二": 2,
-            "两": 2,
-            "三": 3,
-            "四": 4,
-            "五": 5,
-            "六": 6,
-            "七": 7,
-            "八": 8,
-            "九": 9,
-            "十": 10,
-        }
-        return values.get(match.group(1), 0) * 10000
-    match = re.search(r"(\d{4,7})\s*(?:字|字符|汉字|中文字符)", text)
-    if match:
-        return int(match.group(1))
-    match = re.search(r"(\d{4,7})\s*(?:chars?|characters?|words?)\b", text)
-    if match:
-        return int(match.group(1))
-    match = re.search(r"(\d+(?:\.\d+)?)\s*(?:k|thousand)\s*(?:chars?|characters?|words?)\b", text)
-    if match:
-        return max(0, int(float(match.group(1)) * 1000))
-    return 0
-
-
-def looks_like_paper_task(content: str) -> bool:
-    text = content.lower()
-    if not text:
-        return False
-    paper_terms = (
-        "论文", "文献综述", "系统综述", "研究设计", "研究问题", "研究假设", "研究方法",
-        "摘要", "引言", "相关工作", "方法论", "讨论", "结论", "参考文献", "引用",
-        "审稿", "审稿意见", "审稿回复", "投稿", "期刊", "学术", "开题", "课题",
-        "paper", "literature review", "systematic review", "abstract", "citation",
-        "reviewer", "journal", "doi",
-    )
-    return any(term in text for term in paper_terms)
-
-
 def looks_like_follow_up_execution(content: str) -> bool:
     text = content.strip().lower()
     if len(text) > 40:
@@ -484,92 +303,6 @@ def looks_like_diagnostic_feedback(content: str) -> bool:
     return False
 
 
-def looks_like_code_change_request(content: str) -> bool:
-    text = content.lower()
-    if not text:
-        return False
-
-    # Analysis-only requests should NOT be treated as code change
-    analysis_only_terms = (
-        "分析代码", "检查代码", "看下代码", "代码逻辑", "解读代码",
-        "帮我看看", "帮我分析", "帮我理解", "什么意思", "怎么工作",
-        "调用工具", "能否找到原因", "排查", "定位问题",
-    )
-    if any(term in text for term in analysis_only_terms):
-        explicit_write = ("并修复", "然后改", "然后修", "并改", "顺便改", "帮我修")
-        if not any(term in text for term in explicit_write):
-            return False
-
-    code_context_terms = (
-        ".py", ".js", ".ts", ".tsx", ".jsx", ".vue", ".html", ".css", ".json",
-        "代码", "文件", "函数", "组件", "页面", "前端", "后端", "接口", "路由",
-        "端口", "配置", "样式", "布局", "按钮", "输入框", "目录", "登录",
-        "报错", "bug", "ui", "css", "js", "html", "vue", "react",
-        "seo", "网站", "网页", "meta", "robots.txt", "sitemap.xml",
-        "canonical", "open graph", "twitter card",
-    )
-    direct_write_terms = (
-        "帮我改", "帮我修", "帮我加", "帮我删", "开始做", "直接改", "修复",
-        "改成", "改造", "改造成", "改为", "替换", "新增", "添加", "添加路由",
-        "删除", "移除", "去掉", "实现", "创建页面", "创建逻辑", "独立页面",
-        "修改导航", "接入", "更新", "调整", "重构", "补上", "写入", "生成",
-        "变更", "恢复", "回退", "太大", "太小", "没反应", "加载不出来",
-        "优化网站", "优化页面", "优化其他页", "继续优化",
-        "创建robots", "生成robots", "创建sitemap", "生成sitemap",
-        "添加meta", "补充meta",
-    )
-    broad_write_terms = ("修改", "改", "修", "加", "删")
-
-    if any(term in text for term in direct_write_terms):
-        return True
-    return any(term in text for term in broad_write_terms) and any(
-        term in text for term in code_context_terms
-    )
-
-
-def looks_like_simple_code_change(content: str) -> bool:
-    text = content.lower().strip()
-    if len(text) > 100:
-        return False
-    broad_terms = (
-        "全部", "完整", "全局", "很多文件", "多文件", "重构", "实现", "接入",
-        "测试", "验证", "生成报告", "计划执行",
-    )
-    if any(term in text for term in broad_terms):
-        return False
-    simple_terms = (
-        "字太大", "字太小", "太大", "太小", "改小", "改大", "按钮",
-        "颜色", "间距", "文案", "样式", "布局", "显示", "隐藏", "没反应",
-    )
-    return any(term in text for term in simple_terms)
-
-
-def looks_like_dangling_action(content: str) -> bool:
-    text = content.strip()
-    if not text:
-        return False
-    tail = text[-260:].lower()
-    action_terms = (
-        "让我先", "首先让我", "让我来", "我先", "接下来", "现在我", "我将",
-        "我会", "准备", "开始", "需要先", "继续", "let me", "i will", "next",
-    )
-    toolish_terms = (
-        "验证", "检查", "查看", "读取", "搜索", "查找", "扫描", "修改", "写入",
-        "替换", "运行", "调用", "测试", "确认", "verify", "check",
-        "read", "search", "scan", "edit", "write", "run", "test",
-    )
-    dangling_endings = ("：", ":", "。", ".", "先验证一下", "先检查一下", "先读取", "开始执行修改")
-    has_action = any(term in tail for term in action_terms)
-    has_toolish = any(term in tail for term in toolish_terms)
-    if has_action and has_toolish:
-        if text.endswith(("：", ":")):
-            return True
-        if any(tail.endswith(ending.lower()) for ending in dangling_endings):
-            return True
-        return True
-    return False
-
-
 def plan_has_pending_write_step(execution_plan: Any) -> bool:
     """Check whether a plan explicitly contains a pending local write step.
 
@@ -631,112 +364,6 @@ def plan_has_pending_write_step(execution_plan: Any) -> bool:
         ):
             return True
     return False
-
-
-def user_requests_code_change(content: str, mode: str | None) -> bool:
-    """Check if the user message in coding mode requests a code change."""
-    if mode != "coding":
-        return False
-    if has_no_write_instruction(content):
-        return False
-    text = content.lower()
-    inquiry_terms = (
-        "建议", "分析", "解释", "为什么", "是否", "方案", "思路",
-        "怎么", "如何", "检查", "查看",
-    )
-    direct_write_terms = (
-        "帮我改", "帮我修", "帮我加", "帮我删", "开始做", "直接改", "修复",
-        "改成", "改造", "改造成", "改为", "替换", "新增", "添加", "添加路由",
-        "删除", "移除", "去掉", "实现", "创建页面", "创建逻辑", "独立页面",
-        "修改导航", "接入", "更新", "调整", "重构", "补上", "写入", "生成",
-        "变更", "恢复", "回退", "太大", "太小", "没反应", "加载不出来",
-        "优化网站", "优化页面", "优化其他页", "继续优化",
-        "创建robots", "生成robots", "创建sitemap", "生成sitemap",
-        "添加meta", "补充meta",
-    )
-    broad_write_terms = ("修改", "改", "修", "加", "删")
-    code_context_terms = (
-        ".py", ".js", ".ts", ".tsx", ".jsx", ".vue", ".html", ".css", ".json",
-        "代码", "文件", "函数", "组件", "页面", "前端", "后端", "样式", "布局",
-        "按钮", "ui", "端口", "配置", "接口", "路由", "seo", "网站", "网页",
-        "meta", "robots.txt", "sitemap.xml", "canonical", "open graph", "twitter card",
-    )
-    if has_explicit_write_instruction(content) or any(term in text for term in direct_write_terms):
-        return True
-    if any(term in text for term in inquiry_terms):
-        return False
-    return any(term in text for term in broad_write_terms) and any(
-        term in text for term in code_context_terms
-    )
-
-
-def code_change_intent(
-    content: str,
-    mode: str | None,
-    *,
-    has_previous_write: bool = False,
-) -> bool:
-    """Simplified code-change intent check without conversation history.
-
-    The full conversation-aware version remains on the handler because it
-    needs to traverse message history.  This pure variant covers the
-    common single-message cases and is fully testable.
-    """
-    if has_no_write_instruction(content):
-        return False
-    if user_requests_code_change(content, mode):
-        return True
-    if looks_like_follow_up_execution(content) and has_previous_write:
-        return True
-    return False
-
-
-def classify_task_intent(
-    content: str,
-    mode: str | None,
-    *,
-    has_previous_write: bool = False,
-    is_follow_up_with_conversation: bool = False,
-) -> str:
-    """Classify the user's task intent from message content.
-
-    Parameters
-    ----------
-    content : str
-        The user message text.
-    mode : str | None
-        Legacy mode/profile hint such as ``"coding"`` or ``"terminal"``.
-    has_previous_write : bool
-        Whether the conversation history contains a prior write context.
-    is_follow_up_with_conversation : bool
-        When ``True`` and the message looks like a follow-up with a
-        conversation present, the caller should do additional history
-        checks.  This pure function returns ``"write_required"`` for
-        follow-ups when *has_previous_write* is True.
-    """
-    if has_no_write_instruction(content):
-        return "read_only_analysis"
-    if looks_like_follow_up_execution(content) and has_previous_write:
-        return "write_required"
-    if user_requests_code_change(content, "coding"):
-        return "write_required"
-    if looks_like_document_export_request(content):
-        return "document_export"
-    if looks_like_paper_task(content):
-        return "paper_workflow"
-    if mode == "coding":
-        if user_requests_code_change(content, mode):
-            return "write_required"
-        if looks_like_read_only_request(content):
-            return "read_only_analysis"
-        if looks_like_follow_up_execution(content) and is_follow_up_with_conversation:
-            # Caller needs to inspect conversation history for final verdict.
-            # Default to "answer_only" here; the handler overrides with history.
-            return "answer_only"
-        return "answer_only"
-    if looks_like_read_only_request(content):
-        return "read_only_analysis"
-    return "answer_only"
 
 
 # ---------------------------------------------------------------------------
@@ -1189,8 +816,6 @@ def failure_route_attempt_count_since_progress(tool_events: list[dict[str, Any]]
 
 def repeated_failure_action(
     tool_events: list[dict[str, Any]],
-    *,
-    strategy_change_intervened: bool,
 ) -> str:
     """Return the convergence action for repeated failed execution routes.
 
@@ -1204,7 +829,7 @@ def repeated_failure_action(
         return "none"
     if route_attempts >= 7:
         return "stop"
-    return "change_strategy"
+    return "report_repetition"
 
 
 def _tool_failure_signature(event: dict[str, Any]) -> str:
@@ -1584,38 +1209,4 @@ def is_recoverable_write_failure(tool_id: str, event: dict[str, Any]) -> bool:
             "not found in file",
             "multiple matches",
         )
-    )
-
-
-# ---------------------------------------------------------------------------
-# Stage management
-# ---------------------------------------------------------------------------
-
-def execution_stage_sequence(
-    mode: str | None,
-    code_change_intent: bool,
-    task_intent: str = "",
-) -> list[str]:
-    profile = profile_for_task_intent(
-        task_intent,
-        mode,
-        code_change_intent=code_change_intent,
-    )
-    return stage_sequence_for_profile(
-        profile.id,
-        task_intent=task_intent,
-        code_change_intent=code_change_intent,
-    )
-
-
-def stage_round_limit(stage: str, mode: str | None, code_change_intent: bool) -> int:
-    profile = profile_for_task_intent(
-        "write_required" if code_change_intent else "",
-        mode,
-        code_change_intent=code_change_intent,
-    )
-    return round_limit_for_profile(
-        profile.id,
-        stage,
-        code_change_intent=code_change_intent,
     )
