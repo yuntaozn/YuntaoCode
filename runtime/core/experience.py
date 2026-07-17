@@ -1,8 +1,7 @@
 """Experience-layer schemas.
 
-Experience records sit between raw Runbook evidence and Skill Evolution. They
-capture what a task taught the runtime without implying that a reusable skill
-already exists or should be promoted.
+Experience records capture reviewed Runbook evidence without implying that a
+reusable skill already exists or that runtime behavior should change.
 """
 
 from __future__ import annotations

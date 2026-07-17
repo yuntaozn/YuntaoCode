@@ -99,15 +99,5 @@ Avoid:
   code;
 - treating draft creation as a substitute for final file export.
 
-## Extension Direction
-
-Future document-oriented capabilities can build on the same draft object:
-
-- source extraction can append notes or citations;
-- long translation can append translated batches to a target draft;
-- book organization can create sections and move blocks;
-- report generation can inspect coverage before export;
-- paper workflows can attach citation metadata and source notes.
-
 The runtime should remain small: task state, draft state, traces, inspection,
 recovery, and export. The model owns task interpretation.

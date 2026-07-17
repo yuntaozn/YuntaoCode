@@ -122,7 +122,7 @@ Runtime 负责：
 - 将模型契约规范为稳定 schema。
 - 应用 `只分析/不要修改` 这类硬边界。
 - 校验写入、验证、文档覆盖等成功条件。
-- 记录 `task.contract` 事件，供审计和后续 UI 展示。
+- 记录 `task.contract` 事件，供审计和 UI 展示。
 
 `requires_write` 只表示任务必须产生或修改本地文件。
 `requires_state_change` 表示任务必须产生可观察状态变化，范围还包括 Blender/CAD
@@ -182,15 +182,6 @@ created/running/waiting_confirmation/verifying
   -> cancelled
 ```
 
-后续可以扩展：
-
-```text
-paused
-resuming
-rolling_back
-rolled_back
-```
-
 ## Plan And Step
 
 Plan 是任务的可展示执行方案，Step 是可推进的最小阶段。
@@ -248,26 +239,16 @@ Trace 的目标不是“展示热闹过程”，而是：
 - 用户能知道系统为什么这样做。
 - 开发者能复盘失败位置。
 - 测试能断言状态迁移。
-- 未来能支持 replay / resume。
+- 支持 replay / resume 的证据基础。
 
 ## Recovery
 
-Recovery 是 YuntaoCode 区别于普通 AI Chat 的关键方向。
-
-短期目标：
+Recovery 是 YuntaoCode 区别于普通 AI Chat 的关键能力。
 
 - 写入前创建 checkpoint。
 - 工具失败后记录可恢复原因。
 - 对可恢复失败生成明确 retry prompt。
 - 最终结果里说明已验证内容和未验证风险。
-
-中期目标：
-
-- `task.pause()`
-- `task.resume()`
-- `task.retry(step_id)`
-- `task.rollback(checkpoint_id)`
-- `task.replay(trace_id)`
 
 ## Template
 

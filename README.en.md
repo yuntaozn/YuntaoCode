@@ -6,12 +6,12 @@ YuntaoCode is a local-first AI task execution foundation for developers, educati
 
 Rather than building yet another AI chat application, YuntaoCode focuses on making local tasks plannable, executable, pausable, recoverable, verifiable, and auditable.
 
-Its current open-source goal is to make three execution foundations and one evidence-based experience layer explicit for AI working on real local tasks:
+The current code is organized around three execution foundations and one evidence-based experience layer:
 
 * **Task Runtime**: task state, plans, steps, execution, verification, recovery, and results.
 * **Context Runtime**: context selection, compression, evidence boundaries, long-term memory, and a context ledger.
 * **Capability Runtime**: tools, permissions, plugins, capability contracts, and local execution boundaries.
-* **Experience Layer**: turns real task records into Experience Samples, Digests, and Replay Fixtures for later evaluation and capability improvement.
+* **Experience Layer**: turns real task records into RunEvidence, Experience Samples, Replay Fixtures, Evaluation Fixtures, and diagnostic packages.
 
 ---
 
@@ -34,7 +34,7 @@ As these questions were gradually addressed, a local Runtime architecture center
 
 YuntaoCode is the result of that evolution.
 
-It is not an answer to what the future AI terminal should look like, but an ongoing exploration.
+It is not a final answer to what an AI terminal should look like, but an ongoing engineering exploration.
 
 ---
 
@@ -42,7 +42,7 @@ It is not an answer to what the future AI terminal should look like, but an ongo
 
 ### Runtime Foundation
 
-YuntaoCode is not built around a tool checklist. It is organized around three execution runtime lines that can evolve over time, plus an evidence-based experience layer:
+YuntaoCode is not built around a tool checklist. It is organized around three execution runtime lines plus an evidence-based experience layer:
 
 ```text
 Task Runtime
@@ -55,7 +55,7 @@ Capability Runtime
   Manages tool capabilities, permissions, confirmations, local Capability Packs, and external integrations
 
 Experience Layer
-  Turns task records into Experience Samples, Digests, and Replay Fixtures for later evaluation and capability improvement
+  Turns task records into RunEvidence, Experience Samples, Replay Fixtures, Evaluation Fixtures, and diagnostic packages
 ```
 
 The first three lines define how tasks run. The Experience Layer preserves evidence and lessons without registering AI-generated code by default or bypassing Runtime permission, verification, and manual confirmation boundaries. The model may help understand and execute tasks, but the Runtime owns state, permission boundaries, evidence, and completion checks.
@@ -115,7 +115,7 @@ Compatible with OpenAI-style APIs:
 * Task plans, model decisions, and execution progress
 * Tool calls, confirmations, and errors
 * Pre-write backups and result verification
-* Foundations for task pause, resume, replay, and audit
+* Foundation records for task pause, resume, replay, and audit
 
 ---
 
@@ -319,11 +319,11 @@ Create a Handler under `runtime/api/` and register it in `runtime/app.py`.
 
 The current version provides capability-source management. It groups built-in tools by ID prefix, such as `filesystem`, `code`, `shell`, `git`, `web`, and `preview`, and displays enablement and dependency status. These groups are not installed third-party plugins.
 
-A Plugin in YuntaoCode is a versioned, distributable package that may contain Skills, Capability Packs, MCP/CLI provider descriptors, and future controlled extensions. Installation, review, enablement, and execution are independent states. The current foundation defines manifest and local installation-state contracts only; dynamic loading, a marketplace, and remote auto-update remain out of scope.
+A Plugin in YuntaoCode is a versioned, distributable package that may contain Skills, Capability Packs, MCP/CLI provider descriptors, and controlled extension declarations. Installation, review, enablement, and execution are independent states. The current foundation defines manifest and local installation-state contracts only; dynamic loading, a marketplace, and remote auto-update remain out of scope.
 
 See [docs/capability-packs.md](docs/capability-packs.md) for local Capability Packs and the extension contract draft in [docs/plugin-system.md](docs/plugin-system.md). The repository does not include external plugin sample directories at this stage; capability extension examples stay in documentation so experimental artifacts are not mistaken for built-in features.
 
-AI may help create local Capability Packs. By default, it should first distill method skills: prompts, steps, counterexamples, and verification checklists under `capability-packs/items/<pack-id>/` in the user data directory. Tool adapter drafts must stay isolated. After completion, test/dependency summaries plus one manual confirmation can move the draft into a future controlled registration or enablement path. See [docs/capability-governance.md](docs/capability-governance.md).
+AI may help create local Capability Packs. By default, it should first distill method skills: prompts, steps, counterexamples, and verification checklists under `capability-packs/items/<pack-id>/` in the user data directory. Tool adapter drafts must stay isolated; 0.1 does not automatically register drafts as trusted runtime capabilities. See [docs/capability-governance.md](docs/capability-governance.md).
 
 ### MCP Services Directory
 
@@ -367,62 +367,29 @@ Instead, we focus on:
 * whether results can be verified, rolled back, and reviewed;
 * whether the task execution system still works after replacing the model.
 
-We believe that models will continue to change, but a stable, open, and extensible Task Runtime will remain valuable.
+We believe that models keep changing, but a stable, open, and extensible Task Runtime remains valuable.
 
 ---
 
-## Roadmap
+## Current Implementation
 
-### Phase 1: Runtime Foundation
+### Runtime Foundation
 
-Goal: stabilize the Task, Context, Capability, and Evidence foundations. YuntaoCode's value is not the number of tools it ships with, but whether tasks can be executed, observed, recovered, verified, and reviewed.
+Status: closing.
 
-* [x] Task Model foundation: ProductTask, Run, ToolTask, state, results, and lineage
-* [x] Run Lifecycle foundation: running, waiting_confirmation, paused, resumed, completed, failed, stopped
-* [x] Task Trace foundation: RunEvent, canonical event_name, tool calls, confirmations, errors, verification, results, and final-answer previews
-* [x] Run Recovery foundation: pause, resume, Runbook, and Replay Request
-* [x] Recovery Context foundation: Checkpoint, Context Snapshot, and explicitly started Replay Runs
-* [x] Task Audit foundation: RunEvidence, RunWorkbench, run audit summary, task-history UI, and state-transition tests
-* [x] Context Runtime minimum loop: Context Pack / Ledger, context hygiene, task lineage, memory boundaries, visual evidence, and recovery snapshots
-* [x] Capability Runtime minimum loop: ToolSpec metadata, Capability Preflight v2, permissions, confirmations, artifacts, providers, and verification evidence
-* [x] Automation Runtime foundation: triggers, task templates, concurrency boundary, configuration UI, and normal Run conversion contract
-* [x] MCP Service Lifecycle foundation: service configuration, start / restart actions, protocol connection, tool discovery, diagnostics, and capability binding
-* [x] Runtime Extension Contract foundation: plugin / MCP / CLI / Capability Pack boundaries, permissions, dependencies, and task artifact conventions
+The current code implements these foundations:
 
-### Phase 2: Experience And Evaluation Loop
-
-Goal: let YuntaoCode learn from real task evidence by producing auditable samples, replayable fixtures, and comparable evaluation reports. This does not mean every task becomes a skill, and it is not a public benchmark or data-collection system.
-
-* [x] RunEvidence: a unified fact view for one run
-* [x] Experience Runtime foundation: Experience Sample, Experience Digest, and the data boundary between Runbook and Replay
-* [x] Evaluation Fixture / Report foundation: selected RunEvidence can become a fixture and be compared with another run
-* [x] Experience Sample Export: manually export an experience sample from selected RunEvidence
-* [ ] Experience Sample file import, validation, annotation, and comparison
-* [ ] Replay Runner: replay selected fixtures through the normal Task Runtime
-* [ ] Deeper Evaluation Reports: compare models, providers, runtime versions, capability availability, and failure causes
-* [ ] Experience Digestion: summarize stable patterns, applicability boundaries, and counterexamples from multiple samples
-
-### Phase 3: Skill / Capability Evolution
-
-Goal: let AI propose skill candidates, task templates, or capability drafts from experience and evaluation evidence, then prove them through isolation, replay, verification, and explicit user enablement. A Skill is not just a prompt note, and a Plugin is not trusted code by default; both must earn trust through the evidence chain.
-
-* [ ] Experience Digest to Skill Candidate flow
-* [ ] Task Template Candidate: reusable task structure learned from successful runs and failure counterexamples
-* [ ] AI-built Capability / Plugin Draft isolation, test summary, and enablement boundary
-* [ ] Candidate Replay: candidates must pass selected fixture replay/evaluation
-* [ ] Manual Promotion: users explicitly enable promoted capabilities
-* [ ] Capability versioning, compatibility, rollback, and deprecation policy
-
-### Phase 4: Self-Iteration Lab
-
-Goal: let YuntaoCode help improve its own Runtime inside isolated clones, test suites, diagnostic reports, and human merge boundaries. This is controlled self-iteration, not direct model edits to trusted runtime code.
-
-* [ ] Runtime Self-Diagnostic: locate foundation issues from failed tasks, diagnostics, and evaluation reports
-* [ ] Runtime Sandbox / clone: generate, test, and verify improvement proposals in an isolated environment
-* [ ] Fixture Regression Suite: use selected task fixtures to detect runtime regressions
-* [ ] Source Update Proposal: AI-generated code-change proposals with evidence, test results, and risk summaries
-* [ ] Human Merge Boundary: human review, merge, release, and rollback
-* [ ] Optional ecosystem: plugin indexes, signed distribution, team sync, and enterprise deployment only after the evolution loop is stable
+* Task Model: ProductTask, Run, ToolTask, state, results, and lineage
+* Run Lifecycle: running, waiting_confirmation, paused, resumed, completed, failed, stopped
+* Task Trace: RunEvent, canonical event_name, tool calls, confirmations, errors, verification, results, and final-answer previews
+* Run Recovery: pause, resume, Runbook, Replay Request, Checkpoint, and Context Snapshot
+* Task Audit: RunEvidence, RunWorkbench, run audit summary, task-history UI, and state-transition tests
+* Context Runtime: Context Pack / Ledger, context hygiene, task lineage, memory boundaries, visual evidence, and recovery snapshots
+* Capability Runtime: ToolSpec metadata, Capability Preflight, permissions, confirmations, artifacts, providers, and verification evidence
+* Provider boundaries: built-in tools, MCP, CLI, Capability Packs, and plugin declarations enter through Capability Runtime
+* Automation Runtime foundation: triggers, task templates, concurrency boundary, configuration UI, and normal Run conversion contract
+* Extension Contract foundation: plugin / MCP / CLI / Capability Pack boundaries, permissions, dependencies, and task artifact conventions
+* Experience / Evaluation foundation: RunEvidence, Experience Sample Export, Replay Fixture, Evaluation Fixture, Evaluation Report, and diagnostic packages
 
 ---
 
@@ -448,8 +415,8 @@ Status: **Active Development**
 Before v1.0:
 
 * APIs may change
-* Plugin interfaces may evolve
-* Runtime architecture will continue to improve
+* Plugin interfaces may change
+* Runtime architecture may change
 
 ---
 

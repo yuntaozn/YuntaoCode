@@ -50,7 +50,7 @@ User Request
 
 ## Task Route Proposal
 
-后续模型路由层可以输出结构化提案：
+模型路由层可以输出结构化提案：
 
 ```json
 {

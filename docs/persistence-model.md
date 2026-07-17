@@ -85,7 +85,7 @@ SQLite tables should use explicit schema versions, transactions, foreign keys,
 and indexes for common workspace, conversation, run, status, and time queries.
 Artifact contents should not be embedded in the database by default.
 
-## Migration Phases
+## Current Migration State
 
 1. **Shared JSON mechanics - complete:** use one atomic document adapter while
    preserving existing Store APIs and JSON formats.

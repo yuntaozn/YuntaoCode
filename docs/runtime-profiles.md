@@ -23,9 +23,9 @@ loads all built-in tool groups plus the product management surfaces:
 
 ### `lite`
 
-`lite` is a foundation profile for testing and future lightweight embedding. It
-keeps the Task Runtime usable while leaving product and external-provider
-surfaces out of the startup path.
+`lite` is a foundation profile for testing a lightweight startup path. It keeps
+the Task Runtime usable while leaving product and external-provider surfaces
+out of the startup path.
 
 The current lite tool groups are:
 

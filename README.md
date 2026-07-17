@@ -6,12 +6,12 @@
 
 YuntaoCode 关注的核心不是“再做一个 AI 聊天助手”，而是让本地任务可以被计划、执行、暂停、恢复、验证和审计。
 
-它当前最重要的开源目标，是把 AI 进入本地真实任务时必须面对的三条执行主线和一条经验证据层做成清晰基座：
+当前代码围绕三条执行主线和一条经验证据层组织：
 
 * **Task Runtime**：任务状态、计划、步骤、执行、验证、恢复和结果。
 * **Context Runtime**：上下文选择、压缩、证据边界、长期记忆和上下文账本。
 * **Capability Runtime**：工具、权限、插件、能力契约和本地执行边界。
-* **Experience Layer**：从真实任务记录中沉淀 Experience Sample、Digest 和 Replay Fixture，用于后续评测与能力升级。
+* **Experience Layer**：从真实任务记录中沉淀 RunEvidence、Experience Sample、Replay Fixture、Evaluation Fixture 和诊断包。
 
 ---
 
@@ -34,7 +34,7 @@ YuntaoCode 并非从产品规划开始。
 
 YuntaoCode 就是在这样的过程中自然演化出来的。
 
-它不是对未来 AI 终端的答案，而是一次持续进行中的探索。
+它不是对 AI 终端形态的最终答案，而是一次持续进行中的工程探索。
 
 ---
 
@@ -55,7 +55,7 @@ Capability Runtime
   管理工具能力、权限、确认、本机能力包和外部能力接入
 
 Experience Layer
-  从任务记录中整理 Experience Sample、Digest 和 Replay Fixture，用于后续评测和能力升级
+  从任务记录中整理 RunEvidence、Experience Sample、Replay Fixture、Evaluation Fixture 和诊断包
 ```
 
 前三条主线共同决定任务如何运行；Experience Layer 只沉淀证据和经验，不默认注册 AI 生成代码，也不绕过 Runtime 的权限、验证和人工确认边界。模型可以参与任务判断和执行，但 Runtime 必须拥有状态、边界、证据和完成判定。
@@ -115,7 +115,7 @@ YuntaoCode 把一次请求看作一个可管理的任务，而不是一次普通
 * 记录任务计划、模型判断和执行进展
 * 记录工具调用、确认和错误
 * 支持写入前备份和结果验证
-* 为后续任务暂停、恢复、回放和审计预留扩展能力
+* 为任务暂停、恢复、回放和审计提供基础记录
 
 ---
 
@@ -279,7 +279,7 @@ python -m runtime.app --host 127.0.0.1 --port 8765
 
 贡献新能力前，建议先阅读 [docs/README.md](docs/README.md) 中的文档地图，再根据变更类型进入 Task、Context、Capability、Experience 或插件/MCP 相关文档。
 
-项目当前不鼓励优先堆叠应用场景。更推荐的贡献方向是：
+贡献新能力时，优先检查这些当前边界：
 
 * 让任务状态更清晰；
 * 让计划、步骤和工具结果更容易测试；
@@ -316,11 +316,11 @@ def register_my_tools(registry: ToolRegistry):
 
 当前版本提供的是能力来源管理：系统会按工具 ID 前缀展示 `filesystem`、`code`、`shell`、`git`、`web`、`preview` 等内置能力分组，并支持启停和依赖状态展示。这些分组不是已安装的第三方插件。
 
-Plugin 在 YuntaoCode 中定义为可版本化、可分发的能力包容器，可包含 Skill、Capability Pack、MCP/CLI provider 描述和未来受控扩展。安装、审查、启用与实际执行彼此独立；当前只建立 manifest 和本机安装状态的数据契约，不提供动态加载、插件市场或远程自动更新。
+Plugin 在 YuntaoCode 中定义为可版本化、可分发的能力包容器，可包含 Skill、Capability Pack、MCP/CLI provider 描述和受控扩展声明。安装、审查、启用与实际执行彼此独立；当前只建立 manifest 和本机安装状态的数据契约，不提供动态加载、插件市场或远程自动更新。
 
 本机能力包见 [docs/capability-packs.md](docs/capability-packs.md)，插件契约草案见 [docs/plugin-system.md](docs/plugin-system.md)。当前仓库不包含外部插件样板目录；能力扩展示例只保留在文档中，避免把实验产物误认为已内置功能。
 
-AI 可以帮助创建本机能力包。默认应先沉淀为方法型 Skill（提示词、步骤、反例和验证清单），写入用户数据目录下的 `capability-packs/items/<pack-id>/`。工具适配器草稿必须保持隔离，完成后通过测试/依赖摘要和一次人工确认，再进入后续受控注册或启用流程。详见 [docs/capability-governance.md](docs/capability-governance.md)。
+AI 可以帮助创建本机能力包。默认应先沉淀为方法型 Skill（提示词、步骤、反例和验证清单），写入用户数据目录下的 `capability-packs/items/<pack-id>/`。工具适配器草稿必须保持隔离；0.1 不把草稿自动注册为可信运行时能力。详见 [docs/capability-governance.md](docs/capability-governance.md)。
 
 ### MCP 服务目录
 
@@ -363,64 +363,31 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 
 我们相信：
 
-未来的模型会不断变化，
+模型会持续变化，
 
 但稳定、开放、可扩展的 Task Runtime 仍然具有长期价值。
 
 ---
 
-## Roadmap
+## 当前实现
 
-### Phase 1：Runtime Foundation
+### Runtime Foundation
 
-目标：先把 Task / Context / Capability / Evidence 四条基础线打稳。YuntaoCode 的价值不来自工具数量，而来自任务能被执行、观察、恢复、验证和复盘。
+状态：收口中。
 
-* [x] Task Model 基础：ProductTask、Run、ToolTask、状态、结果和运行血缘
-* [x] Run Lifecycle 基础：running、waiting_confirmation、paused、resumed、completed、failed、stopped
-* [x] Task Trace 基础：RunEvent、canonical event_name、工具调用、确认、错误、验证、结果和最终摘要预览
-* [x] Run Recovery 基础：暂停、恢复、Runbook、Replay Request
-* [x] Recovery Context 基础：Checkpoint、Context Snapshot、显式启动的 Replay Run
-* [x] Task Audit 基础：RunEvidence、RunWorkbench、执行审计摘要、任务记录 UI 和状态迁移测试
-* [x] Context Runtime 最小闭环：Context Pack / Ledger、上下文卫生、任务血缘、记忆边界、视觉证据和恢复快照
-* [x] Capability Runtime 最小闭环：ToolSpec 元数据、Capability Preflight v2、权限、确认、产物、Provider 和验证证据
-* [x] Automation Runtime 基础：触发器、任务模板、并发边界、配置页和普通 Run 转换契约
-* [x] MCP Service Lifecycle 基础：服务配置、启动 / 重启、协议连接、工具发现、诊断和能力绑定
-* [x] Runtime Extension Contract 基础：插件 / MCP / CLI / Capability Pack 边界、权限声明、依赖声明和任务产物规范
+当前代码已经实现的基础能力：
 
-### Phase 2：Experience And Evaluation Loop
-
-目标：让 YuntaoCode 从真实任务中留下可审计证据，提取经验样本，形成可回放、可比较、可评测的任务样本。不是把每一次任务都自动变成 skill，也不是收集用户数据做排行榜。
-
-* [x] RunEvidence：统一的运行事实视图
-* [x] Experience Runtime 基础：Experience Sample、Experience Digest、Runbook / Replay 之间的数据边界
-* [x] Evaluation Fixture / Report 基础：从选定 RunEvidence 生成样本并比较结果
-* [x] Experience Sample Export：从选定 RunEvidence 手动导出经验样本
-* [ ] Experience Sample 文件导入、校验、标注和对比
-* [ ] Replay Runner：通过正常 Task Runtime 回放选定样本
-* [ ] Evaluation Report 深化：模型、Provider、Runtime 版本、能力可用性和失败原因对比
-* [ ] 经验消化机制：从多个样本总结稳定模式、适用边界和反例
-
-### Phase 3：Skill / Capability Evolution
-
-目标：让 AI 基于经验和评测证据提出候选技能、任务模板或能力草稿，并经过隔离、回放、验证和人工启用。Skill 不是一份提示词说明书，Plugin 也不是默认可信代码；它们都必须从证据链中获得信任。
-
-* [ ] Experience Digest 到 Skill Candidate 的生成流程
-* [ ] Task Template Candidate：从成功任务和失败反例中沉淀可复用任务结构
-* [ ] AI 自建 Capability Pack 隔离目录、导出、测试摘要和启用边界
-* [ ] Candidate Replay：候选能力必须通过选定 fixture 的回放评测
-* [ ] Manual Promotion：用户确认后才进入可启用能力列表
-* [ ] 能力版本、兼容性、回滚和废弃策略
-
-### Phase 4：Self-Iteration Lab
-
-目标：让 YuntaoCode 在隔离分身、测试集、诊断报告和人工合并边界内辅助改进自己的 Runtime。这里关注的是“可控自我迭代”，不是让模型直接修改可信主运行时代码。
-
-* [ ] Runtime Self-Diagnostic：从失败任务、诊断包和评测报告定位基座问题
-* [ ] Runtime Sandbox / 分身：独立环境中生成、测试和验证改进方案
-* [ ] Fixture Regression Suite：用选定任务样本验证 Runtime 改动是否退化
-* [ ] Source Update Proposal：AI 生成带证据的代码变更建议、测试结果和风险摘要
-* [ ] Human Merge Boundary：人工审查、合并、发布和回滚
-* [ ] 可选生态：插件索引、签名分发、团队同步和企业部署只在进化闭环稳定后推进
+* Task Model：ProductTask、Run、ToolTask、状态、结果和运行血缘
+* Run Lifecycle：running、waiting_confirmation、paused、resumed、completed、failed、stopped
+* Task Trace：RunEvent、canonical event_name、工具调用、确认、错误、验证、结果和最终摘要预览
+* Run Recovery：暂停、恢复、Runbook、Replay Request、Checkpoint、Context Snapshot
+* Task Audit：RunEvidence、RunWorkbench、执行审计摘要、任务记录 UI 和状态迁移测试
+* Context Runtime：Context Pack / Ledger、上下文卫生、任务血缘、记忆边界、视觉证据和恢复快照
+* Capability Runtime：ToolSpec 元数据、Capability Preflight、权限、确认、产物、Provider 和验证证据
+* Provider 边界：内置工具、MCP、CLI、Capability Pack 和插件声明都通过 Capability Runtime 接入
+* Automation Runtime 基础：触发器、任务模板、并发边界、配置页和普通 Run 转换契约
+* Extension Contract 基础：插件 / MCP / CLI / Capability Pack 边界、权限声明、依赖声明和任务产物规范
+* Experience / Evaluation 基础：RunEvidence、Experience Sample Export、Replay Fixture、Evaluation Fixture、Evaluation Report 和诊断包
 
 ---
 

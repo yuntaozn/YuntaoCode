@@ -14,8 +14,8 @@ The foundation contract keeps these boundaries explicit:
 - the project is a local-first AI Task Runtime, not a tool bundle, chat shell,
   MCP/CLI client, or Skill manager;
 - Task, Context, Capability, and Experience are the main architecture lines;
-- providers such as built-in tools, CLI, MCP, Capability Packs, and future
-  plugins must enter the same Capability Runtime boundary;
+- providers such as built-in tools, CLI, MCP, Capability Packs, and plugin
+  declarations must enter the same Capability Runtime boundary;
 - evidence, state, permissions, verification, and recovery must remain more
   important than adding another scenario.
 
@@ -38,15 +38,11 @@ Above them is an evidence-learning layer:
   saved user goal and schedule into a normal Task/Run, and does not execute
   tools or bypass runtime permissions directly.
 - **Experience Runtime** extracts reviewed task experience from Runbook and
-  RunResult facts. It prepares selected samples and digests for Replay,
-  Evaluation, and future Skill Evolution, but it does not control live task
-  execution or make generated code trusted.
-- **Skill / Capability Evolution** turns evaluated experience into candidate
-  skills, task templates, or capability drafts. It is evidence-driven and must
-  not silently register generated code as trusted runtime capability.
-- **Self-Iteration Lab** is a future boundary for improving YuntaoCode itself
-  through isolated clones, regression fixtures, diagnostics, and human merge
-  decisions. It is not direct model self-modification of the trusted runtime.
+  RunResult facts. In 0.1 it covers RunEvidence, diagnostic export,
+  Experience Sample export, Evaluation Fixture, and Evaluation Report records;
+  it does not control live task execution or make generated code trusted.
+
+Ideas beyond this boundary stay out of the 0.1 foundation contract.
 
 The model may propose task semantics, routing, and next actions. The runtime
 owns schema, permissions, state transitions, evidence, and completion checks.
@@ -109,8 +105,8 @@ Interventions should stay in three explicit layers:
      strategy by themselves.
 3. **Risk evidence**
    - Non-blocking advisories and observable tool-result warnings are carried as
-     `runtime_risks` so Context Pack, RunResult, diagnostics, Runbook, and future
-     replay/evaluation can audit them.
+     `runtime_risks` so Context Pack, RunResult, diagnostics, Runbook, and
+     evaluation records can audit them.
 
 This means a document translation hint should say that a temporary script may
 weaken coverage, progress, resumability, and verification evidence. It should
@@ -161,7 +157,7 @@ taxonomy.
 
 `runtime/run_trace.py` builds a compact `run_trace_summary.v1` view from the
 persisted event stream. This is the shared audit surface for Runbook,
-diagnostic export, and future Evaluation/Replay work. It does not replace the
+diagnostic export, and evaluation fixture/report records. It does not replace the
 stored events and does not include raw tool outputs or file contents; it keeps
 event families, canonical names, counts, terminal status, result status, and a
 sanitized timeline.
@@ -171,12 +167,12 @@ post-run consumers. RunEvidence gathers the Run metadata, task contract,
 trace summary, capability evidence, capability snapshot, plan, tool steps,
 completion decisions, result, verification evidence, failures, checkpoints,
 recovery summary, and a manual replay seed. Runbook, diagnostic export,
-Experience Sample export, Replay, and future Evaluation should consume
+Experience Sample export, and evaluation records consume
 RunEvidence instead of each parsing persisted events separately.
 
 RunEvidence is an evidence layer, not a strategy layer. It must not execute
 tools, silently promote generated code, alter model context, or decide whether
-a future run should retry, replay, or change strategy.
+a run should retry, replay, or change strategy.
 
 `runtime/run_workbench.py` builds `run_workbench.v1`, the user-facing workbench
 view derived from RunEvidence. It presents run status, task contract facts,
@@ -257,12 +253,11 @@ Completed or partial Runs persist a recovery `ContextSnapshot` and
 unresolved risks from the checkpoint instead of replaying the full failed
 conversation as instructions.
 
-Runbook and Replay also provide the evidence base for future Experience and
-Skill Evolution work. In that path, a Runbook can become an Experience Sample,
-selected samples can become Replay Fixtures, a Skill Candidate can be tested
-against fixtures, and only replay evidence plus manual promotion can make the
-candidate available as a user skill. See [experience-runtime.md](experience-runtime.md)
-and [skill-evolution.md](skill-evolution.md).
+Runbook and Replay provide the evidence base for 0.1 experience and evaluation
+records. A selected RunEvidence view can be exported as an Experience Sample,
+and selected evidence can be represented as Evaluation Fixture / Report records.
+These records are passive artifacts; they do not register skills or execute
+generated code.
 
 Completion decisions are completion-loop evidence. After a completion
 self-review prompt, the runtime records the model's observable choice: continue
@@ -273,9 +268,8 @@ to close.
 
 ## Diagnostic Export
 
-Diagnostic export is separate from Skill Evolution. It helps compare task
-behavior across machines and should be generated only when the user asks for a
-specific Run diagnostic package.
+Diagnostic export helps compare task behavior across machines and should be
+generated only when the user asks for a specific Run diagnostic package.
 
 The diagnostic package is a compact, sanitized JSON artifact. It may include
 runtime version, operating-system and executable availability, sanitized model
@@ -287,14 +281,13 @@ by default.
 Diagnostic exports are manual local downloads in 0.1. They are not persisted by
 the Runtime and are not submitted to any service.
 
-## Replay And Evaluation Direction
+## Experience And Evaluation Foundation
 
-Replay and evaluation are engineering capabilities of YuntaoCode, not a
-separate product line in 0.1. They exist to help contributors compare real task
-execution across models, providers, runtime versions, prompts, local
-environments, and capability availability.
+Experience and evaluation records are part of the 0.1 foundation. They are
+local artifacts for selected Runs, not a separate product line and not an
+automatic learning system.
 
-The foundation chain is:
+The 0.1 evidence chain is:
 
 ```text
 Run
@@ -304,22 +297,12 @@ Run
   -> Replay Fixture
   -> Evaluation Fixture
   -> Evaluation Report
-  -> Skill Evolution
-  -> Self-Iteration Lab
 ```
 
 Diagnostic Export is for debugging a specific Run on a specific machine.
-Experience Sample Export is for creating a reviewed sample that can later
-become a small replayable fixture. Evaluation should compare those fixtures
-under controlled runtime or model changes and produce evidence-based reports.
-Skill Evolution should only build on that evidence after replay proves a
-pattern is stable.
-
-Reusable task templates, Capability Packs, MCP capability bindings, and external
-extension contracts are supporting artifacts in this chain. They should not be
-described as the product's main roadmap by themselves, because that makes the
-project look like a traditional tool/plugin aggregation layer instead of an AI
-Task Runtime that can learn from evidence.
+Experience Sample Export is for saving a reviewed sample from selected
+RunEvidence. Evaluation Fixture and Evaluation Report records make selected
+evidence comparable without replaying or collecting tasks automatically.
 
 The first local fixture shape now exists as `evaluation_fixture.v1`, exported
 manually from a selected RunEvidence view. It captures task goal, task
@@ -334,10 +317,10 @@ verification modality, failure-count drift, and new risks are warning checks.
 This keeps reports useful for regression analysis without turning baseline
 capability usage into live execution policy.
 
-For 0.1, Experience and Evaluation remain local, manual foundations. There is
+Experience and Evaluation remain local, manual foundations in 0.1. There is
 no automatic task collection, upload, public leaderboard, central sample
 service, automatic fixture execution, or trusted execution of AI-generated
-code. Design notes live in [evaluation.md](evaluation.md).
+code.
 
 ## Task Contract
 
@@ -538,8 +521,8 @@ the task did not require a write. If such a write has no observed verification,
 `RunResult` records `optional_write_not_verified` and the UI can present the
 result as modified-but-unverified without blocking the model's chosen strategy.
 
-Future UI work should prefer showing facts from `RunResult` over inferring task
-state from assistant text.
+UI work should prefer showing facts from `RunResult` over inferring task state
+from assistant text.
 
 Tool-result risks are advisory runtime facts discovered after a tool finishes.
 They help the model notice evidence without letting the runtime choose a fixed
@@ -595,13 +578,11 @@ The current hygiene rule is conservative:
 3. Collapse older assistant messages that contain failed textual tool-call
    markers or deterministic failure summaries into neutral recovery facts.
 4. Keep UI history and persisted run events unchanged.
-5. Record a `context_hygiene` report when cleanup happens so future strategy
-   changes can be audited and tested.
+5. Record a `context_hygiene` report when cleanup happens so strategy changes
+   can be audited and tested.
 
-This layer is expected to evolve. Future work can add task summaries, evidence
-snapshots, source trust levels, memory selection, stale fact detection, and
-recovery checkpoints without turning the conversation runner into another
-policy branch pile.
+0.1 keeps this layer focused on explicit context records and hygiene reports;
+unimplemented context features stay out of the foundation contract.
 
 Initial schemas are defined in `runtime/core/context.py`:
 
@@ -613,7 +594,7 @@ Design notes live in [context-runtime.md](context-runtime.md).
 
 ## Capability Runtime
 
-Tools, built-in skills, future plugins, and MCP servers should enter the task
+Tools, built-in skills, plugin declarations, and MCP servers should enter the task
 runtime through capability contracts. A capability contract describes input
 schema, permissions, output artifacts, whether a tool is long-running or
 retry-safe, and whether confirmation is required.
@@ -678,22 +659,3 @@ outputs still need explicit write tools such as `code.edit_file`,
 - Prefer cross-platform tool contracts over shell-specific assumptions. When a
   command must run on multiple platforms, use `command` plus `args` instead of
   embedding shell-specific syntax.
-
-## Future Foundation Work
-
-1. Refine product-level Task lifecycle and task-level cancellation.
-2. Connect context snapshots to compression and longer-running resume flows.
-3. Add richer CapabilityContract verification rules such as artifact_exists,
-   coverage_check, syntax_check, and visual_observation.
-4. Persist confirmation requests and outcomes as richer first-class trace
-   records.
-5. Keep `conversation_runner.execute()` as lifecycle orchestration. Provider
-   streaming lives in `runtime/tool_call_loop.py`, model-proposed tool batches
-   run through `runtime/tool_execution_batch.py`, and post-loop result
-   finalization lives in `runtime/run_finalizer.py`. Cross-round mutable facts
-   now live in `runtime/run_execution_state.py`; future lifecycle changes should
-   extend that tested state contract instead of adding local flags or another
-   task-decision layer.
-6. Add checkpoint rollback and policy-controlled unattended Runbook execution.
-7. Connect selected Experience Samples to local Replay/Evaluation without
-   automatic collection or promotion.

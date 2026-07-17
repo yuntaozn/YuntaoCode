@@ -1,4 +1,4 @@
-# 架构草案
+# 架构说明
 
 ## 核心分工
 
@@ -18,20 +18,18 @@ Python Tornado sidecar
   - 本地项目对话记录
   - 文档、代码、浏览器等技能
 
-后台服务
-  - 账号、权限和组织级授权验证
-  - 后续可提供团队同步能力
 ```
 
-## 为什么先做 Python sidecar
+## Python sidecar
 
-Tauri 是壳，真正的产品壁垒是本地技能运行时。先把 Python sidecar 独立跑通，可以降低新技术栈风险，也方便后续接入 Tauri、命令行或 Web 调试面板。
+Tauri 是壳，核心边界是本地 Task Runtime。Python sidecar 可以独立运行，
+也可以被桌面壳启动。
 
 ## 核心定位：Task Runtime
 
 YuntaoCode 不应只按工具清单扩展。Filesystem、Shell、Git、文档解析、浏览器和 MCP 都是工具入口；真正需要沉淀的是本地 AI 任务运行基座。
 
-YuntaoCode 是本地优先的 AI Task Runtime。Task、Context、Capability 和 Experience 是基础主线；MCP、CLI、内置工具、本机能力包和未来插件都是能力来源，通过统一边界接入，不各自形成独立执行体系。
+YuntaoCode 是本地优先的 AI Task Runtime。Task、Context、Capability 和 Experience 是基础主线；MCP、CLI、内置工具、本机能力包和插件声明都是能力来源，通过统一边界接入，不各自形成独立执行体系。
 
 当前基座应按三条执行主线加一条经验学习层理解：
 
@@ -46,8 +44,8 @@ Capability Runtime
   能力契约、工具、权限、确认、插件草案、外部能力接入。
 
 Experience Runtime
-  从 Runbook / RunResult 中抽取经验样本和经验消化结果，供 Replay、
-  Evaluation 和未来 Skill Evolution 使用；不直接控制当前任务执行。
+  从 Runbook / RunResult 中抽取经验样本、Replay Fixture 和 Evaluation
+  记录；不直接控制当前任务执行。
 ```
 
 外部能力接入进一步区分为：
@@ -89,7 +87,7 @@ Task
   -> Recovery
 ```
 
-短期架构重点：
+0.1 架构重点：
 
 - 定义清晰的 Task / Plan / Step / Trace 数据结构。
 - 让任务状态迁移可测试。
@@ -103,7 +101,7 @@ Task
   （builtin、cli、mcp、capability_pack、external_plugin、ai_draft）和 provider
   健康状态，避免 MCP、CLI、插件各自形成独立执行体系。
 
-Task Model 草案见 [task-model.md](task-model.md)，Context Runtime 规划见 [context-runtime.md](context-runtime.md)，Capability Runtime 规划见 [capability-runtime.md](capability-runtime.md)，Experience Runtime 规划见 [experience-runtime.md](experience-runtime.md)，Document Draft Runtime 见 [document-draft-runtime.md](document-draft-runtime.md)，当前代码层基础契约见 [runtime-foundation.md](runtime-foundation.md)。
+Task Model 见 [task-model.md](task-model.md)，Context Runtime 见 [context-runtime.md](context-runtime.md)，Capability Runtime 见 [capability-runtime.md](capability-runtime.md)，Experience Runtime 见 [experience-runtime.md](experience-runtime.md)，Document Draft Runtime 见 [document-draft-runtime.md](document-draft-runtime.md)，当前代码层基础契约见 [runtime-foundation.md](runtime-foundation.md)。
 
 ## 当前运行边界
 
@@ -158,7 +156,7 @@ User Request
 工具事件的前端预览、进度摘要和回填给模型的压缩 payload 由
 `runtime/tool_event_presentation.py` 负责，避免 API Handler 直接承载展示规则。
 
-后续演进方向是让第一层任务理解更多交给模型，Runtime 负责能力目录与执行契约：
+当前原则是让第一层任务理解更多交给模型，Runtime 负责能力目录与执行契约：
 
 ```text
 Model proposes and may revise: goal + capability + tool + expected artifacts

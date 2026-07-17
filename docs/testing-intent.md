@@ -65,7 +65,7 @@ These areas should stay well covered:
 - `Task Contract -> Tool Events -> RunResult`: this is the main truth chain for
   deciding whether a task actually completed.
 - `Capability Snapshot -> Preflight -> Guard -> Tool Execution`: this keeps
-  MCP, CLI, built-in tools, and future providers under one runtime boundary.
+  MCP, CLI, built-in tools, and provider declarations under one runtime boundary.
 - `Context Hygiene -> Follow-up Inheritance`: this prevents previous failed
   runs or stale goals from becoming hidden instructions.
 - `RunStore -> RunEvent -> Recovery`: this lets the UI and diagnostics explain

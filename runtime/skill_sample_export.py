@@ -1,4 +1,4 @@
-"""Portable Experience and Skill Evolution sample exports.
+"""Portable Experience Sample and Replay Fixture exports.
 
 Sample exports are generated on demand from an existing Runbook view. They
 produce an Experience Sample plus a Replay Fixture. They do not persist

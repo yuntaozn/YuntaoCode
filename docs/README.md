@@ -55,7 +55,7 @@ new architecture note belongs.
 - [plugin-system.md](plugin-system.md) defines Plugin as a distributable
   package, separates package manifests from Runtime-owned installation/review
   state, and describes its relationship with skills, Capability Packs, MCP,
-  CLI, hooks, and future external providers.
+  CLI, hooks, and external providers.
 - [capability-packs.md](capability-packs.md) describes global user-data-level
   method skills, task templates, context packs, and tool adapter drafts.
 - [cli-providers.md](cli-providers.md) describes declarative local command
@@ -69,26 +69,23 @@ new architecture note belongs.
 - [document-draft-runtime.md](document-draft-runtime.md) describes the document
   draft helper layer for long document generation.
 
-## Experience, Evaluation, And Evolution
+## Experience And Evaluation
 
 - [experience-runtime.md](experience-runtime.md) describes Experience Sample
   and Experience Digest as the layer between Runbook evidence and replay.
 - [evaluation.md](evaluation.md) anchors local replay/evaluation plus
   `evaluation_fixture.v1` and `evaluation_report.v1` as engineering
   capabilities, not a separate benchmark product.
-- [skill-evolution.md](skill-evolution.md) describes Replay Fixture, Skill
-  Candidate, Replay Result, and manual Promotion.
 
 ## Placement Rules
 
 - Put cross-layer summaries in `runtime-foundation.md`; move detailed behavior
   into the layer-specific document.
 - Put executable tool/provider boundaries in `capability-runtime.md` or an
-  extension document, not in Skill Evolution.
+  extension document.
 - Put model-context selection, compression, and memory scope in
   `context-runtime.md`.
-- Put learning-from-runs behavior in `experience-runtime.md` first; only move
-  to `skill-evolution.md` after replay/evaluation evidence matters.
+- Put learning-from-runs behavior in `experience-runtime.md`.
 - Avoid adding a new document for a single rule unless it is likely to become a
   stable extension point.
 - Store documentation as UTF-8 without BOM. If Chinese text appears garbled in

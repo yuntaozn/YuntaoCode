@@ -1,8 +1,8 @@
 # Experience Runtime
 
-Experience Runtime is the layer between raw task evidence and Skill Evolution.
-It lets YuntaoCode learn from real runs without turning every run into a skill,
-prompt rule, plugin, or runtime patch.
+Experience Runtime is the 0.1 layer for exporting reviewed evidence from real
+runs without turning every run into a skill, prompt rule, plugin, or runtime
+patch.
 
 ## Position
 
@@ -20,9 +20,6 @@ Capability Runtime
 
 Experience Runtime
   Extracts reviewed task experience from RunEvidence and RunResult evidence.
-
-Evaluation / Skill Evolution
-  Replays selected fixtures and promotes only evidence-backed reusable patterns.
 ```
 
 Experience Runtime is not another execution controller. It does not decide the
@@ -30,8 +27,8 @@ current task strategy, bypass permission checks, or make generated code trusted.
 
 ## Why This Layer Exists
 
-Skill Evolution is useful only when it is backed by evidence. Jumping directly
-from "a task happened" to "create a skill" creates three problems:
+Jumping directly from "a task happened" to "create a reusable capability"
+creates three problems:
 
 - normal task traces become hidden prompt rules;
 - failed or machine-specific behavior can pollute later tasks;
@@ -46,8 +43,6 @@ RunEvidence
   -> Experience Digest
   -> Replay Fixture
   -> Evaluation Result
-  -> Skill Candidate
-  -> Skill Promotion
 ```
 
 The first two records preserve and summarize experience. They do not grant new
@@ -81,14 +76,13 @@ describe:
 - what evidence is required;
 - common failure modes.
 
-A digest is still not an active skill. It is a candidate input for evaluation
-or Skill Evolution.
+A digest is still not an active skill and does not change runtime behavior.
 
 ### Replay Fixture
 
 A Replay Fixture is a testable sample derived from experience. It should be
-stable enough to run against future runtime, model, provider, or capability
-changes.
+stable enough to compare selected runtime, model, provider, or capability
+changes when the user explicitly exports it.
 
 ## Current 0.1 Boundary
 
@@ -109,10 +103,9 @@ The current compatibility export may still be named "skill sample" in older
 API paths, but the stable concept is an **Experience Sample plus Replay
 Fixture**.
 
-Experience material is currently exported as explicit local artifacts instead
-of being saved into a runtime-managed sample registry. This keeps the 0.1
-surface small while the project is still validating what should become
-replayable experience, evaluation fixtures, or future Skill Evolution input.
+Experience material is exported as explicit local artifacts instead of being
+saved into a runtime-managed sample registry. This keeps the 0.1 surface small
+and reviewable.
 
 ## Data Contract
 
@@ -126,38 +119,19 @@ Schema versions:
 - `experience_sample.v1`
 - `experience_digest.v1`
 
-These versions are independent from the product release version, plugin
-manifest versions, and Skill Evolution schema versions.
+These versions are independent from the product release version and plugin
+manifest versions.
 
 ## Relationship To Context
 
 Experience is not memory by default.
 
 An exported sample or digest must not silently enter the next model context.
-If a future feature wants to use a digest as model guidance, it should go
-through Context Runtime with explicit source, trust, freshness, and workspace
-scope.
+Any use of a digest as model guidance must go through Context Runtime with
+explicit source, trust, freshness, and workspace scope.
 
 ## Relationship To Capability
 
 Experience can mention capability IDs and failure modes, but it cannot enable
 or disable capabilities. Capability availability, MCP health, permissions, and
 confirmation gates remain owned by Capability Runtime.
-
-## Relationship To Skill Evolution
-
-Skill Evolution starts after enough experience and replay evidence exists.
-
-An Experience Digest may become a Skill Candidate draft, but only Replay
-Results and a manual Promotion decision can make a candidate user-enabled. See
-[skill-evolution.md](skill-evolution.md).
-
-## Future Work
-
-Useful next steps after 0.1:
-
-1. Add a local view for selected Experience Samples.
-2. Add an explicit "create digest from selected samples" action.
-3. Let Evaluation replay selected fixtures and report regressions.
-4. Allow manually promoted digests to become Skill Candidate drafts.
-5. Keep every promotion reversible, inspectable, and replay-testable.

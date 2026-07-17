@@ -44,16 +44,9 @@ queued -> running -> success
 queued -> running -> failure
 ```
 
-后续可以加：
-
-```text
-waiting_confirmation
-cancelled
-```
-
 ## 任务流程里的意义
 
-任务流程以后不要只编排提示词，而是编排工具：
+任务流程不只编排提示词，也编排工具：
 
 ```text
 扫描资料目录
@@ -147,4 +140,4 @@ Runtime 会先完整解析并验证补丁涉及的全部文件，再执行写入
 }
 ```
 
-未来如果引入用户目标级 Task API，应独立建模 Task / Plan / Step / Trace / Result，不要继续把工具调用记录扩展成产品级任务。
+用户目标级 Task API 独立建模 Task / Plan / Step / Trace / Result，不把工具调用记录继续扩展成产品级任务。

@@ -1,13 +1,12 @@
-# Local Replay And Evaluation Direction
+# Local Evaluation Foundation
 
-This document anchors the evaluation direction for YuntaoCode. It is a
-foundation note, not a product plan for a standalone Local AI Evaluation
-platform.
+This document records the 0.1 local evaluation foundation for YuntaoCode. It
+is not a product plan for a standalone Local AI Evaluation platform.
 
 YuntaoCode needs evaluation because it is a Task Runtime. Real task execution
 depends on the model, provider, runtime prompts, tool contracts, context
 selection, confirmation policy, local environment, and MCP/plugin availability.
-Evaluation should help contributors understand that whole system.
+Evaluation records help contributors understand that whole system.
 
 ## Position
 
@@ -27,7 +26,7 @@ It should answer YuntaoCode-specific questions:
 
 It should not become a generic leaderboard or benchmark product.
 
-## Existing Foundations
+## 0.1 Foundations
 
 The current 0.1 work already provides the first pieces:
 
@@ -38,7 +37,7 @@ The current 0.1 work already provides the first pieces:
   machine.
 - **Experience Sample Export** turns a selected Run into a reviewed sample and
   a small Replay Fixture.
-- **Replay Fixture** can later become a stable sample for regression testing.
+- **Replay Fixture** is a passive record derived from reviewed evidence.
 - **Evaluation Fixture** is a local, manually exported fixture generated from
   RunEvidence for regression/evaluation runs.
 - **Evaluation Report** compares one fixture with one RunEvidence view and
@@ -47,7 +46,7 @@ The current 0.1 work already provides the first pieces:
 - **RunResult** provides runtime-owned facts instead of relying on assistant
   prose.
 
-The direction is:
+The 0.1 evidence chain is:
 
 ```text
 Run
@@ -57,13 +56,11 @@ Run
   -> Replay Fixture
   -> Evaluation Fixture
   -> Evaluation Report
-  -> Skill Evolution
 ```
 
 This chain should stay explicit. Diagnostic packages are for debugging.
 Experience samples are for reviewed learning and replay. Evaluation reports
-compare behavior. Skill Evolution decides whether a reusable capability has
-enough evidence to be promoted.
+compare behavior.
 
 ## Evaluation Scope
 
@@ -81,9 +78,9 @@ The unit of evaluation is a task fixture, not a single chat prompt. A useful
 fixture should include the goal, task contract, expected artifacts, relevant
 capability snapshot, verification requirements, and safe replay boundaries.
 
-## Metrics Direction
+## Report Facts
 
-Early reports should favor facts that already exist in Run events and
+0.1 reports favor facts that already exist in Run events and
 RunResult:
 
 - final status: success, partial, failure, blocked, stopped;
@@ -102,7 +99,7 @@ is not useful for this project.
 
 ## 0.1 Boundary
 
-For 0.1, evaluation remains a direction anchor:
+For 0.1, evaluation remains local and manual:
 
 - manual export only;
 - local files only;
@@ -118,49 +115,12 @@ For 0.1, evaluation remains a direction anchor:
 - no central sample service;
 - no new database dependency;
 - no automatic fixture execution;
-- no automatic skill promotion;
 - no trusted execution of AI-generated code.
 
-The current priority is to keep RunEvidence, diagnostic export, Experience
-Sample export, Runbook, Replay Fixture, and RunResult coherent enough that
-evaluation can be added later without changing the foundation again.
-
-## Future Shape
-
-The first local evaluation modules are intentionally small:
+The local evaluation modules are intentionally small:
 
 ```text
 runtime/evaluation/
   fixtures.py
   reports.py
 ```
-
-Later implementation can add:
-
-```text
-runtime/evaluation/
-  runner.py
-  metrics.py
-```
-
-The future runner should replay selected fixtures through normal Task Runtime
-execution and produce local JSON or Markdown reports. It should not bypass
-normal capability contracts, permission checks, context hygiene, or result
-verification.
-
-UI and automation can come after the command-line or internal API path proves
-useful in real project testing.
-
-## Relationship To Skill Evolution
-
-Evaluation and Skill Evolution are related but not the same.
-
-Evaluation asks whether a runtime/model/provider combination can complete a
-selected task fixture.
-
-Skill Evolution asks whether repeated evidence is strong enough to turn a
-task pattern into a reusable skill candidate and, eventually, a manually
-promoted skill.
-
-Both should use Replay Fixture evidence. Neither should trust model claims
-without runtime-owned RunResult facts.

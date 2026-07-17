@@ -95,21 +95,19 @@ Export produces `capability_pack_export.v1`:
 }
 ```
 
-The export bundle is designed for manual sharing, diagnostics, replay research,
-and future promotion review. Sharing a bundle should still be treated like
+The export bundle is designed for manual sharing, diagnostics, and reviewed
+task evidence. Sharing a bundle should still be treated like
 sharing generated code or operational knowledge: review it for secrets and
 local paths first.
 
-## Relationship To Skill Evolution
+## Relationship To Experience Records
 
-Capability Packs can be outputs of the experience layer:
+Capability Packs can be local artifacts informed by reviewed experience:
 
 ```text
 Runbook evidence
   -> Experience Sample / Digest
   -> Capability Pack draft
-  -> Replay / evaluation evidence
-  -> manual promotion decision
 ```
 
 The important boundary is that a pack is evidence-backed reusable knowledge or
@@ -121,8 +119,8 @@ a draft descriptor. It is not a permission to mutate core runtime code.
 - MCP services stay in `mcp-services/` and the MCP manager.
 - A plugin is a versioned distribution container. It may package one or more
   Capability Packs, Skill-like methods, or provider descriptors.
-- External executable providers remain a future controlled provider boundary.
-- Capability Packs may describe a future provider, but they do not install or
+- External executable providers are not loaded by Capability Packs in 0.1.
+- Capability Packs may describe a provider draft, but they do not install or
   load it. A locally learned pack also does not become an installed plugin just
   because it can be exported.
 

@@ -110,7 +110,7 @@ Supported evidence rules in the first implementation:
 - `stderr_not_contains`
 
 Evidence is returned in the tool output and can be used by RunResult, Runbook,
-diagnostics, replay, and future evaluation. A failed required evidence rule
+diagnostics, replay, and evaluation records. A failed required evidence rule
 makes the ToolTask fail even if the command exits.
 
 ## Why Not Shell

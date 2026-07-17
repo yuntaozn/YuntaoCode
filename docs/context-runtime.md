@@ -262,7 +262,7 @@ Context Runtime 判断是否能作为模型输入。
   console/page/network 错误、OCR 或运行诊断。
 - 每次视觉证据注入都应写入 RunEvent/metadata，方便诊断“模型当时是否真的看到了图”。
 
-这层的目标是让模型有机会“看见”自己刚刚生成或验证的产物，而不是把视觉判断硬编码
+这层让模型有机会“看见”自己刚刚生成或验证的产物，而不是把视觉判断硬编码
 进系统。视觉上下文和文本上下文一样，只提供来源、可信度和边界。
 
 ## Memory Scope
@@ -354,7 +354,7 @@ Context Snapshot 是恢复和回放的事实输入，不是让模型机械重复
 只是模型下一轮不应因为压缩摘要而反复看到旧任务边界和旧工具失败格式，从而把它们
 误当作当前目标或调用模板。
 
-## Phase-Aware Context
+## Context By Model Call Stage
 
 不同阶段需要不同上下文：
 
@@ -453,23 +453,5 @@ Context Runtime 当前已具备以下基础：
 - 需要写入、导出或外部状态变化的任务，如果暂未观察到目标产物，会按工具事实是否变化进行进展判断；事实仍在变化时继续给模型空间，事实停滞时提示模型换路线，而不是按固定次数直接失败。
 - 搜索/读取预算只作为进展提醒：当模型长时间侦察但没有目标产物时，Runtime 将事实反馈给模型选择下一步，不再把“达到侦察预算”本身作为失败原因。
 
-Evidence Index、向量检索、复杂知识库、样本库和跨设备上下文同步属于后续演进能力，不是当前 Context Runtime 的基础依赖。
-
-## Next Steps
-
-短期建议：
-
-1. 建立独立的 Run Context Window：在长工具循环中按完整工具调用轮次治理窗口，保留
-   最近执行证据和结构化运行事实，不能按消息条数切断 tool-call/result 配对。
-2. 将关键 Context Pack 汇总写入 ContextSnapshot，支持暂停、恢复和回放复用。
-3. 为已读取文件建立轻量 EvidenceRecord，记录路径、摘要、范围和 hash。
-4. 在任务记录中展示 Context Ledger 摘要，让用户知道模型当时看到了哪些事实。
-5. 增强 workspace memory 的显式保存和清理路径，并让用户可查看单次 Run 选中了哪些记忆。
-6. 让历史对话压缩输出结构化摘要草案；它与运行中工具循环窗口保持独立。
-
-中期建议：
-
-1. 为长文档、代码仓库和多轮任务引入 Evidence Index。
-2. 将恢复任务优先绑定 Recovery Context，而不是依赖旧对话。
-3. 支持手动导出 Context Snapshot，用于诊断另一台电脑上的模型差异。
-4. 在 Replay / Evaluation 中复用 Context Pack 和 Context Snapshot，验证任务是否真的可重放。
+Evidence Index、向量检索、复杂知识库、样本库和跨设备上下文同步不属于当前
+Context Runtime 基础实现。

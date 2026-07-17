@@ -111,8 +111,8 @@ preventing a missing dynamic tool list from erasing the intended
 external-application boundary.
 
 The Blender example also sets `BLENDER_MCP_DISABLE_TELEMETRY=1` by default.
-This follows YuntaoCode's local-first boundary, but it is not a substitute for
-future process-level network enforcement.
+This follows YuntaoCode's local-first boundary, but it is not a process-level
+network sandbox.
 
 The public service API exposes these views as `server_definition`,
 `connection_profile`, `session`, and `capability_bindings` while retaining the

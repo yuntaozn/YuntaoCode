@@ -133,7 +133,7 @@ Capability Runtime
     - cli
 ```
 
-同一个 capability 未来可以有多个 provider 实现。Runtime 可以根据可用性、权限、
+同一个 capability 可以有多个 provider 实现。Runtime 可以根据可用性、权限、
 平台、依赖、执行证据和模型判断来选择工具，但安全确认、PathGuard、Trace、
 RunResult 和验证证据仍走同一条路径。
 
@@ -155,7 +155,7 @@ capability_pack
   用户数据目录中的方法型 Skill、任务模板或上下文包。默认不执行代码。
 
 external_plugin
-  未来受控插件 provider。
+  外部插件声明。0.1 不把外部插件代码自动注册为可信运行时 provider。
 
 ai_draft
   AI 生成的能力草稿或适配器描述，默认不进入可信运行时。
@@ -208,11 +208,11 @@ Runtime 能力
   通用但偏重或带外部访问边界，可以启停，也应清楚展示依赖和风险。
 
 外部能力提供者
-  CLI providers, MCP services, future external plugins, Capability Packs, AI-built tool adapter drafts
+  CLI providers, MCP services, external plugin declarations, Capability Packs, AI-built tool adapter drafts
   不应直接混入 `runtime/skills/`，需要独立生命周期和受控边界。
 ```
 
-不适合默认内置的能力包括视频生成、Blender/CAD 建模、RAG/向量库、重度浏览器自动化、特定办公流程、特定行业工具，以及纯提示词方法论 Skill Pack。这些应优先走 CLI provider、MCP、外部插件、AI 草稿或 Skill Evolution，而不是扩大主 Runtime。
+不适合默认内置的能力包括视频生成、Blender/CAD 建模、RAG/向量库、重度浏览器自动化、特定办公流程、特定行业工具，以及纯提示词方法论 Skill Pack。这些应优先作为 CLI provider、MCP、外部插件声明或 AI 草稿处理，而不是扩大主 Runtime。
 
 `preview.visual_debug` 是内置可选能力中的证据能力。它使用浏览器预览本地 HTML
 或 URL，并把截图、console error、page error 和 failed request 作为 verification
@@ -252,8 +252,7 @@ Evidence Context 的增强，不是任务路由、验证替代品或系统级自
 
 运行/调试类工具应返回或可归一化为 `debug_session.v1`。该契约记录命令、工作目录、
 进程号、退出码、超时、stdout/stderr 摘要、诊断、服务 URL/端口和心跳等事实。
-`shell.run_command` 和 `preview.*` 首先接入该结构；未来 CLI provider、dev server、
-浏览器调试、长任务和外部应用连接也应优先复用它。它的作用是帮助模型、用户和
+`shell.run_command` 和 `preview.*` 已接入该结构。它的作用是帮助模型、用户和
 RunResult 理解“实际运行过什么、运行到哪里、失败在哪里”，而不是让 Runtime 替模型
 决定下一步策略。
 
@@ -315,7 +314,7 @@ Runtime 不根据用户文本自动选择 Provider，也不把文件产物改写
 - 内置工具属于内置 capability provider。
 - 受控 CLI 属于 `cli` provider，而不是裸 shell 能力。
 - AI-built Capability Pack 属于未加载 pack asset；其中的 tool adapter 草稿仍是未加载 draft provider。
-- 外部插件是可分发包；其中的可执行组件未来作为本地或受控 provider 接入，
+- 外部插件是可分发包；0.1 只建立声明和安装状态边界，不自动加载其中的可执行组件。
   Skill、Capability Pack 等非执行组件仍走各自的选择与上下文路径。
 - MCP 工具属于外部 capability provider。
 所有 provider 都需要走同样的能力声明、权限、确认、Trace、RunResult。
@@ -353,7 +352,7 @@ Additional runtime guards now exist in `runtime/agent_strategy/capability_prefli
   another safe strategy.
 - Capability preflight facts are advisory unless they represent a hard safety
   boundary. Non-blocking advisories are carried as `runtime_risks` so the model,
-  RunResult, diagnostics, and future replay/evaluation can audit them without
+  RunResult, diagnostics, and evaluation records can audit them without
   turning capability fit into a hidden route lock.
 - New runs emit `capability_preflight.v2`. The contract contains
   `advisories`, `readiness_issues`, `visual_verification_tool_ids`, and a
@@ -369,8 +368,8 @@ Additional runtime guards now exist in `runtime/agent_strategy/capability_prefli
 persisted tool events. It preserves declared ToolSpec metadata
 (`declared_capability`, effects, roles, and verification strength) alongside
 observed tool-output facts such as artifacts, effects, roles, paths, and
-verification strength. RunResult, Runbook, diagnostics, and future replay /
-evaluation code can use this summary as audit evidence. It is not an execution
+verification strength. RunResult, Runbook, diagnostics, and evaluation code can
+use this summary as audit evidence. It is not an execution
 policy and must not block or force a strategy by itself.
 
 Current built-in local file capability split:
@@ -392,8 +391,8 @@ Current built-in local file capability split:
 
 Capability Runtime 的 Provider 遵循同一套原则：
 
-- Built-in tools, CLI providers, MCP providers, and future executable plugin
-  components are capability providers. Capability Packs and non-executable
+- Built-in tools, CLI providers, and MCP providers are capability providers.
+  Capability Packs, plugin declarations, and non-executable
   plugin components are capability assets. None of them owns task state,
   planning, completion, replay, or audit.
 - Provider metadata must normalize into ToolSpec / Capability facts:
@@ -426,26 +425,4 @@ Capability Runtime 的 Provider 遵循同一套原则：
   escape hatch.
 - AI-built Capability Packs are user-data-level drafts by default. They can
   provide method skills, task templates, context packs, or tool-adapter drafts,
-  but generated executable code is not trusted runtime code until an explicit
-  promotion design exists.
-
-Capability Runtime can continue deepening richer verification rules, provider
-isolation, promotion flows, and cross-platform adapter checks without changing
-this boundary.
-
-## Next Steps
-
-短期建议：
-
-1. 将 ToolSpec 的 artifact、effect、role 和权限元数据逐步映射为 CapabilityContract。
-2. 在 task_contract 之后增加可选 RouteProposal 验证事件。
-3. 继续把 artifact、capability_id 和验证规则沉淀为可测试的 evidence schema。
-4. 将 CLI provider 设计为声明式能力来源，而不是开放任意 shell。
-5. 前端能力页区分 built-in capability、CLI provider、MCP provider、Capability Pack、AI draft 和 future external provider；不要把这些来源都标成已安装插件。
-
-中期建议：
-
-1. 为外部插件建立子进程或独立环境边界。
-2. 将 MCP server 暴露的工具包装成 CapabilityContract。
-3. 为 capability 增加验证规则，例如 artifact_exists、coverage_check、syntax_check。
-4. 引入受控 promote flow，而不是让 AI draft 修改主 runtime。
+  but generated executable code is not trusted runtime code.

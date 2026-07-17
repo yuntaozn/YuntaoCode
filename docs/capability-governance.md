@@ -130,9 +130,8 @@ A pack can be reviewed with a lightweight manual confirmation flow:
 1. AI finishes the isolated pack.
 2. AI runs available checks or verification scripts.
 3. AI summarizes files, permissions, dependencies, and test results.
-4. The UI asks for explicit confirmation if the pack should be enabled or
-   promoted.
-5. Method skills may become selectable context assets.
+4. The UI asks for explicit confirmation before enabling a pack.
+5. Method skills can be selectable context assets.
 6. Tool adapters remain non-executable until a controlled execution boundary
    exists.
 

@@ -49,7 +49,7 @@ and artifacts before execution. See
 - Let dependency problems degrade one plugin instead of breaking the runtime.
 - Avoid coupling the core runtime to any single application domain, such as video, office documents, RAG, or browser automation.
 
-## Non-Goals for the Current Stage
+## Current Boundary
 
 - Remote plugin marketplace.
 - Background auto-update.
@@ -74,7 +74,7 @@ Plugin Installation
 
 Capability Provider
   Executable capability source registered through Capability Runtime, such as
-  builtin, CLI, MCP, or a future isolated external provider.
+  builtin, CLI, or MCP.
 ```
 
 A package cannot declare itself reviewed, trusted, or enabled. Installing a
@@ -119,9 +119,9 @@ Local evolution assets and distributable packages use separate roots:
   installations.json
 ```
 
-Only the first root exists in the current implementation. The plugin root is a
-future storage boundary documented here so package installation is not later
-mixed into Capability Pack evolution data.
+Only the first root exists in the current implementation. The plugin root is
+documented as a storage boundary so package installation is not mixed into
+Capability Pack data.
 
 Local Capability Packs should live under a user-controlled local data directory:
 
@@ -139,9 +139,8 @@ Local Capability Packs should live under a user-controlled local data directory:
 ```
 
 Legacy `ai-plugins/` draft scanning may remain for compatibility, but new
-AI-created capabilities should use Capability Packs. A Capability Pack may
-later be exported into a plugin package; it should not be born in the installed
-plugin directory.
+AI-created capabilities should use Capability Packs. A Capability Pack is not
+an installed plugin just because it can be exported.
 
 ## Pack Manifest
 
@@ -296,49 +295,18 @@ AI can create Capability Pack drafts, but the draft must stay isolated:
 5. The capability page may display the pack as a local Capability Pack.
 6. The runtime does not load or register executable draft code.
 7. AI runs available tests or dependency checks and summarizes the result.
-8. The user confirms whether the draft should enter a future controlled promotion path, similar to command execution confirmation.
+8. The user confirms only the draft artifact and test summary. 0.1 does not
+   load executable draft code as trusted runtime capability.
 
 At this stage, that confirmation must not be implemented by modifying `runtime/skills/`, `runtime/api/`, `runtime/app.py`, or built-in tool registration. In-process Python plugin loading remains out of scope until YuntaoCode has a controlled execution boundary.
 
 See [capability-governance.md](capability-governance.md).
 
-## Skill Evolution Boundary
+## 0.1 Runtime Loading Boundary
 
-Capability Packs and Skill Evolution are related but separate.
-
-- A `method_skill` pack describes reusable model-facing task method.
-- A `tool_adapter` pack describes a possible executable capability provider.
-- A Skill Candidate describes a reusable task pattern backed by Runbook
-  evidence.
-- Replay Fixtures and Skill Replay Results test whether the candidate works
-  against historical task samples.
-- Skill Promotion is a manual enablement decision after replay evidence exists.
-
-Therefore an AI-built Capability Pack should not become trusted runtime code
-only because the user confirmed that the draft was created. It can become one
-candidate artifact in the Skill Evolution flow, but executable registration or
-enablement still requires a controlled boundary. See
-[skill-evolution.md](skill-evolution.md).
-
-## Future Runtime Loading Flow
-
-This flow is a future implementation target, not current behavior:
-
-1. Discover a configured package source or explicit local package.
-2. Parse and validate `plugin_manifest.v1`, including relative component paths.
-3. Copy immutable package content into a versioned cache and compute its digest.
-4. Create a Runtime-owned `plugin_installation.v1` record in `unreviewed` state.
-5. Display components, requested permissions, compatibility, source, and digest.
-6. Review and enable components independently where their provider lifecycle permits it.
-7. Register executable components only through Capability Runtime and an
-   isolated provider boundary; skills and packs enter their own selection path.
-8. Execute provider tools only through normal Task Runtime tool calls.
-9. Write model output, tool calls, confirmations, errors, and generated artifacts into the task trace.
-
-For an early catalog, a reviewed JSON index hosted on GitHub, Gitee, or a local
-file is sufficient. A dedicated marketplace server is not required until
-publishing, identity, moderation, signing, or team policy creates a real server
-requirement.
+0.1 does not dynamically load external plugin executable code. Package
+manifests, Capability Packs, method skills, and AI-built tool-adapter drafts are
+visible as local assets and review records, not trusted in-process providers.
 
 ## MCP Boundary
 
