@@ -1022,6 +1022,50 @@ def test_build_run_result_keeps_auxiliary_failure_auditable_without_failing_anal
     assert "incidental_tool_failure" in result["risks"]
 
 
+def test_build_run_result_treats_read_only_evidence_as_answer_verification() -> None:
+    contract = {
+        "intent": "read_only_analysis",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": True,
+        "deliverables": [{"kind": "answer", "description": "Project structure analysis"}],
+    }
+
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "filesystem.scan_folder",
+                "status": "success",
+                "input": {"path": "D:/workspace"},
+                "output": {"path": "D:/workspace"},
+            },
+            {
+                "tool": "code.list_project_files",
+                "status": "success",
+                "input": {"path": "D:/workspace"},
+                "output": {"path": "D:/workspace"},
+            },
+            {
+                "tool": "filesystem.read_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/README.md"},
+                "output": {"path": "D:/workspace/README.md", "content": "# Demo"},
+            },
+        ],
+    )
+
+    assert result["status"] == "success"
+    assert result["counts"]["verification_successes"] == 3
+    assert result["observed_verification_modalities"] == ["structural", "content"]
+    assert "required_verification_not_satisfied" not in result["risks"]
+    assert "verification_modality_missing" not in result["risks"]
+    assert "execution_contract_failed" not in result["risks"]
+
+
 def test_build_run_result_marks_recovered_delivery_and_weak_verification_partial() -> None:
     contract = {
         "requires_write": False,

@@ -60,6 +60,9 @@ TEMPORARY_TOOL_IDS: frozenset[str] = frozenset({
 })
 
 EVIDENCE_TOOL_IDS: frozenset[str] = frozenset({
+    "attachment.extract_text",
+    "code.list_project_files",
+    "code.search_text",
     "filesystem.scan_folder",
     "filesystem.read_file",
     "filesystem.read_text_preview",
@@ -298,6 +301,12 @@ def task_verification_events(
     )
     if deliverable_events or not _is_verification_only_contract(task_contract):
         return deliverable_events
+    if _is_answer_evidence_contract(task_contract):
+        return [
+            event
+            for event in tool_events
+            if _is_answer_evidence_event(event, mode, task_contract=task_contract)
+        ]
     return [
         event
         for event in tool_events
@@ -434,6 +443,8 @@ def verification_evidence_strength(
     if is_test_verification_event(event):
         return "strong"
     if _event_has_visual_artifact(event):
+        return "standard"
+    if _is_answer_evidence_event(event, mode, task_contract=task_contract):
         return "standard"
     if VERIFICATION in event_declared_roles(event):
         return "standard"
@@ -749,6 +760,33 @@ def _is_verification_only_contract(task_contract: dict[str, Any] | None) -> bool
         return False
     kinds = contract_deliverable_kinds(task_contract)
     return not kinds or kinds.issubset({"answer"})
+
+
+def _is_answer_evidence_contract(task_contract: dict[str, Any] | None) -> bool:
+    if not isinstance(task_contract, dict):
+        return False
+    if task_contract.get("requires_write") or task_contract.get("requires_state_change"):
+        return False
+    kinds = contract_deliverable_kinds(task_contract)
+    return not kinds or kinds.issubset({"answer"})
+
+
+def _is_answer_evidence_event(
+    event: dict[str, Any],
+    mode: str | None,
+    *,
+    task_contract: dict[str, Any] | None,
+) -> bool:
+    if not _is_answer_evidence_contract(task_contract):
+        return False
+    if not _status_is_success_or_partial(event):
+        return False
+    if _event_has_degraded_shell_stderr(event):
+        return False
+    tool_id = canonical_tool_id(str(event.get("tool") or ""))
+    if tool_id in EVIDENCE_TOOL_IDS:
+        return True
+    return _is_verification_event(event, mode, written_paths=event_path_hints(event))
 
 
 def deliverable_path_deviations(

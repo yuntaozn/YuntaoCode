@@ -575,6 +575,37 @@ def test_short_greeting_without_task_context_skips_model_contract() -> None:
     )
 
 
+def test_task_contract_failures_accept_answer_evidence_for_read_only_analysis() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    failures = handler._task_contract_failures(
+        {
+            "intent": "read_only_analysis",
+            "workspace_path": "D:/workspace",
+            "requires_write": False,
+            "requires_state_change": False,
+            "requires_verification": True,
+            "deliverables": [{"kind": "answer"}],
+        },
+        [
+            {
+                "tool": "filesystem.scan_folder",
+                "status": "success",
+                "input": {"path": "D:/workspace"},
+                "output": {"path": "D:/workspace"},
+            },
+            {
+                "tool": "filesystem.read_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/README.md"},
+                "output": {"path": "D:/workspace/README.md", "content": "# Demo"},
+            },
+        ],
+        "terminal",
+    )
+
+    assert failures == []
+
+
 @pytest.mark.asyncio
 async def test_model_task_contract_receives_current_request_not_raw_history(monkeypatch: Any) -> None:
     captured: dict[str, Any] = {}
