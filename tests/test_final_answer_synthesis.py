@@ -60,7 +60,7 @@ def test_partial_run_uses_truthful_synthesized_answer() -> None:
         },
     )
 
-    assert answer.startswith("未完整完成")
+    assert answer.startswith("运行事实摘要")
     assert "viewer.html" in answer
     assert "path is required" in answer
-    assert "不能把本轮视为目标已完成" in answer
+    assert "建议：下一轮应基于这些事实继续修正或补充验证" in answer

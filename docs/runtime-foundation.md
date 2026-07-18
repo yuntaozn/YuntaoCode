@@ -396,8 +396,15 @@ Tool identity and task role are intentionally separate. `tool_id` tells the
 runtime whether a call can change local state, so it is used for permission,
 safety, and confirmation gates. A `tool_event` is interpreted inside the current
 task contract as evidence, draft, temporary artifact, target deliverable, or
-verification. Run completion is based on whether the declared target
-deliverable role was satisfied, not on a fixed list of tool IDs.
+verification. Run completion is based on task-role evidence, not on a fixed list
+of tool IDs.
+
+The finalization gate is also task-role aware. Write and external-state tasks
+enter completion self-review after the target deliverable appears. Read-only
+analysis and answer-evidence tasks have no file or external object to observe,
+so successful evidence-gathering tools can enter the same completion self-review
+loop. In both cases the gate is evidence feedback: the model decides whether to
+continue, verify, repair, or finish.
 
 `requires_write` specifically means that a local file artifact must be created
 or modified. `requires_state_change` covers the wider class of observable
@@ -432,10 +439,9 @@ summary without proving the requested outcome. `RunResult` records all
 verification evidence, its strength, whether it satisfied the contract, and
 role-aware failure impacts.
 
-The runtime can still override the model contract. For example, a user saying
-"only analyze" forces a read-only contract even if the model proposes a write.
-Document coverage requirements and local permission boundaries are also
-runtime-owned.
+The runtime records contract gaps as evidence, but it should not turn ordinary
+task-language heuristics into hidden routing locks. Explicit local permission
+boundaries, confirmation policy, and safety checks remain runtime-owned.
 
 ## Planning And Confirmation Policies
 
@@ -529,15 +535,16 @@ They help the model notice evidence without letting the runtime choose a fixed
 repair strategy. The risk pipeline is documented in
 [tool-result-risks.md](tool-result-risks.md).
 
-When `RunResult.status` is `partial` or `failure`, the runtime replaces
-accumulated model narration with a deterministic, evidence-based final answer.
-Intermediate text emitted before a structured tool call is process narration,
-not a trustworthy completion claim.
+When `RunResult.status` is `partial` or `failure` and the model did not provide
+a usable final answer, the runtime presents a deterministic fact summary. It is
+a fallback audit view, not a model-authored completion claim. Intermediate text
+emitted before a structured tool call is process narration, not a trustworthy
+completion claim.
 
 Short follow-up requests should be interpreted against recent task context
 before the runtime selects an execution profile. The model proposes whether a
 follow-up continues an existing task; the runtime still owns permissions,
-required write/verification evidence, and completion status. This avoids
+required write/verification evidence, and observable completion facts. This avoids
 treating concise requests such as an incremental artifact change as isolated
 chat messages.
 

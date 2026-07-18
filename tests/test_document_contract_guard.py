@@ -530,6 +530,28 @@ def test_execution_notice_reports_optional_write_without_verification() -> None:
     assert notice["written_paths"] == ["viewer.html"]
 
 
+def test_execution_notice_reports_contract_gap_as_observed_fact() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+
+    notice = handler._build_execution_notice(
+        "terminal",
+        "已修改 viewer.html",
+        [
+            {
+                "tool": "filesystem.read_file",
+                "status": "success",
+                "input": {"path": r"D:\ifctool\viewer.html"},
+            },
+        ],
+        requires_code_write=True,
+        contract_failed=True,
+    )
+
+    assert notice["reason"] == "tool_contract_gap"
+    assert "未观察到成功的本地写入工具记录" in notice["message"]
+    assert "系统已判定" not in notice["message"]
+
+
 def test_short_follow_up_uses_model_contract_when_conversation_has_task_context() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
     conversation = SimpleNamespace(messages=[

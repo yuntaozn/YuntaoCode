@@ -381,6 +381,58 @@ def sufficient_task_verification_events(
     return []
 
 
+def successful_task_evidence_events(
+    tool_events: list[dict[str, Any]],
+    *,
+    task_contract: dict[str, Any] | None,
+    workspace_path: str,
+    mode: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return successful events that provide evidence for the current task.
+
+    A task evidence event is broader than a target deliverable. For write or
+    external-state tasks it includes observed target deliverables and their
+    verification evidence. For read-only and answer-evidence tasks it includes
+    successful evidence-gathering tools, even when there is no artifact path to
+    mark as the deliverable.
+    """
+
+    result: list[dict[str, Any]] = []
+    seen: set[int] = set()
+
+    for event in successful_deliverable_events(
+        tool_events,
+        task_contract=task_contract,
+        workspace_path=workspace_path,
+        mode=mode,
+    ):
+        seen.add(id(event))
+        result.append(event)
+
+    for event in task_verification_events(
+        tool_events,
+        task_contract=task_contract,
+        workspace_path=workspace_path,
+        mode=mode,
+    ):
+        event_id = id(event)
+        if event_id in seen:
+            continue
+        seen.add(event_id)
+        result.append(event)
+
+    if _is_answer_evidence_contract(task_contract):
+        for event in tool_events:
+            event_id = id(event)
+            if event_id in seen:
+                continue
+            if _is_answer_evidence_event(event, mode, task_contract=task_contract):
+                seen.add(event_id)
+                result.append(event)
+
+    return result
+
+
 def required_verification_strength(task_contract: dict[str, Any] | None) -> str:
     if not isinstance(task_contract, dict) or not task_contract.get("requires_verification"):
         return "none"

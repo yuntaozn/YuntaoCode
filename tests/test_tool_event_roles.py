@@ -10,6 +10,7 @@ from runtime.agent_strategy.tool_event_roles import (
     sufficient_deliverable_verification_events,
     sufficient_task_verification_events,
     successful_deliverable_events,
+    successful_task_evidence_events,
     task_verification_events,
     verification_evidence_modalities,
     verification_evidence_strength,
@@ -641,6 +642,41 @@ def test_verification_only_contract_uses_task_level_evidence() -> None:
         workspace_path="D:/workspace",
         mode="coding",
     ) == [read_event, interaction_event]
+
+
+def test_answer_contract_collects_successful_task_evidence_without_target_file() -> None:
+    contract = {
+        "intent": "read_only_analysis",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": False,
+        "deliverables": [{"kind": "answer", "description": "Project diagnosis"}],
+    }
+    failed_event = {
+        "tool": "filesystem.read_file",
+        "status": "failure",
+        "input": {"path": "D:/workspace/missing.md"},
+        "error": "not found",
+    }
+    read_event = {
+        "tool": "filesystem.read_file",
+        "status": "success",
+        "input": {"path": "D:/workspace/README.md"},
+        "output": {"path": "D:/workspace/README.md", "content": "# Demo"},
+    }
+    search_event = {
+        "tool": "code.search_text",
+        "status": "success",
+        "input": {"query": "Runtime"},
+        "output": {"matches": [{"path": "runtime/app.py"}]},
+    }
+
+    assert successful_task_evidence_events(
+        [failed_event, read_event, search_event],
+        task_contract=contract,
+        workspace_path="D:/workspace",
+        mode="terminal",
+    ) == [read_event, search_event]
 
 
 def test_preview_interaction_failed_assertion_is_not_successful_verification() -> None:

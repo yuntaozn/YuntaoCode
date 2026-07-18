@@ -26,12 +26,12 @@ RISK_MESSAGES_ZH: dict[str, str] = {
     "partial_write_failure": "同一轮既有写入成功，也有写入失败，产物可能不完整。",
     "partial_write_resumable": "部分写入失败，但已有成功产物可继续修正。",
     "deliverable_path_hint_changed": "最终产物路径与任务中的路径提示不一致，请确认是否符合预期。",
-    "execution_contract_failed": "执行结果没有满足本轮任务契约。",
+    "execution_contract_failed": "本轮任务契约仍有证据缺口。",
     "max_rounds_exceeded": "执行达到轮次上限。",
     "repeated_tool_failure": "同一类工具调用反复失败，需要换策略或检查环境。",
     "capability_preflight_blocked": "能力预检提示：当前环境可能缺少完成任务所需的工具或服务。",
     "model_provider_error": "模型服务返回错误或中断。",
-    "invalid_tool_call_protocol": "模型输出了无效工具调用格式，系统没有执行这次调用。",
+    "invalid_tool_call_protocol": "模型输出了无效工具调用格式，这次无效调用没有进入执行。",
     "invalid_final_answer": "模型最终回复与实际工具执行记录不一致。",
     "model_output_truncated": "模型输出被截断，结果可能不完整。",
     "recovered_tool_failure": "过程中有工具失败，但后续步骤曾尝试恢复。",
@@ -43,7 +43,7 @@ RISK_MESSAGES_ZH: dict[str, str] = {
     "verification_modality_missing": "已有验证证据，但验证形式不满足任务要求。",
     "document_output_coverage_low": "文档输出覆盖率过低：目标文件已生成，但内容明显少于源文档。",
     "document_output_too_short": "文档已导出，但实际内容字数少于用户要求。",
-    "document_output_length_unknown": "无法确认文档输出长度，不能仅凭模型总结判断已完成。",
+    "document_output_length_unknown": "无法确认文档输出长度，不应仅凭模型总结判断已完成。",
     "optional_write_not_verified": "可选写入结果没有验证。",
     "invalid_verification_method": "使用了无效的验证方式。",
     "runtime_verification_not_observed": "没有观察到可退出的运行时验证。",
@@ -76,7 +76,7 @@ def synthesize_failure_answer(
     )
     failures = summary.get("failures") if isinstance(summary.get("failures"), list) else []
     lines = [
-        "未完成：本轮有关键失败，系统已按真实工具记录标记为失败。",
+        "运行事实摘要：本轮观察到关键失败，当前结果应按失败事实处理。",
         "",
         "失败事实：",
     ]
@@ -103,7 +103,7 @@ def synthesize_failure_answer(
     _append_risks(lines, summary.get("risks"))
     lines.extend([
         "",
-        "结论：不能把本轮视为目标已完成。请根据失败事实换策略、补参数、修正环境，或在确实无法继续时如实说明边界。",
+        "建议：请根据失败事实换策略、补参数、修正环境，或在确实无法继续时如实说明边界。",
     ])
     return "\n".join(lines)
 
@@ -119,7 +119,7 @@ def synthesize_partial_answer(
         run_result=run_result,
     )
     lines = [
-        "未完整完成：本轮已有部分进展，但运行事实不足以证明目标已全部完成。",
+        "运行事实摘要：本轮已有部分进展，但运行事实不足以证明目标已全部完成。",
     ]
     _append_list(lines, "已观察到的产物/变更", summary.get("written_paths") or summary.get("changed_paths"))
     verification = summary.get("verification")
@@ -147,7 +147,7 @@ def synthesize_partial_answer(
     _append_risks(lines, summary.get("risks"))
     lines.extend([
         "",
-        "结论：不能把本轮视为目标已完成；下一轮应基于这些事实继续修正或补充验证，而不是复述模型原始总结。",
+        "建议：下一轮应基于这些事实继续修正或补充验证，而不是复述模型原始总结。",
     ])
     return "\n".join(lines)
 
@@ -229,7 +229,7 @@ def synthesize_final_answer(
     verify_lines = list(dict.fromkeys(verify_lines))
     external_deliverable_lines = list(dict.fromkeys(external_deliverable_lines))
 
-    lines = ["系统检测到模型最终回复停在待执行语句，已按真实工具记录收束本轮结果。"]
+    lines = ["运行事实摘要：模型最终回复停在待执行语句，已按真实工具记录收束本轮结果。"]
     if changed_paths:
         lines.append("")
         lines.append("新增/变更文件：")

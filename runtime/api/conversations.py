@@ -865,7 +865,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         if contract.get("expected_document_coverage"):
             prompt += (
                 "\n文档覆盖要求：本轮是全文/整文档输出任务。生成文件后必须验证输出规模，"
-                "不能只验证文件存在；如果输出明显少于源文档，请明确说明未完整完成。\n"
+                "不要只验证文件存在；如果输出明显少于源文档，请明确说明证据不足和下一步处理方式。\n"
             )
         try:
             min_chars = int(contract.get("expected_min_output_chars") or 0)
@@ -2680,8 +2680,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             message = "注意：本轮工具调用达到上限，系统已停止继续执行并保存了诊断信息。实际文件是否变更请以工具调用和变更清单为准。"
             reason = "max_tool_rounds"
         elif contract_failed:
-            message = "注意：本轮模型没有成功调用本地写入工具，系统已判定代码变更未执行。"
-            reason = "tool_contract_failed"
+            message = "注意：本轮未观察到成功的本地写入工具记录；实际文件是否变更请以工具调用、变更清单和后续验证为准。"
+            reason = "tool_contract_gap"
         elif write_failures:
             message = "注意：本轮代码写入工具执行失败，实际文件可能没有变更。请展开上方工具调用查看失败原因。"
             reason = "write_tool_failed"

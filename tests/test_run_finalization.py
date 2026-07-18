@@ -4,8 +4,11 @@ from runtime.agent_strategy.run_finalization import (
     FINAL_ANSWER_CONVERGED,
     FINAL_ANSWER_VERIFIED,
     NEEDS_VERIFICATION_EVIDENCE,
+    NO_TASK_EVIDENCE,
+    NO_TARGET_DELIVERABLE,
     STOP_STAGNANT_VERIFICATION_GAP,
     build_finalization_gate,
+    build_task_evidence_finalization_gate,
     build_verification_gap_decision,
 )
 
@@ -63,6 +66,45 @@ def test_reviewed_target_can_enter_final_answer_without_required_verification() 
     )
 
     assert gate.action == FINAL_ANSWER_CONVERGED
+
+
+def test_answer_evidence_enters_completion_review_without_target_deliverable() -> None:
+    gate = build_task_evidence_finalization_gate(
+        requires_target_deliverable=False,
+        has_target_deliverable=False,
+        has_task_evidence=True,
+        has_target_verification=True,
+        needs_verification_evidence=False,
+        completion_review_stale=True,
+    )
+
+    assert gate.action == COMPLETION_REVIEW
+
+
+def test_task_without_observed_evidence_does_not_enter_completion_review() -> None:
+    gate = build_task_evidence_finalization_gate(
+        requires_target_deliverable=False,
+        has_target_deliverable=False,
+        has_task_evidence=False,
+        has_target_verification=False,
+        needs_verification_evidence=False,
+        completion_review_stale=True,
+    )
+
+    assert gate.action == NO_TASK_EVIDENCE
+
+
+def test_target_contract_still_requires_target_deliverable_before_review() -> None:
+    gate = build_task_evidence_finalization_gate(
+        requires_target_deliverable=True,
+        has_target_deliverable=False,
+        has_task_evidence=True,
+        has_target_verification=True,
+        needs_verification_evidence=False,
+        completion_review_stale=True,
+    )
+
+    assert gate.action == NO_TARGET_DELIVERABLE
 
 
 def test_verification_gap_decision_continues_when_gap_changes() -> None:

@@ -237,7 +237,6 @@ class RunFinalizer:
                 failed=(
                     state.convergence_stopped
                     or state.max_rounds_exceeded
-                    or tool_contract_failed
                     or bool(state.model_provider_error)
                     or (
                         any(event.get("status") == "failure" for event in tool_events)
@@ -542,17 +541,17 @@ def initial_assistant_content(
             f"{model_content}\n\n" if model_content else ""
         ) + (
             "模型服务在工具执行后返回错误，本轮已停止继续调用模型。"
-            "系统会按已观察到的工具结果保存运行事实；如果已经发生写入或外部状态变化，"
+            "运行记录会按已观察到的工具结果保存事实；如果已经发生写入或外部状态变化，"
             "本轮会标记为部分完成，便于继续恢复或人工检查。"
         )
     if convergence_stopped and has_successful_write:
         return (
-            "执行已停止重复重试：本轮已有文件写入成功，但后续工具连续返回相同错误，"
-            "系统没有继续空转。请检查下方失败记录和已写入文件后再决定是否继续。"
+            "运行事实提示：本轮已有文件写入成功，但后续工具连续返回相同错误，"
+            "已停止重复重试。请检查下方失败记录和已写入文件后再决定是否继续。"
         )
     if convergence_stopped:
         return (
-            "执行未完成：同一工具连续返回相同错误，系统已停止重复重试。"
+            "运行事实提示：同一工具连续返回相同错误，已停止重复重试。"
             "请检查下方失败记录，修正调用参数或任务说明后再继续。"
         )
     if max_rounds_exceeded:
@@ -565,27 +564,27 @@ def initial_assistant_content(
         "document_output_too_short" in contract_failures
         or "document_output_length_unknown" in contract_failures
     ):
+        if model_content:
+            return model_content
         return (
-            f"{model_content}\n\n" if model_content else ""
-        ) + (
-            "未完整完成：本轮已经观察到文本/文档产物，但没有证明达到任务要求的输出长度，"
-            "或实际字符数低于任务目标。因此系统不会把它标记为完整完成；请继续扩写、补全或重新导出后再验证。"
+            "运行事实提示：已观察到文本/文档产物，但输出长度证据不足或低于任务目标。"
+            "请基于工具记录决定是继续补全、重新导出，还是向用户说明当前证据边界。"
         )
     if tool_contract_failed and (
         "missing_target_deliverable_verification" in contract_failures
         or "missing_target_verification" in contract_failures
     ):
+        if model_content:
+            return model_content
         return (
-            f"{model_content}\n\n" if model_content else ""
-        ) + (
-            "未完整完成：本轮没有取得足够的真实验证证据，"
-            "因此系统不会把它标记为完整完成。请继续下一轮补充验证或调整执行策略。"
+            "运行事实提示：本轮缺少足够的目标验证证据。"
+            "请基于已观察到的工具结果决定继续验证、换策略，或明确说明证据不足。"
         )
     if tool_contract_failed:
+        if model_content:
+            return model_content
         return (
-            f"{model_content}\n\n" if model_content else ""
-        ) + (
-            "未完成任务目标：本轮没有观察到满足目标契约的执行证据。"
-            "请根据上方工具记录继续修正。"
+            "运行事实提示：本轮观察到任务契约证据缺口。"
+            "请根据工具记录继续修正或说明当前证据边界。"
         )
     return model_content or "模型没有返回内容。"

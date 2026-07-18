@@ -56,14 +56,25 @@ def test_initial_content_uses_write_specific_round_limit_message() -> None:
     assert content == "写入后的轮次提示"
 
 
-def test_initial_content_reports_document_length_evidence_gap() -> None:
+def test_initial_content_preserves_model_text_when_contract_gap_exists() -> None:
     content = _initial_content(
         tool_contract_failed=True,
         contract_failures=["document_output_too_short"],
     )
 
-    assert content.startswith("模型结论\n\n")
-    assert "实际字符数低于任务目标" in content
+    assert content == "模型结论"
+
+
+def test_initial_content_reports_neutral_contract_gap_without_model_text() -> None:
+    content = _initial_content(
+        model_content="",
+        tool_contract_failed=True,
+        contract_failures=["missing_target_verification"],
+    )
+
+    assert content.startswith("运行事实提示")
+    assert "系统不会" not in content
+    assert "未完整完成" not in content
 
 
 def test_initial_content_keeps_ordinary_model_answer() -> None:

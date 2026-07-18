@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 
 NO_TARGET_DELIVERABLE = "no_target_deliverable"
+NO_TASK_EVIDENCE = "no_task_evidence"
 NEEDS_VERIFICATION_EVIDENCE = "needs_verification_evidence"
 COMPLETION_REVIEW = "completion_review"
 FINAL_ANSWER_VERIFIED = "final_answer_verified"
@@ -70,6 +71,49 @@ def build_finalization_gate(
         return FinalizationGate(COMPLETION_REVIEW, "new evidence needs model self-review")
     if has_target_verification:
         return FinalizationGate(FINAL_ANSWER_VERIFIED, "target and verification observed")
+    return FinalizationGate(
+        FINAL_ANSWER_CONVERGED,
+        "model self-review completed without requesting another tool action",
+    )
+
+
+def build_task_evidence_finalization_gate(
+    *,
+    requires_target_deliverable: bool,
+    has_target_deliverable: bool,
+    has_task_evidence: bool,
+    has_target_verification: bool,
+    needs_verification_evidence: bool,
+    completion_review_stale: bool,
+) -> FinalizationGate:
+    """Return finalization state from task-level evidence.
+
+    Write and external-state tasks still use target-deliverable evidence as the
+    entry point. Read-only analysis and answer-evidence tasks have no file or
+    external object to observe, so successful evidence-gathering tools can open
+    the same model self-review loop. The helper only reports the current gate;
+    the model remains responsible for choosing whether to continue, verify, or
+    finish.
+    """
+
+    if requires_target_deliverable:
+        return build_finalization_gate(
+            has_target_deliverable=has_target_deliverable,
+            has_target_verification=has_target_verification,
+            needs_verification_evidence=needs_verification_evidence,
+            completion_review_stale=completion_review_stale,
+        )
+    if not has_task_evidence:
+        return FinalizationGate(NO_TASK_EVIDENCE, "task evidence not observed")
+    if needs_verification_evidence:
+        return FinalizationGate(
+            NEEDS_VERIFICATION_EVIDENCE,
+            "task contract still needs verification evidence",
+        )
+    if completion_review_stale:
+        return FinalizationGate(COMPLETION_REVIEW, "new task evidence needs model self-review")
+    if has_target_verification:
+        return FinalizationGate(FINAL_ANSWER_VERIFIED, "task evidence and verification observed")
     return FinalizationGate(
         FINAL_ANSWER_CONVERGED,
         "model self-review completed without requesting another tool action",
