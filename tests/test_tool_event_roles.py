@@ -3,6 +3,7 @@ from runtime.agent_strategy.tool_event_roles import (
     EVIDENCE,
     VERIFICATION,
     classify_tool_event_role,
+    deliverable_path_deviations,
     deliverable_verification_events,
     event_path_hints,
     failed_tool_event_role,
@@ -371,6 +372,63 @@ def test_py_compile_is_structural_verification_not_behavioral() -> None:
 
     assert verification_evidence_strength(event) == "standard"
     assert verification_evidence_modalities(event) == ("structural",)
+
+
+def test_text_file_validation_counts_as_content_and_structural_evidence() -> None:
+    event = {
+        "tool": "filesystem.finalize_text_file",
+        "status": "success",
+        "input": {"output_path": "D:/workspace/chapter-011-underground-meeting.md"},
+        "output": {
+            "type": "file_write",
+            "path": "D:/workspace/chapter-011-underground-meeting.md",
+            "artifact_kind": "text_file",
+            "draft_stats": {"text_chars": 4480, "line_count": 171},
+            "validation": {"valid": True, "text_chars": 4480, "line_count": 171},
+        },
+    }
+
+    assert verification_evidence_strength(event) == "standard"
+    assert verification_evidence_modalities(event) == ("structural", "content")
+
+
+def test_shell_text_length_check_counts_as_content_evidence() -> None:
+    event = {
+        "tool": "shell.run_command",
+        "status": "success",
+        "input": {
+            "command": "powershell",
+            "args": [
+                "-Command",
+                "(Get-Content 'D:/workspace/chapter-011-underground-meeting.md' -Raw).Length",
+            ],
+        },
+        "output": {"exit_code": 0, "stdout": "6765\r\n", "stderr": ""},
+    }
+
+    assert verification_evidence_strength(event) == "standard"
+    assert verification_evidence_modalities(event) == ("structural", "content")
+
+
+def test_loose_path_hint_accepts_titled_text_deliverable() -> None:
+    contract = {
+        "requires_write": True,
+        "deliverables": [
+            {"kind": "file", "path_hint": "chapter-011", "path_policy": "hint"},
+        ],
+    }
+    event = {
+        "tool": "filesystem.finalize_text_file",
+        "status": "success",
+        "input": {"output_path": "D:/workspace/chapter-011-underground-meeting.md"},
+        "output": {
+            "path": "D:/workspace/chapter-011-underground-meeting.md",
+            "artifact_kind": "text_file",
+            "validation": {"valid": True},
+        },
+    }
+
+    assert deliverable_path_deviations([event], contract) == []
 
 
 def test_shell_success_with_exception_stderr_is_not_clean_verification() -> None:

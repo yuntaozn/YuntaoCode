@@ -522,6 +522,8 @@ def verification_evidence_modalities(
         modalities.append("behavioral")
     elif is_structural_verification_event(event):
         modalities.append("structural")
+    elif _event_has_structural_artifact_evidence(event):
+        modalities.append("structural")
     if _is_structured_external_state_verification(event, task_contract=task_contract):
         modalities.append("structural")
     if _event_has_content_artifact(event):
@@ -660,6 +662,7 @@ def _path_looks_visual_artifact(path: str) -> bool:
 def _event_has_content_artifact(event: dict[str, Any]) -> bool:
     tool_id = canonical_tool_id(str(event.get("tool") or ""))
     if tool_id in {
+        "code.search_text",
         "filesystem.read_file",
         "filesystem.read_text_preview",
         "spreadsheet.inspect_workbook",
@@ -668,13 +671,127 @@ def _event_has_content_artifact(event: dict[str, Any]) -> bool:
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
     if str(output.get("type") or "").strip().lower() == "spreadsheet_preview":
         return True
+    if _event_has_content_measure(output):
+        return True
     artifact_values = [output.get("artifact_kind")]
     if isinstance(output.get("artifacts"), list):
         artifact_values.extend(output.get("artifacts") or [])
     normalized = {str(item or "").strip().lower() for item in artifact_values if str(item or "").strip()}
-    if normalized & {"text", "document_text", "dom_text", "html", "markdown", "page_text"}:
+    if normalized & {
+        "text",
+        "text_file",
+        "document_text",
+        "dom_text",
+        "html",
+        "markdown",
+        "page_text",
+    }:
+        return True
+    if _shell_command_inspects_text_content(event):
         return True
     return tool_id == "preview.interact_page" and bool(str(output.get("text") or "").strip())
+
+
+def _event_has_structural_artifact_evidence(event: dict[str, Any]) -> bool:
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    validation = output.get("validation") if isinstance(output.get("validation"), dict) else {}
+    if validation.get("valid") is True:
+        return True
+    integrity = output.get("integrity") if isinstance(output.get("integrity"), dict) else {}
+    if integrity.get("checked") is True and integrity.get("valid") is True:
+        return True
+    return _shell_command_inspects_text_content(event)
+
+
+def _event_has_content_measure(output: dict[str, Any]) -> bool:
+    validation = output.get("validation") if isinstance(output.get("validation"), dict) else {}
+    draft_stats = output.get("draft_stats") if isinstance(output.get("draft_stats"), dict) else {}
+    for source in (output, validation, draft_stats):
+        for key in (
+            "content_chars",
+            "text_chars",
+            "character_count",
+            "char_count",
+            "word_count",
+            "line_count",
+            "paragraph_count",
+            "nonempty_paragraph_count",
+        ):
+            if _positive_int(source.get(key)):
+                return True
+    return False
+
+
+def _shell_command_inspects_text_content(event: dict[str, Any]) -> bool:
+    if canonical_tool_id(str(event.get("tool") or "")) != "shell.run_command":
+        return False
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    if output.get("timed_out") is True or shell_success_has_stderr_warning(output):
+        return False
+    try:
+        if int(output.get("exit_code", 0) or 0) != 0:
+            return False
+    except (TypeError, ValueError):
+        return False
+    stdout = str(output.get("stdout") or "").strip()
+    if not stdout:
+        return False
+    event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
+    command = str(event_input.get("command") or "").strip().lower()
+    args = event_input.get("args") if isinstance(event_input.get("args"), list) else []
+    combined = f"{command} {' '.join(str(item).lower() for item in args)}"
+    content_markers = (
+        "get-content",
+        "read-text",
+        "read_text",
+        "readfile",
+        "read_file",
+        "readfilesync",
+        "open(",
+        ".read(",
+        "cat ",
+        "type ",
+        "wc ",
+        "measure-object",
+        ".length",
+        "len(",
+        "content.length",
+        "text.length",
+    )
+    if not any(marker in combined for marker in content_markers):
+        return False
+    return _command_mentions_text_like_target(combined)
+
+
+def _command_mentions_text_like_target(command: str) -> bool:
+    text_suffixes = (
+        ".txt",
+        ".md",
+        ".markdown",
+        ".html",
+        ".htm",
+        ".css",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".py",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".csv",
+        ".xml",
+        ".docx",
+        ".pdf",
+    )
+    return any(suffix in command for suffix in text_suffixes)
+
+
+def _positive_int(value: Any) -> bool:
+    try:
+        return int(value or 0) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 _STATE_FACT_META_KEYS: frozenset[str] = frozenset({
@@ -780,16 +897,25 @@ def failed_tool_event_role(
 
 
 def contract_deliverable_paths(task_contract: dict[str, Any] | None) -> set[str]:
+    return {path for path, _policy in _contract_deliverable_path_specs(task_contract)}
+
+
+def _contract_deliverable_path_specs(
+    task_contract: dict[str, Any] | None,
+) -> list[tuple[str, str]]:
     if not isinstance(task_contract, dict):
-        return set()
-    result: set[str] = set()
+        return []
+    result: list[tuple[str, str]] = []
     for item in task_contract.get("deliverables") or []:
         if not isinstance(item, dict):
             continue
+        policy = str(item.get("path_policy") or "hint").strip().lower()
+        if policy not in {"exact", "hint"}:
+            policy = "hint"
         for key in ("path_hint", "path", "output_path"):
             path = _normalize_path_hint(item.get(key))
             if path:
-                result.add(path)
+                result.append((path, policy))
     return result
 
 
@@ -846,17 +972,17 @@ def deliverable_path_deviations(
     task_contract: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     """Return successful deliverables that used a different hinted path."""
-    hinted_paths = contract_deliverable_paths(task_contract)
-    if not hinted_paths:
+    hinted_specs = _contract_deliverable_path_specs(task_contract)
+    if not hinted_specs:
         return []
     deviations: list[dict[str, Any]] = []
     for event in events:
         paths = event_path_hints(event)
-        if not paths or any(_path_matches_any(path, hinted_paths) for path in paths):
+        if not paths or any(_path_matches_any_deliverable_hint(path, hinted_specs) for path in paths):
             continue
         deviations.append({
             "tool": canonical_tool_id(str(event.get("tool") or "")),
-            "expected_path_hints": sorted(hinted_paths),
+            "expected_path_hints": sorted({path for path, _policy in hinted_specs}),
             "actual_paths": sorted(paths),
         })
     return deviations
@@ -1035,3 +1161,47 @@ def _path_matches_any(path: str, candidates: set[str]) -> bool:
         if normalized.endswith("/" + other) or other.endswith("/" + normalized):
             return True
     return False
+
+
+def _path_matches_any_deliverable_hint(
+    path: str,
+    candidates: list[tuple[str, str]],
+) -> bool:
+    normalized = _normalize_path_hint(path)
+    if not normalized:
+        return False
+    exact_candidates = {candidate for candidate, _policy in candidates}
+    if _path_matches_any(normalized, exact_candidates):
+        return True
+    return any(
+        policy != "exact" and _path_matches_loose_hint(normalized, candidate)
+        for candidate, policy in candidates
+    )
+
+
+def _path_matches_loose_hint(path: str, expected: str) -> bool:
+    actual_name = _basename(path)
+    expected_name = _basename(expected)
+    if not actual_name or not expected_name:
+        return False
+    expected_stem, expected_ext = _split_extension(expected_name)
+    if expected_ext:
+        return False
+    actual_stem, _actual_ext = _split_extension(actual_name)
+    if actual_stem == expected_stem:
+        return True
+    separators = (" ", "-", "_", ".", ":", "：", "—", "－")
+    return any(actual_stem.startswith(expected_stem + separator) for separator in separators)
+
+
+def _basename(path: str) -> str:
+    return _normalize_path_hint(path).rsplit("/", 1)[-1]
+
+
+def _split_extension(name: str) -> tuple[str, str]:
+    if "." not in name:
+        return name, ""
+    stem, extension = name.rsplit(".", 1)
+    if not stem:
+        return name, ""
+    return stem, extension

@@ -553,6 +553,87 @@ def test_build_run_result_does_not_count_truncated_preview_as_verification() -> 
     assert "test_not_observed" in result["risks"]
 
 
+def test_build_run_result_accepts_text_length_check_as_content_verification_after_edit() -> None:
+    contract = {
+        "intent": "write_required",
+        "requires_write": True,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["content", "structural"],
+        "expected_min_output_chars": 3000,
+        "deliverables": [
+            {
+                "kind": "file",
+                "path_hint": "chapter-011",
+                "path_policy": "hint",
+                "description": "Long-form chapter text",
+            }
+        ],
+    }
+
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary={"files": [{"path": "chapter-011-underground-meeting.md"}]},
+        requires_code_write=False,
+        expected_min_output_chars=3000,
+        task_contract=contract,
+        tool_events=[
+            {
+                "tool": "filesystem.finalize_text_file",
+                "status": "success",
+                "input": {"output_path": "D:/workspace/chapter-011-underground-meeting.md"},
+                "output": {
+                    "path": "D:/workspace/chapter-011-underground-meeting.md",
+                    "artifact_kind": "text_file",
+                    "size": 12885,
+                    "draft_stats": {"text_chars": 4480, "line_count": 171},
+                    "validation": {"valid": True, "text_chars": 4480, "line_count": 171},
+                },
+            },
+            {
+                "tool": "code.edit_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/chapter-011-underground-meeting.md"},
+                "output": {
+                    "path": "D:/workspace/chapter-011-underground-meeting.md",
+                    "diff_preview": "- old\n+ new",
+                    "encoding": "utf-8",
+                },
+            },
+            {
+                "tool": "shell.run_command",
+                "status": "success",
+                "input": {
+                    "command": "powershell",
+                    "args": [
+                        "-Command",
+                        "(Get-Content 'D:/workspace/chapter-011-underground-meeting.md' -Raw).Length",
+                    ],
+                },
+                "output": {"exit_code": 0, "stdout": "6765\r\n", "stderr": ""},
+            },
+            {
+                "tool": "code.search_text",
+                "status": "success",
+                "input": {
+                    "path": "D:/workspace/chapter-011-underground-meeting.md",
+                    "query": "previous chapter",
+                },
+                "output": {"matches": []},
+            },
+        ],
+    )
+
+    assert result["status"] == "success"
+    assert result["observed_verification_modalities"] == ["structural", "content"]
+    assert result["missing_verification_modalities"] == []
+    assert "required_verification_not_satisfied" not in result["risks"]
+    assert "verification_modality_missing" not in result["risks"]
+    assert "execution_contract_failed" not in result["risks"]
+    assert "deliverable_path_hint_changed" not in result["risks"]
+
+
 def test_build_run_result_marks_partial_write_failures() -> None:
     result = build_run_result(
         workspace_path="D:/workspace",
