@@ -33,12 +33,20 @@ class CompletionReviewState:
     review_count: int = 0
     pending: bool = False
     latest_result: dict[str, Any] = field(default_factory=dict)
+    latest_evidence_pack: dict[str, Any] = field(default_factory=dict)
 
-    def begin(self, *, event_count: int, run_result: dict[str, Any]) -> None:
+    def begin(
+        self,
+        *,
+        event_count: int,
+        run_result: dict[str, Any],
+        evidence_pack: dict[str, Any] | None = None,
+    ) -> None:
         self.event_count = int(event_count)
         self.review_count += 1
         self.pending = True
         self.latest_result = dict(run_result)
+        self.latest_evidence_pack = dict(evidence_pack or {})
 
     def consume(self) -> None:
         self.pending = False
@@ -46,6 +54,7 @@ class CompletionReviewState:
     def reset_pending(self) -> None:
         self.pending = False
         self.latest_result = {}
+        self.latest_evidence_pack = {}
 
 
 @dataclass
@@ -68,7 +77,7 @@ class RunExecutionState:
     progress_observer_count: int = 0
     stagnant_rounds: int = 0
     last_progress_key: str = ""
-    convergence_stopped: bool = False
+    no_progress_budget_exhausted: bool = False
     argument_observation_threshold: int = 24_000
     large_argument_observations: int = 0
     runtime_intervention_count: int = 0

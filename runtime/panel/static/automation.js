@@ -154,6 +154,7 @@ function renderPreview(item) {
         [t("automation_page.workspace"), workspace?.name || workspace?.path || template.workspace_id || ""],
         [t("automation_page.trigger_kind"), triggerLabel(item)],
         [t("automation_page.state"), stateLabel(item.state)],
+        [t("automation_page.next_run"), item.next_run_at ? formatDate(item.next_run_at) : t("automation_page.none")],
         [t("automation_page.last_run"), item.last_run_id || t("automation_page.none")],
     ];
     preview.innerHTML = rows.map(([label, value]) => `

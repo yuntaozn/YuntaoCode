@@ -10,6 +10,8 @@ from runtime.core.automation import (
     Automation,
     AutomationTaskTemplate,
     AutomationTrigger,
+    automation_next_run_at,
+    automation_is_due,
     can_trigger_automation,
 )
 from runtime.persistence import AtomicJsonDocumentStorage, DocumentStorage
@@ -51,6 +53,7 @@ class AutomationStore:
             created_at=now,
             updated_at=now,
         )
+        automation = _with_current_next_run(automation)
         self._automations[automation.id] = automation
         self._save()
         return automation
@@ -59,14 +62,18 @@ class AutomationStore:
         current = self._require(automation_id)
         merged = current.to_dict()
         _deep_update(merged, payload)
+        next_run_at = str(payload.get("next_run_at") or "") if "next_run_at" in payload else current.next_run_at
+        if "trigger" in payload and "next_run_at" not in payload:
+            next_run_at = ""
         updated = _automation_from_payload(
             merged,
             automation_id=current.id,
             created_at=current.created_at,
             updated_at=utc_now(),
             last_run_id=current.last_run_id,
-            next_run_at=str(payload.get("next_run_at", current.next_run_at) or ""),
+            next_run_at=next_run_at,
         )
+        updated = _with_current_next_run(updated)
         self._automations[automation_id] = updated
         self._save()
         return updated
@@ -86,15 +93,37 @@ class AutomationStore:
         self._save()
         return True
 
-    def record_prepared_run(self, automation_id: str, run_id: str) -> Automation:
+    def record_prepared_run(self, automation_id: str, run_id: str, *, now: Any = None) -> Automation:
         current = self._require(automation_id)
         updated = replace(current, last_run_id=run_id, updated_at=utc_now())
+        updated = replace(updated, next_run_at=automation_next_run_at(updated, now=now))
         self._automations[automation_id] = updated
         self._save()
         return updated
 
     def can_trigger(self, automation_id: str, *, active_runs: int = 0) -> bool:
         return can_trigger_automation(self._require(automation_id), active_runs=active_runs)
+
+    def due(self) -> list[Automation]:
+        return [
+            item for item in self.list()
+            if automation_is_due(item)
+        ]
+
+    def ensure_next_run(self, automation_id: str) -> Automation:
+        current = self._require(automation_id)
+        updated = _with_current_next_run(current, force=True)
+        if updated != current:
+            self._automations[automation_id] = updated
+            self._save()
+        return updated
+
+    def advance_next_run(self, automation_id: str, *, now: Any = None) -> Automation:
+        current = self._require(automation_id)
+        updated = replace(current, next_run_at=automation_next_run_at(current, now=now), updated_at=utc_now())
+        self._automations[automation_id] = updated
+        self._save()
+        return updated
 
     def _require(self, automation_id: str) -> Automation:
         automation = self.get(automation_id)
@@ -179,6 +208,18 @@ def _automation_from_payload(
         updated_at=str(updated_at or payload.get("updated_at") or now),
         metadata=_dict(payload.get("metadata")),
     )
+
+
+def _with_current_next_run(automation: Automation, *, force: bool = False) -> Automation:
+    if automation.trigger.kind == "manual":
+        next_run_at = ""
+    elif automation.next_run_at and not force:
+        next_run_at = automation.next_run_at
+    else:
+        next_run_at = automation_next_run_at(automation)
+    if next_run_at == automation.next_run_at:
+        return automation
+    return replace(automation, next_run_at=next_run_at, updated_at=utc_now())
 
 
 def _normalize_choice(value: Any, allowed: set[str], fallback: str) -> str:

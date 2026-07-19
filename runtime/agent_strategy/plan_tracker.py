@@ -85,35 +85,20 @@ def normalize_execution_plan(raw_plan: str, mode: str | None) -> dict[str, Any]:
 
 
 def fallback_execution_plan(mode: str | None) -> dict[str, Any]:
-    """Return a sensible default execution plan for the given mode."""
-    if mode == "coding":
-        steps = [
-            ("定位相关代码", "扫描目录并读取与需求相关的文件。", "code.list_project_files / filesystem.read_file"),
-            ("分析修改点", "确认需要修改的函数、配置或页面，并控制影响范围。", "code.search_text"),
-            (
-                "执行代码变更",
-                "使用批量替换、精确编辑或文本草稿最终写入工具完成修改。",
-                "code.replace_text / code.edit_file / filesystem.finalize_text_file",
-            ),
-            ("验证结果", "运行可行的语法检查、测试或搜索验证。", "shell.run_command / git.status"),
-            ("汇总变更", "列出修改文件、验证结果和剩余风险。", "git.diff / git.status"),
-        ]
-    elif mode == "paper":
-        steps = [
-            ("建立材料护照", "扫描论文项目目录，识别草稿、文献、笔记、数据说明和参考资料。", "filesystem.scan_folder / code.list_project_files"),
-            ("提取已确认事实", "读取核心文档或表格，区分 raw、redacted、verified 信息，并列出未覆盖材料。", "filesystem.read_file / document.extract_docx_outline / document.extract_pdf_text_preview / spreadsheet.inspect_workbook"),
-            ("形成论文产出", "根据用户目标生成大纲、综述、摘要、段落草稿、审稿回复或修改建议。", "本地模型 / document.create_draft"),
-            ("学术质量门", "检查幻觉引用、方法论捏造、实验结果捏造、过早锁定框架和贡献夸大风险。", "本地模型"),
-            ("汇总结论", "列出依据、可用文本、待确认项和建议的下一步用户决策。", "本地模型"),
-        ]
-    else:
-        steps = [
-            ("识别资料范围", "扫描当前项目目录，确定需要读取的文档和附件。", "filesystem.scan_folder"),
-            ("读取核心内容", "提取 Word、PDF、表格或文本中的标题、大纲、关键段落和表格预览；PDF 转 Word 时直接使用 document.extract_pdf_to_docx。", "document.extract_docx_outline / document.extract_pdf_text_preview / spreadsheet.inspect_workbook / document.extract_pdf_to_docx"),
-            ("分析和归纳", "按用户目标整理事实、问题、风险或结论。", "filesystem.read_file"),
-            ("形成产出", "生成摘要、审查意见、清单或汇报内容。", "本地模型"),
-            ("说明依据", "列出已读取资料、跳过项和不确定项。", "本地模型"),
-        ]
+    """Return a neutral audit plan when the model plan cannot be parsed.
+
+    The fallback keeps the UI and trace readable, but it must not become a
+    mode-specific workflow or tool route.  The model still chooses the actual
+    next actions from the task contract and visible capabilities.
+    """
+    _ = mode
+    steps = [
+        ("确认当前目标", "根据本轮用户请求和任务契约确认要达成的结果。", ""),
+        ("收集必要证据", "按当前目标选择需要读取、观察或检查的最小上下文。", ""),
+        ("执行模型选择的动作", "由模型根据可见能力选择读取、写入、外部状态变更或回答路线。", ""),
+        ("验证可观察结果", "根据任务契约需要检查产物、状态、内容或运行证据。", ""),
+        ("基于事实收束", "说明已完成事项、证据、不确定项和下一步。", ""),
+    ]
     return {
         "title": "计划执行",
         "steps": [

@@ -117,7 +117,7 @@ def test_tool_execution_guard_reports_missing_required_fields() -> None:
     assert decision is not None
     assert decision.reason == "invalid_tool_input"
     assert "path" in decision.message
-    assert "无效调用不会进入人工确认" in decision.message
+    assert "本次调用没有执行" in decision.message
 
 
 def test_tool_execution_guard_reports_document_and_verification_messages() -> None:

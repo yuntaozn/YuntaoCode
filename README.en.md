@@ -2,14 +2,14 @@
 
 **Local-First AI Task Runtime**
 
-YuntaoCode is a local-first AI task execution foundation for developers, education, and engineering work.
+YuntaoCode is a local-first task execution foundation for AI engineering practice.
 
 Rather than building yet another AI chat application, YuntaoCode focuses on making local tasks plannable, executable, pausable, recoverable, verifiable, and auditable.
 
 The current code is organized around three execution foundations and one evidence-based experience layer:
 
 * **Task Runtime**: task state, plans, steps, execution, verification, recovery, and results.
-* **Context Runtime**: context selection, compression, evidence boundaries, long-term memory, and a context ledger.
+* **Context Runtime**: context selection, compression, evidence boundaries, long-term memory, a context ledger, and an audit view.
 * **Capability Runtime**: tools, permissions, plugins, capability contracts, and local execution boundaries.
 * **Experience Layer**: turns real task records into RunEvidence, Experience Samples, Replay Fixtures, Evaluation Fixtures, and diagnostic packages.
 
@@ -58,7 +58,7 @@ Experience Layer
   Turns task records into RunEvidence, Experience Samples, Replay Fixtures, Evaluation Fixtures, and diagnostic packages
 ```
 
-The first three lines define how tasks run. The Experience Layer preserves evidence and lessons without registering AI-generated code by default or bypassing Runtime permission, verification, and manual confirmation boundaries. The model may help understand and execute tasks, but the Runtime owns state, permission boundaries, evidence, and completion checks.
+The first three lines support task execution. The Experience Layer preserves evidence and lessons without registering AI-generated code by default or bypassing Runtime permission, verification, and manual confirmation boundaries. The model understands the goal, chooses the strategy, and writes the conclusion; the Runtime preserves state, boundaries, evidence, and auditable closure facts.
 
 ### Task First
 
@@ -159,7 +159,7 @@ The Python Runtime is the core of the system.
 
 The Tauri desktop application is only one possible interface layer. The Runtime itself can operate independently.
 
-The current implementation already includes tool calling, model-decided planning, confirmation, pre-write backups, execution records, context snapshots, and experience sample export. The Runtime no longer drives tasks through preset role stages: the model continuously judges the goal, visible capabilities, and observed facts, while the system owns safety, protocol, state, evidence, and audit boundaries.
+The current implementation already includes tool calling, model-decided planning, confirmation, pre-write backups, execution records, context snapshots, context audit, and experience sample export. The Runtime no longer drives tasks through preset role stages: the model continuously judges the goal, visible capabilities, and observed facts, while the system owns safety, protocol, state, evidence, and audit boundaries.
 
 The Agent Runtime strategy layer lives in `runtime/agent_strategy/`. It owns model task contracts, internal profile descriptions, planning policy, factual advisories, and execution-plan lifecycle helpers so that `conversation_runner.py` can remain an orchestration layer.
 
@@ -371,52 +371,35 @@ We believe that models keep changing, but a stable, open, and extensible Task Ru
 
 ---
 
-## Current Implementation
+## Current 0.1 Implementation Snapshot
 
-### Runtime Foundation
+Current Development Version: **0.1.0**
 
-Status: closing.
-
-The current code implements these foundations:
+0.1 is not a feature-complete release, a scenario-coverage promise, or a stability guarantee. Its purpose is to make the local-first AI Task Runtime foundation clear and executable. The current code implements these foundations:
 
 * Task Model: ProductTask, Run, ToolTask, state, results, and lineage
 * Run Lifecycle: running, waiting_confirmation, paused, resumed, completed, failed, stopped
 * Task Trace: RunEvent, canonical event_name, tool calls, confirmations, errors, verification, results, and final-answer previews
 * Run Recovery: pause, resume, Runbook, Replay Request, Checkpoint, and Context Snapshot
-* Task Audit: RunEvidence, RunWorkbench, run audit summary, task-history UI, and state-transition tests
-* Context Runtime: Context Pack / Ledger, context hygiene, task lineage, memory boundaries, visual evidence, and recovery snapshots
+* Task Audit: RunEvidence, RunWorkbench, completion evidence pack, run audit summary, runtime debug audit, task-history UI, and state-transition tests
+* Context Runtime: Context Pack / Ledger / Audit, context hygiene, task lineage, memory boundaries, visual evidence / verification summaries, and recovery snapshots
 * Capability Runtime: ToolSpec metadata, Capability Preflight, permissions, confirmations, artifacts, providers, and verification evidence
 * Provider boundaries: built-in tools, MCP, CLI, Capability Packs, and plugin declarations enter through Capability Runtime
-* Automation Runtime foundation: triggers, task templates, concurrency boundary, configuration UI, and normal Run conversion contract
+* Automation Runtime foundation: triggers, task templates, lightweight scheduler, concurrency boundary, configuration UI, and normal prepared Run conversion contract
 * Extension Contract foundation: plugin / MCP / CLI / Capability Pack boundaries, permissions, dependencies, and task artifact conventions
 * Experience / Evaluation foundation: RunEvidence, Experience Sample Export, Replay Fixture, Evaluation Fixture, Evaluation Report, and diagnostic packages
 
----
+## Development Direction Gate
 
-## Education & Research
+Recent changes should answer these questions before entering the 0.1 foundation:
 
-YuntaoCode can also be used for:
+* Does this make one of Task / Context / Capability / Experience clearer?
+* Does this reduce Runtime-owned task semantics, route selection, or final conclusions?
+* Does this strengthen state, evidence, verification, recovery, audit, or permission boundaries?
+* Can its effect be checked through tests, diagnostic packages, or real task records?
+* Does it avoid turning a scenario, tool, MCP service, CLI provider, plugin, or Skill into a separate execution system?
 
-* AI Agent Training
-* MCP Education
-* RAG Experiments
-* Local LLM Deployment
-* Software Engineering Courses
-* AI Engineering Practice
-
----
-
-## Project Status
-
-Current Development Version: **0.1.0**
-
-Status: **Active Development**
-
-Before v1.0:
-
-* APIs may change
-* Plugin interfaces may change
-* Runtime architecture may change
+If a change only expands scenarios, follows a new concept, or grows the tool list without clarifying these boundaries, it should stay out of the 0.1 foundation.
 
 ---
 

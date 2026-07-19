@@ -86,6 +86,7 @@ def build_context_ledger(records: list[dict[str, Any]], *, phase: str) -> dict[s
             "source_type": str(record.get("source_type") or ""),
             "trust": str(record.get("trust") or ""),
             "freshness": str(record.get("freshness") or ""),
+            "task_id": str(record.get("task_id") or ""),
             "token_estimate": _safe_int(record.get("token_estimate")),
             "content_hash": _content_hash(content),
             "content_preview": _truncate(content, 180),
@@ -881,12 +882,26 @@ def _tool_event_summary(event: dict[str, Any]) -> str:
     status = str(event.get("status") or "unknown")
     path = _tool_event_path(event)
     error = _truncate(event.get("error"), 160)
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    observation = event.get("tool_attempt_observation")
+    if not isinstance(observation, dict):
+        observation = output.get("observation") if isinstance(output.get("observation"), dict) else {}
+    reason = str(output.get("reason") or observation.get("reason") or "").strip()
+    missing_fields = [
+        str(item)
+        for item in observation.get("missing_fields") or []
+        if str(item or "").strip()
+    ] if isinstance(observation, dict) else []
     roles = event.get("declared_roles") if isinstance(event.get("declared_roles"), list) else []
     bits = [tool, status]
     if path:
         bits.append(path)
     if roles:
         bits.append("roles=" + ",".join(str(item) for item in roles[:4]))
+    if reason:
+        bits.append("reason=" + _truncate(reason, 120))
+    if missing_fields:
+        bits.append("missing=" + ",".join(missing_fields[:4]))
     if error:
         bits.append("error=" + error)
     return " / ".join(bits)

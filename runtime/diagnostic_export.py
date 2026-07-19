@@ -1,8 +1,8 @@
 """Portable diagnostic exports for a selected Run.
 
 Diagnostic exports help compare behavior across machines. They are generated on
-demand, avoid secrets and file contents, and do not participate in Skill
-Evolution replay verification.
+demand, avoid secrets and file contents, and do not participate in capability
+promotion or replay execution.
 """
 
 from __future__ import annotations

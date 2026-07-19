@@ -60,7 +60,7 @@ def evaluate_tool_execution_guard(
             reason="invalid_tool_input",
             message=(
                 f"工具调用缺少必填参数：{', '.join(missing_fields)}。"
-                "请补全参数后重新发送结构化工具调用；无效调用不会进入人工确认。"
+                "本次调用没有执行；请补全参数后重新发送结构化工具调用。"
             ),
         )
 

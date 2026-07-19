@@ -41,8 +41,8 @@ The current 0.1 work already provides the first pieces:
 - **Evaluation Fixture** is a local, manually exported fixture generated from
   RunEvidence for regression/evaluation runs.
 - **Evaluation Report** compares one fixture with one RunEvidence view and
-  explains pass, partial, failure, or blocked outcomes without replaying the
-  task.
+  explains passed, partial, or failed comparison outcomes without replaying the
+  task. Invalid report inputs use a separate `blocked` status.
 - **RunResult** provides runtime-owned facts instead of relying on assistant
   prose.
 
@@ -80,10 +80,12 @@ capability snapshot, verification requirements, and safe replay boundaries.
 
 ## Report Facts
 
-0.1 reports favor facts that already exist in Run events and
-RunResult:
+0.1 reports favor facts that already exist in Run events and RunResult.
+Keep the status layers separate:
 
-- final status: success, partial, failure, blocked, stopped;
+- RunResult status: success, partial, failure, stopped, no_tool_activity;
+- Evaluation Report status: passed, partial, failed;
+- invalid fixture/evidence input status: blocked;
 - target artifact produced or not;
 - verification evidence strength;
 - tool call count and failed tool call count;

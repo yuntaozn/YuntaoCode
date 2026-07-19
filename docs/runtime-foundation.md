@@ -19,6 +19,33 @@ The foundation contract keeps these boundaries explicit:
 - evidence, state, permissions, verification, and recovery must remain more
   important than adding another scenario.
 
+## Development Direction Gate
+
+0.1 should be treated as a direction release for the runtime foundation. It is
+not a promise that every scenario is stable, every provider is mature, or every
+future extension path is finished.
+
+Before a change enters the 0.1 foundation, it should make at least one runtime
+boundary clearer:
+
+- Task state, trace, recovery, verification, or result evidence;
+- Context selection, compression, memory scope, source trust, or stale-context
+  handling;
+- Capability contracts, provider health, permissions, confirmation, artifacts,
+  or evidence strength;
+- Experience/evaluation records derived from selected RunEvidence without
+  becoming hidden prompts, automatic capability promotion, or trusted generated
+  code.
+
+The preferred direction is removal of hidden control, clearer observable facts,
+and stronger execution records. The model owns task semantics, route choice,
+self-correction, and final wording. The runtime owns protocol integrity,
+permissions, local safety boundaries, persisted state, and evidence surfaces.
+
+Changes that mainly add a scenario, product promise, marketplace idea, new
+tool list, or external concept should stay outside the 0.1 foundation until
+real runs show which boundary they clarify.
+
 ## Runtime Lines
 
 YuntaoCode should be read as a layered runtime, not as a growing tool list.
@@ -35,8 +62,8 @@ The three execution-facing lines are:
 Above them is an evidence-learning layer:
 
 - **Automation Runtime** sits above Task Runtime as a trigger layer. It turns a
-  saved user goal and schedule into a normal Task/Run, and does not execute
-  tools or bypass runtime permissions directly.
+  saved user goal and schedule into a normal prepared Task/Run, and does not
+  execute tools or bypass runtime permissions directly.
 - **Experience Runtime** extracts reviewed task experience from Runbook and
   RunResult facts. In 0.1 it covers RunEvidence, diagnostic export,
   Experience Sample export, Evaluation Fixture, and Evaluation Report records;
@@ -44,8 +71,9 @@ Above them is an evidence-learning layer:
 
 Ideas beyond this boundary stay out of the 0.1 foundation contract.
 
-The model may propose task semantics, routing, and next actions. The runtime
-owns schema, permissions, state transitions, evidence, and completion checks.
+The model may propose task semantics, routing, next actions, and final wording.
+The runtime owns schema, permissions, state transitions, evidence, and
+observable closure facts.
 
 The first pure schema package for these concepts lives in `runtime/core/`.
 It intentionally avoids Tornado, model-provider, filesystem, and network
@@ -62,18 +90,18 @@ the remaining JSON stores and incremental SQLite direction are documented in
 The runtime should not decide the task strategy for the model, but it must
 prevent an execution from repeating the same failed action indefinitely.
 
-The current convergence rule is:
+The current convergence rule is progress-driven:
 
-1. The first failure is returned to the model as real tool evidence.
-2. A second identical trailing failure triggers a strategy-change
-   intervention. The model must choose a materially different next action,
-   such as supplying valid parameters, reading minimal missing context,
-   choosing another capability, moving to verification, or truthfully
-   stopping.
-3. If the model receives that intervention and still repeats the identical
-   failed action, the runtime stops the loop and records a stopped result.
-4. Any materially different tool result or successful action resets the
-   repeated-failure sequence.
+1. Each failed tool attempt is returned to the model as real execution evidence.
+2. A repeated failed route inside the current no-progress window triggers an
+   advisory with `execution_convergence` facts. The model may still choose the
+   next route.
+3. A successful or partial tool result resets the no-progress window.
+4. Changing tool, arguments, or route is treated as self-correction evidence
+   and expands the bounded retry budget.
+5. The runtime stops only when the latest failed route repeats too many times
+   in a no-progress window. This prevents an infinite loop without turning the
+   runtime into a planner.
 
 This contract is deliberately narrower than task planning. It judges whether
 execution is converging; it does not hard-code which strategy the model must
@@ -113,6 +141,22 @@ weaken coverage, progress, resumability, and verification evidence. It should
 not say that the model is forbidden to choose that route. If the model chooses a
 different safe strategy, the runtime should judge the actual artifact and
 verification evidence, not the route label.
+
+`tool_attempt_observation.v1` is the shared record for a model-proposed tool
+call that did not run. It covers malformed JSON, non-object arguments, missing
+required fields, unknown tool names, truncated tool calls, unavailable
+capability services, disabled tools, safety boundaries, and user-cancelled
+local actions. The record keeps `reason` and `message` for compatibility, but
+also carries a bounded input summary, missing fields, available tool hints when
+useful, and model-facing repair options.
+
+This observation is not a task verdict. It says only that one attempted action
+was not executed by the runtime. The model should use the fact to decide whether
+to resend valid parameters, choose another visible tool, gather missing context,
+start or refresh a dependency, verify existing output, ask the user, or stop
+honestly. Large write-like attempts are reported as evidence that incremental
+write/edit routes are usually more reliable, but the runtime does not forbid the
+model from choosing a different safe route.
 
 ## Task And ToolTask
 
@@ -240,7 +284,7 @@ Task store is still being separated from historical ToolTask records.
 - `{"action": "evaluate_fixture", "fixture": {...}}` compares the current
   RunEvidence with a selected `evaluation_fixture.v1` and returns an
   `evaluation_report.v1`. It does not execute replay, call a model, call tools,
-  or promote skills.
+  or promote new capabilities.
 - `{"action": "replay"}` creates a new prepared Run under the same Task and
   returns a replay request artifact. It does not execute tools until the user
   explicitly starts the prepared Run.
@@ -256,8 +300,8 @@ conversation as instructions.
 Runbook and Replay provide the evidence base for 0.1 experience and evaluation
 records. A selected RunEvidence view can be exported as an Experience Sample,
 and selected evidence can be represented as Evaluation Fixture / Report records.
-These records are passive artifacts; they do not register skills or execute
-generated code.
+These records are passive artifacts; they do not register trusted capabilities
+or execute generated code.
 
 Completion decisions are completion-loop evidence. After a completion
 self-review prompt, the runtime records the model's observable choice: continue
@@ -265,6 +309,16 @@ with tools, produce a final-answer candidate, repair malformed tool-call
 protocol, or make no observable decision. This event does not force a route; it
 exists so the Workbench, Replay, and Evaluation can inspect how a run attempted
 to close.
+
+`completion_evidence_pack.v1` is the model-facing fact package used by that
+self-review prompt. It groups RunResult, compact Run facts, artifacts,
+verification evidence, visual verification summary, runtime debug audit,
+capability evidence, recent ToolTask progress, risks, failures, and previous
+completion decisions. The pack is evidence-only: it does not decide completion,
+rank tools, force fallback, or block the model from changing strategy. The
+model remains responsible for deciding whether to continue with tools, verify
+or repair, ask the user for a missing boundary, or produce a final answer from
+the observed evidence.
 
 ## Diagnostic Export
 
@@ -331,9 +385,10 @@ The intended split is:
 
 - The model judges the task semantics: goal, intent, whether a write is
   required, whether observable state must change, expected deliverables, first
-  action, blockers, confidence, and whether a plan is useful.
+  action, non-binding execution advisories, confidence, and whether a plan is
+  useful.
 - The runtime owns the contract shape, schema version, local security
-  overrides, workspace scope, success conditions, and completion checks.
+  overrides, workspace scope, success conditions, and observable closure facts.
 
 This avoids growing a large keyword router for every scenario. Keyword and
 policy heuristics remain only as fallback and safety inputs; they should not be
@@ -626,7 +681,7 @@ Current runtime-level capability guards:
   selection to the model unless a separate safety/permission boundary applies;
 - new runs use `capability_preflight.v2`, which carries advisory
   `readiness_issues` and `route_hint` metadata instead of legacy
-  `blockers/enforce_*` route-control fields;
+  route-control fields;
 - execution still performs a second guard before running a tool, so malformed
   native/tool-call variants cannot silently fall back to shell scripts or file
   generation outside the declared safety and permission boundary.

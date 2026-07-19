@@ -6,7 +6,7 @@ from runtime.agent_strategy.run_finalization import (
     NEEDS_VERIFICATION_EVIDENCE,
     NO_TASK_EVIDENCE,
     NO_TARGET_DELIVERABLE,
-    STOP_STAGNANT_VERIFICATION_GAP,
+    PAUSE_STAGNANT_VERIFICATION_GAP,
     build_finalization_gate,
     build_task_evidence_finalization_gate,
     build_verification_gap_decision,
@@ -126,7 +126,7 @@ def test_verification_gap_decision_continues_when_gap_changes() -> None:
     assert second.stagnant_rounds == 0
 
 
-def test_verification_gap_decision_stops_only_after_repeated_stagnation() -> None:
+def test_verification_gap_decision_pauses_only_after_repeated_stagnation() -> None:
     decision = build_verification_gap_decision(
         previous_key="",
         current_key="missing=content",
@@ -150,4 +150,4 @@ def test_verification_gap_decision_stops_only_after_repeated_stagnation() -> Non
         stagnant_rounds=decision.stagnant_rounds,
     )
 
-    assert decision.action == STOP_STAGNANT_VERIFICATION_GAP
+    assert decision.action == PAUSE_STAGNANT_VERIFICATION_GAP

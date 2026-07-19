@@ -83,6 +83,14 @@ class TestFallbackExecutionPlan:
         plan = fallback_execution_plan(None)
         assert len(plan["steps"]) == 5
 
+    def test_fallback_is_neutral_across_modes(self):
+        coding = fallback_execution_plan("coding")
+        paper = fallback_execution_plan("paper")
+        general = fallback_execution_plan(None)
+
+        assert coding["steps"] == paper["steps"] == general["steps"]
+        assert all(not step["tool_hint"] for step in coding["steps"])
+
 
 class TestToolMatchesPlanStep:
     def test_exact_match(self):

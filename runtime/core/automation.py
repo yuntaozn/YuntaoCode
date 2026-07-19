@@ -8,6 +8,7 @@ or RunResult verification.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, time, timedelta, timezone
 from typing import Any, Literal
 
 
@@ -24,6 +25,15 @@ ConcurrencyPolicy = Literal["skip_if_running", "queue_next", "allow_parallel"]
 AUTOMATION_STATES: frozenset[str] = frozenset(AutomationState.__args__)  # type: ignore[attr-defined]
 TRIGGER_KINDS: frozenset[str] = frozenset(AutomationTriggerKind.__args__)  # type: ignore[attr-defined]
 CONCURRENCY_POLICIES: frozenset[str] = frozenset(ConcurrencyPolicy.__args__)  # type: ignore[attr-defined]
+WEEKDAY_INDEX: dict[str, int] = {
+    "mon": 0,
+    "tue": 1,
+    "wed": 2,
+    "thu": 3,
+    "fri": 4,
+    "sat": 5,
+    "sun": 6,
+}
 
 
 @dataclass(frozen=True)
@@ -170,3 +180,144 @@ def automation_task_seed(automation: Automation) -> dict[str, Any]:
     seed["automation_name"] = automation.name
     seed["trigger"] = automation.trigger.to_dict()
     return seed
+
+
+def automation_is_due(automation: Automation, *, now: datetime | None = None) -> bool:
+    """Return whether an active scheduled automation is due.
+
+    This is schedule evidence only.  It does not decide whether execution may
+    proceed; concurrency, permissions, confirmations, and actual work remain in
+    the normal Task/Run path.
+    """
+
+    if automation.state != "active" or automation.trigger.kind == "manual":
+        return False
+    scheduled = parse_automation_datetime(automation.next_run_at)
+    if scheduled is None:
+        return False
+    return scheduled <= _utc(now)
+
+
+def automation_next_run_at(
+    automation: Automation,
+    *,
+    now: datetime | None = None,
+) -> str:
+    """Return the next UTC ISO timestamp for an automation, or empty string."""
+
+    next_at = next_automation_run_datetime(automation, now=now)
+    if next_at is None:
+        return ""
+    return next_at.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def next_automation_run_datetime(
+    automation: Automation,
+    *,
+    now: datetime | None = None,
+) -> datetime | None:
+    """Compute the next scheduled time for supported 0.1 trigger kinds."""
+
+    if automation.state not in {"active", "draft"}:
+        return None
+    trigger = automation.trigger
+    current = _utc(now)
+    if trigger.kind == "manual":
+        return None
+    if trigger.kind == "once":
+        if automation.last_run_id:
+            return None
+        run_at = parse_automation_datetime(trigger.run_at)
+        return run_at if run_at and run_at > current else None
+    if trigger.kind == "interval":
+        seconds = max(60, int(trigger.interval_seconds or 0))
+        return current + timedelta(seconds=seconds)
+    if trigger.kind == "daily":
+        scheduled_time = _parse_time_of_day(trigger.time_of_day)
+        if scheduled_time is None:
+            return None
+        return _next_daily_datetime(current, scheduled_time)
+    if trigger.kind == "weekly":
+        scheduled_time = _parse_time_of_day(trigger.time_of_day)
+        if scheduled_time is None:
+            return None
+        weekdays = [
+            WEEKDAY_INDEX[item]
+            for item in trigger.days_of_week
+            if item in WEEKDAY_INDEX
+        ]
+        if not weekdays:
+            weekdays = [0]
+        return _next_weekly_datetime(current, scheduled_time, weekdays)
+    return None
+
+
+def parse_automation_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _next_daily_datetime(current: datetime, scheduled_time: time) -> datetime:
+    candidate = current.replace(
+        hour=scheduled_time.hour,
+        minute=scheduled_time.minute,
+        second=0,
+        microsecond=0,
+    )
+    if candidate <= current:
+        candidate += timedelta(days=1)
+    return candidate
+
+
+def _next_weekly_datetime(
+    current: datetime,
+    scheduled_time: time,
+    weekdays: list[int],
+) -> datetime:
+    for offset in range(0, 8):
+        candidate_date = current.date() + timedelta(days=offset)
+        if candidate_date.weekday() not in weekdays:
+            continue
+        candidate = datetime.combine(candidate_date, scheduled_time, tzinfo=current.tzinfo)
+        if candidate > current:
+            return candidate
+    return datetime.combine(
+        current.date() + timedelta(days=7),
+        scheduled_time,
+        tzinfo=current.tzinfo,
+    )
+
+
+def _parse_time_of_day(value: Any) -> time | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    pieces = text.split(":")
+    if len(pieces) < 2:
+        return None
+    try:
+        hour = int(pieces[0])
+        minute = int(pieces[1])
+    except ValueError:
+        return None
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return None
+    return time(hour=hour, minute=minute)
+
+
+def _utc(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)

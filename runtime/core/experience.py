@@ -1,7 +1,7 @@
 """Experience-layer schemas.
 
 Experience records capture reviewed Runbook evidence without implying that a
-reusable skill already exists or that runtime behavior should change.
+reusable capability already exists or that runtime behavior should change.
 """
 
 from __future__ import annotations

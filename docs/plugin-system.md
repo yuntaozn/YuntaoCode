@@ -1,14 +1,15 @@
-# Runtime Extension Contract Draft
+# Runtime Extension Boundary
 
-This document defines the early plugin direction for YuntaoCode as a Task Runtime extension contract.
+This document defines how plugin-shaped packages fit into YuntaoCode without
+becoming a separate execution system.
 
 The current release has a **Capabilities & Plugins** page. It groups built-in
 tools by tool ID prefix, such as `filesystem`, `code`, `shell`, `git`, and
 `web`, and may also show MCP-discovered capabilities, local Capability Packs,
 and legacy AI-built plugin drafts. These entries are capability provider views,
 not all third-party plugins. External plugin loading, remote indexes,
-auto-update, and marketplace distribution are intentionally out of scope until
-the Task Runtime contract is stable.
+auto-update, and marketplace distribution are outside the 0.1 foundation
+boundary.
 
 A plugin is a versioned, distributable package. It may contain model-facing
 skills, Capability Packs, MCP or CLI provider descriptors, external provider
@@ -41,15 +42,21 @@ and artifacts before execution. See
   imported through `runtime.skills.*` or registered by editing
   `runtime/skills/__init__.py`.
 
-## Goals
+## 0.1 Extension Gate
 
-- Define how an external capability should describe itself before it can be loaded.
-- Make filesystem, shell, network, and model permissions visible before execution.
-- Keep tool calls inside the normal Task Runtime path, including confirmation, trace, recovery, and audit.
-- Let dependency problems degrade one plugin instead of breaking the runtime.
-- Avoid coupling the core runtime to any single application domain, such as video, office documents, RAG, or browser automation.
+Extension work belongs in 0.1 only when it clarifies the Runtime boundary:
 
-## Current Boundary
+- capability and provider identity are explicit before execution;
+- filesystem, shell, network, model, and external-application permissions are
+  visible before execution;
+- tool calls stay inside the normal Task Runtime path, including confirmation,
+  trace, recovery, verification, and audit;
+- dependency problems degrade one provider or package without breaking the
+  runtime;
+- the core runtime stays independent from a single application domain such as
+  video, office documents, RAG, browser automation, CAD, or Blender.
+
+## Outside The 0.1 Foundation
 
 - Remote plugin marketplace.
 - Background auto-update.
@@ -317,10 +324,3 @@ ordinary plugin capability list. See [mcp-services.md](mcp-services.md).
 Connected MCP tools may appear in the capability page as a read-only capability
 group. That entry is a live capability view, not an installed plugin and not a
 second lifecycle control surface.
-
-## Open Questions
-
-- Which isolated subprocess or service boundary external providers should use;
-  in-process third-party loading is not the preferred default.
-- How plugin execution should report structured task artifacts.
-- How plugin signing should work after local plugin loading is stable.

@@ -1,7 +1,7 @@
 """Evaluation reports comparing a fixture with one RunEvidence view.
 
 Reports are local evidence comparisons. They do not replay tasks, call a
-model, execute tools, or promote skills. The goal is to make selected
+model, execute tools, or promote capabilities. The goal is to make selected
 regression samples useful before an automatic evaluation runner exists.
 """
 
@@ -108,6 +108,7 @@ def build_evaluation_report(
             "executes_replay": False,
             "calls_model": False,
             "calls_tools": False,
+            "promotes_capability": False,
             "promotes_skill": False,
             "uses_run_evidence": True,
         },
@@ -160,6 +161,7 @@ def _blocked_report(
             "executes_replay": False,
             "calls_model": False,
             "calls_tools": False,
+            "promotes_capability": False,
             "promotes_skill": False,
             "uses_run_evidence": True,
         },

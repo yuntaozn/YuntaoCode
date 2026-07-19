@@ -119,6 +119,8 @@ def debug_session_summary(session: dict[str, Any] | None) -> dict[str, Any] | No
             "exit_code": _optional_int(session.get("exit_code")),
             "timed_out": bool(session.get("timed_out")),
             "timeout": _optional_int(session.get("timeout")),
+            "started_at": session.get("started_at") or "",
+            "finished_at": session.get("finished_at") or "",
             "duration_seconds": _optional_float(session.get("duration_seconds")),
             "stdout_chars": _optional_int(session.get("stdout_chars")),
             "stderr_chars": _optional_int(session.get("stderr_chars")),
@@ -126,6 +128,7 @@ def debug_session_summary(session: dict[str, Any] | None) -> dict[str, Any] | No
             "stderr_truncated": bool(session.get("stderr_truncated")),
             "service": session.get("service") if isinstance(session.get("service"), dict) else {},
             "diagnostic_count": _optional_int(session.get("diagnostic_count")) or 0,
+            "heartbeat": session.get("heartbeat") if isinstance(session.get("heartbeat"), dict) else {},
             "status": session.get("status"),
             "has_runtime_errors": bool(session.get("has_runtime_errors")),
         }
@@ -147,6 +150,8 @@ def debug_session_summary(session: dict[str, Any] | None) -> dict[str, Any] | No
         "exit_code": process.get("exit_code"),
         "timed_out": bool(process.get("timed_out")),
         "timeout": process.get("timeout"),
+        "started_at": process.get("started_at") or "",
+        "finished_at": process.get("finished_at") or "",
         "duration_seconds": process.get("duration_seconds"),
         "stdout_chars": streams.get("stdout_chars"),
         "stderr_chars": streams.get("stderr_chars"),
@@ -154,6 +159,7 @@ def debug_session_summary(session: dict[str, Any] | None) -> dict[str, Any] | No
         "stderr_truncated": bool(streams.get("stderr_truncated")),
         "service": service,
         "diagnostic_count": len(session.get("diagnostics") or []),
+        "heartbeat": session.get("heartbeat") if isinstance(session.get("heartbeat"), dict) else {},
         "status": health.get("status"),
         "has_runtime_errors": bool(health.get("has_runtime_errors")),
     }

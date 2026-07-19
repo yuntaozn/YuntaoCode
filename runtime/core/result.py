@@ -24,7 +24,7 @@ RISK_CODES: frozenset[str] = frozenset({
     "execution_contract_failed",
     "max_rounds_exceeded",
     "repeated_tool_failure",
-    "capability_preflight_blocked",
+    "capability_preflight_advisory",
     "model_provider_error",
     "invalid_tool_call_protocol",
     "invalid_final_answer",
@@ -54,6 +54,7 @@ class RuntimeResult:
     verified: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     verification_evidence: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     required_verification_strength: str = "none"
+    capability_advisories: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     failures: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     failure_details: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     risks: tuple[str, ...] = field(default_factory=tuple)
@@ -70,6 +71,7 @@ class RuntimeResult:
             "verified": [dict(item) for item in self.verified],
             "verification_evidence": [dict(item) for item in self.verification_evidence],
             "required_verification_strength": self.required_verification_strength,
+            "capability_advisories": [dict(item) for item in self.capability_advisories],
             "failures": [dict(item) for item in self.failures],
             "failure_details": [dict(item) for item in self.failure_details],
             "risks": list(self.risks),

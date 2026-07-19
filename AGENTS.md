@@ -70,9 +70,9 @@ foundation easier to understand, test, and extend.
   - `task.py`: Task, Plan, Step, and state transition contracts.
   - `experience.py`: Experience Sample and Experience Digest contracts extracted
     from reviewed Runbook evidence.
-  - `skill_evolution.py`: passive Skill Candidate, Replay Fixture, Replay Result,
-    and Promotion data contracts. This is not a plugin loader and must not
-    register AI-generated code.
+  - `replay_fixture.py`: passive Replay Fixture records derived from selected
+    Runbook evidence. This is not a plugin loader and must not register
+    AI-generated code.
 - `runtime/api/`
   - Tornado API handlers and streaming endpoints.
 - `runtime/tool_event_presentation.py`
@@ -103,7 +103,6 @@ foundation easier to understand, test, and extend.
   - `persistence-model.md`: operational data boundaries and SQLite direction.
   - `experience-runtime.md`: Experience Sample / Digest layer for reviewed Run
     evidence.
-  - `skill-evolution.md`: passive Skill Candidate data contracts.
   - `evaluation.md`: local evaluation records for selected task fixtures; not a
     standalone benchmark product.
 
@@ -116,8 +115,8 @@ foundation easier to understand, test, and extend.
   `docs/capability-runtime.md`.
 - New work should clarify one of: Task Model, lifecycle, trace, recovery,
   verification, template, or tool capability boundaries.
-- Skill Candidate work should stay passive and evidence-backed. It must not make
-  AI-generated code executable in the trusted runtime by default.
+- Replay and experience work should stay passive and evidence-backed. It must
+  not make AI-generated code executable in the trusted runtime by default.
 - Evaluation work should start from selected task fixtures and RunResult
   evidence. Do not add automatic task collection, remote upload, or public
   leaderboard behavior without an explicit product and privacy design.

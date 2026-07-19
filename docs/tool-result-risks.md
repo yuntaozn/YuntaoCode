@@ -39,7 +39,7 @@ does not treat that command as clean verification evidence.
 Non-blocking execution advisories, such as `document_contract_advisory`,
 `verification_runtime_advisory`, and `capability_fallback_advisory`, also flow
 through `runtime_risks`. They are evidence for the model and audit trail, not
-tool-call blockers.
+tool-call route locks.
 
 Risks are advisory by default. The model may repair the artifact, continue with
 an explicit assumption, or stop and report the issue. Safety and permission

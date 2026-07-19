@@ -15,11 +15,16 @@ def test_known_run_result_risks_have_schema_codes() -> None:
     assert "invalid_tool_call_protocol" in RISK_CODES
     assert "artifact_integrity_invalid" in RISK_CODES
     assert "shell_stderr_warning" in RISK_CODES
+    assert "capability_preflight_advisory" in RISK_CODES
+    assert "capability_preflight_blocked" not in RISK_CODES
 
 
 def test_risk_presenter_uses_user_facing_message() -> None:
     assert risk_message_zh("document_output_length_unknown") != "document_output_length_unknown"
     assert "无法确认文档输出长度" in risk_message_zh("document_output_length_unknown")
+    assert risk_message_zh("max_rounds_exceeded") == "当前执行预算已用完。"
+    assert "反复无新进展" in risk_message_zh("repeated_tool_failure")
+    assert "能力预检提示" in risk_message_zh("capability_preflight_advisory")
 
 
 def test_partial_answer_maps_risks_to_user_facing_messages() -> None:

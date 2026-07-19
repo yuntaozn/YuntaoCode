@@ -112,7 +112,7 @@ RouteProposal 是模型对任务的结构化理解，Capability 是 Runtime 对�
     }
   ],
   "first_action": "write",
-  "blockers": [],
+  "execution_advisories": [],
   "confidence": 0.8
 }
 ```

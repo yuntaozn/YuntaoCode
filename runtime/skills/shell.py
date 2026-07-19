@@ -306,6 +306,7 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
         "info",
         f"running: {display_command[:200]}",
         {
+            "kind": "command_start",
             "cwd": cwd,
             "timeout": timeout,
             "command_role": command_facts.role,

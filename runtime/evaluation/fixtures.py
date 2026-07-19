@@ -133,6 +133,7 @@ def build_evaluation_fixture_from_evidence(
             "local_only": True,
             "remote_submission": False,
             "executes_replay": False,
+            "promotes_capability": False,
             "promotes_skill": False,
         },
     }

@@ -20,6 +20,7 @@ def test_build_debug_session_records_process_streams_and_health() -> None:
         timeout=30,
         diagnostics=[{"code": "syntax_error"}],
         duration_seconds=0.42,
+        heartbeat={"last_progress_at": "2026-07-01T00:00:00Z"},
     )
 
     assert session["schema_version"] == DEBUG_SESSION_SCHEMA_VERSION
@@ -27,6 +28,7 @@ def test_build_debug_session_records_process_streams_and_health() -> None:
     assert session["process"]["pid"] == 123
     assert session["streams"]["stderr_chars"] == len("SyntaxError")
     assert session["diagnostics"][0]["code"] == "syntax_error"
+    assert session["heartbeat"]["last_progress_at"] == "2026-07-01T00:00:00Z"
     assert session["health"]["status"] == "failed"
     assert session["health"]["has_runtime_errors"] is True
 
@@ -72,6 +74,9 @@ def test_debug_session_summary_accepts_compact_summary() -> None:
         "stderr_truncated": False,
         "service": {"kind": "browser_preview", "status_code": 200},
         "diagnostic_count": 0,
+        "started_at": "2026-07-01T00:00:00Z",
+        "finished_at": "2026-07-01T00:00:13Z",
+        "heartbeat": {"last_progress_at": "2026-07-01T00:00:12Z"},
         "status": "success",
         "has_runtime_errors": False,
     })
@@ -81,5 +86,7 @@ def test_debug_session_summary_accepts_compact_summary() -> None:
     assert summary["command"].startswith("playwright capture")
     assert summary["exit_code"] == 0
     assert summary["duration_seconds"] == 13.165
+    assert summary["started_at"] == "2026-07-01T00:00:00Z"
+    assert summary["heartbeat"]["last_progress_at"] == "2026-07-01T00:00:12Z"
     assert summary["service"]["status_code"] == 200
     assert summary["status"] == "success"

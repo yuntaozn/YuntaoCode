@@ -155,6 +155,19 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
             "status": "partial",
             "risks": ["write_not_verified"],
             "verification_evidence": [],
+            "debug_sessions": [
+                {
+                    "schema_version": "debug_session.v1",
+                    "kind": "debug_session",
+                    "source_type": "preview.capture_page",
+                    "command": "playwright capture http://127.0.0.1:1234/viewer.html",
+                    "executable": "playwright.chromium",
+                    "service": {"kind": "browser_preview", "status_code": 200},
+                    "diagnostic_count": 0,
+                    "status": "success",
+                    "has_runtime_errors": False,
+                }
+            ],
         },
     })
     store.record_event(run.id, {
@@ -244,6 +257,12 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
     assert evidence["capability_snapshot"]["preferred_tool_ids"] == ["filesystem.write_file"]
     assert evidence["visual_context"][0]["tool"] == "preview.capture_local_html"
     assert evidence["visual_context"][0]["injected_into_model_context"] is True
+    assert evidence["visual_verification"]["schema_version"] == "visual_verification.v1"
+    assert evidence["visual_verification"]["counts"]["model_context_records"] == 1
+    assert evidence["visual_verification"]["flags"]["model_context_injected"] is True
+    assert evidence["debug_audit"]["schema_version"] == "debug_audit.v1"
+    assert evidence["debug_audit"]["counts"]["preview_sessions"] == 1
+    assert evidence["debug_audit"]["flags"]["has_preview_service"] is True
     assert evidence["tool_steps"][0]["declared_capability"] == "code.text_write"
     assert evidence["completion_decisions"][0]["action"] == "final_answer_candidate"
     assert evidence["risks"] == ["write_not_verified"]

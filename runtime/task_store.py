@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from .persistence import AtomicJsonDocumentStorage, DocumentStorage
+from .tool_task_summary import build_tool_task_progress
 
 
 TOOL_TASK_STORE_SCHEMA_VERSION = "0.1"
@@ -51,6 +52,7 @@ class TaskRecord:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "logs": self.logs,
+            "progress": build_tool_task_progress(self),
         }
 
 

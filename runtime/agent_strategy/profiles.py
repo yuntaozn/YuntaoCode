@@ -74,7 +74,13 @@ def profile_for_task_intent(
     state_change_intent: bool = False,
     first_action: str | None = None,
 ) -> AgentProfile:
-    """Resolve the internal profile for a classified task intent."""
+    """Resolve the internal profile from the model-declared task contract.
+
+    ``mode`` is accepted for legacy call sites, but it must not route an
+    otherwise neutral task. The unified terminal keeps task semantics with the
+    model contract instead of resurrecting old user-facing assistant modes.
+    """
+    _ = mode
     if task_intent == "document_export":
         return DOCUMENT_PROFILE
     if task_intent == "paper_workflow":
@@ -84,19 +90,11 @@ def profile_for_task_intent(
     if state_change_intent:
         return EXECUTION_PROFILE
     if task_intent == "write_required":
-        if mode == "paper":
-            return PAPER_PROFILE
         return CODING_PROFILE
     if task_intent == "answer_only":
         if str(first_action or "").strip() in {"read", "search", "use_tool", "verify"}:
             return ANALYSIS_PROFILE
         return CHAT_PROFILE
-    if mode == "paper":
-        return PAPER_PROFILE
-    if mode == "document":
-        return DOCUMENT_PROFILE
-    if mode == "coding":
-        return CODING_PROFILE
     return ANALYSIS_PROFILE
 
 

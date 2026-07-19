@@ -12,7 +12,7 @@ COMPLETION_REVIEW = "completion_review"
 FINAL_ANSWER_VERIFIED = "final_answer_verified"
 FINAL_ANSWER_CONVERGED = "final_answer_converged"
 CONTINUE_VERIFICATION_GAP = "continue_verification_gap"
-STOP_STAGNANT_VERIFICATION_GAP = "stop_stagnant_verification_gap"
+PAUSE_STAGNANT_VERIFICATION_GAP = "pause_stagnant_verification_gap"
 
 
 @dataclass(frozen=True)
@@ -148,7 +148,7 @@ def build_verification_gap_decision(
         and next_stagnant_rounds >= max(1, max_stagnant_rounds)
     ):
         return VerificationGapDecision(
-            STOP_STAGNANT_VERIFICATION_GAP,
+            PAUSE_STAGNANT_VERIFICATION_GAP,
             "verification gap remained unchanged across repeated rounds",
             next_prompt_count,
             next_stagnant_rounds,

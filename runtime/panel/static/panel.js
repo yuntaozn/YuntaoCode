@@ -430,7 +430,7 @@ async function runTaskHistoryAction(action, runId, button) {
         downloadJson(data.filename || `yuntaocode-diagnostic-${runId}.json`, data);
         showToast(t('tasks.diagnostic_exported'));
     } else if (action === "export_fixture") {
-        downloadJson(data.filename || `yuntaocode-skill-sample-${runId}.json`, data);
+        downloadJson(data.filename || `yuntaocode-experience-sample-${runId}.json`, data);
         showToast(t('tasks.fixture_exported'));
     } else if (action === "replay" || (action === "resume" && data?.prepared_run)) {
         showToast(t('tasks.prepared'));
@@ -455,6 +455,9 @@ function renderRunWorkbench(workbench) {
     const plan = workbench?.plan || {};
     const workspace = workbench?.workspace || {};
     const contextEvidence = workbench?.context_evidence || {};
+    const contextAudit = workbench?.context_audit || {};
+    const visualVerification = workbench?.visual_verification || {};
+    const debugAudit = workbench?.debug_audit || {};
     const contextPack = workbench?.context_pack || {};
     const completionDecisions = Array.isArray(workbench?.completion_decisions) ? workbench.completion_decisions : [];
     const timeline = Array.isArray(workbench?.timeline) ? workbench.timeline : [];
@@ -477,6 +480,9 @@ function renderRunWorkbench(workbench) {
             ${renderWorkbenchSection(t('tasks.audit'), renderWorkbenchAudit(audit), "full")}
             ${renderWorkbenchSection(t('tasks.workspace_snapshot'), renderWorkbenchWorkspace(workspace))}
             ${renderWorkbenchSection(t('tasks.context_evidence'), renderWorkbenchContextEvidence(contextEvidence), "full")}
+            ${renderWorkbenchSection(t('tasks.context_audit'), renderWorkbenchContextAudit(contextAudit), "full")}
+            ${renderWorkbenchSection(t('tasks.visual_verification'), renderWorkbenchVisualVerification(visualVerification), "full")}
+            ${renderWorkbenchSection(t('tasks.debug_audit'), renderWorkbenchDebugAudit(debugAudit), "full")}
             ${renderWorkbenchSection(t('tasks.context_pack'), renderWorkbenchContextPack(contextPack))}
             ${renderWorkbenchSection(t('tasks.artifacts'), renderWorkbenchArtifacts(artifacts))}
             ${renderWorkbenchSection(t('tasks.verification'), renderWorkbenchVerification(verification))}
@@ -628,6 +634,336 @@ function renderWorkbenchContextEvidence(summary) {
 
     if (!rows.length) return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
     return `<ul class="task-workbench-list">${rows.join("")}</ul>`;
+}
+
+function renderWorkbenchContextAudit(audit) {
+    if (!audit || typeof audit !== "object" || audit.kind !== "context_audit") {
+        return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    }
+    const counts = audit.counts && typeof audit.counts === "object" ? audit.counts : {};
+    const flags = audit.flags && typeof audit.flags === "object" ? audit.flags : {};
+    const phases = Array.isArray(audit.phase_summary) ? audit.phase_summary : [];
+    const sourceSummary = Array.isArray(audit.source_summary) ? audit.source_summary : [];
+    const trustSummary = Array.isArray(audit.trust_summary) ? audit.trust_summary : [];
+    const freshnessSummary = Array.isArray(audit.freshness_summary) ? audit.freshness_summary : [];
+    const historicalRecords = Array.isArray(audit.historical_records) ? audit.historical_records : [];
+    const hygieneRecords = Array.isArray(audit.hygiene_records) ? audit.hygiene_records : [];
+    const rows = [];
+
+    rows.push(`
+        <li>
+            <strong>${escapeHtml(t('tasks.context_audit_boundary_title'))}</strong>
+            <span>${escapeHtml(audit.boundary === "audit_only" ? t('tasks.context_audit_boundary') : audit.boundary || "")}</span>
+        </li>
+    `);
+
+    rows.push(`
+        <li>
+            <strong>${escapeHtml(t('tasks.context_audit_counts'))}</strong>
+            <span>${escapeHtml([
+                `${t('tasks.context_packs')}：${Number(counts.context_packs || 0)}`,
+                `${t('tasks.context_records')}：${Number(counts.records || 0)}`,
+                `${t('tasks.tokens')}：${Number(counts.token_estimate || 0)}`,
+                `${t('tasks.context_current_records')}：${Number(counts.current_records || 0)}`,
+                `${t('tasks.context_historical_records')}：${Number(counts.historical_records || 0)}`,
+                `${t('tasks.context_memory_records')}：${Number(counts.memory_records || 0)}`,
+                `${t('tasks.context_lineage_records')}：${Number(counts.task_lineage_records || 0)}`,
+                `${t('tasks.context_previous_contract_records')}：${Number(counts.previous_contract_records || 0)}`,
+                `${t('tasks.context_hygiene_records')}：${Number(counts.hygiene_records || 0)}`,
+            ].join(" · "))}</span>
+        </li>
+    `);
+
+    if (flags.has_task_id_gaps || Number(counts.different_task_records || 0)) {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(t('tasks.context_task_identity'))}</strong>
+                <span>${escapeHtml([
+                    audit.run_task_id ? `${t('tasks.task_id')}：${audit.run_task_id}` : "",
+                    `${t('tasks.context_task_id_gaps')}：${Number(counts.records_without_task_id || 0)}`,
+                    `${t('tasks.context_different_task_records')}：${Number(counts.different_task_records || 0)}`,
+                ].filter(Boolean).join(" · "))}</span>
+            </li>
+        `);
+    }
+
+    phases.slice(0, 8).forEach((item) => {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(`${t('tasks.context_phase')}：${item.phase || "-"}`)}</strong>
+                <span>${escapeHtml([
+                    `${t('tasks.context_packs')}：${Number(item.pack_count || 0)}`,
+                    `${t('tasks.context_records')}：${Number(item.record_count || 0)}`,
+                    `${t('tasks.tokens')}：${Number(item.token_estimate || 0)}`,
+                    `${t('tasks.context_historical_records')}：${Number(item.historical_records || 0)}`,
+                    Array.isArray(item.record_kinds) && item.record_kinds.length ? `${t('tasks.context_record_kinds')}：${item.record_kinds.slice(0, 8).join(" · ")}` : "",
+                ].filter(Boolean).join(" · "))}</span>
+            </li>
+        `);
+    });
+
+    const distributionText = [
+        renderAuditCounterSummary(sourceSummary, "source_type", t('tasks.source_types')),
+        renderAuditCounterSummary(trustSummary, "trust", t('tasks.trust_levels')),
+        renderAuditCounterSummary(freshnessSummary, "freshness", t('tasks.freshness_levels')),
+    ].filter(Boolean).join(" · ");
+    if (distributionText) {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(t('tasks.context_distribution'))}</strong>
+                <span>${escapeHtml(distributionText)}</span>
+            </li>
+        `);
+    }
+
+    historicalRecords.slice(0, 6).forEach((item) => {
+        rows.push(renderWorkbenchContextAuditRecord(t('tasks.context_historical_record'), item));
+    });
+    hygieneRecords.slice(0, 4).forEach((item) => {
+        rows.push(renderWorkbenchContextAuditRecord(t('tasks.context_hygiene_record'), item));
+    });
+
+    return `<ul class="task-workbench-list">${rows.join("")}</ul>`;
+}
+
+function renderAuditCounterSummary(items, key, title) {
+    if (!items.length) return "";
+    return `${title}：${items.slice(0, 4).map((item) => `${item[key] || "unknown"}(${Number(item.count || 0)})`).join(" / ")}`;
+}
+
+function renderWorkbenchContextAuditRecord(title, item) {
+    return `
+        <li>
+            <strong>${escapeHtml(title)}</strong>
+            <span>${escapeHtml([
+                item.phase || "",
+                item.kind || "",
+                item.source_type || "",
+                item.trust || "",
+                item.freshness || "",
+                item.task_id ? `${t('tasks.task_id')}：${item.task_id}` : "",
+            ].filter(Boolean).join(" · "))}</span>
+            ${item.content_preview ? `<code>${escapeHtml(item.content_preview)}</code>` : ""}
+        </li>
+    `;
+}
+
+function renderWorkbenchVisualVerification(summary) {
+    if (!summary || typeof summary !== "object" || summary.kind !== "visual_verification") {
+        return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    }
+    const counts = summary.counts && typeof summary.counts === "object" ? summary.counts : {};
+    const flags = summary.flags && typeof summary.flags === "object" ? summary.flags : {};
+    const modalities = summary.modalities && typeof summary.modalities === "object" ? summary.modalities : {};
+    const sources = summary.sources && typeof summary.sources === "object" ? summary.sources : {};
+    const records = Array.isArray(summary.records) ? summary.records : [];
+    const contextRecords = Array.isArray(summary.model_context_records) ? summary.model_context_records : [];
+    const debugSessions = Array.isArray(summary.debug_sessions) ? summary.debug_sessions : [];
+    const rows = [];
+
+    rows.push(`
+        <li>
+            <strong>${escapeHtml(t('tasks.visual_boundary'))}</strong>
+            <span>${escapeHtml(summary.boundary === "evidence_only" ? t('tasks.visual_boundary_evidence_only') : summary.boundary || "")}</span>
+        </li>
+    `);
+
+    rows.push(`
+        <li>
+            <strong>${escapeHtml(t('tasks.visual_verification_counts'))}</strong>
+            <span>${escapeHtml([
+                `${t('tasks.visual_evidence')}：${Number(counts.visual_evidence || 0)}`,
+                `${t('tasks.visual_verification_records')}：${Number(counts.visual_verification_records || 0)}`,
+                `${t('tasks.debug_sessions')}：${Number(counts.debug_sessions || 0)}`,
+                `${t('tasks.model_context_used')}：${Number(counts.model_context_injected || 0)}`,
+                `${t('tasks.visual_runtime_errors')}：${Number(counts.runtime_error_records || 0)}`,
+                `${t('tasks.console_errors')}：${Number(counts.console_errors || 0)}`,
+                `${t('tasks.page_errors')}：${Number(counts.page_errors || 0)}`,
+                `${t('tasks.failed_requests')}：${Number(counts.failed_requests || 0)}`,
+            ].join(" · "))}</span>
+        </li>
+    `);
+
+    rows.push(`
+        <li>
+            <strong>${escapeHtml(t('tasks.visual_facts'))}</strong>
+            <span>${escapeHtml([
+                flags.visual_required ? t('tasks.visual_required') : "",
+                flags.visual_observed ? t('tasks.visual_observed') : "",
+                flags.visual_missing ? t('tasks.visual_missing') : "",
+                flags.has_runtime_errors ? t('tasks.runtime_errors_seen') : "",
+                flags.model_context_available ? t('tasks.model_context_available') : "",
+                flags.model_context_injected ? t('tasks.model_context_injected') : "",
+            ].filter(Boolean).join(" · ") || t('tasks.none'))}</span>
+        </li>
+    `);
+
+    const modalityText = [
+        Array.isArray(modalities.required) && modalities.required.length ? `${t('tasks.required_modalities')}：${modalities.required.join(" · ")}` : "",
+        Array.isArray(modalities.observed) && modalities.observed.length ? `${t('tasks.observed_modalities')}：${modalities.observed.join(" · ")}` : "",
+        Array.isArray(modalities.missing) && modalities.missing.length ? `${t('tasks.missing_modalities')}：${modalities.missing.join(" · ")}` : "",
+    ].filter(Boolean).join(" · ");
+    if (modalityText) {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(t('tasks.visual_modalities'))}</strong>
+                <span>${escapeHtml(modalityText)}</span>
+            </li>
+        `);
+    }
+
+    const sourceText = [
+        Array.isArray(sources.tools) && sources.tools.length ? `${t('tasks.tools')}：${sources.tools.join(" · ")}` : "",
+        Array.isArray(sources.source_types) && sources.source_types.length ? `${t('tasks.source_types')}：${sources.source_types.join(" · ")}` : "",
+    ].filter(Boolean).join(" · ");
+    if (sourceText) {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(t('tasks.visual_sources'))}</strong>
+                <span>${escapeHtml(sourceText)}</span>
+            </li>
+        `);
+    }
+
+    records.slice(0, 8).forEach((item) => {
+        rows.push(renderWorkbenchVisualRecord(t('tasks.visual_evidence'), item));
+    });
+    contextRecords.slice(0, 4).forEach((item) => {
+        rows.push(renderWorkbenchVisualRecord(t('tasks.model_context_record'), item));
+    });
+    debugSessions.slice(0, 4).forEach((item) => {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(item.source_type || item.tool || t('tasks.debug_session'))}</strong>
+                <span>${escapeHtml([
+                    item.status || "",
+                    item.exit_code != null ? `exit=${item.exit_code}` : "",
+                    item.timed_out ? t('tasks.timed_out') : "",
+                    item.has_runtime_errors ? t('tasks.runtime_errors_seen') : "",
+                    item.diagnostic_count ? `${t('tasks.diagnostics')}：${Number(item.diagnostic_count || 0)}` : "",
+                ].filter(Boolean).join(" · "))}</span>
+                ${item.command ? `<code>${escapeHtml(item.command)}</code>` : ""}
+            </li>
+        `);
+    });
+
+    return `<ul class="task-workbench-list">${rows.join("")}</ul>`;
+}
+
+function renderWorkbenchVisualRecord(title, item) {
+    return `
+        <li>
+            <strong>${escapeHtml(title)}</strong>
+            <span>${escapeHtml([
+                item.tool || "",
+                item.source_type || "",
+                item.artifact_kind || "",
+                item.format || "",
+                item.width && item.height ? `${item.width}x${item.height}` : "",
+                item.has_runtime_errors ? t('tasks.runtime_errors_seen') : "",
+                item.injected_into_model_context ? t('tasks.model_context_injected') : "",
+            ].filter(Boolean).join(" · "))}</span>
+            ${item.path ? `<code>${escapeHtml(item.path)}</code>` : ""}
+        </li>
+    `;
+}
+
+function renderWorkbenchDebugAudit(audit) {
+    if (!audit || typeof audit !== "object" || audit.kind !== "debug_audit") {
+        return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    }
+    const counts = audit.counts && typeof audit.counts === "object" ? audit.counts : {};
+    const flags = audit.flags && typeof audit.flags === "object" ? audit.flags : {};
+    const records = Array.isArray(audit.records) ? audit.records : [];
+    const installSessions = Array.isArray(audit.dependency_install_sessions) ? audit.dependency_install_sessions : [];
+    const previewSessions = Array.isArray(audit.preview_sessions) ? audit.preview_sessions : [];
+    const serviceSessions = Array.isArray(audit.service_sessions) ? audit.service_sessions : [];
+    const longSessions = Array.isArray(audit.long_sessions) ? audit.long_sessions : [];
+    const problemSessions = Array.isArray(audit.problem_sessions) ? audit.problem_sessions : [];
+    const rows = [];
+
+    rows.push(`
+        <li>
+            <strong>${escapeHtml(t('tasks.debug_boundary'))}</strong>
+            <span>${escapeHtml(audit.boundary === "evidence_only" ? t('tasks.debug_boundary_evidence_only') : audit.boundary || "")}</span>
+        </li>
+    `);
+
+    rows.push(`
+        <li>
+            <strong>${escapeHtml(t('tasks.debug_audit_counts'))}</strong>
+            <span>${escapeHtml([
+                `${t('tasks.debug_sessions')}：${Number(counts.debug_sessions || 0)}`,
+                `${t('tasks.dependency_install_sessions')}：${Number(counts.dependency_install_sessions || 0)}`,
+                `${t('tasks.preview_sessions')}：${Number(counts.preview_sessions || 0)}`,
+                `${t('tasks.service_sessions')}：${Number(counts.service_sessions || 0)}`,
+                `${t('tasks.timed_out')}：${Number(counts.timed_out_sessions || 0)}`,
+                `${t('tasks.failed_sessions')}：${Number(counts.failed_sessions || 0)}`,
+                `${t('tasks.warning_sessions')}：${Number(counts.warning_sessions || 0)}`,
+                `${t('tasks.runtime_errors_seen')}：${Number(counts.runtime_error_sessions || 0)}`,
+                `${t('tasks.long_sessions')}：${Number(counts.long_sessions || 0)}`,
+                `${t('tasks.diagnostics')}：${Number(counts.diagnostics || 0)}`,
+            ].join(" · "))}</span>
+        </li>
+    `);
+
+    rows.push(`
+        <li>
+            <strong>${escapeHtml(t('tasks.debug_facts'))}</strong>
+            <span>${escapeHtml([
+                flags.has_dependency_install ? t('tasks.has_dependency_install') : "",
+                flags.has_preview_service ? t('tasks.has_preview_service') : "",
+                flags.has_service_evidence ? t('tasks.has_service_evidence') : "",
+                flags.has_port_or_process_check ? t('tasks.has_port_or_process_check') : "",
+                flags.has_timeout ? t('tasks.has_timeout') : "",
+                flags.has_failure ? t('tasks.has_failure') : "",
+                flags.has_warning ? t('tasks.has_warning') : "",
+                flags.has_runtime_errors ? t('tasks.runtime_errors_seen') : "",
+                flags.has_long_session ? t('tasks.has_long_session') : "",
+                flags.has_truncated_streams ? t('tasks.has_truncated_streams') : "",
+            ].filter(Boolean).join(" · ") || t('tasks.none'))}</span>
+        </li>
+    `);
+
+    [
+        ...installSessions.slice(0, 4).map((item) => [t('tasks.dependency_install_session'), item]),
+        ...previewSessions.slice(0, 4).map((item) => [t('tasks.preview_session'), item]),
+        ...serviceSessions.slice(0, 3).map((item) => [t('tasks.service_session'), item]),
+        ...longSessions.slice(0, 3).map((item) => [t('tasks.long_session'), item]),
+        ...problemSessions.slice(0, 6).map((item) => [t('tasks.problem_session'), item]),
+    ].forEach(([title, item]) => {
+        rows.push(renderWorkbenchDebugRecord(title, item));
+    });
+
+    if (!installSessions.length && !previewSessions.length && !serviceSessions.length && !longSessions.length && !problemSessions.length) {
+        records.slice(0, 6).forEach((item) => {
+            rows.push(renderWorkbenchDebugRecord(t('tasks.debug_session'), item));
+        });
+    }
+
+    return `<ul class="task-workbench-list">${rows.join("")}</ul>`;
+}
+
+function renderWorkbenchDebugRecord(title, item) {
+    const duration = Number.isFinite(Number(item.duration_seconds)) && Number(item.duration_seconds) > 0
+        ? `${Number(item.duration_seconds).toFixed(1)}s`
+        : "";
+    return `
+        <li>
+            <strong>${escapeHtml(title)}</strong>
+            <span>${escapeHtml([
+                item.role || "",
+                item.source_type || "",
+                item.status || "",
+                item.exit_code != null ? `exit=${item.exit_code}` : "",
+                item.timed_out ? t('tasks.timed_out') : "",
+                duration,
+                item.diagnostic_count ? `${t('tasks.diagnostics')}：${Number(item.diagnostic_count || 0)}` : "",
+                item.stderr_chars ? `stderr=${Number(item.stderr_chars || 0)}` : "",
+            ].filter(Boolean).join(" · "))}</span>
+            ${item.command ? `<code>${escapeHtml(item.command)}</code>` : ""}
+        </li>
+    `;
 }
 
 function renderWorkbenchSection(title, body, extraClass = "") {
@@ -2177,10 +2513,10 @@ async function sendMessage(event) {
         if (metadata.waitingConfirmation) {
             metadata.statusText = baseStatusText;
             setStatusBarElapsed("");
-        } else if ((metadata.consecutiveToolFailures || 0) >= 2) {
+        } else if ((metadata.routeAttemptCount || metadata.consecutiveToolFailures || 0) >= 2) {
             metadata.statusText = t('status.repeated_tool_failures', {
                 tool: metadata.lastFailedTool || t('status.unknown_tool'),
-                count: metadata.consecutiveToolFailures,
+                count: metadata.routeAttemptCount || metadata.consecutiveToolFailures,
             });
         } else if (metadata.silentSeconds >= 15) {
             const waitingPhases = [
@@ -2257,6 +2593,11 @@ async function sendMessage(event) {
                     touchProgress(eventData.message || t('status.thinking'));
                     updateActiveStreamState("running", eventData.status || "status", eventData.message || t('status.thinking'));
                     showStatusBar(eventData.message || t('status.thinking'));
+                    if (eventData.status === "repeated_route_observed" || eventData.status === "repeated_tool_failure") {
+                        currentMetadata.executionConvergence = eventData.execution_convergence || eventData.convergence || null;
+                        currentMetadata.routeAttemptCount = eventData.route_attempt_count || 0;
+                        currentMetadata.lastFailedTool = eventData.tool || currentMetadata.lastFailedTool || "";
+                    }
                     streamingMessages[assistantIndex].metadata = {
                         ...currentMetadata,
                         pending: true,
@@ -2284,6 +2625,17 @@ async function sendMessage(event) {
                     metadata.connectionAlive = eventData.connection_alive !== false;
                     metadata.heartbeatPhase = eventData.phase || "";
                     metadata.modelIdleSeconds = eventData.idle_seconds || 0;
+                    if (eventData.progress && (eventData.task_id || eventData.tool)) {
+                        const toolEvents = metadata.tool_events || [];
+                        const toolIndex = findToolEventIndex(toolEvents, eventData);
+                        if (toolIndex >= 0) {
+                            toolEvents[toolIndex] = {
+                                ...toolEvents[toolIndex],
+                                progress: eventData.progress,
+                            };
+                            metadata.tool_events = toolEvents;
+                        }
+                    }
                     streamingMessages[assistantIndex].metadata = metadata;
                     updateActiveStreamState("running", "heartbeat", metadata.statusText || metadata.baseStatusText || t('status.model_still_processing'));
                     if (Date.now() - lastProgressRenderAt >= 5000) {
@@ -2356,18 +2708,7 @@ async function sendMessage(event) {
                     }
                     const metadata = streamingMessages[assistantIndex].metadata || {};
                     const toolEvents = metadata.tool_events || [];
-                    let toolIndex = eventData.task_id
-                        ? toolEvents.findIndex((item) => item.task_id === eventData.task_id)
-                        : -1;
-                    if (toolIndex < 0) {
-                        for (let index = toolEvents.length - 1; index >= 0; index -= 1) {
-                            if (toolEvents[index].status === "running"
-                                && (!eventData.tool || toolEvents[index].tool === eventData.tool)) {
-                                toolIndex = index;
-                                break;
-                            }
-                        }
-                    }
+                    const toolIndex = findToolEventIndex(toolEvents, eventData);
                     if (toolIndex >= 0) {
                         const current = toolEvents[toolIndex];
                         const logs = [...(current.logs || []), {
@@ -2375,7 +2716,11 @@ async function sendMessage(event) {
                             message: logMessage,
                             data: eventData.data || {},
                         }].slice(-120);
-                        toolEvents[toolIndex] = { ...current, logs };
+                        toolEvents[toolIndex] = {
+                            ...current,
+                            logs,
+                            progress: eventData.progress || current.progress || null,
+                        };
                     }
                     metadata.tool_events = toolEvents;
                     metadata.pending = true;
@@ -2408,6 +2753,8 @@ async function sendMessage(event) {
                         metadata.lastFailureError = eventData.error || "";
                     } else if (eventData.status === "success") {
                         metadata.consecutiveToolFailures = 0;
+                        metadata.routeAttemptCount = 0;
+                        metadata.executionConvergence = null;
                         metadata.lastFailureSignature = "";
                         metadata.lastFailedTool = "";
                         metadata.lastFailureError = "";
@@ -2417,7 +2764,7 @@ async function sendMessage(event) {
                         metadata.strategyChangeText = "";
                     }
                     const toolEvents = metadata.tool_events || [];
-                    const existIdx = toolEvents.findIndex((e) => e.tool === eventData.tool && e.status === "running");
+                    const existIdx = findToolEventIndex(toolEvents, eventData);
                     const toolEntry = {
                         status: eventData.status,
                         tool: eventData.tool,
@@ -2426,10 +2773,11 @@ async function sendMessage(event) {
                         task_id: eventData.task_id || "",
                         error: eventData.error || "",
                         output: eventData.output || null,
+                        progress: eventData.progress || (existIdx >= 0 ? toolEvents[existIdx].progress || null : null),
                         logs: existIdx >= 0 ? (toolEvents[existIdx].logs || []) : [],
                     };
-                    if (existIdx >= 0 && eventData.status !== "running") {
-                        toolEvents[existIdx] = toolEntry;
+                    if (existIdx >= 0) {
+                        toolEvents[existIdx] = { ...toolEvents[existIdx], ...toolEntry };
                     } else {
                         toolEvents.push(toolEntry);
                     }
@@ -3062,12 +3410,72 @@ function renderToolEvents(message) {
                         <strong>${escapeHtml(item.name || item.tool)}</strong>
                     </div>
                 `;
+                const progressHtml = renderToolProgress(item);
                 const logsHtml = renderToolLogs(item);
                 const outputHtml = renderToolOutput(item);
-                return header + logsHtml + outputHtml;
+                return header + progressHtml + logsHtml + outputHtml;
             }).join("")}
         </div>
     `;
+}
+
+function findToolEventIndex(toolEvents, eventData) {
+    if (!Array.isArray(toolEvents)) return -1;
+    if (eventData.task_id) {
+        const taskIndex = toolEvents.findIndex((item) => item.task_id === eventData.task_id);
+        if (taskIndex >= 0) return taskIndex;
+    }
+    for (let index = toolEvents.length - 1; index >= 0; index -= 1) {
+        if (toolEvents[index].status === "running"
+            && (!eventData.tool || toolEvents[index].tool === eventData.tool)) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+function renderToolProgress(item) {
+    const progress = item.progress && typeof item.progress === "object" ? item.progress : {};
+    const taskProgress = progress.tool_task && typeof progress.tool_task === "object" ? progress.tool_task : progress;
+    if (!taskProgress || taskProgress.kind !== "tool_task_progress") return "";
+    const command = taskProgress.command && typeof taskProgress.command === "object" ? taskProgress.command : {};
+    const flags = taskProgress.flags && typeof taskProgress.flags === "object" ? taskProgress.flags : {};
+    const counts = taskProgress.counts && typeof taskProgress.counts === "object" ? taskProgress.counts : {};
+    const lastHeartbeat = taskProgress.last_heartbeat && typeof taskProgress.last_heartbeat === "object" ? taskProgress.last_heartbeat : {};
+    const role = command.role || "";
+    const chips = [];
+    const roleLabel = toolRoleLabel(role);
+    if (roleLabel) chips.push(roleLabel);
+    if (Number.isFinite(Number(taskProgress.elapsed_seconds))) {
+        chips.push(t('tools.progress_elapsed', {seconds: Number(taskProgress.elapsed_seconds)}));
+    }
+    if (Number.isFinite(Number(taskProgress.stale_seconds)) && Number(taskProgress.stale_seconds) > 0) {
+        chips.push(t('tools.progress_stale', {seconds: Number(taskProgress.stale_seconds)}));
+    }
+    if (Number.isFinite(Number(counts.output_events)) && Number(counts.output_events) > 0) {
+        chips.push(t('tools.progress_output_events', {count: Number(counts.output_events)}));
+    }
+    if (flags.has_heartbeat) chips.push(t('tools.progress_heartbeat_seen'));
+    if (taskProgress.can_cancel) chips.push(t('tools.can_cancel'));
+    if (!chips.length) return "";
+    const lastSilent = Number(lastHeartbeat.silent_seconds);
+    const note = Number.isFinite(lastSilent) && lastSilent > 0
+        ? `<span>${escapeHtml(t('tools.progress_no_output', {seconds: Math.round(lastSilent)}))}</span>`
+        : "";
+    return `
+        <div class="tool-progress-summary">
+            ${chips.map((chip) => `<em>${escapeHtml(chip)}</em>`).join("")}
+            ${note}
+        </div>
+    `;
+}
+
+function toolRoleLabel(role) {
+    if (role === "dependency_install") return t('tools.role_dependency_install');
+    if (role === "preview_service") return t('tools.role_preview_service');
+    if (role === "service") return t('tools.role_service');
+    if (role === "command") return t('tools.role_command');
+    return role || "";
 }
 
 function renderToolLogs(item) {

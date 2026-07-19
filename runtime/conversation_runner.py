@@ -21,12 +21,16 @@ from runtime.agent_strategy import tool_event_roles as _event_roles
 from runtime.agent_strategy.project_context import build_active_focus_snapshot
 from runtime.agent_strategy.policy import deterministic_plan_gate, resolve_profile
 from runtime.agent_strategy.profiles import profile_to_public_dict
+from runtime.agent_strategy.convergence import (
+    PAUSE_NO_PROGRESS,
+    build_execution_convergence_decision,
+)
 from runtime.agent_strategy.run_finalization import (
     COMPLETION_REVIEW,
     FINAL_ANSWER_CONVERGED,
     FINAL_ANSWER_VERIFIED,
     NEEDS_VERIFICATION_EVIDENCE,
-    STOP_STAGNANT_VERIFICATION_GAP,
+    PAUSE_STAGNANT_VERIFICATION_GAP,
     build_task_evidence_finalization_gate,
     build_verification_gap_decision,
 )
@@ -37,7 +41,7 @@ from runtime.context_pack import (
 )
 from runtime.run_finalizer import RunFinalizationRequest, RunFinalizer
 from runtime.run_execution_state import RunExecutionState
-from runtime.run_completion import build_completion_decision
+from runtime.run_completion import build_completion_decision, build_completion_evidence_pack
 from runtime.run_result import build_run_result
 from runtime.run_recovery import format_recovery_context
 from runtime.visual_context import build_visual_context_messages
@@ -768,6 +772,7 @@ class ConversationRunExecutor:
                         content=round_text,
                         finish_reason=round_finish_reason,
                         reason=decision_reason,
+                        evidence_pack=run_state.completion_review.latest_evidence_pack,
                     )
                     metadata.setdefault("completion_decisions", []).append(decision)
                     self.write_event({"event": "completion_decision", "decision": decision})
@@ -911,22 +916,24 @@ class ConversationRunExecutor:
                             "content": execution_context_prompt,
                         })
                     await self.flush()
-                repeated_failure_count = self._consecutive_repeated_failure_count(tool_events)
-                failure_route_attempt_count = self._failure_route_attempt_count_since_progress(tool_events)
-                repeated_failure_action = self._repeated_failure_action(tool_events)
-                if repeated_failure_action == "stop":
-                    run_state.convergence_stopped = True
+                convergence_decision = build_execution_convergence_decision(tool_events)
+                repeated_failure_count = convergence_decision.consecutive_failure_count
+                failure_route_attempt_count = convergence_decision.route_attempt_count
+                repeated_failure_action = convergence_decision.action
+                if repeated_failure_action == PAUSE_NO_PROGRESS:
+                    run_state.no_progress_budget_exhausted = True
                     repeated_tool = str(tool_events[-1].get("tool") or "unknown tool")
                     self.write_event({
                         "event": "status",
                         "status": "repeated_tool_failure",
                         "message": (
                             f"{repeated_tool} 在当前无进展窗口内已出现 {failure_route_attempt_count} 次同一路线失败，"
-                            "正在保存当前可观察结果，避免继续空转。"
+                            "当前循环预算用尽，正在保存可观察结果。"
                         ),
                         "tool": repeated_tool,
                         "failure_count": repeated_failure_count,
                         "route_attempt_count": failure_route_attempt_count,
+                        "execution_convergence": convergence_decision.to_dict(),
                     })
                     await self.flush()
                     break
@@ -949,6 +956,7 @@ class ConversationRunExecutor:
                         "tool": repeated_tool,
                         "failure_count": repeated_failure_count,
                         "route_attempt_count": failure_route_attempt_count,
+                        "execution_convergence": convergence_decision.to_dict(),
                     })
                     await self.flush()
                     continue
@@ -1033,11 +1041,11 @@ class ConversationRunExecutor:
                         prompt_count=gap_decision.prompt_count,
                         stagnant_rounds=gap_decision.stagnant_rounds,
                     )
-                    if gap_decision.action == STOP_STAGNANT_VERIFICATION_GAP:
+                    if gap_decision.action == PAUSE_STAGNANT_VERIFICATION_GAP:
                         self.write_event({
                             "event": "status",
                             "status": "verification_gap_stagnant",
-                            "message": "验证缺口已连续多轮无新证据变化；正在保存当前可观察结果，避免空转。",
+                            "message": "验证缺口已连续多轮无新证据变化；当前循环预算用尽，正在保存可观察结果。",
                             "verification_gap": {
                                 "prompt_count": run_state.verification_gap.prompt_count,
                                 "stagnant_rounds": run_state.verification_gap.stagnant_rounds,
@@ -1101,11 +1109,19 @@ class ConversationRunExecutor:
                         task_contract=task_contract,
                         contract_failed=False,
                         max_rounds_exceeded=run_state.max_rounds_exceeded,
-                        convergence_stopped=run_state.convergence_stopped,
+                        no_progress_budget_exhausted=run_state.no_progress_budget_exhausted,
+                    )
+                    completion_evidence_pack = build_completion_evidence_pack(
+                        workspace_path=workspace.path,
+                        task_contract=task_contract,
+                        run_result=provisional_result,
+                        tool_events=tool_events,
+                        completion_decisions=metadata.get("completion_decisions"),
                     )
                     run_state.completion_review.begin(
                         event_count=len(tool_events),
                         run_result=provisional_result,
+                        evidence_pack=completion_evidence_pack,
                     )
                     messages.append({
                         "role": "system",
@@ -1113,6 +1129,8 @@ class ConversationRunExecutor:
                             workspace.path,
                             task_contract,
                             provisional_result,
+                            tool_events=tool_events,
+                            completion_decisions=metadata.get("completion_decisions"),
                         ),
                     })
                     self.write_event({
@@ -1123,6 +1141,7 @@ class ConversationRunExecutor:
                             "count": run_state.completion_review.review_count,
                             "run_result_status": provisional_result.get("status"),
                             "risks": provisional_result.get("risks") or [],
+                            "evidence_pack_schema": completion_evidence_pack.get("schema_version"),
                         },
                     })
                     await self.flush()

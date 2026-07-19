@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from runtime.core.automation import (
     Automation,
     AutomationTaskTemplate,
     AutomationTrigger,
+    automation_is_due,
+    automation_next_run_at,
     automation_task_seed,
     can_trigger_automation,
 )
@@ -121,6 +125,33 @@ def test_automation_queue_next_does_not_start_parallel_run() -> None:
     )
 
     assert not can_trigger_automation(automation, active_runs=1)
+
+
+def test_automation_computes_next_interval_run_time() -> None:
+    now = datetime(2026, 7, 19, 8, 0, tzinfo=timezone.utc)
+    automation = Automation(
+        id="automation-interval",
+        name="Interval check",
+        state="active",
+        trigger=AutomationTrigger(kind="interval", interval_seconds=300),
+        task_template=AutomationTaskTemplate(goal="Check status"),
+    )
+
+    assert automation_next_run_at(automation, now=now) == "2026-07-19T08:05:00Z"
+
+
+def test_automation_due_uses_persisted_next_run_at() -> None:
+    now = datetime(2026, 7, 19, 8, 0, tzinfo=timezone.utc)
+    automation = Automation(
+        id="automation-due",
+        name="Due check",
+        state="active",
+        trigger=AutomationTrigger(kind="daily", time_of_day="08:00"),
+        task_template=AutomationTaskTemplate(goal="Check status"),
+        next_run_at="2026-07-19T07:59:00Z",
+    )
+
+    assert automation_is_due(automation, now=now)
 
 
 def test_trace_event_normalizes_unknown_event_name() -> None:
@@ -285,6 +316,7 @@ def test_runtime_result_schema_is_core_owned() -> None:
     result = RuntimeResult(
         status="partial",
         counts={"tool_events": 2, "failures": 1},
+        capability_advisories=({"code": "service_stopped", "message": "MCP service is not ready"},),
         verification_evidence=({"tool": "pytest", "strength": "strong"},),
         failure_details=({"tool": "lint", "impact": "incidental"},),
         risks=("write_not_verified",),
@@ -295,11 +327,12 @@ def test_runtime_result_schema_is_core_owned() -> None:
     assert data["schema_version"] == RUN_RESULT_SCHEMA_VERSION
     assert data["kind"] == "run_result"
     assert data["risks"] == ["write_not_verified"]
+    assert data["capability_advisories"][0]["code"] == "service_stopped"
     assert data["verification_evidence"][0]["strength"] == "strong"
     assert data["failure_details"][0]["impact"] == "incidental"
 
 
-def test_experience_sample_is_between_runbook_and_skill_candidate() -> None:
+def test_experience_sample_preserves_reviewed_runbook_evidence() -> None:
     runbook = {
         "run": {
             "id": "run-1",

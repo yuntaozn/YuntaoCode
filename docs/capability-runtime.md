@@ -256,6 +256,12 @@ Evidence Context 的增强，不是任务路由、验证替代品或系统级自
 RunResult 理解“实际运行过什么、运行到哪里、失败在哪里”，而不是让 Runtime 替模型
 决定下一步策略。
 
+`debug_audit.v1` 从 `debug_session.v1` 汇总运行调试证据，标记依赖安装、预览服务、
+端口/进程检查、服务会话、长时间运行、超时、stderr 和诊断等事实。它只进入
+RunResult、RunEvidence 和 RunWorkbench 作为审计视图，不参与任务路由、工具选择、
+完成判断或失败收束。模型需要根据这些事实自行决定是否继续验证、换工具、调整命令或
+向用户说明风险。
+
 子进程可观察性属于 ToolTask 执行契约，而不是某个安装器的特例：
 
 - stdout/stderr 在进程运行中增量写入 ToolTask 日志，并通过现有 `tool_log` 事件显示；
@@ -264,6 +270,11 @@ RunResult 理解“实际运行过什么、运行到哪里、失败在哪里”�
 - 普通命令保持较短默认超时，已识别的依赖安装使用较长默认超时，显式 timeout 仍由调用者决定；
 - 停止 Run 时取消应传播到 ToolTask，并请求终止其子进程树；
 - 命令角色只用于超时、确认文案和审计展示，不应成为隐藏任务路由器。
+
+`tool_task_progress.v1` 是 ToolTask 日志的只读摘要。它把任务状态、已运行时间、最近进展、
+命令角色、最近 stdout/stderr 输出、心跳、取消记录和日志计数整理给 API、流式事件和
+前端工具卡片使用。它不替模型判断任务是否该继续，也不把依赖安装、预览服务或端口检查
+变成固定流程；模型仍根据可见事实自主决定下一步。
 
 工具成功也必须代表真实的可观察变化。文件编辑中 `old_text` 与 `new_text` 最终解析为
 相同内容、行范围替换没有改变文件等 no-op 情况，应返回可纠正的工具失败，不能生成
@@ -359,8 +370,8 @@ Additional runtime guards now exist in `runtime/agent_strategy/capability_prefli
   `route_hint` whose policy is advisory. `preferred_tool_ids` is retained only
   as a null compatibility field for older diagnostic readers; new runs do not
   rank tools for the model.
-  It intentionally does not emit `blockers`, `allowed_tool_ids`,
-  `restrict_fallback`, or `enforce_*` fields. Readers may still normalize older
+  It intentionally avoids legacy route-control fields such as hard fallback
+  restrictions or enforcement flags. Readers may still normalize older
   diagnostic records, but new runtime behavior must not reintroduce those
   fields as hidden policy controls.
 

@@ -59,6 +59,7 @@ def test_legacy_skill_sample_export_contains_experience_sample_and_fixture() -> 
     assert exported["run_evidence"]["result_status"] == "success"
     assert exported["sample_policy"]["contains_full_runbook"] is False
     assert exported["sample_policy"]["contains_file_contents"] is False
+    assert exported["sample_policy"]["promotes_capability"] is False
     assert exported["sample_policy"]["promotes_skill"] is False
     assert "runbook" not in exported
 

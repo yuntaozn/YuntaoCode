@@ -12,8 +12,10 @@ from typing import Any
 
 from runtime.capability_evidence import build_capability_evidence_summary
 from runtime.context_pack import context_pack_summary
+from runtime.debug_audit import build_debug_audit
 from runtime.run_trace import build_run_trace_summary
 from runtime.visual_evidence import visual_evidence_summary
+from runtime.visual_verification import build_visual_verification_summary
 from runtime.workspace_snapshot import workspace_snapshot_summary
 
 
@@ -58,6 +60,23 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
     run_info = _run_info(run)
     contract = task_contract if isinstance(task_contract, dict) else {}
     result = result if isinstance(result, dict) else {}
+    visual_context = _visual_context_records(visual_context_events)
+    visual_verification = build_visual_verification_summary(
+        visual_evidence=_dict_list(result.get("visual_evidence")),
+        debug_sessions=_dict_list(result.get("debug_sessions")),
+        visual_context=visual_context,
+        verification_evidence=_dict_list(result.get("verification_evidence")),
+        required_modalities=_string_list(result.get("required_verification_modalities")),
+        observed_modalities=_string_list(result.get("observed_verification_modalities")),
+        missing_modalities=_string_list(result.get("missing_verification_modalities")),
+        result_status=str(result.get("status") or ""),
+        risks=_result_risks(result),
+    )
+    debug_audit = build_debug_audit(
+        debug_sessions=_dict_list(result.get("debug_sessions")),
+        result_status=str(result.get("status") or ""),
+        risks=_result_risks(result),
+    )
     return {
         "schema_version": RUN_EVIDENCE_SCHEMA_VERSION,
         "kind": "run_evidence",
@@ -66,7 +85,9 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
         "trace": build_run_trace_summary(run, events=events),
         "context_pack": context_pack_summary(context_pack),
         "context_packs": _selected_context_pack_summaries(context_packs, limit=8),
-        "visual_context": _visual_context_records(visual_context_events),
+        "visual_context": visual_context,
+        "visual_verification": visual_verification,
+        "debug_audit": debug_audit,
         "workspace_snapshot": workspace_snapshot_summary(workspace_snapshot),
         "capability_evidence": build_capability_evidence_summary(
             tool_events,
@@ -168,7 +189,7 @@ def _capability_summary(capability: Any, preflight: Any) -> dict[str, Any]:
     advisories = _dict_list(preflight.get("advisories"))
     readiness_issues = _dict_list(preflight.get("readiness_issues"))
     if not readiness_issues:
-        readiness_issues = [*_dict_list(preflight.get("blockers")), *advisories]
+        readiness_issues = advisories
     return {
         "ok": preflight.get("ok"),
         "available_tool_count": len(capability.get("available_tool_ids") or []),

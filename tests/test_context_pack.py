@@ -48,6 +48,7 @@ def test_context_pack_builds_phase_selected_records() -> None:
     assert previous["metadata"]["inheritance_rule"] == "historical_reference_only_unless_current_request_continues_it"
     assert pack["ledger"]["schema_version"] == "context_ledger.v1"
     assert pack["ledger"]["records"][0]["source_type"] == "user_message"
+    assert pack["ledger"]["records"][0]["task_id"] == "task-1"
     assert "content_hash" in pack["ledger"]["records"][0]
 
 
@@ -366,6 +367,21 @@ def test_execution_context_pack_includes_recent_tools_and_state() -> None:
                 "input": {"command": "npm test"},
                 "error": "command exited with code 1",
             },
+            {
+                "tool": "filesystem.write_file",
+                "status": "failure",
+                "input": {"content": "hello"},
+                "error": "missing path",
+                "output": {
+                    "type": "tool_attempt_observation",
+                    "reason": "invalid_tool_input",
+                    "message": "missing path",
+                    "observation": {
+                        "reason": "invalid_tool_input",
+                        "missing_fields": ["path"],
+                    },
+                },
+            },
         ],
         execution_plan={
             "state": "running",
@@ -380,6 +396,8 @@ def test_execution_context_pack_includes_recent_tools_and_state() -> None:
     kinds = [item["kind"] for item in pack["records"]]
     assert kinds == ["task_contract", "capability", "tool_result", "recovery", "risk"]
     assert "filesystem.apply_changes" in pack["records"][2]["content"]
+    assert "reason=invalid_tool_input" in pack["records"][2]["content"]
+    assert "missing=path" in pack["records"][2]["content"]
     assert "round=3" in pack["records"][3]["content"]
     assert "stage=" not in pack["records"][3]["content"]
     assert "verify output" in pack["records"][3]["content"]

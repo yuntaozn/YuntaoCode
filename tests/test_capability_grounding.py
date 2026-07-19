@@ -57,7 +57,6 @@ def test_grounding_does_not_convert_file_target_from_text_match() -> None:
             }
         ],
         "first_action": "plan",
-        "blockers": ["缺少Blender相关的操作能力，无法直接在Blender中创建3D模型"],
         "system_overrides": [],
     }
 
@@ -71,7 +70,6 @@ def test_grounding_does_not_convert_file_target_from_text_match() -> None:
     assert contract["requires_write"] is True
     assert contract["requires_state_change"] is True
     assert contract["deliverables"][0]["kind"] == "file"
-    assert contract["blockers"] == ["缺少Blender相关的操作能力，无法直接在Blender中创建3D模型"]
     assert "capability_grounded" not in contract["system_overrides"]
 
 
@@ -92,7 +90,6 @@ def test_grounding_preserves_model_selected_capability_and_file_artifact() -> No
             }
         ],
         "first_action": "plan",
-        "blockers": [],
         "system_overrides": [],
     }
 
@@ -169,7 +166,6 @@ def test_grounding_does_not_select_missing_external_capability_from_text() -> No
             }
         ],
         "first_action": "plan",
-        "blockers": ["Missing Blender capability"],
         "system_overrides": [],
     }
 
@@ -191,7 +187,6 @@ def test_grounding_does_not_select_missing_external_capability_from_text() -> No
             "description": "Current Blender scene",
         }
     ]
-    assert contract["blockers"] == ["Missing Blender capability"]
     assert preflight["target_capability_ids"] == []
     assert preflight["advisories"][0]["code"] == "service_stopped"
     assert preflight["advisories"][0]["recommended_action"] == "start"

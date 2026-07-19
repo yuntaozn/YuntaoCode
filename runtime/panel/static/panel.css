@@ -1202,6 +1202,31 @@ button {
     border-color: rgba(245, 158, 11, 0.22);
 }
 
+.tool-progress-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+    margin: -2px 0 8px;
+    color: #56636d;
+    font-size: 12px;
+}
+
+.tool-progress-summary em,
+.tool-progress-summary span {
+    padding: 2px 6px;
+    border: 1px solid rgba(47, 111, 98, 0.14);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.64);
+    font-style: normal;
+}
+
+.tool-progress-summary span {
+    color: #8a5a00;
+    border-color: rgba(245, 158, 11, 0.22);
+    background: rgba(245, 158, 11, 0.08);
+}
+
 .tool-live-logs {
     margin: 0 0 8px;
     border: 1px solid rgba(47, 111, 98, 0.16);

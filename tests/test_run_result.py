@@ -40,6 +40,9 @@ def test_build_run_result_records_writes_verification_and_risks() -> None:
     assert result["counts"]["verification_successes"] == 1
     assert result["counts"]["test_successes"] == 1
     assert result["counts"]["debug_sessions"] == 1
+    assert result["debug_audit"]["schema_version"] == "debug_audit.v1"
+    assert result["debug_audit"]["counts"]["debug_sessions"] == 1
+    assert result["debug_audit"]["flags"]["has_debug_evidence"] is True
     assert result["debug_sessions"][0]["tool"] == "shell.run_command"
     assert result["debug_sessions"][0]["exit_code"] == 0
     assert result["risks"] == []
@@ -174,6 +177,9 @@ def test_build_run_result_accepts_visual_verification_for_visual_code_task() -> 
     assert result["observed_verification_modalities"] == ["visual"]
     assert result["missing_verification_modalities"] == []
     assert result["counts"]["visual_evidence"] == 1
+    assert result["visual_verification"]["schema_version"] == "visual_verification.v1"
+    assert result["visual_verification"]["counts"]["visual_evidence"] == 1
+    assert result["visual_verification"]["flags"]["visual_observed"] is True
     assert result["visual_evidence"][0]["tool"] == "preview.capture_local_html"
     assert result["visual_evidence"][0]["path"] == "D:/workspace/preview.png"
     assert result["visual_evidence"][0]["model_context_eligible"] is True
@@ -250,6 +256,11 @@ def test_build_run_result_preserves_compact_visual_and_debug_summaries() -> None
     assert result["visual_evidence"][0]["path"].endswith("index.png")
     assert result["visual_evidence"][0]["source_type"] == "local_html"
     assert result["visual_evidence"][0]["width"] == 1440
+    assert result["visual_verification"]["counts"]["debug_sessions"] == 1
+    assert result["visual_verification"]["counts"]["failed_requests"] == 1
+    assert result["debug_audit"]["counts"]["preview_sessions"] == 1
+    assert result["debug_audit"]["counts"]["service_sessions"] == 1
+    assert result["debug_audit"]["flags"]["has_preview_service"] is True
     assert result["debug_sessions"][0]["command"].startswith("playwright capture")
     assert result["debug_sessions"][0]["exit_code"] == 0
     assert result["debug_sessions"][0]["service"]["status_code"] == 200
@@ -1602,12 +1613,12 @@ def test_build_run_result_allows_recovered_non_write_failure() -> None:
     assert result["counts"]["failures"] == 1
 
 
-def test_build_run_result_marks_repeated_failure_convergence_stop() -> None:
+def test_build_run_result_marks_no_progress_budget_without_progress_as_stopped() -> None:
     result = build_run_result(
         workspace_path="D:/workspace",
         mode="coding",
         change_summary=None,
-        convergence_stopped=True,
+        no_progress_budget_exhausted=True,
         tool_events=[
             {
                 "tool": "filesystem.write_file",
@@ -1620,7 +1631,35 @@ def test_build_run_result_marks_repeated_failure_convergence_stop() -> None:
     )
 
     assert result["status"] == "stopped"
-    assert result["flags"]["convergence_stopped"] is True
+    assert result["flags"]["no_progress_budget_exhausted"] is True
+    assert "repeated_tool_failure" in result["risks"]
+    assert "invalid_tool_call_protocol" in result["risks"]
+
+
+def test_build_run_result_marks_no_progress_budget_after_write_as_partial() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="coding",
+        change_summary=None,
+        no_progress_budget_exhausted=True,
+        tool_events=[
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/src/app.js"},
+                "output": {"path": "D:/workspace/src/app.js"},
+            },
+            {
+                "tool": "shell.run_command",
+                "status": "failure",
+                "input": {"command": "npm run dev"},
+                "error": "command timed out",
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["flags"]["no_progress_budget_exhausted"] is True
     assert "repeated_tool_failure" in result["risks"]
 
 
@@ -1732,7 +1771,7 @@ def test_build_run_result_records_all_apply_patch_paths() -> None:
     assert result["written_paths"] == ["src/app.js", "src/styles.css"]
 
 
-def test_build_run_result_records_capability_preflight_blocker() -> None:
+def test_build_run_result_records_capability_preflight_advisory() -> None:
     result = build_run_result(
         workspace_path="D:/workspace",
         tool_events=[],
@@ -1744,15 +1783,18 @@ def test_build_run_result_records_capability_preflight_blocker() -> None:
             "deliverables": [{"kind": "external_state"}],
         },
         contract_failed=True,
-        preflight_blockers=[{
+        preflight_advisories=[{
             "code": "missing_external_state_capability",
             "message": "No external-state capability is available.",
         }],
     )
 
     assert result["status"] == "failure"
-    assert result["failures"][0]["tool"] == "capability.preflight"
-    assert "capability_preflight_blocked" in result["risks"]
+    assert result["failures"] == []
+    assert result["capability_advisories"][0]["code"] == "missing_external_state_capability"
+    assert "capability_preflight_advisory" in result["risks"]
+    assert result["failure_details"][0]["impact"] == "advisory"
+    assert result["failure_details"][0]["tool"] == "capability.preflight"
 
 
 def test_build_run_result_includes_capability_evidence_summary() -> None:

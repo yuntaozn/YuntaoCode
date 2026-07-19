@@ -340,6 +340,49 @@ def test_document_translation_progress_message_includes_counts() -> None:
     assert "最近 180s 没有新进度" in message
 
 
+def test_shell_progress_snapshot_exposes_tool_task_runtime_facts() -> None:
+    task = FakeTask(logs=[
+        {
+            "level": "info",
+            "message": "running: python -m pip install playwright",
+            "time": "2026-06-02T14:04:00+00:00",
+            "data": {
+                "kind": "command_start",
+                "cwd": "D:/demo",
+                "timeout": 600,
+                "command_role": "dependency_install",
+                "observable": True,
+            },
+        },
+        {
+            "level": "info",
+            "message": "command still running; elapsed 120s; no new output for 90s",
+            "time": "2026-06-02T14:06:00+00:00",
+            "data": {
+                "kind": "command_heartbeat",
+                "elapsed_seconds": 120.0,
+                "silent_seconds": 90.0,
+            },
+        },
+    ])
+
+    progress = tool_progress_snapshot("shell.run_command", task)
+    message = tool_progress_message(
+        "shell.run_command",
+        task,
+        120,
+        90,
+        progress,
+        display_name="执行终端命令",
+    )
+
+    assert progress["tool_task"]["schema_version"] == "tool_task_progress.v1"
+    assert progress["tool_task"]["command"]["role"] == "dependency_install"
+    assert progress["tool_task"]["flags"]["has_heartbeat"] is True
+    assert "正在安装或更新依赖" in message
+    assert "最近 90s 没有新输出" in message
+
+
 def test_summarize_tool_payload_compacts_large_scan_results() -> None:
     payload = {
         "tool": "filesystem.scan_folder",

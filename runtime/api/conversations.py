@@ -61,6 +61,7 @@ from runtime.run_result_presenter import (
 from runtime.shell_command_facts import shell_command_facts
 from runtime.task_runner import ToolContext
 from runtime import tool_event_presentation as _tool_present
+from runtime import tool_call_protocol as _tool_proto
 
 
 _ACTIVE_CONVERSATION_RUN_STATUSES = {"running", "waiting_confirmation", "paused"}
@@ -1101,12 +1102,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
 
     def _planning_prompt(self, workspace_path: str, mode: str | None) -> str:
         lang = self.get_lang()
-        if mode == "coding":
-            focus = i18n.t("planner.focus_coding", lang)
-        elif mode == "paper":
-            focus = i18n.t("planner.focus_paper", lang)
-        else:
-            focus = i18n.t("planner.focus_general", lang)
+        _ = mode
+        focus = i18n.t("planner.focus_general", lang)
         return (
             i18n.t("planner.intro", lang, workspace_path=workspace_path)
             + focus + "\n"
@@ -1266,16 +1263,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         return set(_clf.DELIVERABLE_VERIFICATION_TOOL_IDS)
 
     def _verification_tool_ids(self, mode: str | None) -> set[str]:
-        ids = set(self._deliverable_verification_tool_ids())
-        if mode in {"document", "paper"}:
-            ids |= {
-                "filesystem.scan_folder",
-                "filesystem.read_file",
-                "filesystem.read_text_preview",
-                "document.extract_docx_outline",
-                "document.extract_pdf_text_preview",
-            }
-        return ids
+        _ = mode
+        return _clf.verification_tool_ids(None)
 
     def _execution_pressure_tool_ids(self, mode: str | None) -> set[str]:
         return (
@@ -1326,7 +1315,20 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         reason: str,
         message: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        model_tool_name = ((tool_call.get("function") or {}).get("name") or self._model_tool_name(tool_id))
+        function = tool_call.get("function") or {}
+        model_tool_name = (function.get("name") or self._model_tool_name(tool_id))
+        raw_arguments_text = str(function.get("arguments") or "")
+        observation = _tool_proto.build_tool_attempt_observation(
+            tool_id=tool_id,
+            arguments=arguments,
+            reason=reason,
+            message=message,
+            raw_tool_name=str(model_tool_name or ""),
+            raw_arguments_text=raw_arguments_text,
+            missing_fields=self._tool_attempt_missing_fields(tool_id, arguments, reason),
+            available_tool_ids=self._tool_attempt_available_tool_ids(reason),
+        )
+        output = _tool_proto.tool_attempt_output(observation)
         event = {
             "status": "failure",
             "tool": tool_id,
@@ -1334,13 +1336,14 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "input": arguments,
             "task_id": "",
             "error": message,
-            "output": {"type": "guard", "reason": reason, "message": message},
+            "output": output,
+            "tool_attempt_observation": observation,
         }
         tool_payload = {
             "tool": tool_id,
             "input": arguments,
             "status": "failure",
-            "output": {"reason": reason, "message": message},
+            "output": output,
             "error": message,
         }
         return {
@@ -1349,6 +1352,37 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "name": model_tool_name,
             "content": self._compact_tool_payload(tool_payload),
         }, event
+
+    def _tool_attempt_missing_fields(
+        self,
+        tool_id: str,
+        arguments: dict[str, Any],
+        reason: str,
+    ) -> list[str]:
+        if reason != "invalid_tool_input":
+            return []
+        try:
+            return list(self.runtime.registry.missing_required_input_fields(tool_id, arguments))
+        except Exception:
+            return []
+
+    def _tool_attempt_available_tool_ids(self, reason: str) -> list[str]:
+        if reason != "unknown_tool":
+            return []
+        try:
+            tool_ids: list[str] = []
+            for spec in self.runtime.registry.list_specs():
+                tool_id = str(spec.get("id") or "").strip()
+                if not tool_id:
+                    continue
+                if hasattr(self.runtime, "settings") and not self.runtime.settings.is_tool_enabled(tool_id):
+                    continue
+                if hasattr(self.runtime, "is_tool_available") and not self.runtime.is_tool_available(spec):
+                    continue
+                tool_ids.append(tool_id)
+            return tool_ids[:24]
+        except Exception:
+            return []
 
     def _progress_key(self, tool_events: list[dict[str, Any]], mode: str | None) -> str:
         return _clf.progress_key(tool_events, mode)
@@ -1849,6 +1883,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "name": self._tool_display_name(tool_id),
             "input": arguments,
             "task_id": task.id,
+            "progress": self._tool_progress_snapshot(tool_id, task),
             "confirmation_decision": confirmation_decision.to_dict(),
             "declared_capability": tool_spec.capability,
             "declared_effects": list(tool_spec.effects or []),
@@ -1881,6 +1916,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                             "level": log_event.get("level"),
                             "message": log_event.get("message"),
                             "data": log_event.get("data") or {},
+                            "progress": self._tool_progress_snapshot(tool_id, current),
                         })
                     emitted_progress = True
                 task = current
@@ -1930,6 +1966,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "task_id": task.id,
             "error": task_error,
             "output": output_preview,
+            "progress": self._tool_progress_snapshot(tool_id, task),
             "declared_capability": tool_spec.capability,
             "declared_effects": list(tool_spec.effects or []),
             "declared_roles": list(tool_spec.roles or []),
@@ -2190,9 +2227,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         content: str,
         conversation: Any | None = None,
     ) -> str:
-        if requested_mode in {"coding", "paper", "document"}:
-            return requested_mode
-        return requested_mode or "terminal"
+        _ = (requested_mode, content, conversation)
+        return "terminal"
 
     def _has_successful_write(self, tool_events: list[dict[str, Any]]) -> bool:
         return _clf.has_successful_write(tool_events)
@@ -2524,8 +2560,17 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         workspace_path: str,
         task_contract: dict[str, Any],
         run_result: dict[str, Any],
+        *,
+        tool_events: list[dict[str, Any]] | None = None,
+        completion_decisions: list[dict[str, Any]] | None = None,
     ) -> str:
-        return _prp.completion_review_prompt(workspace_path, task_contract, run_result)
+        return _prp.completion_review_prompt(
+            workspace_path,
+            task_contract,
+            run_result,
+            tool_events=tool_events,
+            completion_decisions=completion_decisions,
+        )
 
     def _final_answer_prompt(self, workspace_path: str) -> str:
         return _prp.final_answer_prompt(workspace_path)
@@ -2575,7 +2620,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                     paths.append(str(path))
         unique_paths = list(dict.fromkeys(paths))
         lines = [
-            f"本轮已有写入工具成功执行，但后续工具调用达到上限（{max_rounds} 轮），系统已停止继续执行。",
+            f"本轮已有写入工具成功执行，但当前工具执行预算已用完（{max_rounds} 轮）。",
             "本轮变更是否完整请以上方工具记录和变更清单为准。",
         ]
         if unique_paths:
@@ -2583,7 +2628,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             lines.append("已成功写入的文件：")
             lines.extend(f"- {path}" for path in unique_paths[-8:])
         lines.append("")
-        lines.append("建议：如结果不完整，请基于这些已写入文件继续下一轮，系统会避免重复搜索并优先收束。")
+        lines.append("建议：如结果不完整，请基于这些已写入文件继续下一轮；后续可利用本轮事实补写、验证、换工具或说明边界。")
         return "\n".join(lines)
 
     def _build_execution_notice(
@@ -2677,7 +2722,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             for event in write_failures
         ]
         if max_rounds_exceeded:
-            message = "注意：本轮工具调用达到上限，系统已停止继续执行并保存了诊断信息。实际文件是否变更请以工具调用和变更清单为准。"
+            message = "注意：本轮工具执行预算已用完，诊断信息已保存。实际文件是否变更请以工具调用和变更清单为准，可基于本轮事实继续或恢复。"
             reason = "max_tool_rounds"
         elif contract_failed:
             message = "注意：本轮未观察到成功的本地写入工具记录；实际文件是否变更请以工具调用、变更清单和后续验证为准。"

@@ -191,7 +191,7 @@ class RunFinalizer:
         assistant_content = initial_assistant_content(
             model_content="".join(request.content_parts).strip(),
             model_provider_error=state.model_provider_error,
-            convergence_stopped=state.convergence_stopped,
+            no_progress_budget_exhausted=state.no_progress_budget_exhausted,
             has_successful_write=has_successful_write(tool_events),
             max_rounds_exceeded=state.max_rounds_exceeded,
             max_rounds_after_write_message=self._host._max_rounds_after_write_message(
@@ -226,8 +226,8 @@ class RunFinalizer:
         if state.progress_observer_count:
             metadata["progress_observer_count"] = state.progress_observer_count
             metadata["stagnant_rounds"] = state.stagnant_rounds
-        if state.convergence_stopped:
-            metadata["convergence_stopped"] = True
+        if state.no_progress_budget_exhausted:
+            metadata["no_progress_budget_exhausted"] = True
         if state.completion_review.review_count:
             metadata["completion_review_count"] = state.completion_review.review_count
 
@@ -235,7 +235,7 @@ class RunFinalizer:
             complete_remaining_plan_steps(
                 request.execution_plan,
                 failed=(
-                    state.convergence_stopped
+                    state.no_progress_budget_exhausted
                     or state.max_rounds_exceeded
                     or bool(state.model_provider_error)
                     or (
@@ -282,7 +282,8 @@ class RunFinalizer:
             task_contract=task_contract,
             contract_failed=tool_contract_failed,
             max_rounds_exceeded=state.max_rounds_exceeded,
-            convergence_stopped=state.convergence_stopped,
+            no_progress_budget_exhausted=state.no_progress_budget_exhausted,
+            preflight_advisories=_preflight_advisories(request.capability_preflight),
             model_error=state.model_provider_error,
             final_answer_error=final_answer_error,
         )
@@ -527,7 +528,7 @@ def initial_assistant_content(
     *,
     model_content: str,
     model_provider_error: str,
-    convergence_stopped: bool,
+    no_progress_budget_exhausted: bool,
     has_successful_write: bool,
     max_rounds_exceeded: bool,
     max_rounds_after_write_message: str,
@@ -540,19 +541,19 @@ def initial_assistant_content(
         return (
             f"{model_content}\n\n" if model_content else ""
         ) + (
-            "模型服务在工具执行后返回错误，本轮已停止继续调用模型。"
+            "模型服务在工具执行后返回错误，本轮没有继续获得可用模型响应。"
             "运行记录会按已观察到的工具结果保存事实；如果已经发生写入或外部状态变化，"
             "本轮会标记为部分完成，便于继续恢复或人工检查。"
         )
-    if convergence_stopped and has_successful_write:
+    if no_progress_budget_exhausted and has_successful_write:
         return (
-            "运行事实提示：本轮已有文件写入成功，但后续工具连续返回相同错误，"
-            "已停止重复重试。请检查下方失败记录和已写入文件后再决定是否继续。"
+            "运行事实提示：本轮已有文件写入成功，但后续同一路线反复无新进展。"
+            "当前 Run 已保留失败事实和已写入产物，可基于这些事实继续恢复、换参数或换工具。"
         )
-    if convergence_stopped:
+    if no_progress_budget_exhausted:
         return (
-            "运行事实提示：同一工具连续返回相同错误，已停止重复重试。"
-            "请检查下方失败记录，修正调用参数或任务说明后再继续。"
+            "运行事实提示：同一路线反复无新进展。"
+            "当前 Run 已保留失败事实，可基于这些事实继续恢复、换参数、换工具或说明边界。"
         )
     if max_rounds_exceeded:
         return (
@@ -588,3 +589,15 @@ def initial_assistant_content(
             "请根据工具记录继续修正或说明当前证据边界。"
         )
     return model_content or "模型没有返回内容。"
+
+
+def _preflight_advisories(preflight: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(preflight, dict):
+        return []
+    advisories = preflight.get("advisories")
+    if isinstance(advisories, list):
+        return [item for item in advisories if isinstance(item, dict)]
+    readiness = preflight.get("readiness_issues")
+    if isinstance(readiness, list):
+        return [item for item in readiness if isinstance(item, dict)]
+    return []

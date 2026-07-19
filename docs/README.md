@@ -8,7 +8,7 @@ new architecture note belongs.
 - [runtime-foundation.md](runtime-foundation.md) is the current foundation
   contract. It summarizes the runtime lines, run events, task contract,
   convergence, RunEvidence, RunResult, context, capability, temporary
-  artifacts, and next foundation work.
+  artifacts, and the 0.1 development direction gate.
 - [runtime-profiles.md](runtime-profiles.md) describes `full` and `lite`
   backend assembly profiles and the boundary between the core Task Runtime and
   optional product/provider surfaces.

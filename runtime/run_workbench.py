@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from runtime.context_audit import build_context_audit
 from runtime.run_evidence import build_run_evidence
 from runtime.run_result_presenter import risk_message_zh
 
@@ -36,6 +37,9 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
     tool_steps = _dict_list(evidence.get("tool_steps"))
     completion_decisions = _dict_list(evidence.get("completion_decisions"))
     context_evidence = _context_evidence_summary(evidence)
+    context_audit = build_context_audit(evidence)
+    visual_verification = _dict(evidence.get("visual_verification"))
+    debug_audit = _dict(evidence.get("debug_audit"))
     timeline = _timeline(tool_steps, _dict_list(evidence.get("status_timeline")))[:80]
     audit = _audit_summary(
         artifacts=artifacts,
@@ -108,6 +112,9 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
         "timeline": timeline,
         "completion_decisions": completion_decisions[:12],
         "context_evidence": context_evidence,
+        "context_audit": context_audit,
+        "visual_verification": visual_verification,
+        "debug_audit": debug_audit,
         "context_pack": _dict(evidence.get("context_pack")),
         "context_packs": _dict_list(evidence.get("context_packs"))[:8],
         "workspace": _dict(evidence.get("workspace_snapshot")),

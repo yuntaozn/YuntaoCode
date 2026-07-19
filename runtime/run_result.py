@@ -29,8 +29,10 @@ from runtime.agent_strategy.tool_event_roles import (
 from runtime.agent_strategy.tool_result_risks import assess_tool_result_risks
 from runtime.capability_evidence import build_capability_evidence_summary
 from runtime.core.result import RUN_RESULT_SCHEMA_VERSION
+from runtime.debug_audit import build_debug_audit
 from runtime.debug_session import debug_session_summary, normalize_debug_session
 from runtime.visual_evidence import normalize_visual_evidence, visual_evidence_summary
+from runtime.visual_verification import build_visual_verification_summary
 
 
 def build_run_result(
@@ -45,8 +47,8 @@ def build_run_result(
     task_contract: dict[str, Any] | None = None,
     contract_failed: bool = False,
     max_rounds_exceeded: bool = False,
-    convergence_stopped: bool = False,
-    preflight_blockers: list[dict[str, Any]] | None = None,
+    no_progress_budget_exhausted: bool = False,
+    preflight_advisories: list[dict[str, Any]] | None = None,
     model_error: str = "",
     final_answer_error: str = "",
 ) -> dict[str, Any]:
@@ -55,19 +57,23 @@ def build_run_result(
     The model may still write the final prose answer, but this structure is the
     runtime-owned source of truth for what actually happened.
     """
+    capability_advisories: list[dict[str, str]] = []
     state_write_successes: list[dict[str, Any]] = []
     state_write_failures: list[dict[str, Any]] = []
     verification_successes: list[dict[str, Any]] = []
     test_successes: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     failed_events: list[dict[str, Any]] = []
-    for blocker in preflight_blockers or []:
-        if not isinstance(blocker, dict):
+    for advisory in preflight_advisories or []:
+        if not isinstance(advisory, dict):
             continue
-        failures.append({
-            "tool": "capability.preflight",
-            "path": "",
-            "error": str(blocker.get("message") or blocker.get("code") or "capability preflight advisory"),
+        capability_advisories.append({
+            "code": str(advisory.get("code") or "capability_preflight_advisory"),
+            "message": str(
+                advisory.get("message")
+                or advisory.get("code")
+                or "capability preflight advisory"
+            ),
         })
     invalid_verification_failures: list[dict[str, Any]] = []
     effective_statuses: list[str] = []
@@ -233,7 +239,7 @@ def build_run_result(
     }
     if "truncated_tool_call" in failure_reasons:
         risks.append("model_output_truncated")
-    if failure_reasons & {"malformed_tool_arguments", "non_object_tool_arguments"}:
+    if failure_reasons & {"malformed_tool_arguments", "non_object_tool_arguments", "invalid_tool_input"}:
         risks.append("invalid_tool_call_protocol")
     for event in tool_events:
         event_risks = event.get("runtime_risks")
@@ -293,10 +299,10 @@ def build_run_result(
         risks.append("deliverable_path_hint_changed")
     if max_rounds_exceeded:
         risks.append("max_rounds_exceeded")
-    if convergence_stopped:
+    if no_progress_budget_exhausted:
         risks.append("repeated_tool_failure")
-    if preflight_blockers:
-        risks.append("capability_preflight_blocked")
+    if preflight_advisories:
+        risks.append("capability_preflight_advisory")
     model_error_text = str(model_error or "").strip()
     if model_error_text:
         failures.append({
@@ -384,12 +390,18 @@ def build_run_result(
         successful_deliverables=write_successes,
         sufficient_verifications=sufficient_verification_successes,
     )
-    for _ in preflight_blockers or []:
+    for preflight_advisory in preflight_advisories or []:
+        advisory = preflight_advisory if isinstance(preflight_advisory, dict) else {}
         failure_details.insert(0, {
             "tool": "capability.preflight",
             "path": "",
             "role": "capability",
-            "impact": "blocking",
+            "impact": "advisory",
+            "error": str(
+                advisory.get("message")
+                or advisory.get("code")
+                or "capability preflight advisory"
+            ),
         })
     if model_error_text:
         failure_details.append({
@@ -443,7 +455,22 @@ def build_run_result(
         has_observed_state_change=observed_state_change,
         contract_failed=unresolved_contract_failed,
         max_rounds_exceeded=max_rounds_exceeded,
-        convergence_stopped=convergence_stopped,
+        no_progress_budget_exhausted=no_progress_budget_exhausted,
+    )
+    visual_verification = build_visual_verification_summary(
+        visual_evidence=visual_evidence,
+        debug_sessions=debug_sessions,
+        verification_evidence=verification_evidence,
+        required_modalities=list(required_modalities),
+        observed_modalities=observed_verification_modalities,
+        missing_modalities=missing_verification_modalities,
+        result_status=status,
+        risks=risks,
+    )
+    debug_audit = build_debug_audit(
+        debug_sessions=debug_sessions,
+        result_status=status,
+        risks=risks,
     )
     return {
         "schema_version": RUN_RESULT_SCHEMA_VERSION,
@@ -476,8 +503,11 @@ def build_run_result(
         "verified": verified[:12],
         "verification_evidence": verification_evidence[:12],
         "visual_evidence": visual_evidence[:12],
+        "visual_verification": visual_verification,
         "debug_sessions": debug_sessions[:12],
+        "debug_audit": debug_audit,
         "capability_evidence": capability_evidence,
+        "capability_advisories": capability_advisories[:12],
         "required_verification_strength": required_strength,
         "required_verification_modalities": list(required_modalities),
         "observed_verification_modalities": observed_verification_modalities,
@@ -491,7 +521,7 @@ def build_run_result(
             "contract_failed": bool(contract_failed),
             "unresolved_contract_failed": bool(unresolved_contract_failed),
             "max_rounds_exceeded": bool(max_rounds_exceeded),
-            "convergence_stopped": bool(convergence_stopped),
+            "no_progress_budget_exhausted": bool(no_progress_budget_exhausted),
             "expected_document_coverage": bool(expected_document_coverage),
             "expected_min_output_chars": max(0, int(expected_min_output_chars or 0)),
             "observed_text_output_chars": int(min_output_check.get("observed") or 0),
@@ -525,13 +555,15 @@ def _result_status(
     has_observed_state_change: bool,
     contract_failed: bool,
     max_rounds_exceeded: bool,
-    convergence_stopped: bool,
+    no_progress_budget_exhausted: bool,
 ) -> str:
     if contract_failed:
         if has_write_success and not has_missing_target_deliverable:
             return "partial"
         return "failure"
-    if max_rounds_exceeded or convergence_stopped:
+    if max_rounds_exceeded or no_progress_budget_exhausted:
+        if has_observed_state_change or has_write_success:
+            return "partial"
         return "stopped"
     if has_model_error:
         if has_observed_state_change or has_write_success or has_tool_events:

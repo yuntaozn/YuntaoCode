@@ -1,9 +1,9 @@
-"""Task contract evolution helpers.
+"""Task contract continuity helpers.
 
-The model owns the first semantic task judgment, while the runtime owns how a
-contract evolves when the user follows up, an execution plan reveals a write
-target, or tool facts prove that local state changed.  Keeping these rules here
-prevents the base contract schema module from becoming another policy sink.
+The model owns semantic task judgment.  This module only applies explicit
+model-declared continuity and derives success-condition facts from the current
+contract.  It must not infer a follow-up route from short user wording, promote
+tool effects into task intent, or replace the model's current target.
 """
 
 from __future__ import annotations
@@ -121,53 +121,6 @@ def task_continuity_anchor(contract: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def inherit_task_contract_for_followup(
-    previous_contract: dict[str, Any],
-    fallback_contract: dict[str, Any],
-) -> dict[str, Any]:
-    """Carry a previous task contract into an explicit execute-follow-up turn."""
-    inherited = deepcopy(previous_contract) if isinstance(previous_contract, dict) else {}
-    contract = dict(fallback_contract)
-    for key in (
-        "intent",
-        "goal",
-        "requires_write",
-        "requires_state_change",
-        "requires_verification",
-        "required_verification_modalities",
-        "expected_document_coverage",
-        "capability_ids",
-        "deliverables",
-        "blockers",
-        "confidence",
-    ):
-        if key in inherited:
-            contract[key] = deepcopy(inherited[key])
-    if _contract_expects_document_output(inherited):
-        contract["expected_min_output_chars"] = deepcopy(
-            inherited.get("expected_min_output_chars", 0)
-        )
-    else:
-        contract["expected_min_output_chars"] = 0
-    contract.update({
-        "source": "conversation_context",
-        "raw_model_contract": None,
-        "scope_relation": "continue",
-        "scope_relation_source": "runtime_explicit_followup",
-        "continuity_anchor": task_continuity_anchor(inherited),
-        "revision_request": "",
-        "requires_plan": False,
-        "first_action": _followup_first_action(contract),
-    })
-    if contract.get("requires_write"):
-        contract["requires_state_change"] = True
-    overrides = list(contract.get("system_overrides") or [])
-    overrides.append("inherited_task_contract")
-    contract["system_overrides"] = list(dict.fromkeys(str(item) for item in overrides if item))
-    contract["success_conditions"] = success_conditions_for_contract(contract)
-    return contract
-
-
 def success_conditions_for_contract(contract: dict[str, Any]) -> list[str]:
     required_modalities = {
         str(item or "").strip().lower()
@@ -197,44 +150,8 @@ def normalize_scope_relation(value: Any) -> str:
     return text if text in VALID_SCOPE_RELATIONS else "new"
 
 
-def looks_like_task_revision_followup(content: str) -> bool:
-    """Return whether a short request revises or retries the active task."""
-    text = str(content or "").strip().lower()
-    if not text or len(text) > 120:
-        return False
-    terms = (
-        "再试一次",
-        "再来一次",
-        "再做一次",
-        "重新做",
-        "重做",
-        "继续做",
-        "继续完成",
-        "不理想",
-        "没做好",
-        "没有完成",
-        "没有成功",
-        "try again",
-        "redo it",
-        "do it again",
-        "continue it",
-        "continue the task",
-        "improve it",
-        "not good enough",
-    )
-    return any(term in text for term in terms)
-
-
 def _contract_expects_document_output(contract: dict[str, Any]) -> bool:
     return _document_contract_expects_text_output(contract)
-
-
-def _followup_first_action(contract: dict[str, Any]) -> str:
-    if contract.get("requires_write"):
-        return "write"
-    if contract.get("requires_state_change"):
-        return "use_tool"
-    return "answer"
 
 
 def _safe_int(value: Any) -> int:

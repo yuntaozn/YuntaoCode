@@ -91,6 +91,7 @@ def test_evaluation_fixture_export_uses_run_evidence_without_executing_replay(tm
     assert fixture["verification_evidence"][0]["path"] == "D:/workspace/scene.png"
     assert fixture["replay_seed"]["boundary"] == "manual_start_required"
     assert fixture["boundaries"]["manual_replay_required"] is True
+    assert fixture["boundaries"]["promotes_capability"] is False
     assert fixture["boundaries"]["promotes_skill"] is False
 
 

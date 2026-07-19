@@ -14,6 +14,7 @@ from typing import Any
 
 from runtime.tool_aliases import TOOL_ID_ALIASES, normalize_tool_id
 
+from . import convergence as _convergence
 from .tool_result_risks import shell_success_has_stderr_warning
 
 
@@ -146,8 +147,13 @@ def canonical_tool_id(value: Any) -> str:
 
 
 def explorer_tool_ids(mode: str | None) -> set[str]:
-    """Return the set of tool IDs available during the explorer stage."""
-    base: set[str] = {
+    """Return tool IDs that can provide local inspection evidence.
+
+    ``mode`` is accepted for legacy call sites. Evidence classification should
+    not change because an old assistant mode string is present.
+    """
+    _ = mode
+    return {
         "filesystem.scan_folder",
         "filesystem.read_file",
         "filesystem.read_text_preview",
@@ -156,25 +162,26 @@ def explorer_tool_ids(mode: str | None) -> set[str]:
         "spreadsheet.inspect_workbook",
         "code.search_text",
         "code.list_project_files",
+        "git.status",
+        "git.log",
     }
-    if mode in {"coding", "terminal"}:
-        base |= {"git.status", "git.log"}
-    return base
 
 
 def verification_tool_ids(mode: str | None) -> set[str]:
-    """Return the set of tool IDs that count as verification."""
-    ids: set[str] = set(DELIVERABLE_VERIFICATION_TOOL_IDS)
-    if mode in {"document", "paper"}:
-        ids |= {
-            "filesystem.scan_folder",
-            "filesystem.read_file",
-            "filesystem.read_text_preview",
-            "document.extract_docx_outline",
-            "document.extract_pdf_text_preview",
-            "spreadsheet.inspect_workbook",
-        }
-    return ids
+    """Return tool IDs that may provide verification evidence.
+
+    The final evidence decision still depends on the task contract, target path
+    relation, status, and tool output facts. It must not depend on legacy mode.
+    """
+    _ = mode
+    return set(DELIVERABLE_VERIFICATION_TOOL_IDS) | {
+        "filesystem.scan_folder",
+        "filesystem.read_file",
+        "filesystem.read_text_preview",
+        "document.extract_docx_outline",
+        "document.extract_pdf_text_preview",
+        "spreadsheet.inspect_workbook",
+    }
 
 
 def is_write_tool(tool_id: str) -> bool:
@@ -227,20 +234,8 @@ def is_invalid_verification_method_event(event: dict[str, Any]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Intent classification — user message
+# Context evidence classification
 # ---------------------------------------------------------------------------
-
-def looks_like_follow_up_execution(content: str) -> bool:
-    text = content.strip().lower()
-    if len(text) > 40:
-        return False
-    terms = (
-        "继续", "再执行", "再次执行", "重新执行", "重试", "再试", "试试",
-        "继续优化", "继续执行", "继续处理", "接着做", "往下做", "接着改",
-        "按这个改", "就这样改", "继续改", "继续做", "再来一次",
-        "失败了", "没成功", "没生成", "没能成功", "没执行完", "不完整",
-    )
-    return any(term in text for term in terms)
 
 
 def looks_like_diagnostic_feedback(content: str) -> bool:
@@ -773,80 +768,21 @@ def round_has_only_non_progress(round_events: list[dict[str, Any]]) -> bool:
 
 
 def consecutive_repeated_failure_count(tool_events: list[dict[str, Any]]) -> int:
-    """Count identical trailing failures so the runtime can stop empty retries."""
-    signature = ""
-    count = 0
-    for event in reversed(tool_events):
-        if event.get("status") != "failure":
-            break
-        event_signature = _tool_failure_signature(event)
-        if not signature:
-            signature = event_signature
-        if event_signature != signature:
-            break
-        count += 1
-    return count
+    return _convergence.consecutive_repeated_failure_count(tool_events)
 
 
 def failure_route_attempt_count_since_progress(tool_events: list[dict[str, Any]]) -> int:
-    """Count same failed execution route attempts since the last real progress.
-
-    This is intentionally route-oriented instead of turn-oriented.  A model may
-    try a different route after a failure; if that route produces a successful
-    tool event, the self-correction budget should reset.  If it only alternates
-    between failures and eventually returns to the same failed tool+arguments,
-    the route is still being repeated without progress.
-    """
-    latest = tool_events[-1] if tool_events else {}
-    if latest.get("status") != "failure":
-        return 0
-    target_signature = _tool_failure_signature(latest)
-    count = 0
-    is_latest = True
-    for event in reversed(tool_events):
-        if not is_latest and _is_progress_event(event):
-            break
-        is_latest = False
-        if event.get("status") != "failure":
-            continue
-        if _tool_failure_signature(event) == target_signature:
-            count += 1
-    return count
+    return _convergence.failure_route_attempt_count_since_progress(tool_events)
 
 
 def repeated_failure_action(
     tool_events: list[dict[str, Any]],
 ) -> str:
-    """Return the convergence action for repeated failed execution routes.
-
-    The first repeated route is evidence that the current route is not working,
-    not proof that the task should stop.  Give the model a wider bounded
-    self-correction budget in the current no-progress window, then stop only if
-    it keeps returning to the same failed route without producing new evidence.
-    """
-    route_attempts = failure_route_attempt_count_since_progress(tool_events)
-    if route_attempts < 2:
-        return "none"
-    if route_attempts >= 7:
-        return "stop"
-    return "report_repetition"
+    return _convergence.repeated_failure_action(tool_events)
 
 
 def _tool_failure_signature(event: dict[str, Any]) -> str:
-    output = event.get("output") if isinstance(event.get("output"), dict) else {}
-    event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
-    error = " ".join(str(event.get("error") or "").lower().split())
-    return json.dumps(
-        {
-            "tool": canonical_tool_id(str(event.get("tool") or "")),
-            "reason": str(output.get("reason") or "").strip().lower(),
-            "error": error,
-            "input": event_input,
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        default=str,
-    )
+    return _convergence.failure_route_signature(event)
 
 
 def _is_progress_event(event: dict[str, Any]) -> bool:

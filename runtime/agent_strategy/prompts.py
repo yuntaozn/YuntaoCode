@@ -19,6 +19,14 @@ from runtime.run_fact_summary import (
     format_run_fact_summary,
     format_tool_failure_fact_summary,
 )
+from runtime.run_completion import (
+    build_completion_evidence_pack,
+    format_completion_evidence_pack,
+)
+from runtime.agent_strategy.convergence import (
+    build_execution_convergence_decision,
+    format_convergence_decision,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -86,9 +94,12 @@ def repeated_failure_strategy_prompt(
         workspace_path=workspace_path,
         tool_events=tool_events,
     )
+    convergence = build_execution_convergence_decision(tool_events)
+    convergence_text = format_convergence_decision(convergence)
     return (
         "Repeated failure recovery advisory.\n"
         f"{format_tool_failure_fact_summary(facts)}\n"
+        f"{convergence_text + chr(10) if convergence_text else ''}"
         "The runtime is not choosing the next strategy. Use the facts above to "
         "decide whether to change tool, change arguments, gather smaller context, "
         "verify an existing result, ask the user, or finalize with an honest "
@@ -170,18 +181,14 @@ def format_execution_plan_for_context(plan: dict[str, Any]) -> str:
 
 
 def execute_plan_prompt(plan: dict[str, Any], mode: str | None) -> str:
-    code_rule = ""
-    if mode == "coding":
-        code_rule = (
-            "如果任务涉及代码变更，只有观察到成功生成或更新任务契约中的目标产物后，才能声称已经修改完成。"
-        )
+    _ = (plan, mode)
     return (
         "计划执行模式已开启。上面的计划是参考路线，不是固定轨道；"
         "如工具结果、插话或文件结构显示原计划不合适，可以跳过、合并、拆分或追加步骤。"
-        "计划只是运行审计和协作上下文，不是新的人工确认门。不要输出“确认/是否执行/Y/n”等文本询问；"
-        "如果任务信息足够，请直接调用最合适的工具推进。运行时会负责权限、安全和确认策略。"
-        "需要读取本地资料或代码时应调用本地工具；每次工具返回后继续推进下一步。"
-        f"{code_rule}"
+        "计划只是运行审计和协作上下文，不是新的人工确认门；权限和高风险确认由运行时呈现。"
+        "如果任务信息足够，可以直接调用最合适的工具推进；如果信息不足，可以明确向用户提问。"
+        "需要读取本地资料或代码时可以调用本地工具；每次工具返回后结合新事实继续判断下一步。"
+        "涉及本地变更时，只有观察到成功生成或更新任务契约中的目标产物后，才能声称已经修改完成。"
         "最终回答要说明：完成了哪些步骤、使用了哪些文件或工具、结果和未完成/不确定项。"
     )
 
@@ -190,6 +197,9 @@ def completion_review_prompt(
     workspace_path: str,
     task_contract: dict[str, Any] | None,
     run_result: dict[str, Any],
+    *,
+    tool_events: list[dict[str, Any]] | None = None,
+    completion_decisions: list[dict[str, Any]] | None = None,
 ) -> str:
     """Prompt the model to self-audit completion from runtime facts.
 
@@ -197,16 +207,17 @@ def completion_review_prompt(
     runtime does not decide the next strategy; it exposes facts and asks the
     model to either continue with tools or finish honestly.
     """
-    facts = build_run_fact_summary(
+    evidence_pack = build_completion_evidence_pack(
         workspace_path=workspace_path,
-        tool_events=[],
-        run_result=run_result,
         task_contract=task_contract,
+        run_result=run_result,
+        tool_events=tool_events,
+        completion_decisions=completion_decisions,
     )
     return (
         "Completion self-review from runtime facts.\n"
         f"Current project: {workspace_path}\n"
-        f"{format_run_fact_summary(facts)}\n"
+        f"{format_completion_evidence_pack(evidence_pack)}\n"
         "These facts are evidence, not a forced route. Decide whether the task "
         "is actually complete. If the goal is not closed, continue with the "
         "most suitable tool, verification, or repair strategy. If it is closed, "
@@ -364,6 +375,7 @@ def verifier_retry_prompt(
     visual_verification_tool_ids: list[str] | tuple[str, ...] | None = None,
     runtime_diagnostics: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
 ) -> str:
+    _ = mode
     context = _verification_retry_context(
         required_modalities=required_modalities,
         observed_modalities=observed_modalities,
@@ -371,17 +383,6 @@ def verifier_retry_prompt(
         visual_verification_tool_ids=visual_verification_tool_ids,
         runtime_diagnostics=runtime_diagnostics,
     )
-    if mode in {"document", "paper"}:
-        return (
-            "Verification evidence advisory, not a hard tool constraint.\n"
-            f"Workspace: {workspace_path}\n"
-            f"{context}"
-            "The current evidence does not yet satisfy the model-declared "
-            "verification modalities. Visible read, inspect, render, or other "
-            "artifact-aware tools may provide additional facts. The model decides "
-            "whether to gather more evidence, choose another route, ask the user, "
-            "or finalize with an explicit verification limitation."
-        )
     return (
         "Verification evidence advisory, not a hard tool constraint.\n"
         f"Workspace: {workspace_path}\n"
@@ -422,7 +423,7 @@ def runtime_intervention_prompt(
 
 def max_rounds_message(max_rounds: int, tool_events: list[dict[str, Any]]) -> str:
     lines = [
-        f"本轮已达到工具调用上限（{max_rounds} 轮），系统已停止继续执行，避免陷入重复调用。",
+        f"本轮已用完当前工具执行预算（{max_rounds} 轮）。运行记录已保存，可基于已有事实继续、恢复或换策略。",
         "",
     ]
     if tool_events:
@@ -445,6 +446,6 @@ def max_rounds_message(max_rounds: int, tool_events: list[dict[str, Any]]) -> st
         lines.append("本轮没有成功产生可记录的工具调用。")
     lines.extend([
         "",
-        "建议：如果这是代码或界面修改任务，请直接说明要修改的文件、关键词或期望结果；系统会继续自动识别任务类型并调用合适工具。",
+        "建议：如果仍需继续，请补充下一步目标、关键文件、关键词或期望结果；后续可基于本轮事实继续验证、换工具、换参数或如实说明边界。",
     ])
     return "\n".join(lines)

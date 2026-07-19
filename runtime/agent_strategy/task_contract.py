@@ -1,8 +1,8 @@
 """Task contract normalization and validation.
 
 The model may judge what the task is, but the runtime owns the contract shape,
-security overrides, and completion checks.  This module keeps that boundary
-pure and testable.
+permission/safety facts, and observable closure facts.  This module keeps that
+boundary pure and testable.
 """
 
 from __future__ import annotations
@@ -118,7 +118,6 @@ def default_task_contract(
         "capability_ids": [],
         "deliverables": [],
         "first_action": "plan" if requires_plan else ("write" if requires_write else "answer"),
-        "blockers": [],
         "confidence": 0.0,
         "scope_relation": "new",
         "scope_relation_source": "default",
@@ -202,12 +201,7 @@ def merge_model_task_contract(
                 raw_contract.get("first_action"),
                 requires_write or requires_state_change,
             ),
-            "blockers": _normalize_string_list(raw_contract.get("blockers"), limit=6, item_limit=180),
-            "execution_advisories": _normalize_advisories(
-                raw_contract.get("execution_advisories")
-                or raw_contract.get("advisories")
-                or raw_contract.get("strategy_advisories")
-            ),
+            "execution_advisories": _normalize_contract_advisories(raw_contract),
             "confidence": _normalize_confidence(raw_contract.get("confidence")),
             "scope_relation": _normalize_scope_relation(raw_contract.get("scope_relation")),
             "scope_relation_source": (
@@ -377,7 +371,6 @@ def task_contract_prompt(
         '  "expected_min_output_chars": 0,\n'
         '  "execution_advisories": [{"code": "optional-short-code", "message": "non-binding execution note", "suggested_first_action": "read|write|verify|use_tool"}],\n'
         '  "first_action": "answer|read|search|plan|write|verify|ask_user|use_tool",\n'
-        '  "blockers": [],\n'
         '  "confidence": 0.0\n'
         "}\n"
     )
@@ -450,79 +443,6 @@ def should_use_model_task_contract(
     if has_recent_task_context:
         return True
     return not _looks_like_obvious_chat(text)
-
-
-def looks_like_execute_contract_followup(content: str) -> bool:
-    """Return whether the user is asking to run the previously agreed task."""
-    text = str(content or "").strip().lower()
-    if not text or len(text) > 60:
-        return False
-    normalized = text.strip(" \t\r\n.,!?;:，。！？；：~～")
-    exact_terms = {
-        "执行",
-        "立即执行",
-        "开始执行",
-        "确认执行",
-        "按计划执行",
-        "执行计划",
-        "执行以上计划",
-        "执行上面的计划",
-        "按上面的计划执行",
-        "就按这个执行",
-        "就按计划执行",
-        "run",
-        "execute",
-        "run it",
-        "execute it",
-        "go ahead",
-    }
-    if normalized in exact_terms:
-        return True
-    phrase_terms = (
-        "立即执行",
-        "按计划执行",
-        "执行以上计划",
-        "执行上面的计划",
-        "按上面的计划",
-        "go ahead",
-    )
-    return any(term in normalized for term in phrase_terms)
-
-
-def looks_like_task_revision_followup(content: str) -> bool:
-    """Return whether a short request revises or retries the active task."""
-    text = str(content or "").strip().lower()
-    if not text or len(text) > 120:
-        return False
-    terms = (
-        "再试一次",
-        "再来一次",
-        "再做一次",
-        "重新做",
-        "重做",
-        "继续做",
-        "继续完成",
-        "不理想",
-        "没做好",
-        "没有完成",
-        "没有成功",
-        "try again",
-        "redo it",
-        "do it again",
-        "continue it",
-        "continue the task",
-        "improve it",
-        "not good enough",
-    )
-    return any(term in text for term in terms)
-
-
-def inherit_task_contract_for_followup(
-    previous_contract: dict[str, Any],
-    fallback_contract: dict[str, Any],
-) -> dict[str, Any]:
-    """Carry a previous task contract into an explicit execute-follow-up turn."""
-    return _contract_evolution.inherit_task_contract_for_followup(previous_contract, fallback_contract)
 
 
 def success_conditions_for_contract(contract: dict[str, Any]) -> list[str]:
@@ -641,6 +561,24 @@ def _normalize_advisories(value: Any) -> list[dict[str, str]]:
         seen.add(key)
         result.append(advisory)
     return result
+
+
+def _normalize_contract_advisories(raw_contract: dict[str, Any]) -> list[dict[str, str]]:
+    raw_advisories = raw_contract.get("execution_advisories")
+    if raw_advisories is None:
+        raw_advisories = raw_contract.get("advisories")
+    if raw_advisories is None:
+        raw_advisories = raw_contract.get("strategy_advisories")
+
+    advisories = _normalize_advisories(raw_advisories)
+    legacy_blockers = _normalize_string_list(raw_contract.get("blockers"), limit=6, item_limit=180)
+    for blocker in legacy_blockers:
+        advisories.append({
+            "code": "legacy_blocker_note",
+            "message": blocker,
+            "suggested_first_action": "",
+        })
+    return _normalize_advisories(advisories)
 
 
 def _normalize_confidence(value: Any) -> float:

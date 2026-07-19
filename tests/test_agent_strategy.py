@@ -1,6 +1,6 @@
 """Behaviour-driven tests for the agent_strategy modules.
 
-Covers intent hints, tool classification, tool-call processing, progress
+Covers context evidence hints, tool classification, tool-call processing, progress
 observation, planning policy, profiles, and prompt construction.
 """
 
@@ -14,7 +14,6 @@ import pytest
 from runtime.agent_strategy.classifiers import (
     # Context classifiers
     looks_like_diagnostic_feedback,
-    looks_like_follow_up_execution,
     # Tool classification
     WRITE_TOOL_IDS,
     RECON_TOOL_IDS,
@@ -80,24 +79,8 @@ from runtime.agent_strategy.profiles import (
 )
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 5a: Intent classifiers
+# 5a: Context evidence classifiers
 # ═══════════════════════════════════════════════════════════════════════════
-
-class TestLooksLikeFollowUpExecution:
-    def test_continue(self):
-        assert looks_like_follow_up_execution("继续")
-
-    def test_retry(self):
-        assert looks_like_follow_up_execution("重试")
-
-    def test_retry_after_failure(self):
-        assert looks_like_follow_up_execution("失败了再来一次")
-
-    def test_too_long(self):
-        # Messages > 40 chars are NOT follow-ups
-        long_msg = "继续执行之前的任务，我需要你帮我完成整个项目的重构和优化工作，包括前端、后端、数据库迁移以及所有单元测试的编写和部署流程的配置更新"
-        assert not looks_like_follow_up_execution(long_msg)
-
 
 class TestLooksLikeDiagnosticFeedback:
     def test_browser_runtime_log(self):
@@ -156,8 +139,8 @@ class TestAgentProfiles:
             first_action="read",
         ).id == "analysis"
 
-    def test_legacy_document_mode_routes_to_document(self):
-        assert profile_for_task_intent("", "document").id == "document"
+    def test_legacy_mode_does_not_route_neutral_contract(self):
+        assert profile_for_task_intent("", "document").id == "analysis"
 
     def test_unknown_profile_falls_back_to_analysis(self):
         assert get_profile("missing").id == "analysis"
@@ -287,11 +270,9 @@ class TestIsVerificationTool:
     def test_git_status(self):
         assert is_verification_tool("git.status", None)
 
-    def test_read_file_in_paper_mode(self):
+    def test_read_file_evidence_class_is_mode_neutral(self):
         assert is_verification_tool("filesystem.read_file", "paper")
-
-    def test_read_file_in_coding_mode(self):
-        assert not is_verification_tool("filesystem.read_file", "coding")
+        assert is_verification_tool("filesystem.read_file", "coding")
 
     def test_web_capture_page(self):
         assert is_verification_tool("web.capture_page", None)
@@ -311,9 +292,9 @@ class TestExplorerToolIds:
         assert "git.status" in ids
         assert "git.log" in ids
 
-    def test_document_no_git(self):
+    def test_document_uses_same_evidence_tool_pool(self):
         ids = explorer_tool_ids("document")
-        assert "git.status" not in ids
+        assert "git.status" in ids
 
 
 class TestVerificationToolIds:
@@ -324,9 +305,9 @@ class TestVerificationToolIds:
         assert "preview.capture_local_html" in ids
         assert "preview.capture_file" in ids
 
-    def test_paper_adds_read(self):
-        ids = verification_tool_ids("paper")
-        assert "filesystem.read_file" in ids
+    def test_verification_tool_pool_is_mode_neutral(self):
+        assert verification_tool_ids("paper") == verification_tool_ids("coding")
+        assert "filesystem.read_file" in verification_tool_ids("paper")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -734,7 +715,7 @@ class TestConsecutiveRepeatedFailureCount:
 
         assert repeated_failure_action(events) == "report_repetition"
 
-    def test_repeated_failure_stops_only_after_larger_no_progress_route_budget(self):
+    def test_repeated_failure_pauses_only_after_larger_no_progress_route_budget(self):
         event = {
             "tool": "filesystem.write_file",
             "status": "failure",
@@ -743,8 +724,8 @@ class TestConsecutiveRepeatedFailureCount:
             "output": {"reason": "invalid_tool_input"},
         }
 
-        assert repeated_failure_action([event] * 6) == "report_repetition"
-        assert repeated_failure_action([event] * 7) == "stop"
+        assert repeated_failure_action([event] * 8) == "report_repetition"
+        assert repeated_failure_action([event] * 9) == "pause_no_progress"
 
     def test_repeated_failure_action_counts_same_route_across_failed_detours(self):
         write_failure = {
@@ -1173,14 +1154,17 @@ class TestPrompts:
     def test_execute_plan_prompt_does_not_create_user_confirmation_gate(self):
         prompt = execute_plan_prompt({"title": "Test Plan", "steps": []}, "terminal")
 
-        assert "不要输出" in prompt
-        assert "确认" in prompt
-        assert "直接调用" in prompt
+        assert "权限和高风险确认由运行时呈现" in prompt
+        assert "可以直接调用" in prompt
+        assert "可以明确向用户提问" in prompt
 
     def test_max_rounds_message(self):
         events = [{"tool": "filesystem.read_file", "status": "success"}]
         msg = max_rounds_message(10, events)
         assert "10" in msg
+        assert "执行预算" in msg
+        assert "系统已停止" not in msg
+        assert "后续可" in msg
 
     def test_verifier_retry_prompt_coding(self):
         prompt = verifier_retry_prompt("coding", "/tmp")
@@ -1189,7 +1173,7 @@ class TestPrompts:
 
     def test_verifier_retry_prompt_paper(self):
         prompt = verifier_retry_prompt("paper", "/tmp")
-        assert "artifact-aware tools" in prompt
+        assert "not a hard tool constraint" in prompt
         assert "model decides" in prompt
 
     def test_verifier_retry_prompt_exposes_missing_modalities(self):

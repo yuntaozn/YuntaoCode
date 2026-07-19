@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from runtime.automation_store import AutomationStore
 
 
@@ -56,6 +58,58 @@ def test_automation_store_prevents_parallel_by_default(tmp_path) -> None:
 
     assert store.can_trigger(created.id, active_runs=0)
     assert not store.can_trigger(created.id, active_runs=1)
+
+
+def test_automation_store_initializes_next_run_for_scheduled_trigger(tmp_path) -> None:
+    store = AutomationStore(tmp_path / "automations.json")
+    created = store.create({
+        "name": "Interval schedule",
+        "state": "active",
+        "trigger": {"kind": "interval", "interval_seconds": 300},
+        "task_template": {"goal": "Check status"},
+    })
+
+    assert created.next_run_at
+
+
+def test_automation_store_advances_interval_after_prepared_run(tmp_path) -> None:
+    store = AutomationStore(tmp_path / "automations.json")
+    created = store.create({
+        "name": "Interval schedule",
+        "state": "active",
+        "next_run_at": "2026-07-19T08:00:00Z",
+        "trigger": {"kind": "interval", "interval_seconds": 300},
+        "task_template": {"goal": "Check status"},
+    })
+
+    updated = store.record_prepared_run(
+        created.id,
+        "run-1",
+        now=datetime(2026, 7, 19, 8, 1, tzinfo=timezone.utc),
+    )
+
+    assert updated.last_run_id == "run-1"
+    assert updated.next_run_at == "2026-07-19T08:06:00Z"
+
+
+def test_automation_store_clears_once_after_prepared_run(tmp_path) -> None:
+    store = AutomationStore(tmp_path / "automations.json")
+    created = store.create({
+        "name": "Once schedule",
+        "state": "active",
+        "next_run_at": "2026-07-19T08:00:00Z",
+        "trigger": {"kind": "once", "run_at": "2026-07-19T08:00:00Z"},
+        "task_template": {"goal": "Check once"},
+    })
+
+    updated = store.record_prepared_run(
+        created.id,
+        "run-1",
+        now=datetime(2026, 7, 19, 8, 1, tzinfo=timezone.utc),
+    )
+
+    assert updated.last_run_id == "run-1"
+    assert updated.next_run_at == ""
 
 
 def test_automation_store_validates_goal(tmp_path) -> None:

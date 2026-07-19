@@ -48,9 +48,10 @@ Schema versions:
 - `automation_run.v1`
 
 These schemas are pure data contracts. The current implementation also has a
-local `AutomationStore`, `/automations` API handlers, and a configuration page
-that can create a prepared normal Run. It still does not start timers, spawn
-background processes, call models, or execute tools by itself.
+local `AutomationStore`, `/automations` API handlers, a configuration page, and
+a lightweight scheduler. Manual and scheduled triggers create a prepared normal
+Run. The scheduler does not call models, execute tools, or mark work complete
+by itself.
 
 ## Trigger Types
 
@@ -92,6 +93,12 @@ The initial concurrency policies are:
 The default should be `skip_if_running`, because most local-first automations
 touch a workspace and should avoid overlapping writes.
 
+In the 0.1 scheduler, `skip_if_running` advances the next scheduled time when
+the automation is due but an earlier prepared/running Run is still active.
+`queue_next` keeps the due time in place, so the next scheduler tick after the
+active Run clears can create the prepared Run. This is still a trigger policy;
+it does not start tools or models directly.
+
 ## Confirmation And Safety
 
 Automation cannot weaken safety boundaries.
@@ -102,13 +109,13 @@ applies. The user should be able to pause or disable an automation at any time.
 
 ## UI Direction
 
-The first UI should be simple:
+The first UI should stay simple:
 
 - automation list;
 - enabled/paused state;
 - trigger summary;
 - workspace and task goal;
-- last result and next run;
+- last run and next scheduled trigger;
 - actions: run now, pause/resume, edit, delete, view recent Runs.
 
 The UI should not expose a separate "automation result" as if it replaced
@@ -131,7 +138,7 @@ Do not add these until the basic trigger-to-Run chain is stable:
 1. Keep the schema pure and tested.
 2. Add local persistence through a Store boundary when the UI needs editing.
 3. Add API handlers for CRUD and manual trigger.
-4. Add a lightweight scheduler that only creates normal Runs.
+4. Add a lightweight scheduler that only creates prepared normal Runs.
 5. Surface linked Run history and RunResult in the automation UI.
 6. Consider OS-level startup or desktop integration only after the local
    scheduler proves stable.

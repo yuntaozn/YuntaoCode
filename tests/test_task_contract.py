@@ -3,9 +3,6 @@ from runtime.agent_strategy.task_contract import (
     contract_expects_text_output,
     default_task_contract,
     extract_task_contract_json,
-    inherit_task_contract_for_followup,
-    looks_like_execute_contract_followup,
-    looks_like_task_revision_followup,
     merge_model_task_contract,
     should_apply_task_continuity,
     should_use_model_task_contract,
@@ -98,6 +95,7 @@ def test_task_contract_prompt_contains_only_contract_request() -> None:
     assert "当前用户请求是任务语义的第一依据" in prompt
     assert "系统回退契约" not in prompt
     assert "focus_relation" in prompt
+    assert '"blockers"' not in prompt
 
 
 def test_model_contract_separates_new_task_from_inherited_focus() -> None:
@@ -247,6 +245,27 @@ def test_model_contract_preserves_execution_advisories_as_non_binding_context() 
     ]
 
 
+def test_legacy_model_blockers_become_non_binding_execution_advisories() -> None:
+    contract = merge_model_task_contract(
+        {
+            "intent": "write_required",
+            "requires_write": False,
+            "requires_state_change": True,
+            "blockers": ["Missing Blender capability"],
+        },
+        _fallback("answer_only"),
+    )
+
+    assert "blockers" not in contract
+    assert contract["execution_advisories"] == [
+        {
+            "code": "legacy_blocker_note",
+            "message": "Missing Blender capability",
+            "suggested_first_action": "",
+        }
+    ]
+
+
 def test_task_contract_context_keeps_recent_task_and_current_follow_up() -> None:
     context = task_contract_context_messages(
         [
@@ -321,73 +340,6 @@ def test_diagnostic_feedback_uses_model_contract_even_if_fallback_is_chat() -> N
     )
 
 
-def test_execute_followup_inherits_external_state_contract_without_file_write() -> None:
-    previous = {
-        "intent": "write_required",
-        "goal": "在 Blender 中创建一个二层小楼的 3D 模型",
-        "requires_write": False,
-        "requires_state_change": True,
-        "requires_verification": True,
-        "requires_plan": True,
-        "deliverables": [
-            {"kind": "external_state", "description": "Blender 场景中的二层小楼"}
-        ],
-        "first_action": "plan",
-    }
-
-    contract = inherit_task_contract_for_followup(previous, _fallback("answer_only"))
-
-    assert looks_like_execute_contract_followup("立即执行")
-    assert contract["source"] == "conversation_context"
-    assert contract["requires_write"] is False
-    assert contract["requires_state_change"] is True
-    assert contract["requires_plan"] is False
-    assert contract["first_action"] != "verify"
-    assert contract["deliverables"][0]["kind"] == "external_state"
-    assert "target_deliverable_success" in contract["success_conditions"]
-
-
-def test_execute_followup_inherits_visual_verification_requirement() -> None:
-    previous = {
-        "intent": "write_required",
-        "goal": "Create a good-looking house in the current Blender scene",
-        "requires_write": False,
-        "requires_state_change": True,
-        "requires_verification": True,
-        "required_verification_modalities": ["visual"],
-        "deliverables": [
-            {"kind": "external_state", "description": "Current Blender scene"}
-        ],
-        "first_action": "use_tool",
-    }
-
-    contract = inherit_task_contract_for_followup(previous, _fallback("answer_only"))
-
-    assert contract["requires_write"] is False
-    assert contract["requires_state_change"] is True
-    assert contract["required_verification_modalities"] == ["visual"]
-    assert "target_visual_verification" in contract["success_conditions"]
-
-
-def test_execute_followup_does_not_inherit_text_length_from_code_contract() -> None:
-    previous = {
-        "intent": "write_required",
-        "goal": "Create an interactive code artifact",
-        "requires_write": True,
-        "requires_state_change": True,
-        "requires_verification": True,
-        "expected_min_output_chars": 2000,
-        "deliverables": [
-            {"kind": "code", "path_hint": "src/app.js"}
-        ],
-    }
-
-    contract = inherit_task_contract_for_followup(previous, _fallback("answer_only"))
-
-    assert contract["expected_min_output_chars"] == 0
-    assert "document_min_output_chars" not in contract["success_conditions"]
-
-
 def test_retry_wording_does_not_override_current_model_target() -> None:
     previous = {
         "intent": "write_required",
@@ -418,7 +370,6 @@ def test_retry_wording_does_not_override_current_model_target() -> None:
         current_user_content="not good enough, try again",
     )
 
-    assert looks_like_task_revision_followup("not good enough, try again")
     assert contract["scope_relation"] == "new"
     assert contract["goal"] == "Improve the Blender Python script"
     assert contract["requires_write"] is True

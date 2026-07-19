@@ -47,6 +47,7 @@ from .api.workspaces import WorkspaceDetailHandler, WorkspaceOpenHandler, Worksp
 from .config import RuntimeConfig
 from .conversation_store import ConversationStore
 from .automation_store import AutomationStore
+from .automation_scheduler import AutomationScheduler
 from .backup_store import BackupStore
 from .attachment_store import AttachmentStore
 from .capability_pack_store import CapabilityPackStore
@@ -129,6 +130,7 @@ class RuntimeState:
     cli_providers: CliProviderManager | None
     attachments: AttachmentStore
     automations: AutomationStore | None
+    automation_scheduler: AutomationScheduler | None
     capability_packs: CapabilityPackStore | None
 
     def is_tool_available(self, spec: dict[str, Any]) -> bool:
@@ -169,6 +171,8 @@ class RuntimeState:
             self.runs.close()
         finally:
             try:
+                if self.automation_scheduler is not None:
+                    self.automation_scheduler.stop()
                 self.attachments.close()
             finally:
                 if self.mcp_services is not None:
@@ -215,12 +219,13 @@ def build_runtime(
         else None
     )
     automations = AutomationStore(settings.data_dir / "automations.json") if features.automations else None
+    automation_scheduler = None
     capability_packs = (
         CapabilityPackStore(settings.data_dir / "capability-packs")
         if features.capability_packs
         else None
     )
-    return RuntimeState(
+    runtime = RuntimeState(
         config=config,
         features=features,
         registry=registry,
@@ -237,8 +242,12 @@ def build_runtime(
         cli_providers=cli_providers,
         attachments=attachments,
         automations=automations,
+        automation_scheduler=automation_scheduler,
         capability_packs=capability_packs,
     )
+    if automations is not None:
+        runtime.automation_scheduler = AutomationScheduler(runtime)
+    return runtime
 
 
 def make_app(runtime: RuntimeState) -> tornado.web.Application:
@@ -359,6 +368,8 @@ def main() -> None:
     io_loop.spawn_callback(warm_context_tokenizer)
     if runtime.mcp_services is not None:
         io_loop.spawn_callback(runtime.mcp_services.start_auto_services)
+    if runtime.automation_scheduler is not None:
+        io_loop.spawn_callback(runtime.automation_scheduler.start)
 
     print(json.dumps({
         "event": "ready",

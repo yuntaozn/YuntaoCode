@@ -4,15 +4,22 @@ import json
 from typing import Any
 
 from runtime.debug_session import debug_session_summary, normalize_debug_session
+from runtime.tool_task_summary import build_tool_task_progress
 from runtime.visual_evidence import normalize_visual_evidence, visual_evidence_summary
 
 
 def tool_progress_snapshot(tool_id: str, task: Any) -> dict[str, Any]:
     logs = task.logs if getattr(task, "logs", None) else []
+    tool_task = build_tool_task_progress(task)
     snapshot: dict[str, Any] = {
         "tool": tool_id,
         "task_id": getattr(task, "id", ""),
         "status": getattr(task, "status", ""),
+        "tool_task": tool_task,
+        "elapsed_seconds": tool_task.get("elapsed_seconds"),
+        "stale_seconds": tool_task.get("stale_seconds"),
+        "can_cancel": bool(tool_task.get("can_cancel")),
+        "command_role": (tool_task.get("command") or {}).get("role"),
     }
     if logs:
         latest = logs[-1]
@@ -165,6 +172,19 @@ def tool_progress_message(
         return "；".join(parts)
 
     last_log = str(progress.get("last_log_message") or "").strip()
+    task_progress = progress.get("tool_task") if isinstance(progress.get("tool_task"), dict) else {}
+    command = task_progress.get("command") if isinstance(task_progress.get("command"), dict) else {}
+    flags = task_progress.get("flags") if isinstance(task_progress.get("flags"), dict) else {}
+    if flags.get("is_dependency_install"):
+        parts = [f"{name}仍在运行：正在安装或更新依赖", f"已等待 {elapsed_seconds}s"]
+        if stale_seconds >= 60:
+            parts.append(f"最近 {stale_seconds}s 没有新输出，可能仍在下载、编译或等待包管理器")
+        return "；".join(parts)
+    if command.get("role") in {"preview_service", "service"}:
+        parts = [f"{name}仍在运行：正在启动或观察本地服务", f"已等待 {elapsed_seconds}s"]
+        if stale_seconds >= 60:
+            parts.append(f"最近 {stale_seconds}s 没有新输出，请根据后续日志判断服务状态")
+        return "；".join(parts)
     if last_log:
         return f"{name}仍在运行：{last_log}；已等待 {elapsed_seconds}s"
     return f"{name}仍在运行，已等待 {elapsed_seconds}s"
@@ -543,7 +563,15 @@ def summarize_tool_payload(payload: dict[str, Any]) -> dict[str, Any]:
         return payload
 
     compacted = dict(payload)
-    if tool_id == "filesystem.scan_folder":
+    if output.get("type") == "tool_attempt_observation":
+        compacted["output"] = {
+            "type": output.get("type"),
+            "schema_version": output.get("schema_version"),
+            "reason": output.get("reason"),
+            "message": output.get("message"),
+            "observation": output.get("observation"),
+        }
+    elif tool_id == "filesystem.scan_folder":
         compacted["output"] = {
             "root": output.get("root"),
             "folder_count": output.get("folder_count"),

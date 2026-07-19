@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from runtime.core.experience import experience_sample_from_runbook
-from runtime.core.skill_evolution import replay_fixture_from_runbook
+from runtime.core.replay_fixture import replay_fixture_from_runbook
 from runtime.run_evidence import build_run_evidence
 from runtime.runbook import build_runbook_from_evidence
 
@@ -52,6 +52,7 @@ def build_experience_sample_export(run: Any) -> dict[str, Any]:
             "remote_submission": False,
             "contains_full_runbook": False,
             "contains_file_contents": False,
+            "promotes_capability": False,
             "promotes_skill": False,
         },
         "privacy_note": (
@@ -92,5 +93,5 @@ def _sample_evidence_summary(evidence: dict[str, Any]) -> dict[str, Any]:
 
 def _sample_filename(value: str) -> str:
     text = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "").strip()).strip("-._")
-    text = text[:64] or "skill-sample"
+    text = text[:64] or "experience-sample"
     return f"yuntaocode-experience-sample-{text}.json"

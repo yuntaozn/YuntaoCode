@@ -2,14 +2,14 @@
 
 **Local-First AI Task Runtime**
 
-面向开发者、教学与工程实践的本地 AI 任务执行基座。
+面向本地 AI 工程实践的任务执行基座。
 
 YuntaoCode 关注的核心不是“再做一个 AI 聊天助手”，而是让本地任务可以被计划、执行、暂停、恢复、验证和审计。
 
 当前代码围绕三条执行主线和一条经验证据层组织：
 
 * **Task Runtime**：任务状态、计划、步骤、执行、验证、恢复和结果。
-* **Context Runtime**：上下文选择、压缩、证据边界、长期记忆和上下文账本。
+* **Context Runtime**：上下文选择、压缩、证据边界、长期记忆、上下文账本和审计视图。
 * **Capability Runtime**：工具、权限、插件、能力契约和本地执行边界。
 * **Experience Layer**：从真实任务记录中沉淀 RunEvidence、Experience Sample、Replay Fixture、Evaluation Fixture 和诊断包。
 
@@ -58,7 +58,7 @@ Experience Layer
   从任务记录中整理 RunEvidence、Experience Sample、Replay Fixture、Evaluation Fixture 和诊断包
 ```
 
-前三条主线共同决定任务如何运行；Experience Layer 只沉淀证据和经验，不默认注册 AI 生成代码，也不绕过 Runtime 的权限、验证和人工确认边界。模型可以参与任务判断和执行，但 Runtime 必须拥有状态、边界、证据和完成判定。
+前三条主线支撑任务运行；Experience Layer 只沉淀证据和经验，不默认注册 AI 生成代码，也不绕过 Runtime 的权限、验证和人工确认边界。模型负责理解目标、选择策略并书写结论，Runtime 负责保存状态、边界、证据和可审计的收束事实。
 
 ### 任务优先（Task First）
 
@@ -159,7 +159,7 @@ Python Runtime 是系统核心。
 
 Tauri 桌面端只是其中一种界面形式，Runtime 本身可以独立运行。
 
-当前实现已经包含工具调用、模型决定的计划、确认、写入备份、执行记录、上下文快照和经验样本导出。Runtime 不再用预设角色阶段驱动任务，而是把任务目标、可见能力和运行事实交给模型持续判断；系统只负责安全、协议、状态、证据和审计边界。
+当前实现已经包含工具调用、模型决定的计划、确认、写入备份、执行记录、上下文快照、上下文审计和经验样本导出。Runtime 不再用预设角色阶段驱动任务，而是把任务目标、可见能力和运行事实交给模型持续判断；系统只负责安全、协议、状态、证据和审计边界。
 
 Agent Runtime 的策略层位于 `runtime/agent_strategy/`。它负责模型任务契约、内部 Profile 描述、计划策略、事实提示和执行计划生命周期，让 `conversation_runner.py` 尽量保持为编排层。
 
@@ -369,52 +369,35 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 
 ---
 
-## 当前实现
+## 当前 0.1 实现快照
 
-### Runtime Foundation
+当前开发版本：0.1.0
 
-状态：收口中。
-
-当前代码已经实现的基础能力：
+0.1 的意义不是功能完整、场景覆盖或稳定版承诺，而是把本地 AI Task Runtime 的基础边界跑通。当前代码已经实现的基础能力：
 
 * Task Model：ProductTask、Run、ToolTask、状态、结果和运行血缘
 * Run Lifecycle：running、waiting_confirmation、paused、resumed、completed、failed、stopped
 * Task Trace：RunEvent、canonical event_name、工具调用、确认、错误、验证、结果和最终摘要预览
 * Run Recovery：暂停、恢复、Runbook、Replay Request、Checkpoint、Context Snapshot
-* Task Audit：RunEvidence、RunWorkbench、执行审计摘要、任务记录 UI 和状态迁移测试
-* Context Runtime：Context Pack / Ledger、上下文卫生、任务血缘、记忆边界、视觉证据和恢复快照
+* Task Audit：RunEvidence、RunWorkbench、完成自审证据包、执行审计摘要、运行调试审计、任务记录 UI 和状态迁移测试
+* Context Runtime：Context Pack / Ledger / Audit、上下文卫生、任务血缘、记忆边界、视觉证据/验证摘要和恢复快照
 * Capability Runtime：ToolSpec 元数据、Capability Preflight、权限、确认、产物、Provider 和验证证据
 * Provider 边界：内置工具、MCP、CLI、Capability Pack 和插件声明都通过 Capability Runtime 接入
-* Automation Runtime 基础：触发器、任务模板、并发边界、配置页和普通 Run 转换契约
+* Automation Runtime 基础：触发器、任务模板、轻量 scheduler、并发边界、配置页和普通 prepared Run 转换契约
 * Extension Contract 基础：插件 / MCP / CLI / Capability Pack 边界、权限声明、依赖声明和任务产物规范
 * Experience / Evaluation 基础：RunEvidence、Experience Sample Export、Replay Fixture、Evaluation Fixture、Evaluation Report 和诊断包
 
----
+## 开发方向判定
 
-## 教育与实验场景
+近期新增或调整应先回答：
 
-YuntaoCode 同样适用于：
+* 是否让 Task / Context / Capability / Experience 中的一条主线更清楚；
+* 是否减少 Runtime 替模型判断任务语义、执行路线或最终结论；
+* 是否增强状态、证据、验证、恢复、审计或权限边界；
+* 是否能通过测试、诊断包或真实任务记录验证效果；
+* 是否避免把某个场景、工具、MCP、CLI、插件或 Skill 变成新的独立执行体系。
 
-* AI Agent 实训
-* MCP 教学
-* RAG 实验
-* 本地大模型部署实验
-* 软件工程课程
-* AI 工程化实践课程
-
----
-
-## 项目状态
-
-当前开发版本：0.1.0
-
-状态：Active Development
-
-在 v1.0 之前：
-
-* API 可能发生变化
-* 插件接口可能调整
-* Runtime 架构将持续优化
+如果一个改动只是扩展场景、追逐概念或增加工具清单，而不能让以上边界更清楚，它不应进入 0.1 基座。
 
 ---
 

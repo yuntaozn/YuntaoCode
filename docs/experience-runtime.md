@@ -1,8 +1,8 @@
 # Experience Runtime
 
 Experience Runtime is the 0.1 layer for exporting reviewed evidence from real
-runs without turning every run into a skill, prompt rule, plugin, or runtime
-patch.
+runs without turning every run into a prompt rule, plugin, capability, or
+runtime patch.
 
 ## Position
 
@@ -76,7 +76,7 @@ describe:
 - what evidence is required;
 - common failure modes.
 
-A digest is still not an active skill and does not change runtime behavior.
+A digest is still not an active capability and does not change runtime behavior.
 
 ### Replay Fixture
 
@@ -94,8 +94,8 @@ For 0.1, this layer should stay intentionally small:
 - no local sample registry or sample workbench in 0.1;
 - no remote upload;
 - no central sample service;
-- no automatic skill generation;
-- no automatic skill promotion;
+- no automatic capability generation;
+- no automatic capability promotion;
 - no in-process execution of AI-generated code;
 - no hidden prompt injection from exported samples.
 
