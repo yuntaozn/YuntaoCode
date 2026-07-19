@@ -218,6 +218,9 @@ Runtime 能力
 或 URL，并把截图、console error、page error 和 failed request 作为 verification
 evidence 写入任务临时目录。它不代表 Runtime 要替模型判断 UI 是否完成，也不应把
 网页调试硬编码成任务流程；Runtime 只把可观察证据交给模型和 RunResult。
+截图、渲染图等产物可贡献 visual evidence；HTTP 状态、资源响应、DOM 快照、
+预览服务和 debug session 等运行事实可贡献 structural evidence。二者都只是
+RunResult 中的证据模态，不会替模型决定是否还需要交互、内容或人工观察。
 本地 HTML 默认通过短生命周期的 `127.0.0.1` 静态服务打开，避免 `file://`
 导致 module script、import map、相对资源和 Three.js 页面被浏览器策略误拦。
 `preview.interact_page` 在同一能力下提供有界交互验证：模型可以自行声明点击、输入、
@@ -241,13 +244,13 @@ RunResult 只把它作为“观察证据”汇总，不把它变成隐藏任务�
 `visual_evidence.model_context.eligible` 只是工具声明“这张图适合给模型看”，不是
 Runtime 必须注入图片的命令。真正进入模型上下文前还需要满足三层边界：
 
-1. 当前模型配置未显式关闭图片输入。YuntaoCode 默认把模型视为可接收视觉输入；
-   如果接口或模型不支持多模态，应设置 `supports_vision=false`。
+1. 当前模型配置未显式关闭图片输入；如果接口或模型实际拒绝图片请求，模型流传输层
+   应保留文字化视觉事实并重试一次。
 2. 视觉产物路径位于当前 workspace 或 Runtime 数据目录之内。
 3. 文件类型和大小处于模型上下文桥接允许的范围。
 
-如果模型不支持多模态或产物不满足边界，Runtime 仍应保留截图路径、尺寸、错误和
-DOM/OCR 等文本证据，让模型基于可审计事实继续判断。也就是说，视觉证据桥接是
+如果模型不支持多模态、传输拒绝图片，或产物不满足边界，Runtime 仍应保留截图
+路径、尺寸、错误和 DOM/OCR 等文本证据，让模型基于可审计事实继续判断。也就是说，视觉证据桥接是
 Evidence Context 的增强，不是任务路由、验证替代品或系统级自动判定。
 
 运行/调试类工具应返回或可归一化为 `debug_session.v1`。该契约记录命令、工作目录、

@@ -1086,9 +1086,11 @@ def _event_paths(workspace_path: str, event: dict[str, Any]) -> list[str]:
 def _raw_event_path_hint(event: dict[str, Any]) -> str:
     event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    visual_summary = visual_evidence_summary(normalize_visual_evidence(output))
     return str(
         output.get("path")
         or output.get("output_path")
+        or (visual_summary or {}).get("path")
         or event_input.get("output_path")
         or event_input.get("path")
         or ""

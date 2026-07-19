@@ -5,8 +5,9 @@ from __future__ import annotations
 from contextlib import contextmanager
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-import shutil
+import json
 import re
+import shutil
 from pathlib import Path
 from threading import Thread
 import time
@@ -941,6 +942,14 @@ async def _click_with_recovery(page: Any, selector: str, timeout_ms: int) -> dic
         }
     except Exception as first_error:
         fallback = await _click_clickable_dom_target(page, selector)
+        if str(fallback.get("reason") or "") == "ambiguous_text_selector":
+            candidates = fallback.get("candidates") if isinstance(fallback.get("candidates"), list) else []
+            raise RuntimeError(
+                f"{str(first_error)[:500]}; selector is ambiguous and matched "
+                f"{fallback.get('candidate_count') or len(candidates)} clickable targets. "
+                "Use a more specific selector. candidates="
+                f"{json.dumps(candidates[:8], ensure_ascii=False)}"
+            ) from first_error
         if fallback.get("clicked"):
             return {
                 "selector": selector[:300],
@@ -1067,10 +1076,35 @@ _CLICK_FALLBACK_SCRIPT = r"""(selector) => {
       };
     }
   }
-  const seen = new Set();
+  const clickableTargets = [];
+  const seenTargets = new Set();
   for (const element of candidates) {
     const target = nearestClickable(element);
-    if (!target || seen.has(target)) continue;
+    if (!target || seenTargets.has(target)) continue;
+    seenTargets.add(target);
+    clickableTargets.push({element, target});
+  }
+  if (selectorKind === "text" && clickableTargets.length > 1) {
+    return {
+      clicked: false,
+      reason: "ambiguous_text_selector",
+      selector: rawSelector,
+      text,
+      candidate_count: clickableTargets.length,
+      candidates: clickableTargets.slice(0, 8).map(({element, target}, index) => ({
+        index,
+        target_tag: target.tagName ? target.tagName.toLowerCase() : "",
+        target_role: target.getAttribute("role") || "",
+        target_id: target.id || "",
+        target_class: target.className && typeof target.className === "string" ? target.className.slice(0, 120) : "",
+        target_text: textOf(target).slice(0, 200),
+        original_tag: element.tagName ? element.tagName.toLowerCase() : "",
+      })),
+    };
+  }
+  const seen = new Set();
+  for (const {element, target} of clickableTargets) {
+    if (seen.has(target)) continue;
     seen.add(target);
     try {
       target.scrollIntoView({block: "center", inline: "center"});

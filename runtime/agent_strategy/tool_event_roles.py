@@ -43,6 +43,22 @@ VISUAL_ARTIFACT_KINDS: frozenset[str] = frozenset({
     "visual_capture",
     "pdf",
 })
+ARTIFACT_DELIVERABLE_KINDS: frozenset[str] = frozenset({
+    "artifact",
+    "image",
+    "screenshot",
+    "render",
+    "rendered_image",
+    "viewport_screenshot",
+    "visual_capture",
+    "preview",
+    "pdf",
+})
+ARTIFACT_EFFECTS: frozenset[str] = frozenset({
+    "artifact_write",
+    "artifact_create",
+    "artifact_update",
+})
 
 
 DRAFT_TOOL_IDS: frozenset[str] = frozenset({
@@ -120,6 +136,13 @@ def classify_tool_event_role(
         return TEMPORARY
     if tool_id in EVIDENCE_TOOL_IDS:
         return EVIDENCE
+    if (
+        _status_is_success_or_partial(event)
+        and _contract_expects_artifact(task_contract)
+        and _can_be_deliverable_for_contract(event, task_contract)
+        and (not contract_paths or _contract_allows_alternative_path(event, task_contract))
+    ):
+        return DELIVERABLE
     if VERIFICATION in declared_roles and _status_is_success_or_partial(event):
         return VERIFICATION
 
@@ -617,6 +640,34 @@ def _event_has_visual_artifact(event: dict[str, Any]) -> bool:
     return any(term in tool_id for term in visual_tool_terms)
 
 
+def _event_has_artifact(event: dict[str, Any]) -> bool:
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    artifact_values = [
+        event.get("artifact_kind"),
+        output.get("artifact_kind"),
+    ]
+    for values in (event.get("artifacts"), output.get("artifacts")):
+        if isinstance(values, list):
+            artifact_values.extend(values)
+    normalized = {
+        str(item or "").strip().lower()
+        for item in artifact_values
+        if str(item or "").strip()
+    }
+    if normalized & (ARTIFACT_DELIVERABLE_KINDS | {"visual_evidence", "pdf_page_render"}):
+        return bool(event_path_hints(event) or _event_has_visual_artifact(event))
+    visual_evidence = output.get("visual_evidence")
+    if isinstance(visual_evidence, dict) and visual_evidence.get("kind") == "visual_evidence":
+        return True
+    if ARTIFACT_EFFECTS & event_effects(event):
+        return bool(event_path_hints(event))
+    return _event_has_visual_artifact(event)
+
+
+def _contract_expects_artifact(task_contract: dict[str, Any] | None) -> bool:
+    return bool(contract_deliverable_kinds(task_contract) & ARTIFACT_DELIVERABLE_KINDS)
+
+
 def _event_has_runtime_errors(event: dict[str, Any]) -> bool:
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
     visual_evidence = output.get("visual_evidence")
@@ -700,7 +751,52 @@ def _event_has_structural_artifact_evidence(event: dict[str, Any]) -> bool:
     integrity = output.get("integrity") if isinstance(output.get("integrity"), dict) else {}
     if integrity.get("checked") is True and integrity.get("valid") is True:
         return True
+    if _event_has_runtime_structure_evidence(event):
+        return True
     return _shell_command_inspects_text_content(event)
+
+
+def _event_has_runtime_structure_evidence(event: dict[str, Any]) -> bool:
+    if _event_has_runtime_errors(event):
+        return False
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    if _successful_http_status(output.get("status_code")):
+        return True
+    resources = output.get("resource_responses")
+    if isinstance(resources, list) and any(
+        isinstance(item, dict) and _successful_http_status(item.get("status"))
+        for item in resources
+    ):
+        return True
+    dom_snapshot = output.get("dom_snapshot")
+    if isinstance(dom_snapshot, dict):
+        ready_state = str(dom_snapshot.get("ready_state") or "").strip().lower()
+        if ready_state in {"interactive", "complete"}:
+            return True
+        for key in ("title", "body_text", "headings", "buttons", "body_text_chars"):
+            if dom_snapshot.get(key) not in (None, "", [], {}, 0):
+                return True
+    debug_session = output.get("debug_session")
+    if isinstance(debug_session, dict):
+        if str(debug_session.get("status") or "").strip().lower() == "success":
+            return True
+        service = debug_session.get("service")
+        if isinstance(service, dict) and _successful_http_status(service.get("status_code")):
+            return True
+        try:
+            if int(debug_session.get("exit_code", 1) or 1) == 0:
+                return True
+        except (TypeError, ValueError):
+            pass
+    return False
+
+
+def _successful_http_status(value: Any) -> bool:
+    try:
+        status = int(value or 0)
+    except (TypeError, ValueError):
+        return False
+    return 200 <= status < 400
 
 
 def _event_has_content_measure(output: dict[str, Any]) -> bool:
@@ -1037,6 +1133,13 @@ def event_path_hints(event: dict[str, Any]) -> set[str]:
         path = _normalize_path_hint(output.get(key) or event_input.get(key))
         if path:
             paths.add(path)
+    visual_evidence = output.get("visual_evidence")
+    if isinstance(visual_evidence, dict):
+        artifact = visual_evidence.get("artifact")
+        if isinstance(artifact, dict):
+            path = _normalize_path_hint(artifact.get("path"))
+            if path:
+                paths.add(path)
     return paths
 
 
@@ -1055,21 +1158,23 @@ def _can_be_deliverable_for_contract(
     event: dict[str, Any],
     task_contract: dict[str, Any] | None,
 ) -> bool:
+    deliverable_kinds = contract_deliverable_kinds(task_contract)
+    if _contract_expects_artifact(task_contract) and _event_has_artifact(event):
+        return True
     if not _can_be_deliverable_event(event):
         return False
-    deliverable_kinds = contract_deliverable_kinds(task_contract)
     if not deliverable_kinds:
         return True
 
     tool_id = canonical_tool_id(str(event.get("tool") or ""))
     if is_write_tool(tool_id):
-        return bool(deliverable_kinds & {"file", "code", "document"})
+        return bool(deliverable_kinds & {"file", "code", "document", *ARTIFACT_DELIVERABLE_KINDS})
     if EXTERNAL_STATE_CHANGE in event_effects(event):
         return "external_state" in deliverable_kinds
     if DELIVERABLE in event_declared_roles(event):
         return bool(
             event_path_hints(event)
-            and deliverable_kinds & {"file", "code", "document"}
+            and deliverable_kinds & {"file", "code", "document", *ARTIFACT_DELIVERABLE_KINDS}
         )
     return False
 
@@ -1083,9 +1188,20 @@ def _can_be_intended_deliverable_for_contract(
     intended_roles = event_intended_roles(event)
     intended_effects = event_intended_effects(event)
     if is_write_tool(tool_id):
-        return not deliverable_kinds or bool(deliverable_kinds & {"file", "code", "document"})
+        return not deliverable_kinds or bool(
+            deliverable_kinds & {"file", "code", "document", *ARTIFACT_DELIVERABLE_KINDS}
+        )
     if EXTERNAL_STATE_CHANGE in intended_effects:
         return not deliverable_kinds or "external_state" in deliverable_kinds
+    if _contract_expects_artifact(task_contract):
+        return bool(
+            ARTIFACT_EFFECTS & intended_effects
+            or _event_has_artifact(event)
+            or (
+                VERIFICATION in intended_roles
+                and _event_has_visual_artifact(event)
+            )
+        )
     return DELIVERABLE in intended_roles
 
 
@@ -1099,11 +1215,19 @@ def _contract_allows_alternative_path(
     if not is_write_tool(tool_id) and not (
         DELIVERABLE in event_declared_roles(event)
         and event_path_hints(event)
+    ) and not (
+        _contract_expects_artifact(task_contract)
+        and _event_has_artifact(event)
     ):
         return False
     return any(
         isinstance(item, dict)
-        and str(item.get("kind") or "").strip().lower() in {"file", "code", "document"}
+        and str(item.get("kind") or "").strip().lower() in {
+            "file",
+            "code",
+            "document",
+            *ARTIFACT_DELIVERABLE_KINDS,
+        }
         and str(item.get("path_policy") or "hint").strip().lower() != "exact"
         for item in task_contract.get("deliverables") or []
     )

@@ -173,6 +173,60 @@ async def test_provider_error_reports_whether_runtime_facts_allow_finalization()
 
 
 @pytest.mark.asyncio
+async def test_visual_transport_error_retries_with_text_evidence() -> None:
+    emitted: list[dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
+
+    async def flush() -> None:
+        return None
+
+    async def stream(**kwargs: Any):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            yield {"error": "HTTP 400: image input is not accepted"}
+        else:
+            yield {"message": "checked visual facts"}
+            yield {"finish_reason": "stop"}
+
+    loop = ToolCallLoop(
+        emit=emitted.append,
+        flush=flush,
+        guidance_pending=lambda: False,
+        stream_factory=stream,
+    )
+
+    result = await loop.run_model_round(
+        settings=object(),
+        model="demo",
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Runtime visual evidence path: preview.png"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            ],
+        }],
+        tools=[],
+        enable_thinking=False,
+        reasoning_effort=None,
+        has_runtime_facts=True,
+        consecutive_idle_timeouts=0,
+        argument_observation_threshold=24000,
+        large_argument_observations=0,
+    )
+
+    assert len(calls) == 2
+    assert calls[0]["messages"][0]["content"][1]["type"] == "image_url"
+    assert isinstance(calls[1]["messages"][0]["content"], str)
+    assert "Runtime visual evidence path: preview.png" in calls[1]["messages"][0]["content"]
+    assert "image artifact" in calls[1]["messages"][0]["content"]
+    assert result.content_parts == ["checked visual facts"]
+    assert result.finish_reason == "stop"
+    assert result.model_error == ""
+    assert result.visual_context_fallback is True
+    assert any(event.get("status") == "visual_context_text_fallback" for event in emitted)
+
+
+@pytest.mark.asyncio
 async def test_runtime_guidance_interrupts_after_preserving_streamed_delta() -> None:
     emitted: list[dict[str, Any]] = []
     guidance_checks = 0

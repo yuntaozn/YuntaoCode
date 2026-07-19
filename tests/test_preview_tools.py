@@ -23,6 +23,7 @@ from runtime.tool_registry import ToolRegistry
 GOTO_URLS: list[str] = []
 EMIT_CONSOLE_ERROR = True
 FAIL_CLICK_SELECTORS: set[str] = set()
+AMBIGUOUS_FALLBACK_SELECTORS: set[str] = set()
 
 
 def test_browser_readiness_finds_managed_chromium_binary(tmp_path: Path) -> None:
@@ -92,6 +93,28 @@ class _FakePage:
         if "YUNTAOCODE_PREVIEW_CLICK_FALLBACK" in script:
             selector = str(args[0] if args else "")
             self.actions.append(("click_fallback", selector, "button"))
+            if selector in AMBIGUOUS_FALLBACK_SELECTORS:
+                return {
+                    "clicked": False,
+                    "reason": "ambiguous_text_selector",
+                    "selector": selector,
+                    "text": selector.replace("text=", ""),
+                    "candidate_count": 2,
+                    "candidates": [
+                        {
+                            "index": 0,
+                            "target_tag": "a",
+                            "target_text": "咨询模块维修 →",
+                            "target_class": "btn btn-primary",
+                        },
+                        {
+                            "index": 1,
+                            "target_tag": "button",
+                            "target_text": "模块维修",
+                            "target_class": "case-filter",
+                        },
+                    ],
+                }
             return {
                 "clicked": True,
                 "strategy": "dom_clickable_ancestor",
@@ -459,6 +482,53 @@ async def test_interact_page_recovers_text_click_to_clickable_ancestor(
     assert first_action["click_target"]["target_tag"] == "button"
     assert result["interaction"]["assertion_failed_count"] == 0
     assert result["verification_strength"] == "standard"
+
+
+@pytest.mark.asyncio
+async def test_interact_page_reports_ambiguous_text_selector_without_clicking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    global EMIT_CONSOLE_ERROR
+    workspace = tmp_path / "workspace"
+    temp_dir = tmp_path / "task-temp"
+    workspace.mkdir()
+    temp_dir.mkdir()
+    (workspace / "viewer.html").write_text(
+        "<html><title>Demo</title><body><a>咨询模块维修 →</a><button>模块维修</button></body></html>",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("runtime.skills.preview._async_playwright", lambda: _FakePlaywrightManager())
+    FAIL_CLICK_SELECTORS.add("text=模块维修")
+    AMBIGUOUS_FALLBACK_SELECTORS.add("text=模块维修")
+    EMIT_CONSOLE_ERROR = False
+    try:
+        result = await interact_page(
+            {
+                "path": "viewer.html",
+                "actions": [
+                    {"action": "click", "selector": "text=模块维修"},
+                ],
+            },
+            _Context(PathGuard([workspace]), temp_dir),
+        )
+    finally:
+        FAIL_CLICK_SELECTORS.clear()
+        AMBIGUOUS_FALLBACK_SELECTORS.clear()
+        EMIT_CONSOLE_ERROR = True
+
+    action = result["interaction"]["actions"][0]
+    assert action["ok"] is False
+    assert "selector is ambiguous" in action["error"]
+    assert "case-filter" in action["error"]
+    assert result["interaction"]["assertion_failed_count"] == 1
+    assert result["has_runtime_errors"] is True
+    assert result["verification_strength"] == "none"
+    assert any(
+        item["code"] == "preview_assertion_failed"
+        and "selector is ambiguous" in item["message"]
+        for item in result["runtime_diagnostics"]
+    )
 
 
 def test_register_preview_tools() -> None:

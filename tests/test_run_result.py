@@ -1404,6 +1404,125 @@ def test_build_run_result_counts_read_only_visual_verification() -> None:
     assert result["missing_verification_modalities"] == []
 
 
+def test_build_run_result_counts_visual_artifact_deliverable_with_missing_behavior() -> None:
+    contract = {
+        "intent": "read_only_analysis",
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual", "behavioral"],
+        "deliverables": [
+            {
+                "kind": "artifact",
+                "description": "Preview screenshot and inspection result",
+                "capability_id": "preview.visual_debug",
+            }
+        ],
+    }
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        task_contract=contract,
+        contract_failed=True,
+        tool_events=[
+            {
+                "tool": "preview.capture_local_html",
+                "status": "success",
+                "declared_effects": ["artifact_write"],
+                "declared_roles": ["verification"],
+                "output": {
+                    "roles": ["verification"],
+                    "artifacts": ["screenshot", "visual_evidence"],
+                    "artifact_kind": "screenshot",
+                    "verification_strength": "standard",
+                    "path": "D:/workspace/task-artifacts/run/preview/index.png",
+                    "has_runtime_errors": False,
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["counts"]["deliverable_successes"] == 1
+    assert result["counts"]["verification_successes"] == 1
+    assert result["artifacts"] == [
+        {
+            "kind": "screenshot",
+            "path": "task-artifacts/run/preview/index.png",
+            "tool": "preview.capture_local_html",
+            "status": "success",
+        }
+    ]
+    assert result["observed_verification_modalities"] == ["visual"]
+    assert result["missing_verification_modalities"] == ["behavioral"]
+    assert result["visual_verification"]["flags"]["visual_observed"] is True
+    assert result["visual_verification"]["flags"]["visual_missing"] is False
+    assert "target_deliverable_not_observed" not in result["risks"]
+    assert "visual_verification_not_observed" not in result["risks"]
+    assert "verification_modality_missing" in result["risks"]
+
+
+def test_build_run_result_counts_page_preview_runtime_facts_as_structural() -> None:
+    contract = {
+        "intent": "read_only_analysis",
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual", "structural"],
+        "deliverables": [
+            {
+                "kind": "artifact",
+                "description": "Preview screenshot and inspection result",
+                "capability_id": "preview.visual_debug",
+            }
+        ],
+    }
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        task_contract=contract,
+        contract_failed=True,
+        tool_events=[
+            {
+                "tool": "preview.capture_local_html",
+                "status": "success",
+                "declared_effects": ["artifact_write"],
+                "declared_roles": ["verification"],
+                "output": {
+                    "roles": ["verification"],
+                    "artifacts": ["screenshot", "visual_evidence"],
+                    "artifact_kind": "screenshot",
+                    "verification_strength": "standard",
+                    "path": "D:/workspace/task-artifacts/run/preview/index.png",
+                    "status_code": 200,
+                    "resource_responses": [
+                        {"url": "http://127.0.0.1:5002/index.html", "status": 200},
+                        {"url": "http://127.0.0.1:5002/css/base.css", "status": 200},
+                    ],
+                    "dom_snapshot": {"ready_state": "complete", "body_text_chars": 1200},
+                    "has_runtime_errors": False,
+                    "debug_session": {
+                        "status": "success",
+                        "service": {"kind": "browser_preview", "status_code": 200},
+                    },
+                },
+            },
+        ],
+    )
+
+    assert result["status"] == "success"
+    assert result["counts"]["deliverable_successes"] == 1
+    assert result["counts"]["verification_successes"] == 1
+    assert result["observed_verification_modalities"] == ["visual", "structural"]
+    assert result["missing_verification_modalities"] == []
+    assert result["verification_evidence"][0]["modalities"] == ["visual", "structural"]
+    assert "required_verification_not_satisfied" not in result["risks"]
+    assert "verification_modality_missing" not in result["risks"]
+    assert "execution_contract_failed" not in result["risks"]
+
+
 def test_build_run_result_marks_read_only_visual_runtime_errors_partial() -> None:
     contract = {
         "intent": "read_only_analysis",

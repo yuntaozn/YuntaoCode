@@ -1226,6 +1226,32 @@ function formatElapsed(seconds) {
     return `${minutes}m ${rest}s`;
 }
 
+function parseTimeMs(value) {
+    const parsed = Date.parse(value || "");
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toolEventElapsedSeconds(item, taskProgress) {
+    const progressElapsed = Number(taskProgress?.elapsed_seconds);
+    const progressValue = Number.isFinite(progressElapsed) ? Math.max(0, progressElapsed) : null;
+    const startedAt = Number(item?.startedAt) || parseTimeMs(taskProgress?.created_at);
+    const completedAt = Number(item?.completedAt) || parseTimeMs(taskProgress?.updated_at);
+    if (item?.status === "running" && startedAt) {
+        return Math.max(progressValue || 0, elapsedSeconds(startedAt));
+    }
+    if (startedAt && completedAt && completedAt >= startedAt) {
+        return Math.max(progressValue || 0, (completedAt - startedAt) / 1000);
+    }
+    return progressValue;
+}
+
+function formatToolElapsedChip(seconds, isRunning) {
+    if (!Number.isFinite(Number(seconds))) return "";
+    const value = Math.max(0, Number(seconds));
+    if (!isRunning && value < 1) return t('tools.progress_elapsed_lt1');
+    return t('tools.progress_elapsed', {seconds: Math.floor(value)});
+}
+
 function upsertConversationSummary(conversation) {
     if (!conversation?.id) return;
     const summary = { ...conversation };
@@ -2765,6 +2791,14 @@ async function sendMessage(event) {
                     }
                     const toolEvents = metadata.tool_events || [];
                     const existIdx = findToolEventIndex(toolEvents, eventData);
+                    const previousToolEntry = existIdx >= 0 ? toolEvents[existIdx] : {};
+                    const nowMs = Date.now();
+                    const startedAt = eventData.status === "running"
+                        ? (previousToolEntry.startedAt || nowMs)
+                        : (previousToolEntry.startedAt || nowMs);
+                    const completedAt = ["success", "failure", "partial"].includes(eventData.status)
+                        ? (previousToolEntry.completedAt || nowMs)
+                        : (previousToolEntry.completedAt || null);
                     const toolEntry = {
                         status: eventData.status,
                         tool: eventData.tool,
@@ -2775,6 +2809,8 @@ async function sendMessage(event) {
                         output: eventData.output || null,
                         progress: eventData.progress || (existIdx >= 0 ? toolEvents[existIdx].progress || null : null),
                         logs: existIdx >= 0 ? (toolEvents[existIdx].logs || []) : [],
+                        startedAt,
+                        completedAt,
                     };
                     if (existIdx >= 0) {
                         toolEvents[existIdx] = { ...toolEvents[existIdx], ...toolEntry };
@@ -3446,9 +3482,11 @@ function renderToolProgress(item) {
     const chips = [];
     const roleLabel = toolRoleLabel(role);
     if (roleLabel) chips.push(roleLabel);
-    if (Number.isFinite(Number(taskProgress.elapsed_seconds))) {
-        chips.push(t('tools.progress_elapsed', {seconds: Number(taskProgress.elapsed_seconds)}));
-    }
+    const elapsedChip = formatToolElapsedChip(
+        toolEventElapsedSeconds(item, taskProgress),
+        item.status === "running",
+    );
+    if (elapsedChip) chips.push(elapsedChip);
     if (Number.isFinite(Number(taskProgress.stale_seconds)) && Number(taskProgress.stale_seconds) > 0) {
         chips.push(t('tools.progress_stale', {seconds: Number(taskProgress.stale_seconds)}));
     }

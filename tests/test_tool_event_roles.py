@@ -550,6 +550,107 @@ def test_visual_screenshot_satisfies_visual_verification_modality() -> None:
     ) == ()
 
 
+def test_visual_artifact_can_be_target_artifact_and_verification() -> None:
+    contract = {
+        "intent": "read_only_analysis",
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual", "behavioral"],
+        "deliverables": [
+            {
+                "kind": "artifact",
+                "description": "Preview screenshot and inspection result",
+                "capability_id": "preview.visual_debug",
+            }
+        ],
+    }
+    event = {
+        "tool": "preview.capture_local_html",
+        "status": "success",
+        "declared_effects": ["artifact_write"],
+        "declared_roles": ["verification"],
+        "output": {
+            "roles": ["verification"],
+            "artifacts": ["screenshot", "visual_evidence"],
+            "artifact_kind": "screenshot",
+            "verification_strength": "standard",
+            "path": "D:/workspace/task-artifacts/run/preview/index.png",
+            "has_runtime_errors": False,
+        },
+    }
+
+    assert classify_tool_event_role(
+        event,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) == DELIVERABLE
+    assert successful_deliverable_events(
+        [event],
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) == [event]
+    assert task_verification_events(
+        [event],
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) == [event]
+    assert verification_evidence_modalities(event, task_contract=contract) == ("visual",)
+    assert missing_required_verification_modalities([event], contract) == ("behavioral",)
+
+
+def test_page_preview_runtime_facts_satisfy_structural_modality() -> None:
+    contract = {
+        "intent": "read_only_analysis",
+        "requires_write": False,
+        "requires_state_change": True,
+        "requires_verification": True,
+        "required_verification_modalities": ["visual", "structural"],
+        "deliverables": [
+            {
+                "kind": "artifact",
+                "description": "Preview screenshot and inspection result",
+                "capability_id": "preview.visual_debug",
+            }
+        ],
+    }
+    event = {
+        "tool": "preview.capture_local_html",
+        "status": "success",
+        "declared_effects": ["artifact_write"],
+        "declared_roles": ["verification"],
+        "output": {
+            "roles": ["verification"],
+            "artifacts": ["screenshot", "visual_evidence"],
+            "artifact_kind": "screenshot",
+            "verification_strength": "standard",
+            "path": "D:/workspace/task-artifacts/run/preview/index.png",
+            "status_code": 200,
+            "resource_responses": [
+                {"url": "http://127.0.0.1:5002/index.html", "status": 200},
+                {"url": "http://127.0.0.1:5002/css/base.css", "status": 200},
+            ],
+            "dom_snapshot": {"ready_state": "complete", "body_text_chars": 1200},
+            "has_runtime_errors": False,
+            "debug_session": {
+                "status": "success",
+                "service": {"kind": "browser_preview", "status_code": 200},
+            },
+        },
+    }
+
+    assert verification_evidence_modalities(event, task_contract=contract) == (
+        "visual",
+        "structural",
+    )
+    assert missing_required_verification_modalities([event], contract) == ()
+    assert sufficient_task_verification_events(
+        [event],
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) == [event]
+
+
 def test_visual_artifact_from_state_tool_satisfies_visual_verification_modality() -> None:
     contract = {
         "requires_write": False,
