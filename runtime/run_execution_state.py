@@ -80,7 +80,7 @@ class RunExecutionState:
     no_progress_budget_exhausted: bool = False
     argument_observation_threshold: int = 24_000
     large_argument_observations: int = 0
-    runtime_intervention_count: int = 0
+    guidance_count: int = 0
     model_provider_error: str = ""
 
     @classmethod
@@ -119,9 +119,19 @@ class RunExecutionState:
         return previous_limit, self.round_limit
 
     def record_guidance(self) -> None:
-        self.runtime_intervention_count += 1
+        self.guidance_count += 1
         self.final_answer_mode = False
         self.completion_review.reset_pending()
+
+    @property
+    def runtime_intervention_count(self) -> int:
+        """Backward-compatible alias for older diagnostic readers."""
+
+        return self.guidance_count
+
+    @runtime_intervention_count.setter
+    def runtime_intervention_count(self, value: int) -> None:
+        self.guidance_count = max(0, int(value or 0))
 
     def leave_final_answer_mode(self) -> None:
         self.final_answer_mode = False

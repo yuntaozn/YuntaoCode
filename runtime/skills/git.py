@@ -198,6 +198,9 @@ def register_git_tools(registry: ToolRegistry) -> None:
                     "path": {"type": "string", "description": "仓库路径（可选，默认当前workspace）"},
                 },
             },
+            artifacts=["git_status"],
+            roles=["evidence", "verification"],
+            verification_strength="weak",
         ),
         git_status,
     )
@@ -214,6 +217,9 @@ def register_git_tools(registry: ToolRegistry) -> None:
                     "file": {"type": "string", "description": "指定文件路径（可选）"},
                 },
             },
+            artifacts=["diff"],
+            roles=["evidence", "verification"],
+            verification_strength="standard",
         ),
         git_diff,
     )
@@ -229,6 +235,9 @@ def register_git_tools(registry: ToolRegistry) -> None:
                     "count": {"type": "integer", "default": 10, "description": "显示条数（最大30）"},
                 },
             },
+            artifacts=["git_log"],
+            roles=["evidence"],
+            verification_strength="weak",
         ),
         git_log,
     )

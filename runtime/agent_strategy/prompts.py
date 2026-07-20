@@ -227,6 +227,42 @@ def completion_review_prompt(
         "will record your observable choice as completion-loop evidence; this "
         "record is for audit and replay, not a hard constraint on your strategy."
     )
+
+
+def completion_reentry_prompt(
+    workspace_path: str,
+    task_contract: dict[str, Any] | None,
+    run_result: dict[str, Any],
+    completion_decision: dict[str, Any],
+    *,
+    tool_events: list[dict[str, Any]] | None = None,
+    completion_decisions: list[dict[str, Any]] | None = None,
+) -> str:
+    """Return an evidence prompt when a final candidate still has gaps."""
+    evidence_pack = build_completion_evidence_pack(
+        workspace_path=workspace_path,
+        task_contract=task_contract,
+        run_result=run_result,
+        tool_events=tool_events,
+        completion_decisions=completion_decisions,
+    )
+    action = str(completion_decision.get("action") or "unknown")
+    content_chars = completion_decision.get("content_chars")
+    return (
+        "Completion candidate re-entry from runtime facts.\n"
+        f"Current project: {workspace_path}\n"
+        f"Observed model decision: action={action}; content_chars={content_chars}\n"
+        f"{format_completion_evidence_pack(evidence_pack)}\n"
+        "The previous response looked like a final answer, but the evidence pack "
+        "still contains unresolved verification facts. This is not a forced route "
+        "and not a denial of your judgment. Choose the next step yourself: gather "
+        "more evidence, inspect how to verify, run a suitable check, repair the "
+        "result, ask the user for an external boundary, or finish with an explicit "
+        "limitation if further verification is not useful or possible. Do not turn "
+        "a partial or weakly verified result into a success claim."
+    )
+
+
 def final_answer_prompt(workspace_path: str) -> str:
     return (
         "Final answer phase. Do not call more tools in this phase.\n"
@@ -397,7 +433,7 @@ def verifier_retry_prompt(
     )
 
 
-def runtime_intervention_prompt(
+def guidance_reorientation_prompt(
     workspace_path: str,
     tool_events: list[dict[str, Any]],
     execution_plan: dict[str, Any] | None,

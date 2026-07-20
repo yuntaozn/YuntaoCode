@@ -13,6 +13,7 @@ RUNTIME_CAPABILITY_GROUPS = {"attachment", "memory"}
 FOUNDATION_CAPABILITY_GROUPS = {"filesystem", "code", "shell", "git"}
 OPTIONAL_CAPABILITY_GROUPS = {"document", "web"}
 CAPABILITY_PACK_SOURCE_TYPE = "capability_pack"
+DESKTOP_OBSERVATION_SOURCE_TYPES = {"desktop", "desktop_observation", "local_desktop"}
 
 
 class PluginsHandler(ApiHandler):
@@ -113,6 +114,8 @@ def plugin_provider_kind(plugin_id: str, source_type: str = "builtin") -> str:
         return "mcp_capability"
     if source_type == "cli":
         return "cli_provider"
+    if source_type in DESKTOP_OBSERVATION_SOURCE_TYPES or plugin_id == "desktop":
+        return "desktop_provider"
     if source_type == CAPABILITY_PACK_SOURCE_TYPE:
         return "capability_pack"
     if source_type == "ai_draft":

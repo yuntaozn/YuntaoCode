@@ -401,6 +401,14 @@ Recent changes should answer these questions before entering the 0.1 foundation:
 
 If a change only expands scenarios, follows a new concept, or grows the tool list without clarifying these boundaries, it should stay out of the 0.1 foundation.
 
+Before closing a 0.1 candidate, run the focused readiness gate:
+
+```bash
+python scripts/check_01_readiness.py
+```
+
+This checks release version sync, documentation encoding, core compilation, frontend syntax, and focused Runtime tests. It does not replace real task smoke testing.
+
 ---
 
 ## License

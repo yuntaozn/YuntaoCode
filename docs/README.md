@@ -9,11 +9,18 @@ new architecture note belongs.
   contract. It summarizes the runtime lines, run events, task contract,
   convergence, RunEvidence, RunResult, context, capability, temporary
   artifacts, and the 0.1 development direction gate.
+- [0.1-readiness.md](0.1-readiness.md) defines the focused release hygiene gate
+  for treating the current tree as a 0.1 foundation candidate.
+- [0.1-foundation-inventory.md](0.1-foundation-inventory.md) classifies source
+  groups that belong in the 0.1 foundation candidate and paths that must stay
+  local-only.
 - [runtime-profiles.md](runtime-profiles.md) describes `full` and `lite`
   backend assembly profiles and the boundary between the core Task Runtime and
   optional product/provider surfaces.
 - [architecture.md](architecture.md) is the higher-level architecture sketch
   for the sidecar, desktop shell, unified terminal, and agent strategy layer.
+- [model-harness.md](model-harness.md) describes the model-transport adaptation
+  boundary between `ToolCallLoop` and model provider clients.
 - [versioning.md](versioning.md) defines the product release version and
   independent compatibility-version boundaries.
 - [persistence-model.md](persistence-model.md) describes operational data
@@ -61,6 +68,9 @@ new architecture note belongs.
 - [cli-providers.md](cli-providers.md) describes declarative local command
   providers as controlled Capability Runtime providers rather than free-form
   shell access.
+- [desktop-observation-provider.md](desktop-observation-provider.md) describes
+  the incubating local desktop observation provider and its boundary as a
+  read-only evidence service that can later become CLI, HTTP, or MCP.
 - [capability-governance.md](capability-governance.md) is the current focused
   note for AI-built capability governance and the boundary between method
   skills and executable tool adapters.

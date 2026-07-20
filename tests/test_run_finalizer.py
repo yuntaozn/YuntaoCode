@@ -255,6 +255,7 @@ async def test_finalizer_publishes_result_persists_answer_and_finishes(
     assert outcome.context_tokens == 7
     assert conversation.messages[-1].content == "这是模型的回答。"
     assert metadata["reasoning"] == "内部推理"
+    assert metadata["guidance_count"] == 1
     assert metadata["runtime_intervention_count"] == 1
     assert metadata["malformed_tool_call_retries"] == 1
     assert metadata["progress_observer_count"] == 1

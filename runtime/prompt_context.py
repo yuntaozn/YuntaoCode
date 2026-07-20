@@ -9,7 +9,7 @@ _PLUGIN_DRAFT_BOUNDARY_ZH = """
 当前阶段，AI 自建能力应优先沉淀为方法型能力包（提示词、步骤、反例、验证清单），写入用户数据目录下的 capability-packs/items/<pack-id>/。只有确实需要新执行能力时，才创建工具适配器草稿。不得创建 runtime.skills.<plugin> Python 模块，不得修改 runtime/skills/__init__.py 来注册工具，也不得把草稿代码作为可信进程内插件执行。用户确认表示进入受控注册/启用流程，不表示允许绕过核心边界。不要在当前工作区或开源仓库根目录创建 ai-plugins/ 或 capability-packs/；如果没有专用草稿创建工具或明确可写的用户数据目录，请先说明边界并询问用户。
 
 ## 临时产物边界补充
-一次性分析脚本、中间 JSON、探测输出和不应提交的临时文件，应优先使用 filesystem.write_temp_file 写入任务临时目录；运行这些临时脚本时，shell.run_command 可使用 cwd="task_temp" 或 use_task_temp=true。不要把临时脚本写到用户项目目录，除非用户明确要求保留该脚本作为项目产物。
+一次性分析脚本、中间 JSON、探测输出和不应提交的临时文件，适合使用 filesystem.write_temp_file 写入任务临时目录；运行这些临时脚本时，shell.run_command 可使用 cwd="task_temp" 或 use_task_temp=true。不要把临时脚本写到用户项目目录，除非用户明确要求保留该脚本作为项目产物。
 """
 
 _PLUGIN_DRAFT_BOUNDARY_EN = """

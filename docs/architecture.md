@@ -98,7 +98,7 @@ Task
 - 区分本地文件写入与更广义的可观察状态变更，让 MCP、CAD、数据库和浏览器
   自动化通过统一的 `effects / roles / artifacts` 事实进入任务验收。
 - 区分 Capability 与 Provider：任务层看能力，Runtime 层记录 provider kind
-  （builtin、cli、mcp、capability_pack、external_plugin、ai_draft）和 provider
+  （builtin、cli、mcp、desktop、capability_pack、external_plugin、ai_draft）和 provider
   健康状态，避免 MCP、CLI、插件各自形成独立执行体系。
 
 Task Model 见 [task-model.md](task-model.md)，Context Runtime 见 [context-runtime.md](context-runtime.md)，Capability Runtime 见 [capability-runtime.md](capability-runtime.md)，Experience Runtime 见 [experience-runtime.md](experience-runtime.md)，Document Draft Runtime 见 [document-draft-runtime.md](document-draft-runtime.md)，当前代码层基础契约见 [runtime-foundation.md](runtime-foundation.md)。
@@ -121,6 +121,7 @@ User Request
   -> Agent Profile / Planning Policy
   -> Task / Plan / Step
   -> Conversation Runner
+  -> Model Harness
   -> Tools / Model Providers
   -> Streamed Process Trace
 ```
@@ -147,6 +148,10 @@ User Request
 `runtime/tool_call_loop.py` 负责单轮模型流协议，把内容与推理增量、heartbeat、
 工具调用参数片段、请求预算、模型错误和插话中断整理成可审计事实；它不判断
 任务意图、工具路线、完成状态或验证策略。
+`runtime/model_harness.py` 位于 `ToolCallLoop` 与模型 provider client 之间，
+只处理 provider/model 的请求形态、工具/视觉/推理字段和传输级降级；它不选择
+任务、工具、能力路线或完成条件。模型差异优先沉淀到 Harness，而不是回流到
+`conversation_runner.py`。
 `runtime/tool_execution_batch.py` 执行模型已经提出的一个工具调用批次，维护
 侦察签名、写入修复状态和读取范围等执行账本，并保证所有 tool response 先于
 运行时事实提示返回模型；它不替模型选工具或改写任务契约。

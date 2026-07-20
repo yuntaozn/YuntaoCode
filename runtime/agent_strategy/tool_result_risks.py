@@ -154,7 +154,7 @@ def _runtime_advisory_risks(advisories: Any) -> list[dict[str, Any]]:
         risks.append({
             "code": reason,
             "severity": "info",
-            "source": "runtime_intervention_governance",
+            "source": "runtime_advisory_governance",
             "message": message[:800],
             "action": _advisory_action(reason),
             "blocking": bool(advisory.get("blocking")) is True,

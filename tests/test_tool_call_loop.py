@@ -227,7 +227,7 @@ async def test_visual_transport_error_retries_with_text_evidence() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_guidance_interrupts_after_preserving_streamed_delta() -> None:
+async def test_user_guidance_interrupts_after_preserving_streamed_delta() -> None:
     emitted: list[dict[str, Any]] = []
     guidance_checks = 0
 
@@ -264,4 +264,5 @@ async def test_runtime_guidance_interrupts_after_preserving_streamed_delta() -> 
 
     assert result.interrupted_by_guidance
     assert result.content_parts == ["partial"]
-    assert emitted[-1]["status"] == "runtime_intervention"
+    assert emitted[-1]["status"] == "user_guidance_interrupt"
+    assert emitted[-1]["legacy_status"] == "runtime_intervention"

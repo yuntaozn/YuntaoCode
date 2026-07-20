@@ -205,6 +205,8 @@ def register_spreadsheet_tools(registry: ToolRegistry) -> None:
             requires_confirmation=False,
             capability="spreadsheet.local_files",
             artifacts=["spreadsheet_preview"],
+            roles=["evidence", "verification"],
+            verification_strength="weak",
             idempotent=True,
         ),
         inspect_workbook,

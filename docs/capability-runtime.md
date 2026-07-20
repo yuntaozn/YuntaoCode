@@ -204,7 +204,7 @@ Runtime 能力
   支撑本地任务执行，可以启停，但仍受权限、确认和审计约束。
 
 内置可选能力
-  document, web, preview
+  document, web, preview, desktop
   通用但偏重或带外部访问边界，可以启停，也应清楚展示依赖和风险。
 
 外部能力提供者
@@ -213,6 +213,14 @@ Runtime 能力
 ```
 
 不适合默认内置的能力包括视频生成、Blender/CAD 建模、RAG/向量库、重度浏览器自动化、特定办公流程、特定行业工具，以及纯提示词方法论 Skill Pack。这些应优先作为 CLI provider、MCP、外部插件声明或 AI 草稿处理，而不是扩大主 Runtime。
+
+`desktop.observation` 是正在孵化的本机桌面观察 provider。代码主体放在
+`providers/desktop_observation/`，Runtime 只通过 `runtime.skills.desktop`
+做薄适配。它的边界是只读观察：窗口列表、活动窗口、进程列表、全屏截图和指定窗口
+截图；不提供点击、输入、快捷键、聚焦、关闭窗口或进程控制。窗口和进程事实进入
+`desktop_state.v1`，截图进入 `visual_evidence.v1`。截图可能包含隐私内容，因此
+截图类工具需要确认；窗口/进程列表仍只作为 evidence/verification facts，不替模型
+选择任务路线。详见 [desktop-observation-provider.md](desktop-observation-provider.md)。
 
 `preview.visual_debug` 是内置可选能力中的证据能力。它使用浏览器预览本地 HTML
 或 URL，并把截图、console error、page error 和 failed request 作为 verification

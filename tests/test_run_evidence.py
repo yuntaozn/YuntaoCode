@@ -55,12 +55,30 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
     })
     store.record_event(run.id, {
         "event": "capability_snapshot",
-        "snapshot": {"available_tool_ids": ["filesystem.write_file"], "unavailable_tool_ids": []},
+        "snapshot": {
+            "available_tool_ids": ["filesystem.write_file", "shell.run_command"],
+            "unavailable_tool_ids": [],
+            "available_evidence_kinds": ["content", "runtime", "verification"],
+            "evidence_affordances": [
+                {
+                    "kind": "runtime",
+                    "tool_ids": ["shell.run_command"],
+                    "verification_strengths": ["standard"],
+                }
+            ],
+        },
         "preflight": {
             "ok": True,
             "target_capability_ids": ["code.text_write"],
             "preferred_tool_ids": ["filesystem.write_file"],
             "visual_verification_tool_ids": ["preview.capture_local_html"],
+            "evidence_affordances": [
+                {
+                    "kind": "runtime",
+                    "tool_ids": ["shell.run_command"],
+                    "verification_strengths": ["standard"],
+                }
+            ],
             "advisories": [{
                 "code": "visual_verification_path_uncertain",
                 "message": "visual verification route is uncertain",
@@ -255,6 +273,14 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
     assert evidence["capability_snapshot"]["target_capability_ids"] == ["code.text_write"]
     assert evidence["capability_snapshot"]["advisories"][0]["code"] == "visual_verification_path_uncertain"
     assert evidence["capability_snapshot"]["preferred_tool_ids"] == ["filesystem.write_file"]
+    assert evidence["capability_snapshot"]["available_evidence_kinds"] == [
+        "content",
+        "runtime",
+        "verification",
+    ]
+    assert evidence["capability_snapshot"]["evidence_affordances"][0]["tool_ids"] == [
+        "shell.run_command",
+    ]
     assert evidence["visual_context"][0]["tool"] == "preview.capture_local_html"
     assert evidence["visual_context"][0]["injected_into_model_context"] is True
     assert evidence["visual_verification"]["schema_version"] == "visual_verification.v1"

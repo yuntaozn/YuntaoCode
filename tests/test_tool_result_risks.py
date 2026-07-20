@@ -67,7 +67,7 @@ def test_runtime_advisory_becomes_model_facing_risk_evidence() -> None:
         {
             "code": "verification_runtime_advisory",
             "severity": "info",
-            "source": "runtime_intervention_governance",
+            "source": "runtime_advisory_governance",
             "message": "long-running service is weak verification",
             "action": "treat_as_weak_verification_evidence",
             "blocking": False,

@@ -80,7 +80,7 @@ yuntaocode = "runtime.app:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["runtime*"]
+include = ["runtime*", "providers*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "runtime.version.__version__"}

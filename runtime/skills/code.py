@@ -902,6 +902,9 @@ def register_code_tools(registry: ToolRegistry) -> None:
                 "required": ["path", "query"],
             },
             capability="code.local_project",
+            artifacts=["search_results"],
+            roles=["evidence", "verification"],
+            verification_strength="weak",
         ),
         search_text,
     )
@@ -921,6 +924,9 @@ def register_code_tools(registry: ToolRegistry) -> None:
                 "required": ["path"],
             },
             capability="code.local_project",
+            artifacts=["file_list"],
+            roles=["evidence"],
+            verification_strength="weak",
         ),
         list_project_files,
     )
@@ -929,7 +935,7 @@ def register_code_tools(registry: ToolRegistry) -> None:
             id="code.apply_patch",
             name="应用代码补丁",
             description=(
-                "首选的代码修改工具。使用 Codex 风格的 *** Begin Patch / "
+                "使用 Codex 风格的 *** Begin Patch / "
                 "*** Update File / *** Add File 小块补丁修改一个或多个文件。"
                 "运行时会先完整解析全部补丁，再应用写入；不要用它一次传输超大完整文件。"
             ),
@@ -948,6 +954,9 @@ def register_code_tools(registry: ToolRegistry) -> None:
             },
             requires_confirmation=True,
             capability="code.text_write",
+            artifacts=["file", "diff"],
+            effects=["file_write", "local_state_change"],
+            roles=["deliverable"],
         ),
         apply_patch,
     )
@@ -971,6 +980,9 @@ def register_code_tools(registry: ToolRegistry) -> None:
             },
             requires_confirmation=True,
             capability="code.text_write",
+            artifacts=["file", "diff"],
+            effects=["file_write", "local_state_change"],
+            roles=["deliverable"],
         ),
         replace_text,
     )
@@ -1009,6 +1021,9 @@ def register_code_tools(registry: ToolRegistry) -> None:
             },
             requires_confirmation=True,
             capability="code.text_write",
+            artifacts=["file", "diff"],
+            effects=["file_write", "local_state_change"],
+            roles=["deliverable"],
         ),
         edit_file,
     )

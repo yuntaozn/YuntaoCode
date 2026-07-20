@@ -15,6 +15,7 @@ from runtime.agent_strategy.classifiers import (
     merge_tool_call_chunks,
     tool_call_arguments_size,
 )
+from runtime.model_harness import ModelHarness, default_model_harness
 from runtime.model_providers.client import stream_chat_completion
 
 
@@ -57,11 +58,13 @@ class ToolCallLoop:
         flush: FlushEvents,
         guidance_pending: GuidancePending,
         stream_factory: StreamFactory = stream_chat_completion,
+        harness: ModelHarness | None = None,
     ) -> None:
         self._emit = emit
         self._flush = flush
         self._guidance_pending = guidance_pending
         self._stream_factory = stream_factory
+        self._harness = harness or default_model_harness()
 
     async def run_model_round(
         self,
@@ -82,20 +85,20 @@ class ToolCallLoop:
             large_argument_observations=large_argument_observations,
         )
         large_arguments_reported = False
-        messages_for_attempt = messages
         visual_fallback_attempted = False
+        request = self._harness.prepare_round_request(
+            settings=settings,
+            model=model,
+            messages=messages,
+            tools=tools or None,
+            enable_thinking=enable_thinking,
+            reasoning_effort=reasoning_effort,
+            tool_choice=None,
+        )
 
         while True:
             retry_without_visual_context = False
-            async for event in self._stream_factory(
-                settings=settings,
-                model=model,
-                messages=messages_for_attempt,
-                enable_thinking=enable_thinking,
-                reasoning_effort=reasoning_effort,
-                tools=tools or None,
-                tool_choice=None,
-            ):
+            async for event in self._stream_factory(**request.to_stream_kwargs()):
                 budget = event.get("request_budget")
                 if budget:
                     budget_info = budget if isinstance(budget, dict) else {}
@@ -143,12 +146,12 @@ class ToolCallLoop:
 
                     if (
                         not visual_fallback_attempted
-                        and _contains_image_context(messages_for_attempt)
-                        and _looks_like_visual_transport_error(event.get("error"))
+                        and self._harness.has_visual_context(request)
+                        and self._harness.is_visual_transport_error(event.get("error"))
                     ):
                         visual_fallback_attempted = True
                         result.visual_context_fallback = True
-                        messages_for_attempt = _downgrade_image_context(messages_for_attempt)
+                        request = self._harness.downgrade_visual_context(request)
                         retry_without_visual_context = True
                         await self._publish({
                             "event": "status",
@@ -210,8 +213,9 @@ class ToolCallLoop:
                     result.interrupted_by_guidance = True
                     await self._publish({
                         "event": "status",
-                        "status": "runtime_intervention",
+                        "status": "user_guidance_interrupt",
                         "message": "收到插话，正在暂停当前输出并重新审视任务",
+                        "legacy_status": "runtime_intervention",
                     })
                     break
 
@@ -224,58 +228,3 @@ class ToolCallLoop:
     async def _publish(self, payload: dict[str, Any]) -> None:
         self._emit(payload)
         await self._flush()
-
-
-def _contains_image_context(messages: list[dict[str, Any]]) -> bool:
-    for message in messages:
-        content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, list):
-            continue
-        for part in content:
-            if not isinstance(part, dict):
-                continue
-            if str(part.get("type") or "") in {"image_url", "input_image"}:
-                return True
-    return False
-
-
-def _looks_like_visual_transport_error(error: Any) -> bool:
-    text = str(error or "").lower()
-    if not text:
-        return False
-    if "image" in text or "vision" in text or "multimodal" in text:
-        return True
-    return any(code in text for code in ("http 400", "http 404", "status 400", "status 404"))
-
-
-def _downgrade_image_context(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    downgraded: list[dict[str, Any]] = []
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        content = message.get("content")
-        if not isinstance(content, list):
-            downgraded.append(message)
-            continue
-        text_parts: list[str] = []
-        image_count = 0
-        for part in content:
-            if not isinstance(part, dict):
-                text = str(part or "").strip()
-                if text:
-                    text_parts.append(text)
-                continue
-            part_type = str(part.get("type") or "").strip()
-            if part_type == "text":
-                text = str(part.get("text") or "").strip()
-                if text:
-                    text_parts.append(text)
-            elif part_type in {"image_url", "input_image"}:
-                image_count += 1
-        if image_count:
-            text_parts.append(
-                f"[{image_count} image artifact(s) omitted because the model transport rejected image input. "
-                "Use the accompanying artifact path, dimensions, console/page errors, and other text evidence.]"
-            )
-        downgraded.append({**message, "content": "\n\n".join(text_parts)})
-    return downgraded

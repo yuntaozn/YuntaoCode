@@ -599,7 +599,7 @@ def register_shell_tools(registry: ToolRegistry) -> None:
             name="执行终端命令",
             description=(
                 "在允许工作区或当前任务临时目录内执行终端命令。适合运行构建、测试、安装依赖等操作。"
-                "跨平台任务优先使用 command+args 参数数组和 python/node 等可移植入口；不要假设 bash、PowerShell、cp、rm、"
+                "跨平台任务建议使用 command+args 参数数组和 python/node 等可移植入口；不要假设 bash、PowerShell、cp、rm、"
                 "Copy-Item 等平台专属语法一定可用。运行 filesystem.write_temp_file 创建的临时脚本时，"
                 "可传 cwd='task_temp' 或 use_task_temp=true。不要把 python -m http.server、npm run dev 等长驻服务命令"
                 "当作普通验证命令，除非用户明确要求启动服务。命令输出会在运行中持续显示；无输出时会显示心跳。"
@@ -625,6 +625,10 @@ def register_shell_tools(registry: ToolRegistry) -> None:
                 "required": ["command"],
             },
             requires_confirmation=True,
+            artifacts=["command_output", "debug_session"],
+            effects=["shell_command"],
+            roles=["execution", "evidence", "verification"],
+            verification_strength="standard",
         ),
         run_command,
     )

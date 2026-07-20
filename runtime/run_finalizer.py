@@ -219,8 +219,9 @@ class RunFinalizer:
         metadata["recon_tool_count"] = request.recon_tool_count
         if request.write_repair_mode:
             metadata["write_repair_mode_used"] = True
-        if state.runtime_intervention_count:
-            metadata["runtime_intervention_count"] = state.runtime_intervention_count
+        if state.guidance_count:
+            metadata["guidance_count"] = state.guidance_count
+            metadata["runtime_intervention_count"] = state.guidance_count
         if state.malformed_tool_call_retries:
             metadata["malformed_tool_call_retries"] = state.malformed_tool_call_retries
         if state.progress_observer_count:

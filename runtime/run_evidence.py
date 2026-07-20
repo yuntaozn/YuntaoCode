@@ -194,12 +194,36 @@ def _capability_summary(capability: Any, preflight: Any) -> dict[str, Any]:
         "ok": preflight.get("ok"),
         "available_tool_count": len(capability.get("available_tool_ids") or []),
         "unavailable_tool_count": len(capability.get("unavailable_tool_ids") or []),
+        "available_evidence_kinds": _string_list(capability.get("available_evidence_kinds")),
+        "evidence_affordances": _evidence_affordance_records(
+            preflight.get("evidence_affordances") or capability.get("evidence_affordances")
+        ),
         "target_capability_ids": list(preflight.get("target_capability_ids") or []),
         "preferred_tool_ids": _string_list(preflight.get("preferred_tool_ids")),
         "visual_verification_tool_ids": _string_list(preflight.get("visual_verification_tool_ids")),
         "advisories": advisories,
         "readiness_issues": readiness_issues,
     }
+
+
+def _evidence_affordance_records(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip()
+        if not kind:
+            continue
+        result.append({
+            "kind": kind,
+            "tool_ids": _string_list(item.get("tool_ids"))[:12],
+            "verification_strengths": _string_list(item.get("verification_strengths"))[:6],
+        })
+        if len(result) >= 12:
+            break
+    return result
 
 
 def _plan_summary(plan: Any) -> dict[str, Any]:

@@ -7,6 +7,7 @@ from runtime.tool_registry import ToolRegistry
 
 from .attachments import register_attachment_tools
 from .code import register_code_tools
+from .desktop import register_desktop_tools
 from .document import register_document_tools
 from .filesystem import register_filesystem_tools
 from .git import register_git_tools
@@ -25,6 +26,7 @@ BUILTIN_TOOL_GROUPS: dict[str, ToolRegistrar] = {
     "filesystem": register_filesystem_tools,
     "document": register_document_tools,
     "spreadsheet": register_spreadsheet_tools,
+    "desktop": register_desktop_tools,
     "code": register_code_tools,
     "shell": register_shell_tools,
     "git": register_git_tools,

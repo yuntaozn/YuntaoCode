@@ -113,12 +113,13 @@ write. Once the write and verification conditions are both satisfied, the
 runtime moves to finalization instead of continuing to expose an open-ended
 write loop.
 
-## Runtime Intervention Governance
+## User Guidance And Runtime Advisory Governance
 
-Runtime intervention is not a second planner. Its job is to keep execution
-observable and safe while leaving task strategy to the model.
+User guidance during a run is a new user semantic source, not a runtime-chosen
+strategy. Runtime advisories keep execution observable and safe while leaving
+task strategy to the model.
 
-Interventions should stay in three explicit layers:
+Guidance and advisories should stay in four explicit layers:
 
 1. **Hard safety boundary**
    - PathGuard, permission scope, user confirmation, disabled tools, unavailable
@@ -135,6 +136,14 @@ Interventions should stay in three explicit layers:
    - Non-blocking advisories and observable tool-result warnings are carried as
      `runtime_risks` so Context Pack, RunResult, diagnostics, Runbook, and
      evaluation records can audit them.
+4. **User guidance**
+   - A running user message is recorded as `guidance` and may interrupt the
+     current model stream at a safe point.
+   - The runtime re-orients the model with the new user text and existing run
+     facts. It does not prescribe the next route.
+   - Older stream or diagnostic readers may still see
+     `runtime_intervention` compatibility fields. New runtime code should use
+     User Guidance terminology and `guidance_count`.
 
 This means a document translation hint should say that a temporary script may
 weaken coverage, progress, resumability, and verification evidence. It should

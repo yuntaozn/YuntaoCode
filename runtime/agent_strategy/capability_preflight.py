@@ -25,6 +25,39 @@ VISUAL_ARTIFACT_KINDS = {
     "visual_capture",
     "pdf",
 }
+EVIDENCE_KIND_ORDER = (
+    "content",
+    "structural",
+    "runtime",
+    "visual",
+    "network",
+    "local_state",
+    "external_state",
+    "verification",
+    "evidence",
+)
+CONTENT_ARTIFACT_KINDS = {
+    "attachment_text",
+    "css",
+    "docx",
+    "dom_text",
+    "file",
+    "html",
+    "js",
+    "markdown",
+    "pdf",
+    "site_assets",
+    "spreadsheet_preview",
+    "text",
+    "text_file",
+    "text_preview",
+}
+RUNTIME_ARTIFACT_KINDS = {
+    "command_output",
+    "debug_session",
+    "interaction_trace",
+    "process_list",
+}
 
 
 def build_capability_snapshot(
@@ -205,6 +238,8 @@ def build_capability_snapshot(
             for tool_id, spec in sorted(spec_by_id.items())
             if _string_list(spec.get("artifacts"))
         },
+        "available_evidence_kinds": _available_evidence_kinds(spec_by_id),
+        "evidence_affordances": _evidence_affordances(spec_by_id),
         "capabilities": capabilities,
     }
 
@@ -425,6 +460,7 @@ def preflight_task_capabilities(
         # not rank tools or select a route for the model.
         "preferred_tool_ids": None,
         "visual_verification_tool_ids": visual_verification_tool_ids,
+        "evidence_affordances": snapshot.get("evidence_affordances") or [],
         "route_hint": {
             "policy": "advisory",
             "strategy_owner": "model",
@@ -506,6 +542,118 @@ def _provider_summaries(spec_by_id: dict[str, dict[str, Any]]) -> list[dict[str,
 
 def _string_set(value: Any) -> set[str]:
     return set(_string_list(value))
+
+
+def _available_evidence_kinds(spec_by_id: dict[str, dict[str, Any]]) -> list[str]:
+    kinds: set[str] = set()
+    for tool_id, spec in spec_by_id.items():
+        if not bool(spec.get("available", True)):
+            continue
+        kinds.update(_tool_evidence_kinds(tool_id, spec))
+    return sorted(kinds, key=_evidence_kind_order)
+
+
+def _evidence_affordances(spec_by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for tool_id, spec in sorted(spec_by_id.items()):
+        if not bool(spec.get("available", True)):
+            continue
+        kinds = _tool_evidence_kinds(tool_id, spec)
+        if not kinds:
+            continue
+        for kind in kinds:
+            bucket = grouped.setdefault(
+                kind,
+                {
+                    "kind": kind,
+                    "tool_ids": [],
+                    "provider_kinds": set(),
+                    "artifacts": set(),
+                    "effects": set(),
+                    "roles": set(),
+                    "verification_strengths": set(),
+                },
+            )
+            bucket["tool_ids"].append(tool_id)
+            bucket["provider_kinds"].add(str(spec.get("provider_kind") or "unknown"))
+            bucket["artifacts"].update(_string_list(spec.get("artifacts")))
+            bucket["effects"].update(_string_list(spec.get("effects")))
+            bucket["roles"].update(_string_list(spec.get("roles")))
+            strength = str(spec.get("verification_strength") or "").strip()
+            if strength:
+                bucket["verification_strengths"].add(strength)
+    result: list[dict[str, Any]] = []
+    for kind in sorted(grouped, key=_evidence_kind_order):
+        bucket = grouped[kind]
+        result.append({
+            "kind": kind,
+            "tool_ids": list(dict.fromkeys(bucket["tool_ids"])),
+            "provider_kinds": sorted(bucket["provider_kinds"] - {""}),
+            "artifacts": sorted(bucket["artifacts"] - {""}),
+            "effects": sorted(bucket["effects"] - {""}),
+            "roles": sorted(bucket["roles"] - {""}),
+            "verification_strengths": sorted(bucket["verification_strengths"] - {""}),
+        })
+    return result
+
+
+def _tool_evidence_kinds(tool_id: str, spec: dict[str, Any]) -> set[str]:
+    normalized = str(tool_id or "").strip()
+    prefix = normalized.split(".", 1)[0]
+    roles = _string_set(spec.get("roles"))
+    artifacts = _string_set(spec.get("artifacts"))
+    effects = _string_set(spec.get("effects"))
+    strength = str(spec.get("verification_strength") or "").strip().lower()
+    kinds: set[str] = set()
+
+    if roles & {"evidence", "verification"}:
+        kinds.add("evidence")
+    if strength and strength != "none":
+        kinds.add("verification")
+    if artifacts & VISUAL_ARTIFACT_KINDS or _looks_visual_tool(normalized):
+        kinds.add("visual")
+    if artifacts & CONTENT_ARTIFACT_KINDS or prefix in {
+        "attachment",
+        "code",
+        "document",
+        "filesystem",
+        "git",
+        "spreadsheet",
+        "web",
+    }:
+        kinds.add("content")
+    if artifacts & RUNTIME_ARTIFACT_KINDS or normalized in {"shell.run_command", "preview.interact_page"}:
+        kinds.add("runtime")
+    if prefix in {"code", "filesystem", "git", "spreadsheet"} or normalized in {
+        "shell.run_command",
+        "preview.interact_page",
+    }:
+        kinds.add("structural")
+    if prefix == "web":
+        kinds.add("network")
+    if effects & {"file_write", "file_delete", "local_state_change"}:
+        kinds.add("local_state")
+    if effects & {"external_state_change"}:
+        kinds.add("external_state")
+    if not kinds and roles:
+        kinds.add("evidence")
+    return kinds
+
+
+def _looks_visual_tool(tool_id: str) -> bool:
+    normalized = str(tool_id or "").strip().lower()
+    return any(
+        term in normalized
+        for term in ("screenshot", "capture", "render", "viewport", "image", "pdf")
+    )
+
+
+def _evidence_kind_order(kind: str) -> tuple[int, str]:
+    try:
+        index = EVIDENCE_KIND_ORDER.index(kind)
+    except ValueError:
+        index = len(EVIDENCE_KIND_ORDER)
+    return (index, kind)
 
 
 def _tool_health(spec: dict[str, Any]) -> str:

@@ -311,6 +311,8 @@ def _context_evidence_summary(evidence: dict[str, Any]) -> dict[str, Any]:
             "target_capability_ids": _string_list(capability.get("target_capability_ids")),
             "preferred_tool_ids": _string_list(capability.get("preferred_tool_ids")),
             "visual_verification_tool_ids": _string_list(capability.get("visual_verification_tool_ids")),
+            "available_evidence_kinds": _string_list(capability.get("available_evidence_kinds")),
+            "evidence_affordance_count": len(_dict_list(capability.get("evidence_affordances"))),
             "readiness_issue_count": len(_dict_list(capability.get("readiness_issues"))),
             "advisory_count": len(_dict_list(capability.get("advisories"))),
             "available_tool_count": _safe_int(capability.get("available_tool_count"), 0),

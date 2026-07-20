@@ -31,10 +31,20 @@ foundation easier to understand, test, and extend.
   - Owns provider-facing model-round streaming facts: deltas, heartbeats,
     tool-call chunks, request budgets, provider errors, and interruption.
   - It must not decide task intent, tool routes, completion, or verification.
+- `runtime/model_harness.py`
+  - Owns model/provider transport adaptation before one model round is sent:
+    request shape, tool payload compatibility, multimodal fallback, and
+    provider-facing harness facts.
+  - It must not infer user intent, select tools, choose capability routes, or
+    decide whether a Run is complete.
 - `runtime/tool_execution_batch.py`
   - Executes one model-proposed tool-call batch, preserves provider response
     ordering, and returns explicit execution bookkeeping state.
   - It must not select tools or reinterpret the task contract.
+- `runtime/user_guidance.py`
+  - Owns user-authored guidance queued while a Run is active.
+  - It must not become a hidden planner, task router, or runtime intervention
+    strategy.
 - `runtime/run_finalizer.py`
   - Owns post-loop RunResult construction, recovery checkpoints, final-answer
     presentation, assistant-message persistence, and the terminal done event.
@@ -87,6 +97,14 @@ foundation easier to understand, test, and extend.
   - Keep lifecycle and event-driven state transitions in `RunStore`, not SQL.
 - `runtime/skills/`
   - Local tools. Keep file, shell, Git, and export boundaries explicit.
+- `providers/`
+  - Incubating provider packages that should stay runtime-agnostic where
+    possible. YuntaoCode should consume them through thin adapters such as
+    `runtime.skills.desktop`, so they can later become CLI, HTTP, MCP, or
+    standalone packages.
+  - `desktop_observation/`: read-only local desktop observation. It may produce
+    `desktop_state.v1` and `visual_evidence.v1`; it must not introduce click,
+    typing, hotkey, focus, window control, or process-control behavior.
 - `mcp-services/`
   - External MCP service source/reference trees and service-specific notes.
   - Do not treat files here as built-in `runtime.skills.*` modules or
@@ -99,6 +117,8 @@ foundation easier to understand, test, and extend.
   - Architecture, plugin, and protocol notes for contributors.
   - `README.md`: documentation map and placement rules.
   - `task-model.md`: task, plan, step, trace, recovery, and template direction.
+  - `model-harness.md`: model transport adaptation boundary; use it for
+    provider/model quirks instead of adding policy branches to the runner.
   - `run-artifacts.md`: shared temporary artifacts across ToolTasks in one Run.
   - `persistence-model.md`: operational data boundaries and SQLite direction.
   - `experience-runtime.md`: Experience Sample / Digest layer for reviewed Run
@@ -200,6 +220,7 @@ Run the checks that match your change:
 ```bash
 python scripts/sync_release_version.py --check
 python scripts/check_doc_encoding.py
+python scripts/check_01_readiness.py
 pytest
 python -m py_compile runtime/api/conversations.py runtime/conversation_runner.py runtime/run_execution_state.py runtime/tool_call_loop.py runtime/tool_execution_batch.py runtime/run_finalizer.py
 node --check runtime/panel/static/panel.js

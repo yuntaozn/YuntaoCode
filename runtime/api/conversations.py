@@ -50,7 +50,6 @@ from runtime.conversation_interactions import (
     active_stream_conversation_runs as _active_stream_conversation_runs,
     confirm_responses as _confirm_responses,
     pending_confirms as _pending_confirms,
-    runtime_guidance as _runtime_guidance,
 )
 from runtime.prompt_context import build_system_prompt
 from runtime.run_result_presenter import (
@@ -60,6 +59,7 @@ from runtime.run_result_presenter import (
 )
 from runtime.shell_command_facts import shell_command_facts
 from runtime.task_runner import ToolContext
+from runtime.user_guidance import add_user_guidance, pop_user_guidance
 from runtime import tool_event_presentation as _tool_present
 from runtime import tool_call_protocol as _tool_proto
 
@@ -234,10 +234,7 @@ class ConversationGuidanceHandler(ApiHandler):
         if not content:
             raise tornado.web.HTTPError(400, reason="content is required")
 
-        items = _runtime_guidance.setdefault(conversation_id, [])
-        items.append(content)
-        if len(items) > 10:
-            del items[:-10]
+        pending_count = add_user_guidance(conversation_id, content)
         message = self.runtime.conversations.add_message(
             conversation_id,
             "user",
@@ -247,7 +244,7 @@ class ConversationGuidanceHandler(ApiHandler):
         self.finish_json({
             "success": True,
             "data": {
-                "count": len(items),
+                "count": pending_count,
                 "message": message.to_public_dict(),
             },
         })
@@ -2146,8 +2143,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _normalize_display_path(self, path_value: Any) -> str:
         return str(path_value or "").replace("\\", "/")
 
-    def _is_runtime_guidance_message(self, message: Any) -> bool:
-        return _task_ctx.is_runtime_guidance_message(message)
+    def _is_user_guidance_message(self, message: Any) -> bool:
+        return _task_ctx.is_user_guidance_message(message)
 
     def _discard_parts(self, target: list[str], parts: list[str]) -> None:
         if not parts:
@@ -2350,25 +2347,19 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _interrupt_execution_plan(self, execution_plan: dict[str, Any]) -> None:
         _pt.interrupt_execution_plan(execution_plan)
 
-    def _runtime_intervention_prompt(
+    def _guidance_reorientation_prompt(
         self,
         workspace_path: str,
         tool_events: list[dict[str, Any]],
         execution_plan: dict[str, Any] | None,
     ) -> str:
-        return _prp.runtime_intervention_prompt(workspace_path, tool_events, execution_plan)
+        return _prp.guidance_reorientation_prompt(workspace_path, tool_events, execution_plan)
 
-    def _pop_runtime_guidance(self, conversation_id: str) -> tuple[str, str]:
-        guidance_items = _runtime_guidance.pop(conversation_id, [])
-        if not guidance_items:
+    def _pop_user_guidance(self, conversation_id: str) -> tuple[str, str]:
+        batch = pop_user_guidance(conversation_id)
+        if not batch.items:
             return "", ""
-        guidance_text = "\n".join(f"- {item}" for item in guidance_items[-5:])
-        return (
-            "【运行中插话 / 干预】用户追加了新的信息或纠偏要求。"
-            "请暂停沿用旧思路，重新审视当前任务后再继续：\n"
-            f"{guidance_text}",
-            guidance_text,
-        )
+        return batch.prompt, batch.text
 
     def _verification_modality_status(
         self,
@@ -2568,6 +2559,25 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             workspace_path,
             task_contract,
             run_result,
+            tool_events=tool_events,
+            completion_decisions=completion_decisions,
+        )
+
+    def _completion_reentry_prompt(
+        self,
+        workspace_path: str,
+        task_contract: dict[str, Any] | None,
+        run_result: dict[str, Any],
+        completion_decision: dict[str, Any],
+        *,
+        tool_events: list[dict[str, Any]] | None = None,
+        completion_decisions: list[dict[str, Any]] | None = None,
+    ) -> str:
+        return _prp.completion_reentry_prompt(
+            workspace_path,
+            task_contract,
+            run_result,
+            completion_decision,
             tool_events=tool_events,
             completion_decisions=completion_decisions,
         )

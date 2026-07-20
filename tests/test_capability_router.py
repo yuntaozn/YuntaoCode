@@ -156,6 +156,23 @@ def test_capability_prompt_tells_model_not_to_invent_tools() -> None:
     assert "document.extract_pdf_to_docx" in prompt
 
 
+def test_compact_capability_prompt_exposes_roles_and_verification_strengths() -> None:
+    catalog = build_capability_catalog([
+        {
+            "id": "shell.run_command",
+            "capability": "shell.local_command",
+            "artifacts": ["command_output"],
+            "roles": ["execution", "verification"],
+            "verification_strength": "standard",
+        },
+    ])
+
+    prompt = format_capability_catalog_for_prompt(catalog, compact=True)
+
+    assert "roles=execution,verification" in prompt
+    assert "verification=standard" in prompt
+
+
 def test_validate_task_route_proposal_accepts_known_capability_tool_pair() -> None:
     catalog = build_capability_catalog([
         {"id": "document.extract_pdf_to_docx", "capability": "document.pdf_to_docx", "artifacts": ["docx"]},

@@ -11,8 +11,8 @@ from runtime.terminal_profile import get_terminal_config
 from runtime.context_manager import compress_context, count_messages_tokens
 from runtime.conversation_interactions import (
     paused_runs as _paused_runs,
-    runtime_guidance as _runtime_guidance,
 )
+from runtime.user_guidance import has_pending_user_guidance
 from runtime.tool_call_loop import ToolCallLoop
 from runtime.tool_execution_batch import ToolExecutionBatch, ToolExecutionState
 from runtime.agent_strategy.capability_grounding import ground_task_contract_with_capabilities
@@ -31,6 +31,8 @@ from runtime.agent_strategy.run_finalization import (
     FINAL_ANSWER_VERIFIED,
     NEEDS_VERIFICATION_EVIDENCE,
     PAUSE_STAGNANT_VERIFICATION_GAP,
+    REENTER_COMPLETION_REVIEW,
+    build_completion_reentry_decision,
     build_task_evidence_finalization_gate,
     build_verification_gap_decision,
 )
@@ -503,7 +505,7 @@ class ConversationRunExecutor:
         tool_call_loop = ToolCallLoop(
             emit=self.write_event,
             flush=self.flush,
-            guidance_pending=lambda: bool(_runtime_guidance.get(conversation_id)),
+            guidance_pending=lambda: has_pending_user_guidance(conversation_id),
         )
         tool_execution_batch = ToolExecutionBatch(self)
 
@@ -618,7 +620,7 @@ class ConversationRunExecutor:
                 round_tools = tools
                 round_enable_thinking = enable_thinking
                 round_reasoning_effort = reasoning_effort
-                guidance_prompt, guidance_text = self._pop_runtime_guidance(conversation_id)
+                guidance_prompt, guidance_text = self._pop_user_guidance(conversation_id)
                 if guidance_prompt:
                     await rejudge_guidance_contract(guidance_text)
                     run_state.record_guidance()
@@ -628,7 +630,7 @@ class ConversationRunExecutor:
                         await self.flush()
                     messages.append({
                         "role": "system",
-                        "content": self._runtime_intervention_prompt(
+                        "content": self._guidance_reorientation_prompt(
                             workspace.path,
                             tool_events,
                             execution_plan,
@@ -693,7 +695,7 @@ class ConversationRunExecutor:
                     if round_result.fatal:
                         return
                     continue
-                late_guidance_prompt, late_guidance_text = self._pop_runtime_guidance(conversation_id)
+                late_guidance_prompt, late_guidance_text = self._pop_user_guidance(conversation_id)
                 if late_guidance_prompt:
                     await rejudge_guidance_contract(late_guidance_text)
                     run_state.record_guidance()
@@ -712,7 +714,7 @@ class ConversationRunExecutor:
                         await self.flush()
                     messages.append({
                         "role": "system",
-                        "content": self._runtime_intervention_prompt(
+                        "content": self._guidance_reorientation_prompt(
                             workspace.path,
                             tool_events,
                             execution_plan,
@@ -777,6 +779,74 @@ class ConversationRunExecutor:
                     metadata.setdefault("completion_decisions", []).append(decision)
                     self.write_event({"event": "completion_decision", "decision": decision})
                     await self.flush()
+                    reentry_decision = build_completion_reentry_decision(
+                        completion_decision=decision,
+                        run_result=run_state.completion_review.latest_result,
+                    )
+                    if reentry_decision.action == REENTER_COMPLETION_REVIEW:
+                        verification_gap_key = self._verification_gap_key(
+                            task_contract,
+                            tool_events,
+                            workspace.path,
+                            effective_mode,
+                        )
+                        gap_decision = build_verification_gap_decision(
+                            previous_key=run_state.verification_gap.key,
+                            current_key=verification_gap_key,
+                            prompt_count=run_state.verification_gap.prompt_count,
+                            stagnant_rounds=run_state.verification_gap.stagnant_rounds,
+                        )
+                        run_state.verification_gap.update(
+                            key=gap_decision.key,
+                            prompt_count=gap_decision.prompt_count,
+                            stagnant_rounds=gap_decision.stagnant_rounds,
+                        )
+                        if gap_decision.action == PAUSE_STAGNANT_VERIFICATION_GAP:
+                            run_state.completion_review.consume()
+                            self.write_event({
+                                "event": "status",
+                                "status": "verification_gap_stagnant",
+                                "message": "候选总结仍带同一验证缺口且多轮无新证据变化；当前循环正在保存可观察结果。",
+                                "verification_gap": {
+                                    "prompt_count": run_state.verification_gap.prompt_count,
+                                    "stagnant_rounds": run_state.verification_gap.stagnant_rounds,
+                                },
+                            })
+                            await self.flush()
+                            break
+                        self._discard_parts(content_parts, round_content_parts)
+                        self._discard_parts(reasoning_parts, round_reasoning_parts)
+                        self.write_event({
+                            "event": "message_replace",
+                            "message": "".join(content_parts),
+                            "clear_reasoning": True,
+                        })
+                        messages.append({
+                            "role": "system",
+                            "content": self._completion_reentry_prompt(
+                                workspace.path,
+                                task_contract,
+                                run_state.completion_review.latest_result,
+                                decision,
+                                tool_events=tool_events,
+                                completion_decisions=metadata.get("completion_decisions"),
+                            ),
+                        })
+                        self.write_event({
+                            "event": "status",
+                            "status": "completion_reentry",
+                            "message": "候选总结仍带验证缺口，已把运行事实反馈给模型继续判断。",
+                            "review": {
+                                "count": run_state.completion_review.review_count,
+                                "reason": reentry_decision.reason,
+                                "verification_gap": {
+                                    "prompt_count": run_state.verification_gap.prompt_count,
+                                    "stagnant_rounds": run_state.verification_gap.stagnant_rounds,
+                                },
+                            },
+                        })
+                        await self.flush()
+                        continue
                     run_state.completion_review.consume()
                 if not tool_calls:
                     if (

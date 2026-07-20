@@ -54,6 +54,7 @@ from runtime.agent_strategy.classifiers import (
 
 # ── prompts ───────────────────────────────────────────────────────────────
 from runtime.agent_strategy.prompts import (
+    completion_reentry_prompt,
     completion_review_prompt,
     execute_plan_prompt,
     final_answer_prompt,
@@ -1243,6 +1244,26 @@ class TestPrompts:
         assert "test_not_observed" in prompt
         assert "Decide whether the task is actually complete" in prompt
         assert "Do not claim completion beyond the observed deliverables" in prompt
+
+    def test_completion_reentry_prompt_is_evidence_only(self):
+        prompt = completion_reentry_prompt(
+            "/tmp",
+            {"goal": "create an interactive viewer"},
+            {
+                "status": "partial",
+                "target_written_paths": ["viewer/index.html"],
+                "missing_verification_modalities": ["behavioral"],
+                "risks": ["test_not_observed"],
+            },
+            {"action": "final_answer_candidate", "content_chars": 120},
+        )
+
+        assert "Completion candidate re-entry from runtime facts" in prompt
+        assert "final answer" in prompt
+        assert "missing verification modalities" in prompt
+        assert "behavioral" in prompt
+        assert "not a forced route" in prompt
+        assert "Choose the next step yourself" in prompt
 
     def test_result_synthesis_prompt_uses_runtime_facts_instead_of_fixed_template(self):
         prompt = result_synthesis_prompt(

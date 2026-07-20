@@ -132,7 +132,7 @@ PREFIX_CAPABILITIES: dict[str, tuple[str, str, str]] = {
 TEXT_WRITE_CAPABILITY = (
     "code.text_write",
     "Text Write",
-    "Create or modify text/code files through one unified write route. For long prose, complete pages, multi-file rewrites, or non-trivial full artifacts, default to draft chunk writing: create_text_draft, repeated append_text_chunk, inspect when useful, then finalize_text_file. Use precise edits for small existing-file changes and direct write only for tiny complete files.",
+    "Create or modify text/code files through one unified write route. Draft chunk writing is suited to long prose, complete pages, multi-file rewrites, and non-trivial full artifacts: create_text_draft, repeated append_text_chunk, inspect when useful, then finalize_text_file. Precise edits fit small existing-file changes; direct write fits tiny complete files.",
 )
 
 TEXT_WRITE_TOOL_PROMPT_ORDER: dict[str, int] = {
@@ -374,6 +374,10 @@ def format_capability_catalog_for_prompt(
                 labels.append(f"artifacts={','.join(item.artifacts[:3])}")
             if item.effects:
                 labels.append(f"effects={','.join(item.effects[:3])}")
+            if item.roles:
+                labels.append(f"roles={','.join(item.roles[:3])}")
+            if item.verification_strengths:
+                labels.append(f"verification={','.join(item.verification_strengths[:3])}")
             if item.provider_kinds:
                 labels.append(f"providers={','.join(item.provider_kinds[:3])}")
             suffix = f" ({'; '.join(labels)})" if labels else ""

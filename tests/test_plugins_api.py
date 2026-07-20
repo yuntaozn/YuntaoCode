@@ -85,6 +85,7 @@ def test_plugin_provider_kind_classifies_builtin_boundaries() -> None:
     assert plugin_provider_kind("attachment") == "runtime_capability"
     assert plugin_provider_kind("filesystem") == "builtin_foundation"
     assert plugin_provider_kind("document") == "builtin_optional"
+    assert plugin_provider_kind("desktop", "desktop_observation") == "desktop_provider"
     assert plugin_provider_kind("blender", "mcp") == "mcp_capability"
     assert plugin_provider_kind("pdf-tools", "cli") == "cli_provider"
     assert plugin_provider_kind("doc-method", "capability_pack") == "capability_pack"
@@ -95,6 +96,13 @@ def test_spreadsheet_plugin_has_user_facing_name() -> None:
     assert i18n.t("plugin.name.spreadsheet", "zh-CN") == "表格处理"
     assert i18n.t("plugin.name.spreadsheet", "en") == "Spreadsheet Processing"
     assert i18n.t("plugin.name.spreadsheet", "zh-CN") != "plugin.name.spreadsheet"
+
+
+def test_desktop_plugin_has_user_facing_name_and_kind() -> None:
+    assert i18n.t("plugin.name.desktop", "zh-CN") == "桌面观察"
+    assert i18n.t("plugin.name.desktop", "en") == "Desktop Observation"
+    assert i18n.t("plugins.kind.desktop_provider", "zh-CN") == "桌面观察能力"
+    assert i18n.t("plugins.kind.desktop_provider", "en") == "Desktop Observation"
 
 
 def test_capability_pack_exposes_read_only_provider() -> None:

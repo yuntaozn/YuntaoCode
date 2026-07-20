@@ -592,12 +592,15 @@ def _capability_record(
         for item in advisories
         if isinstance(item, dict) and str(item.get("code") or "").strip()
     ]
+    evidence_affordances = _capability_evidence_affordances(snapshot, preflight)
+    evidence_text = _format_evidence_affordances(evidence_affordances)
     content = (
         "Capability boundary facts: "
         f"available_tools={_safe_int(snapshot.get('available_tool_count'))}/"
         f"{_safe_int(snapshot.get('tool_count'))}; "
         f"target_capabilities={', '.join(target_capability_ids[:8]) or 'none'}; "
         f"visual_verification_tools={', '.join(visual_verification_tool_ids[:8]) or 'none'}; "
+        f"evidence_affordances={evidence_text or 'none'}; "
         f"advisories={', '.join(advisory_codes[:8]) or 'none'}; "
         f"preflight_ok={preflight.get('ok') if 'ok' in preflight else 'unknown'}"
     )
@@ -613,12 +616,61 @@ def _capability_record(
         metadata={
             "target_capability_ids": target_capability_ids[:8],
             "visual_verification_tool_ids": visual_verification_tool_ids[:12],
+            "evidence_affordances": evidence_affordances[:8],
             "advisory_codes": advisory_codes[:12],
             "available_tool_count": _safe_int(snapshot.get("available_tool_count")),
             "tool_count": _safe_int(snapshot.get("tool_count")),
             "preflight_ok": preflight.get("ok"),
         },
     )
+
+
+def _capability_evidence_affordances(
+    snapshot: dict[str, Any],
+    preflight: dict[str, Any],
+) -> list[dict[str, Any]]:
+    value = preflight.get("evidence_affordances")
+    if not isinstance(value, list):
+        value = snapshot.get("evidence_affordances")
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip()
+        if not kind:
+            continue
+        tool_ids = [
+            str(tool_id)
+            for tool_id in item.get("tool_ids") or []
+            if str(tool_id or "").strip()
+        ]
+        result.append({
+            "kind": kind,
+            "tool_ids": tool_ids[:8],
+            "verification_strengths": [
+                str(strength)
+                for strength in item.get("verification_strengths") or []
+                if str(strength or "").strip()
+            ][:4],
+        })
+    return result
+
+
+def _format_evidence_affordances(items: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for item in items[:6]:
+        kind = str(item.get("kind") or "").strip()
+        tool_ids = [
+            str(tool_id)
+            for tool_id in item.get("tool_ids") or []
+            if str(tool_id or "").strip()
+        ]
+        if not kind or not tool_ids:
+            continue
+        parts.append(f"{kind}:{','.join(tool_ids[:4])}")
+    return "; ".join(parts)
 
 
 def _context_hygiene_record(

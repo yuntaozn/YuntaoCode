@@ -13,6 +13,23 @@ FINAL_ANSWER_VERIFIED = "final_answer_verified"
 FINAL_ANSWER_CONVERGED = "final_answer_converged"
 CONTINUE_VERIFICATION_GAP = "continue_verification_gap"
 PAUSE_STAGNANT_VERIFICATION_GAP = "pause_stagnant_verification_gap"
+ACCEPT_COMPLETION_CANDIDATE = "accept_completion_candidate"
+REENTER_COMPLETION_REVIEW = "reenter_completion_review"
+
+
+VERIFICATION_GAP_RISKS = frozenset({
+    "deliverable_not_verified",
+    "write_not_verified",
+    "required_verification_not_satisfied",
+    "verification_modality_missing",
+    "verification_evidence_weak",
+    "visual_verification_not_observed",
+    "runtime_verification_not_observed",
+    "test_not_observed",
+    "invalid_verification_method",
+    "degraded_verification_failure",
+    "optional_write_not_verified",
+})
 
 
 @dataclass(frozen=True)
@@ -43,6 +60,20 @@ class VerificationGapDecision:
     prompt_count: int
     stagnant_rounds: int
     key: str
+
+
+@dataclass(frozen=True)
+class CompletionReentryDecision:
+    """Decision for a model final-answer candidate with unresolved evidence.
+
+    This is intentionally narrow: it does not pick a verification route or
+    decide success. It only says whether a final-answer candidate should get
+    another model-facing evidence prompt before the runner accepts it as the
+    terminal answer.
+    """
+
+    action: str
+    reason: str
 
 
 def build_finalization_gate(
@@ -161,3 +192,64 @@ def build_verification_gap_decision(
         next_stagnant_rounds,
         current_key,
     )
+
+
+def build_completion_reentry_decision(
+    *,
+    completion_decision: dict | None,
+    run_result: dict | None,
+) -> CompletionReentryDecision:
+    """Return whether a completion candidate should re-enter verification.
+
+    A model may respond to completion self-review with prose that honestly says
+    verification is still weak. That prose should not immediately become the
+    final user-facing summary when the runtime facts still expose verification
+    gaps. The returned decision is advisory for the runner loop; the next
+    strategy still belongs to the model. Repeated-loop control should stay with
+    the evidence-gap progress detector, which can compare observable state
+    changes instead of introducing another counter here.
+    """
+
+    decision = completion_decision if isinstance(completion_decision, dict) else {}
+    result = run_result if isinstance(run_result, dict) else {}
+    if decision.get("action") != "final_answer_candidate":
+        return CompletionReentryDecision(
+            ACCEPT_COMPLETION_CANDIDATE,
+            "model did not produce a final-answer candidate",
+        )
+
+    risks = {
+        str(item or "").strip()
+        for item in (result.get("risks") or decision.get("risks") or [])
+        if str(item or "").strip()
+    }
+    missing_modalities = [
+        str(item or "").strip()
+        for item in (
+            result.get("missing_verification_modalities")
+            or _decision_missing_modalities(decision)
+        )
+        if str(item or "").strip()
+    ]
+    unresolved_verification = bool(missing_modalities or (risks & VERIFICATION_GAP_RISKS))
+    if not unresolved_verification:
+        return CompletionReentryDecision(
+            ACCEPT_COMPLETION_CANDIDATE,
+            "no unresolved verification gap observed",
+        )
+
+    return CompletionReentryDecision(
+        REENTER_COMPLETION_REVIEW,
+        "final-answer candidate still has unresolved verification evidence",
+    )
+
+
+def _decision_missing_modalities(decision: dict) -> list[str]:
+    evidence_pack = decision.get("evidence_pack")
+    if not isinstance(evidence_pack, dict):
+        return []
+    return [
+        str(item or "").strip()
+        for item in (evidence_pack.get("missing_verification_modalities") or [])
+        if str(item or "").strip()
+    ]

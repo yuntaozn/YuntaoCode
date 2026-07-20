@@ -8,6 +8,8 @@ from runtime.agent_strategy.task_contract import (
     merge_model_task_contract,
     task_continuity_anchor,
 )
+from runtime.skills import register_builtin_tools
+from runtime.tool_registry import ToolRegistry
 
 
 def test_snapshot_groups_available_and_unavailable_capability_tools() -> None:
@@ -47,6 +49,27 @@ def test_snapshot_groups_available_and_unavailable_capability_tools() -> None:
     assert snapshot["verification_tool_strengths"] == {
         "mcp_blender.get_scene_info": "weak",
     }
+    assert snapshot["available_evidence_kinds"] == ["verification", "evidence"]
+    assert snapshot["evidence_affordances"] == [
+        {
+            "kind": "verification",
+            "tool_ids": ["mcp_blender.get_scene_info"],
+            "provider_kinds": ["mcp"],
+            "artifacts": [],
+            "effects": [],
+            "roles": ["verification"],
+            "verification_strengths": ["weak"],
+        },
+        {
+            "kind": "evidence",
+            "tool_ids": ["mcp_blender.get_scene_info"],
+            "provider_kinds": ["mcp"],
+            "artifacts": [],
+            "effects": [],
+            "roles": ["verification"],
+            "verification_strengths": ["weak"],
+        },
+    ]
     assert snapshot["external_state_capability_ids"] == []
     assert snapshot["provider_kinds"] == ["mcp"]
     assert snapshot["tools_by_provider_kind"] == {
@@ -373,6 +396,8 @@ def test_preflight_exposes_visual_verification_tools_for_code_task() -> None:
             "id": "code.edit_file",
             "capability": "code.text_write",
             "artifacts": ["diff"],
+            "effects": ["file_write", "local_state_change"],
+            "roles": ["deliverable"],
             "available": True,
         },
         {
@@ -425,6 +450,96 @@ def test_preflight_exposes_visual_verification_tools_for_code_task() -> None:
         "preview.interact_page",
         "web.capture_page",
     ]
+    assert [item["kind"] for item in result["evidence_affordances"]] == [
+        "content",
+        "structural",
+        "runtime",
+        "visual",
+        "network",
+        "local_state",
+        "verification",
+        "evidence",
+    ]
+
+
+def test_snapshot_describes_core_evidence_affordances_without_routing() -> None:
+    snapshot = build_capability_snapshot([
+        {
+            "id": "filesystem.read_file",
+            "capability": "filesystem.local_files",
+            "artifacts": ["text"],
+            "roles": ["evidence", "verification"],
+            "verification_strength": "weak",
+        },
+        {
+            "id": "shell.run_command",
+            "capability": "shell.local_command",
+            "artifacts": ["command_output", "debug_session"],
+            "effects": ["shell_command"],
+            "roles": ["execution", "evidence", "verification"],
+            "verification_strength": "standard",
+        },
+        {
+            "id": "preview.capture_local_html",
+            "capability": "preview.visual_debug",
+            "artifacts": ["screenshot", "visual_evidence"],
+            "roles": ["verification"],
+            "verification_strength": "standard",
+        },
+    ])
+    by_kind = {item["kind"]: item for item in snapshot["evidence_affordances"]}
+
+    assert "content" in snapshot["available_evidence_kinds"]
+    assert "runtime" in snapshot["available_evidence_kinds"]
+    assert "visual" in snapshot["available_evidence_kinds"]
+    assert by_kind["content"]["tool_ids"] == ["filesystem.read_file"]
+    assert by_kind["runtime"]["tool_ids"] == ["shell.run_command"]
+    assert by_kind["visual"]["tool_ids"] == ["preview.capture_local_html"]
+
+
+def test_write_tools_expose_local_state_without_becoming_verification() -> None:
+    snapshot = build_capability_snapshot([
+        {
+            "id": "code.edit_file",
+            "capability": "code.text_write",
+            "artifacts": ["file", "diff"],
+            "effects": ["file_write", "local_state_change"],
+            "roles": ["deliverable"],
+        },
+    ])
+    by_kind = {item["kind"]: item for item in snapshot["evidence_affordances"]}
+
+    assert "local_state" in snapshot["available_evidence_kinds"]
+    assert "verification" not in snapshot["available_evidence_kinds"]
+    assert by_kind["local_state"]["tool_ids"] == ["code.edit_file"]
+    assert by_kind["local_state"]["roles"] == ["deliverable"]
+
+
+def test_builtin_tool_specs_feed_evidence_affordances() -> None:
+    registry = ToolRegistry()
+    register_builtin_tools(
+        registry,
+        groups=("filesystem", "code", "shell", "git", "spreadsheet"),
+    )
+
+    snapshot = build_capability_snapshot(registry.list_specs())
+    by_kind = {item["kind"]: item for item in snapshot["evidence_affordances"]}
+
+    assert "content" in snapshot["available_evidence_kinds"]
+    assert "runtime" in snapshot["available_evidence_kinds"]
+    assert "local_state" in snapshot["available_evidence_kinds"]
+    assert "verification" in snapshot["available_evidence_kinds"]
+    assert "evidence" in snapshot["available_evidence_kinds"]
+    assert "filesystem.read_file" in by_kind["content"]["tool_ids"]
+    assert "shell.run_command" in by_kind["runtime"]["tool_ids"]
+    assert "code.edit_file" in by_kind["local_state"]["tool_ids"]
+    assert "git.diff" in by_kind["verification"]["tool_ids"]
+    assert "spreadsheet.inspect_workbook" in by_kind["content"]["tool_ids"]
+    assert snapshot["tool_effects"]["code.edit_file"] == [
+        "file_write",
+        "local_state_change",
+    ]
+    assert snapshot["tool_roles"]["code.edit_file"] == ["deliverable"]
 
 
 def test_preflight_advises_unavailable_target_capability() -> None:

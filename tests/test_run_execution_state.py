@@ -30,6 +30,7 @@ def test_guidance_resets_transient_finalization_state() -> None:
 
     state.record_guidance()
 
+    assert state.guidance_count == 1
     assert state.runtime_intervention_count == 1
     assert not state.final_answer_mode
     assert not state.completion_review.pending

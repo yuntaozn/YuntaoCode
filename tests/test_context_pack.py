@@ -287,6 +287,18 @@ def test_planning_context_pack_includes_contract_and_capability_facts() -> None:
             "schema_version": "capability_snapshot.v1",
             "tool_count": 4,
             "available_tool_count": 3,
+            "evidence_affordances": [
+                {
+                    "kind": "runtime",
+                    "tool_ids": ["shell.run_command"],
+                    "verification_strengths": ["standard"],
+                },
+                {
+                    "kind": "visual",
+                    "tool_ids": ["preview.capture_local_html", "preview.interact_page"],
+                    "verification_strengths": ["standard"],
+                },
+            ],
         },
         capability_preflight={
             "schema_version": "capability_preflight.v1",
@@ -303,10 +315,12 @@ def test_planning_context_pack_includes_contract_and_capability_facts() -> None:
     assert pack["ledger"]["records"][-1]["kind"] == "capability"
     assert "code.edit_file" not in pack["records"][-1]["content"]
     assert "preview.interact_page" in pack["records"][-1]["content"]
+    assert "evidence_affordances=runtime:shell.run_command" in pack["records"][-1]["content"]
     assert pack["records"][-1]["metadata"]["visual_verification_tool_ids"] == [
         "preview.capture_local_html",
         "preview.interact_page",
     ]
+    assert pack["records"][-1]["metadata"]["evidence_affordances"][0]["kind"] == "runtime"
 
 
 def test_verification_context_pack_includes_run_result_facts() -> None:

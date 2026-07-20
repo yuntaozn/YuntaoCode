@@ -148,7 +148,7 @@ def read_file_sync(
     numbered = "".join(
         f"{str(i).rjust(width)}| {line}" for i, line in enumerate(selected, start=s)
     )
-    # Raw content without line numbers – model must use this when constructing old_text for edit_file
+    # Raw content without line numbers; use this when constructing old_text for edit_file.
     raw_content = "".join(selected)
     integrity = inspect_text_artifact_integrity(path, text)
 
@@ -901,6 +901,9 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
                 "required": ["path"],
             },
             capability="filesystem.local_files",
+            artifacts=["directory_listing"],
+            roles=["evidence"],
+            verification_strength="weak",
         ),
         scan_folder,
     )
@@ -919,6 +922,9 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
                 "required": ["path"],
             },
             capability="filesystem.local_files",
+            artifacts=["text_preview"],
+            roles=["evidence", "verification"],
+            verification_strength="weak",
         ),
         read_text_preview,
     )
@@ -937,6 +943,9 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
                 "required": ["path"],
             },
             capability="filesystem.local_files",
+            artifacts=["text"],
+            roles=["evidence", "verification"],
+            verification_strength="weak",
         ),
         read_file,
     )
@@ -946,8 +955,8 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
             name="写入文件",
             description=(
                 "在允许工作区内创建或覆盖很小的完整文本文件。写入前会创建可恢复回退点；"
-                "不要把它作为较大 HTML/CSS/JS/Python/Markdown/JSON 完整产物的首选。"
-                "新建或重写非平凡文本/代码产物时，优先使用 filesystem.create_text_draft、"
+                "它不适合较大 HTML/CSS/JS/Python/Markdown/JSON 完整产物。"
+                "新建或重写非平凡文本/代码产物时，可使用 filesystem.create_text_draft、"
                 "filesystem.append_text_chunk、filesystem.finalize_text_file。"
             ),
             input_schema={
@@ -969,6 +978,9 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
             },
             requires_confirmation=True,
             capability="code.text_write",
+            artifacts=["file"],
+            effects=["file_write", "local_state_change"],
+            roles=["deliverable"],
         ),
         write_file,
     )
@@ -978,7 +990,7 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
             name="Apply local file changes",
             description=(
                 "Apply a small transaction of local file changes inside the workspace boundary. "
-                "Use this as the main filesystem write channel for bounded create, overwrite, "
+                "This is a structured filesystem write channel for bounded create, overwrite, "
                 "literal replace, and delete operations. For complex code edits, use code.edit_file "
                 "or code.apply_patch; for large complete artifacts, use the text draft flow."
             ),
@@ -1130,6 +1142,8 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
             requires_confirmation=True,
             capability="filesystem.text_transform",
             artifacts=["text_file"],
+            effects=["file_write", "local_state_change"],
+            roles=["deliverable"],
             retry_safe=True,
             idempotent=True,
         ),
@@ -1263,6 +1277,8 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
             requires_confirmation=True,
             capability="code.text_write",
             artifacts=["text_file", "text_draft"],
+            effects=["file_write", "local_state_change"],
+            roles=["deliverable"],
             retry_safe=True,
         ),
         finalize_text_file,

@@ -6,7 +6,7 @@ from runtime.agent_strategy import classifiers as _clf
 from runtime.agent_strategy import task_lineage as _lineage
 
 
-def is_runtime_guidance_message(message: Any) -> bool:
+def is_user_guidance_message(message: Any) -> bool:
     metadata = getattr(message, "metadata", {}) or {}
     return bool(metadata.get("guidance") and metadata.get("during_run"))
 
@@ -18,7 +18,7 @@ def has_recent_task_context(conversation: Any | None, current_content: str) -> b
     current = current_content.strip()
     diagnostic_feedback = _clf.looks_like_diagnostic_feedback(current)
     for message in reversed(getattr(conversation, "messages", [])[-12:]):
-        if is_runtime_guidance_message(message):
+        if is_user_guidance_message(message):
             continue
         role = str(getattr(message, "role", "") or "")
         previous_content = str(getattr(message, "content", "") or "").strip()
