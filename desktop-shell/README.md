@@ -3,9 +3,9 @@
 这个目录是 YuntaoCode（云涛智能终端）的 Tauri v2 桌面壳。它的职责很窄：
 
 1. 启动随安装包携带的 Python sidecar。
-2. 读取 sidecar 输出的 `{"event":"ready","url":"..."}`。
+2. 为 sidecar 分配本机端口，并通过 `/health` 轮询确认 runtime 就绪。
 3. 在桌面窗口中用 iframe 加载 Python runtime 提供的本地面板。
-4. 窗口关闭时尝试结束 sidecar 进程。
+4. 窗口关闭时先请求 runtime 关闭，再兜底清理 sidecar 进程树并退出应用。
 
 Python runtime 仍然负责本地工具、模型调用、对话存储、项目目录和设置。
 
@@ -51,6 +51,17 @@ cd YuntaoCode\desktop-shell
 npm run sidecar:windows
 ```
 
+默认构建 `full` sidecar，会包含文档、网页预览、桌面观察等完整产品能力。
+如果只想验证核心 Runtime 或制作轻量包，可以构建 `lite` sidecar：
+
+```powershell
+cd YuntaoCode\desktop-shell
+npm run sidecar:windows:lite
+```
+
+`lite` 只包含附件、文件、代码、Shell、Git 和记忆等核心工具组。它适合体积
+验证和最小运行时冒烟，不适合作为完整能力发行包。
+
 脚本会把产物复制到：
 
 ```text
@@ -81,6 +92,22 @@ npm run dev
 ```powershell
 cd YuntaoCode\desktop-shell
 npm run build:windows
+```
+
+默认 Windows 安装包会构建无控制台 sidecar，避免安装后出现独立黑框。
+NSIS 安装器当前固定为简体中文，以避免 Windows/NSIS 记住上次语言选择后
+导致默认语言漂移。英文安装器可以后续用单独构建配置补充。
+如果需要诊断 sidecar 启动日志，可以直接运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ..\scripts\build_desktop_windows.ps1 -ConsoleSidecar
+```
+
+如需构建轻量安装包：
+
+```powershell
+cd YuntaoCode\desktop-shell
+npm run build:windows:lite
 ```
 
 输出目录通常在：

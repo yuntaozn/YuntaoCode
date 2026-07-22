@@ -838,8 +838,15 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         goal = str(contract.get("goal") or "").strip() or "(not declared)"
         deliverables = json.dumps(contract.get("deliverables") or [], ensure_ascii=False)
         lang = self.get_lang()
+        source = str(contract.get("source") or "").strip()
+        source_notice = ""
+        if source and source != "model":
+            source_notice += i18n.t("contract.source_notice", lang, source=source)
+            if contract.get("model_contract_error"):
+                source_notice += i18n.t("contract.source_error", lang)
         prompt = (
             i18n.t("contract.title", lang)
+            + source_notice
             + i18n.t("contract.workspace", lang, workspace_path=str(contract.get("workspace_path")))
             + i18n.t("contract.access", lang, access_scope=str(contract.get("access_scope")))
             + i18n.t("contract.planning_policy", lang, planning_policy=str(contract.get("planning_policy")))

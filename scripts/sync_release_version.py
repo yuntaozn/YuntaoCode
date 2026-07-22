@@ -74,7 +74,7 @@ def _cargo_toml_with_version(path: Path, version: str) -> str:
 def _cargo_lock_with_version(path: Path, version: str) -> str:
     text = path.read_text(encoding="utf-8")
     pattern = (
-        r'(\[\[package\]\]\s*\nname\s*=\s*"local-intelligent-terminal"\s*\n'
+        r'(\[\[package\]\]\s*\nname\s*=\s*"yuntaocode"\s*\n'
         r'version\s*=\s*)"[^"]+"'
     )
     return _replace_once(text, pattern, rf'\g<1>"{version}"', path=path)

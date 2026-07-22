@@ -39,11 +39,38 @@ def test_task_contract_prompt_is_model_declaration_not_fixed_target() -> None:
         "success_conditions": ["target_deliverable_success"],
     })
 
-    assert "模型声明的任务理解" in prompt
+    assert "当前任务理解" in prompt
     assert "创建模型查看页面" in prompt
     assert "仅作提示，不固定路径" in prompt
     assert "执行策略由你自行选择" in prompt
     assert "必须遵守以下硬条件" not in prompt
+
+
+def test_task_contract_prompt_marks_policy_fallback_as_revisable_context() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    handler.get_lang = lambda: "zh-CN"
+
+    prompt = handler._task_contract_prompt({
+        "source": "policy_fallback",
+        "model_contract_error": "model service timeout",
+        "workspace_path": r"D:\ifctool",
+        "access_scope": "project_only",
+        "planning_policy": "auto",
+        "confirmation_policy": "auto",
+        "intent": "answer_only",
+        "goal": "",
+        "deliverables": [],
+        "routing_strategy": "model_first_task_contract",
+        "requires_write": False,
+        "requires_state_change": False,
+        "requires_verification": False,
+        "success_conditions": ["final_answer"],
+    })
+
+    assert "契约来源：policy_fallback" in prompt
+    assert "不是固定任务结论" in prompt
+    assert "任务契约判断曾发生异常" in prompt
+    assert "当前用户请求仍是语义依据" in prompt
 
 
 def test_task_contract_prompt_includes_execution_advisories_without_hard_constraint() -> None:

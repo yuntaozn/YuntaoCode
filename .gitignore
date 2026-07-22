@@ -12,6 +12,7 @@ htmlcov/
 .env/
 .venv/
 .venv-sidecar-build/
+.venv-sidecar-build-lite/
 venv/
 
 # Node / Tauri

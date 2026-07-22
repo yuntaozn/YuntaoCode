@@ -128,6 +128,23 @@ def test_model_visual_input_defaults_enabled_and_can_be_disabled(tmp_path: Path)
     assert store.get_model_config("text-only")["supports_vision"] is False
 
 
+def test_default_model_seed_keeps_one_model_per_builtin_cloud_interface(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / "settings.json")
+
+    models = store.public()["models"]
+
+    assert [model["id"] for model in models] == [
+        "doubao-seed-2-0-pro-260215",
+        "ark-code-latest",
+        "qwen3.7-max",
+    ]
+    assert [model["provider"] for model in models] == [
+        "volcengine",
+        "volcengine_agent_plan",
+        "qwen",
+    ]
+
+
 def test_default_settings_include_volcengine_agent_plan_provider(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / "settings.json")
 
@@ -143,6 +160,47 @@ def test_default_settings_include_volcengine_agent_plan_provider(tmp_path: Path)
     assert model["api_model"] == "ark-code-latest"
     assert model["context_limit"] == 256000
     assert model["thinking_mode"] == ""
+
+
+def test_legacy_builtin_default_models_are_hidden_on_migration(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({
+            "settings_version": 12,
+            "default_model": "qwen3.6-flash",
+            "models": [
+                {
+                    "id": "qwen3.6-flash",
+                    "name": "Qwen3.6 Flash",
+                    "provider": "qwen",
+                    "context_limit": 983000,
+                },
+                {
+                    "id": "doubao-seed-1-8-251228",
+                    "name": "豆包 Seed 1.8",
+                    "provider": "volcengine",
+                    "context_limit": 128000,
+                },
+                {
+                    "id": "custom-local",
+                    "name": "Custom Local",
+                    "provider": "ollama",
+                    "context_limit": 32000,
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    store = SettingsStore(settings_path)
+    public = store.public()
+    saved = json.loads(settings_path.read_text(encoding="utf-8"))
+
+    assert public["default_model"] == "doubao-seed-2-0-pro-260215"
+    assert "custom-local" in {model["id"] for model in public["models"]}
+    assert "qwen3.6-flash" not in {model["id"] for model in public["models"]}
+    assert store.get_model_config("qwen3.6-flash")["enabled"] is False
+    assert saved["settings_version"] == 13
 
 
 def test_agent_plan_provider_keeps_openai_compatible_chat_completions(tmp_path: Path) -> None:
@@ -170,7 +228,7 @@ def test_agent_plan_provider_keeps_openai_compatible_chat_completions(tmp_path: 
 
     assert provider["chat_path"] == "/chat/completions"
     assert provider["wire_api"] == "chat_completions"
-    assert saved["settings_version"] == 12
+    assert saved["settings_version"] == 13
     assert saved["providers"]["volcengine_agent_plan"]["api_key"] == "secret"
 
 

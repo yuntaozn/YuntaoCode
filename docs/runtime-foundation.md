@@ -686,8 +686,9 @@ Current runtime-level capability guards:
   appear to target external application state, missing services, degraded tools,
   or uncertain visual verification routes;
 - when a target capability is declared for an external-state task, the runtime
-  presents preferred visible tools and readiness evidence, while leaving route
-  selection to the model unless a separate safety/permission boundary applies;
+  presents visible capability, provider, readiness, and evidence facts, while
+  leaving route selection to the model unless a separate safety/permission
+  boundary applies;
 - new runs use `capability_preflight.v2`, which carries advisory
   `readiness_issues` and `route_hint` metadata instead of legacy
   route-control fields;

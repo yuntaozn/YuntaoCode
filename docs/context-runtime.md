@@ -203,7 +203,7 @@ focus_relation = inherit
 `runtime/agent_strategy/project_context.py` 根据模型在 Task Contract 中声明的焦点和
 所引用的 task candidate，生成 `active_focus.v1` 快照。快照只包含：
 
-- 焦点关系和模型声明的对象名称、类型、路径提示。
+- 焦点关系和当前任务理解中的对象名称、类型、路径提示。
 - 被引用的历史候选 ID。
 - 候选 Run 中真实观察到的路径证据。
 - 当前 workspace 路径和焦点是否已解析。
@@ -367,7 +367,7 @@ task_contract
   当前用户请求、workspace 摘要、相关 task_lineage、能力概览、记忆边界。
 
 planning
-  模型声明的任务契约、能力边界、候选步骤、用户硬约束。
+  当前任务契约、能力边界、候选步骤、用户硬约束。
 
 execution
   当前步骤、最近工具结果、必要证据片段、失败恢复线索。

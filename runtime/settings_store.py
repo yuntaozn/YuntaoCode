@@ -19,7 +19,7 @@ from .model_request_options import sanitize_request_options
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "settings_version": 12,
+    "settings_version": 13,
     "backend_url": "http://127.0.0.1:8088",
     "default_model": "doubao-seed-2-0-pro-260215",
     "access_scope": "project_only",
@@ -88,31 +88,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "supports_reasoning_effort": True,
         },
         {
-            "id": "doubao-seed-2-0-code-preview-260215",
-            "name": "豆包 Seed 2.0 编程加强版",
-            "provider": "volcengine",
-            "context_limit": 256000,
-            "supports_tools": True,
-            "thinking_mode": "volcengine",
-            "supports_reasoning_effort": True,
-        },
-        {
-            "id": "doubao-seed-1-6-251015",
-            "name": "豆包 Seed 1.6",
-            "provider": "volcengine",
-            "context_limit": 128000,
-            "supports_tools": True,
-            "thinking_mode": "volcengine",
-        },
-        {
-            "id": "doubao-seed-1-8-251228",
-            "name": "豆包 Seed 1.8",
-            "provider": "volcengine",
-            "context_limit": 128000,
-            "supports_tools": True,
-            "thinking_mode": "volcengine",
-        },
-        {
             "id": "ark-code-latest",
             "name": "火山 Agent Plan ark-code-latest",
             "provider": "volcengine_agent_plan",
@@ -122,43 +97,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "thinking_mode": "",
         },
         {
-            "id": "deepseek-v4-flash",
-            "name": "DeepSeek V4 Flash",
-            "provider": "qwen",
-            "context_limit": 1000000,
-            "supports_tools": True,
-            "thinking_mode": "",
-        },
-        {
-            "id": "qwen3.6-flash",
-            "name": "Qwen3.6 Flash",
-            "provider": "qwen",
-            "context_limit": 983000,
-            "supports_tools": True,
-            "thinking_mode": "qwen",
-            "allow_disable_thinking": False,
-        },
-        {
-            "id": "qwen3.6-max-preview",
-            "name": "Qwen3.6 Max Preview",
-            "provider": "qwen",
-            "context_limit": 1000000,
-            "supports_tools": True,
-            "thinking_mode": "qwen",
-            "allow_disable_thinking": False,
-        },
-        {
             "id": "qwen3.7-max",
             "name": "Qwen3.7 Max",
-            "provider": "qwen",
-            "context_limit": 1000000,
-            "supports_tools": True,
-            "thinking_mode": "qwen",
-            "allow_disable_thinking": False,
-        },
-        {
-            "id": "qwen3.7-max-preview",
-            "name": "Qwen3.7 Max Preview",
             "provider": "qwen",
             "context_limit": 1000000,
             "supports_tools": True,
@@ -182,6 +122,15 @@ VALID_ACCESS_SCOPES = {"project_only", "full_local"}
 VALID_PLANNING_POLICIES = {"off", "auto", "always"}
 VALID_CONFIRMATION_POLICIES = {"conservative", "auto", "aggressive"}
 RUNTIME_MANAGED_PLUGIN_IDS = {"attachment", "memory"}
+PRUNED_DEFAULT_MODEL_IDS = {
+    "doubao-seed-2-0-code-preview-260215",
+    "doubao-seed-1-6-251015",
+    "doubao-seed-1-8-251228",
+    "deepseek-v4-flash",
+    "qwen3.6-flash",
+    "qwen3.6-max-preview",
+    "qwen3.7-max-preview",
+}
 
 
 def planning_policy_from_legacy_policy_alias(value: Any) -> str:
@@ -308,9 +257,22 @@ class SettingsStore:
                 ):
                     agent_plan["chat_path"] = "/chat/completions"
                     agent_plan["wire_api"] = "chat_completions"
+        if version < 13:
+            self._hide_pruned_default_models()
         if version < DEFAULT_SETTINGS["settings_version"]:
             self._settings["settings_version"] = DEFAULT_SETTINGS["settings_version"]
             self._save()
+
+    def _hide_pruned_default_models(self) -> None:
+        models = self._settings.get("models")
+        if isinstance(models, list):
+            for model in models:
+                if not isinstance(model, dict):
+                    continue
+                if str(model.get("id") or "") in PRUNED_DEFAULT_MODEL_IDS:
+                    model["enabled"] = False
+        if str(self._settings.get("default_model") or "") in PRUNED_DEFAULT_MODEL_IDS:
+            self._settings["default_model"] = DEFAULT_SETTINGS["default_model"]
 
     def update(self, payload: dict[str, Any]) -> dict[str, Any]:
         if payload.get("backend_url"):

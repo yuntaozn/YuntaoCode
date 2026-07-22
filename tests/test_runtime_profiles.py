@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 from runtime.app import RuntimeFeatureSet, build_runtime
 from runtime.config import RuntimeConfig
 from runtime.skills import CORE_BUILTIN_TOOL_GROUPS, DEFAULT_BUILTIN_TOOL_GROUPS, register_builtin_tools
@@ -40,6 +42,22 @@ def test_lite_tool_groups_exclude_optional_product_capabilities() -> None:
     assert "spreadsheet.inspect_workbook" not in tool_ids
     assert "web.fetch_url" not in tool_ids
     assert "preview.capture_local_html" not in tool_ids
+
+
+def test_lite_tool_registration_does_not_import_optional_skill_modules(monkeypatch) -> None:
+    optional_modules = {
+        "runtime.skills.document",
+        "runtime.skills.spreadsheet",
+        "runtime.skills.desktop",
+        "runtime.skills.web",
+        "runtime.skills.preview",
+    }
+    for module_name in optional_modules:
+        monkeypatch.delitem(sys.modules, module_name, raising=False)
+
+    _tool_ids_for(CORE_BUILTIN_TOOL_GROUPS)
+
+    assert not any(module_name in sys.modules for module_name in optional_modules)
 
 
 def test_full_tool_groups_include_preview_capability() -> None:

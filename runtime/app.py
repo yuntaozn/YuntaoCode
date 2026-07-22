@@ -179,6 +179,24 @@ class RuntimeState:
                     self.mcp_services.close()
 
 
+class RuntimeShutdownHandler(tornado.web.RequestHandler):
+    def initialize(self, runtime: RuntimeState) -> None:
+        self.runtime = runtime
+
+    async def post(self) -> None:
+        supplied = self.request.headers.get("X-YuntaoCode-Token", "")
+        expected = self.runtime.config.token
+        if not expected or not secrets.compare_digest(supplied, expected):
+            raise tornado.web.HTTPError(403, reason="invalid runtime token")
+
+        self.write({"ok": True, "event": "shutdown_scheduled"})
+        await self.flush()
+        tornado.ioloop.IOLoop.current().call_later(
+            0.05,
+            tornado.ioloop.IOLoop.current().stop,
+        )
+
+
 def build_runtime(
     config: RuntimeConfig,
     *,
@@ -304,6 +322,7 @@ def make_app(runtime: RuntimeState) -> tornado.web.Application:
             (r"/capability-packs", CapabilityPacksHandler, handler_kwargs),
         ])
     routes.extend([
+        (r"/_runtime/shutdown", RuntimeShutdownHandler, handler_kwargs),
         (r"/tools", ToolsHandler, handler_kwargs),
         (r"/attachments", AttachmentsHandler, handler_kwargs),
         (r"/attachments/([^/]+)/content", AttachmentContentHandler, handler_kwargs),
@@ -376,12 +395,12 @@ def main() -> None:
         "url": f"http://{config.host}:{config.port}",
         "profile": runtime.features.profile,
         "workspace_roots": [str(root) for root in runtime.runner.path_guard.workspace_roots],
-    }, ensure_ascii=False), flush=True)
+    }, ensure_ascii=True), flush=True)
 
     try:
         io_loop.start()
     except KeyboardInterrupt:
-        print(json.dumps({"event": "stopped"}, ensure_ascii=False), file=sys.stderr)
+        print(json.dumps({"event": "stopped"}, ensure_ascii=True), file=sys.stderr)
     finally:
         runtime.close()
 

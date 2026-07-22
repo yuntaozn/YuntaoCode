@@ -61,17 +61,34 @@ SUMMARY_MAX_TOKENS = 1_200
 # ---------------------------------------------------------------------------
 
 _encoding: tiktoken.Encoding | None = None
+_encoding_error: str | None = None
 
 
 def _get_encoding() -> tiktoken.Encoding:
-    global _encoding
+    global _encoding, _encoding_error
     if _encoding is None:
-        _encoding = tiktoken.get_encoding("cl100k_base")
+        if _encoding_error is not None:
+            raise RuntimeError(_encoding_error)
+        try:
+            _encoding = tiktoken.get_encoding("cl100k_base")
+            _encoding_error = None
+        except Exception as exc:
+            _encoding_error = _safe_error_text(exc)
+            raise
     return _encoding
 
 
 def tokenizer_ready() -> bool:
     return _encoding is not None
+
+
+def tokenizer_error() -> str | None:
+    return _encoding_error
+
+
+def _safe_error_text(exc: Exception) -> str:
+    text = str(exc) or exc.__class__.__name__
+    return " ".join(text.split())[:300]
 
 
 async def warm_context_tokenizer() -> None:
@@ -83,8 +100,8 @@ async def warm_context_tokenizer() -> None:
     """
     try:
         await asyncio.to_thread(_get_encoding)
-    except Exception:
-        logger.exception("Context tokenizer warmup failed")
+    except Exception as exc:
+        logger.warning("Context tokenizer warmup failed; using fast estimate fallback: %s", _safe_error_text(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +113,11 @@ def count_tokens(text: str) -> int:
     """Return the number of tokens in *text* using cl100k_base."""
     if not text:
         return 0
-    return len(_get_encoding().encode(text))
+    try:
+        return len(_get_encoding().encode(text))
+    except Exception as exc:
+        logger.warning("Context tokenizer unavailable; using fast estimate fallback: %s", _safe_error_text(exc))
+        return _estimate_text_tokens_fast(text)
 
 
 def count_message_tokens(message: dict[str, Any]) -> int:

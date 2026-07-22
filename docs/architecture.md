@@ -132,7 +132,7 @@ User Request
 - `capability_router.py`：能力契约、模型路由提案和提案验证。
 - `conversation_task_context.py`：判断是否存在近期任务上下文，并暴露 Task Lineage
   候选；只有模型显式引用 candidate 后，Runtime 才允许应用连续任务锚点。
-- `project_context.py`：把任务关系与当前工作对象关系分开，生成模型声明、
+- `project_context.py`：把任务关系与当前工作对象关系分开，生成当前任务理解、
   Runtime 可审计的 Active Focus Snapshot，不替模型选择目标。
 - `profiles.py`：模型任务契约可选的内部 Profile 描述，例如直接问答、项目分析、代码修改、外部能力执行、文档工作流、论文工作流；Profile 不生成固定阶段序列。
 - `policy.py`：只处理用户显式的计划开关；自动模式由模型任务契约或模型计划判断器决定，不使用关键词和请求长度路由。
@@ -170,7 +170,7 @@ Runtime validates: protocol integrity, known capability, permission, confirmatio
 
 Capability Router 草案见 [capability-router.md](capability-router.md)。
 
-模型提出的目标、预期产物和路径属于任务理解声明，不是运行时强制锁定的目标。
+模型提出的目标、预期产物和路径属于当前任务理解，不是运行时强制锁定的目标。
 Runtime 可以审计“声明与结果是否一致”，但不应因为路径提示或预先计划阻止模型
 根据执行证据调整策略。只有权限、路径边界、确认和完整工具协议属于硬执行边界。
 完成收束也应基于任务证据而不是文件类型：写入和外部状态任务观察目标产物，只读

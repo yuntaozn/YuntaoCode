@@ -301,7 +301,7 @@ RunResult、RunEvidence 和 RunWorkbench 作为审计视图，不参与任务路
 YuntaoCode 宣称支持 Windows、macOS 和 Linux 时，默认含义不是所有外部工具在三端都天然存在，而是 Runtime 核心和基础能力在三端都有清晰边界：
 
 1. Runtime 核心必须跨平台：设置目录、工作区路径、PathGuard、任务状态、Run/RunEvent、附件、记忆、工具注册、HTTP API 和前端不能依赖单一操作系统。
-2. 内置基础能力必须优先使用跨平台入口：文件读写使用 Python/Pathlib；代码写入使用统一文件能力；Shell 优先使用 `command + args`，不要把 PowerShell、bash、cp、rm、Copy-Item 等语法当作通用协议。
+2. 内置基础能力应提供跨平台入口：文件读写使用 Python/Pathlib；代码写入走统一文件能力；Shell 建议使用 `command + args`，不要把 PowerShell、bash、cp、rm、Copy-Item 等语法当作通用协议。
 3. 可选能力可以有平台适配器：打开文件夹、Word/LibreOffice 转换、浏览器、Git、MCP 服务和桌面壳可以按系统走不同实现，但缺依赖时必须结构化失败并给出可理解诊断。
 4. 文档转换和 GUI 能力不能成为 Runtime 启动前提：缺少 Office、LibreOffice、xdg-open、open、Explorer、浏览器或 MCP 二进制时，只应影响对应 capability。
 5. 新增 `runtime/skills/` 能力时，需要回答：Windows/macOS/Linux 是否都可运行？如果不能，是否有明确降级、错误提示、测试或文档说明？
@@ -362,7 +362,7 @@ Additional runtime guards now exist in `runtime/agent_strategy/capability_prefli
 - `capability_snapshot` records `provider_kind`, `provider_id`, and provider
   summaries so diagnostics can distinguish "the capability is unavailable"
   from "a specific MCP/CLI provider is unhealthy".
-- Model-declared `task_contract.capability_ids` are validated against that
+- Current `task_contract.capability_ids` are validated against that
   snapshot.
 - External-state contracts are checked against capabilities that advertise
   `external_state_change`; missing or unhealthy providers become advisory

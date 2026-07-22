@@ -1,15 +1,15 @@
 [package]
-name = "local-intelligent-terminal"
+name = "yuntaocode"
 version = "0.1.0"
-description = "Local Intelligent Terminal desktop shell"
-authors = ["aiagent"]
-license = ""
-repository = ""
+description = "YuntaoCode desktop shell"
+authors = ["沈阳云涛智能科技有限公司 <wutaoplay@outlook.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/yuntaozn/YuntaoCode"
 edition = "2021"
 rust-version = "1.77.2"
 
 [lib]
-name = "local_intelligent_terminal_lib"
+name = "yuntaocode_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

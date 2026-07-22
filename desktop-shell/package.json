@@ -13,7 +13,10 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "sidecar:windows": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\build_sidecar_windows.ps1",
-    "build:windows": "npm run sidecar:windows && tauri build --verbose"
+    "sidecar:windows:lite": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\build_sidecar_windows.ps1 -Profile lite",
+    "build:windows": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\build_desktop_windows.ps1",
+    "build:windows:console": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\build_desktop_windows.ps1 -ConsoleSidecar",
+    "build:windows:lite": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\build_desktop_windows.ps1 -Profile lite"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
