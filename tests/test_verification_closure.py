@@ -63,6 +63,11 @@ def test_verification_closure_collects_visual_debug_artifact_and_gap_facts() -> 
                 "verification_relevance": "verification",
             },
         ],
+        artifact_summary={
+            "kind": "run_artifact_summary",
+            "model_context_paths": ["preview.png"],
+            "model_context_eligible_count": 2,
+        },
         risks=["verification_modality_missing"],
     )
 
@@ -90,6 +95,7 @@ def test_verification_closure_collects_visual_debug_artifact_and_gap_facts() -> 
     assert "risk:verification_modality_missing" in closure["gap_facts"]
     assert closure["artifact_paths"]["final"] == ["viewer.html"]
     assert closure["artifact_paths"]["visual"] == ["preview.png"]
+    assert closure["artifact_paths"]["model_context"] == ["preview.png"]
 
     text = format_verification_closure_for_model(closure)
     assert "Verification closure facts:" in text

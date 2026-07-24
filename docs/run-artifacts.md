@@ -55,11 +55,16 @@ The compact fields are:
 - `verification_relevance`: `deliverable`, `verification`, `diagnostic`, or
   `context`.
 - `metadata`: bounded details such as size, format, dimensions, validation,
-  command, exit code, and runtime error counts.
+  command, exit code, runtime error counts, and optional `model_context_path`
+  when an artifact has a concrete image/text location that can be referenced by
+  model-context bridges.
 
 `RunResult.artifacts` remains the compatibility field for historical
 write-artifact summaries. New consumers should prefer `RunResult.run_artifacts`
 and `RunResult.artifact_summary`, then fall back to the legacy field.
+`artifact_summary.model_context_paths` lists the bounded artifact locations that
+are eligible for future model context. This is evidence only: it does not force
+image injection or decide whether visual verification was sufficient.
 
 `RunEvidence.artifacts` exposes the same normalized records for diagnostics,
 task history, future replay fixtures, and local evaluation. The task workbench

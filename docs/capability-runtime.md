@@ -245,9 +245,11 @@ runtime diagnostics。Word/PPT 等重依赖文件预览应继续走可选 provid
 视觉类工具应返回或可归一化为 `visual_evidence.v1`。该契约至少包含来源
 （URL、本地文件、MCP 或外部提供者）、截图/渲染产物路径、尺寸、格式、捕获时间、
 页面状态、console/page/network 错误，以及该产物是否可作为模型上下文的 image
-input。`preview.*`、`web.*` 和 MCP 截图结果都应尽量进入这个证据结构；旧的
-`path`、`artifact_kind`、`has_runtime_errors` 等顶层字段可继续保留作为兼容出口。
-RunResult 只把它作为“观察证据”汇总，不把它变成隐藏任务路线或硬性拦截。
+input。摘要层应保留 `model_context_path`，Run Artifact 摘要应汇总
+`model_context_paths`，这样模型自审时能知道哪些视觉证据可被引用。`preview.*`、
+`web.*` 和 MCP 截图结果都应尽量进入这个证据结构；旧的 `path`、`artifact_kind`、
+`has_runtime_errors` 等顶层字段可继续保留作为兼容出口。RunResult 只把它作为
+“观察证据”汇总，不把它变成隐藏任务路线或硬性拦截。
 
 `visual_evidence.model_context.eligible` 只是工具声明“这张图适合给模型看”，不是
 Runtime 必须注入图片的命令。真正进入模型上下文前还需要满足三层边界：

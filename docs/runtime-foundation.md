@@ -323,14 +323,15 @@ exists so the Workbench, Replay, and Evaluation can inspect how a run attempted
 to close.
 
 `completion_evidence_pack.v1` is the model-facing fact package used by that
-self-review prompt. It groups RunResult, compact Run facts, artifacts,
-verification evidence, visual verification summary, runtime debug audit,
-capability evidence, recent ToolTask progress, risks, failures, and previous
-completion decisions. The pack is evidence-only: it does not decide completion,
-rank tools, force fallback, or block the model from changing strategy. The
-model remains responsible for deciding whether to continue with tools, verify
-or repair, ask the user for a missing boundary, or produce a final answer from
-the observed evidence.
+self-review prompt. It groups RunResult, compact Run facts, legacy artifacts,
+typed Run artifacts, artifact summary, verification evidence, verification
+closure, visual verification summary, runtime debug audit, capability evidence,
+recent ToolTask progress, risks, failures, and previous completion decisions.
+The pack is evidence-only: it does not decide completion, rank tools, force
+fallback, or block the model from changing strategy. The model remains
+responsible for deciding whether to continue with tools, verify or repair, ask
+the user for a missing boundary, or produce a final answer from the observed
+evidence.
 
 ## Diagnostic Export
 

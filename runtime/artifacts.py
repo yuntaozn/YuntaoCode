@@ -137,13 +137,16 @@ def summarize_run_artifacts(records: list[dict[str, Any]] | None) -> dict[str, A
     paths: list[str] = []
     final_paths: list[str] = []
     visual_paths: list[str] = []
+    model_context_paths: list[str] = []
     changed_paths: list[str] = []
     for item in artifacts:
         role = str(item.get("role") or "artifact")
         artifact_kind = str(item.get("artifact_kind") or item.get("kind") or "artifact")
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
         by_role[role] = by_role.get(role, 0) + 1
         by_kind[artifact_kind] = by_kind.get(artifact_kind, 0) + 1
         path = str(item.get("path") or "").strip()
+        model_context_path = str(metadata.get("model_context_path") or path).strip()
         if path and path not in paths:
             paths.append(path)
         if path and role in {"final", "draft"} and path not in changed_paths:
@@ -155,6 +158,8 @@ def summarize_run_artifacts(records: list[dict[str, Any]] | None) -> dict[str, A
             or artifact_kind in _VISUAL_KINDS
         ) and path not in visual_paths:
             visual_paths.append(path)
+        if item.get("can_enter_model_context") and model_context_path and model_context_path not in model_context_paths:
+            model_context_paths.append(model_context_path)
 
     return {
         "schema_version": RUN_ARTIFACT_SUMMARY_SCHEMA_VERSION,
@@ -176,6 +181,7 @@ def summarize_run_artifacts(records: list[dict[str, Any]] | None) -> dict[str, A
         "changed_paths": changed_paths[:24],
         "final_paths": final_paths[:24],
         "visual_paths": visual_paths[:24],
+        "model_context_paths": model_context_paths[:24],
         "flags": {
             "has_artifacts": bool(artifacts),
             "has_final_artifacts": bool(final_paths),
@@ -320,9 +326,16 @@ def _record_from_visual_evidence(workspace_path: str, item: dict[str, Any]) -> d
             "page_error_count",
             "failed_request_count",
             "model_context_modality",
+            "model_context_path",
         )
         if summary.get(key) not in (None, "")
     }
+    model_context_path = _relative_workspace_path(
+        workspace_path,
+        str(summary.get("model_context_path") or ""),
+    )
+    if model_context_path:
+        metadata["model_context_path"] = model_context_path
     return _make_record(
         artifact_kind=str(summary.get("artifact_kind") or "screenshot"),
         role="screenshot",
@@ -489,7 +502,7 @@ def _make_record(
 
 def _dedupe_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str, str, str, str]] = set()
+    seen: dict[tuple[str, str, str, str, str, str], int] = {}
     for item in records:
         key = (
             str(item.get("artifact_kind") or ""),
@@ -500,10 +513,44 @@ def _dedupe_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             str((item.get("metadata") or {}).get("draft_id") or ""),
         )
         if key in seen:
+            existing = result[seen[key]]
+            result[seen[key]] = _merge_duplicate_record(existing, item)
             continue
-        seen.add(key)
+        seen[key] = len(result)
         result.append(item)
     return result
+
+
+def _merge_duplicate_record(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(existing)
+    existing_metadata = existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
+    incoming_metadata = incoming.get("metadata") if isinstance(incoming.get("metadata"), dict) else {}
+    merged["metadata"] = _merge_metadata(existing_metadata, incoming_metadata)
+    for flag in ("can_preview", "can_enter_model_context"):
+        merged[flag] = bool(existing.get(flag)) or bool(incoming.get(flag))
+    if not str(merged.get("url") or "").strip() and incoming.get("url"):
+        merged["url"] = incoming.get("url")
+    if not str(merged.get("status") or "").strip() and incoming.get("status"):
+        merged["status"] = incoming.get("status")
+    if not str(merged.get("verification_relevance") or "").strip() and incoming.get("verification_relevance"):
+        merged["verification_relevance"] = incoming.get("verification_relevance")
+    if not str(merged.get("source_task_id") or "").strip() and incoming.get("source_task_id"):
+        merged["source_task_id"] = incoming.get("source_task_id")
+    if merged.get("source_event_index") is None and incoming.get("source_event_index") is not None:
+        merged["source_event_index"] = incoming.get("source_event_index")
+    merged["id"] = _record_id(merged)
+    return merged
+
+
+def _merge_metadata(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(existing)
+    for key, value in incoming.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = {**current, **value}
+        else:
+            merged[key] = value
+    return merged
 
 
 def _record_id(record: dict[str, Any]) -> str:

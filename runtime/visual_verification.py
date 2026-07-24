@@ -178,6 +178,7 @@ def _compact_visual_record(summary: dict[str, Any]) -> dict[str, Any]:
         "failed_request_count": _safe_int(summary.get("failed_request_count"), 0),
         "model_context_eligible": bool(summary.get("model_context_eligible")),
         "model_context_modality": str(summary.get("model_context_modality") or ""),
+        "model_context_path": str(summary.get("model_context_path") or ""),
     }
 
 

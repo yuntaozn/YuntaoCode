@@ -78,6 +78,7 @@ def test_visual_verification_summarizes_visual_errors_and_model_context() -> Non
     assert summary["flags"]["has_runtime_errors"] is True
     assert summary["flags"]["model_context_injected"] is True
     assert summary["records"][0]["injected_into_model_context"] is True
+    assert summary["records"][0]["model_context_path"] == screenshot
 
 
 def test_visual_verification_is_evidence_only_when_empty() -> None:

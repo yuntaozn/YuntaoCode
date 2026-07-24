@@ -66,6 +66,7 @@ def test_build_run_artifacts_unifies_file_visual_debug_and_verification_records(
     assert screenshot["can_enter_model_context"] is True
     assert screenshot["verification_relevance"] == "verification"
     assert screenshot["metadata"]["width"] == 1024
+    assert screenshot["metadata"]["model_context_path"] == "task-artifacts/preview/viewer.png"
 
     command_log = next(item for item in records if item["role"] == "log")
     assert command_log["artifact_kind"] == "command_log"
@@ -88,6 +89,10 @@ def test_build_run_artifacts_unifies_file_visual_debug_and_verification_records(
     assert summary["by_role"]["log"] == 1
     assert summary["changed_paths"] == ["viewer.html"]
     assert summary["visual_paths"] == ["task-artifacts/preview/viewer.png"]
+    assert summary["model_context_paths"] == [
+        "task-artifacts/preview/viewer.png",
+        "viewer.html",
+    ]
     assert summary["flags"]["has_model_context_artifacts"] is True
 
 

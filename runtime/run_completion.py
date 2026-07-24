@@ -44,6 +44,8 @@ def build_completion_evidence_pack(
     visual = _dict(result.get("visual_verification"))
     debug = _dict(result.get("debug_audit"))
     capability = _dict(result.get("capability_evidence"))
+    artifact_summary = _dict(result.get("artifact_summary"))
+    verification_closure = _dict(result.get("verification_closure"))
     return {
         "schema_version": COMPLETION_EVIDENCE_PACK_SCHEMA_VERSION,
         "kind": "completion_evidence_pack",
@@ -54,6 +56,8 @@ def build_completion_evidence_pack(
         "result_status": str(result.get("status") or "unknown"),
         "fact_summary": fact_summary,
         "artifacts": _artifact_records(result.get("artifacts")),
+        "run_artifacts": _run_artifact_records(result.get("run_artifacts")),
+        "artifact_summary": _artifact_summary_digest(artifact_summary),
         "changed_paths": _string_list(result.get("changed_paths"), limit=12),
         "written_paths": _string_list(
             result.get("target_written_paths")
@@ -68,6 +72,7 @@ def build_completion_evidence_pack(
         ),
         "visual_verification": _audit_digest(visual),
         "debug_audit": _audit_digest(debug),
+        "verification_closure": _verification_closure_digest(verification_closure),
         "capability_evidence": _capability_digest(capability),
         "tool_progress": _tool_progress_records(events),
         "tool_attempts": _tool_attempt_records(events),
@@ -98,10 +103,13 @@ def format_completion_evidence_pack(pack: dict[str, Any]) -> str:
     fact_summary = pack.get("fact_summary")
     if isinstance(fact_summary, dict):
         lines.append(format_run_fact_summary(fact_summary))
+    _append_artifact_summary(lines, pack.get("artifact_summary"))
     _append_string_list(lines, "artifacts", _artifact_labels(pack.get("artifacts")))
+    _append_string_list(lines, "run artifacts", _run_artifact_labels(pack.get("run_artifacts")))
     _append_string_list(lines, "changed paths", pack.get("changed_paths"))
     _append_string_list(lines, "written paths", pack.get("written_paths"))
     _append_verification(lines, pack.get("verification"))
+    _append_verification_closure(lines, pack.get("verification_closure"))
     _append_audit_digest(lines, "visual verification", pack.get("visual_verification"))
     _append_audit_digest(lines, "debug audit", pack.get("debug_audit"))
     _append_capability(lines, pack.get("capability_evidence"))
@@ -174,6 +182,8 @@ def _decision_evidence_summary(evidence_pack: dict[str, Any] | None) -> dict[str
             pack.get("missing_verification_modalities"),
             limit=8,
         ),
+        "artifact_summary": _decision_artifact_summary(pack.get("artifact_summary")),
+        "verification_closure": _decision_verification_closure(pack.get("verification_closure")),
         "tool_progress": _tool_progress_records_from_pack(pack.get("tool_progress"))[:4],
         "tool_attempts": _tool_attempt_records_from_pack(pack.get("tool_attempts"))[:4],
     }
@@ -285,6 +295,109 @@ def _artifact_records(value: Any) -> list[dict[str, str]]:
     return records
 
 
+def _run_artifact_records(value: Any) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    if not isinstance(value, list):
+        return records
+    for item in value[:16]:
+        if not isinstance(item, dict):
+            continue
+        records.append({
+            "role": str(item.get("role") or "artifact"),
+            "artifact_kind": str(item.get("artifact_kind") or item.get("kind") or "artifact"),
+            "path": str(item.get("path") or "").strip(),
+            "source_tool": str(item.get("source_tool") or item.get("tool") or "").strip(),
+            "status": str(item.get("status") or "").strip(),
+            "can_enter_model_context": bool(item.get("can_enter_model_context")),
+            "verification_relevance": str(item.get("verification_relevance") or "").strip(),
+        })
+    return records
+
+
+def _artifact_summary_digest(value: dict[str, Any]) -> dict[str, Any]:
+    if not value:
+        return {}
+    return {
+        "schema_version": str(value.get("schema_version") or ""),
+        "kind": str(value.get("kind") or ""),
+        "count": value.get("count"),
+        "by_role": _compact_dict(value.get("by_role"), limit=10),
+        "by_artifact_kind": _compact_dict(value.get("by_artifact_kind"), limit=10),
+        "previewable_count": value.get("previewable_count"),
+        "model_context_eligible_count": value.get("model_context_eligible_count"),
+        "verification_relevant_count": value.get("verification_relevant_count"),
+        "changed_paths": _string_list(value.get("changed_paths"), limit=12),
+        "final_paths": _string_list(value.get("final_paths"), limit=12),
+        "visual_paths": _string_list(value.get("visual_paths"), limit=12),
+        "model_context_paths": _string_list(value.get("model_context_paths"), limit=12),
+        "flags": _compact_dict(value.get("flags"), limit=12),
+    }
+
+
+def _verification_closure_digest(value: dict[str, Any]) -> dict[str, Any]:
+    if not value or value.get("kind") != "verification_closure":
+        return {}
+    modalities = _dict(value.get("modalities"))
+    artifact_paths = _dict(value.get("artifact_paths"))
+    return {
+        "schema_version": str(value.get("schema_version") or ""),
+        "kind": str(value.get("kind") or ""),
+        "boundary": str(value.get("boundary") or ""),
+        "result_status": str(value.get("result_status") or ""),
+        "required_strength": str(value.get("required_strength") or ""),
+        "modalities": {
+            "required": _string_list(modalities.get("required"), limit=8),
+            "observed": _string_list(modalities.get("observed"), limit=8),
+            "missing": _string_list(modalities.get("missing"), limit=8),
+        },
+        "counts": _compact_dict(value.get("counts"), limit=16),
+        "flags": _compact_dict(value.get("flags"), limit=16),
+        "source_kinds": _string_list(value.get("source_kinds"), limit=12),
+        "gap_facts": _string_list(value.get("gap_facts"), limit=12),
+        "gap_risks": _string_list(value.get("gap_risks"), limit=12),
+        "artifact_paths": {
+            "final": _string_list(artifact_paths.get("final"), limit=8),
+            "visual": _string_list(artifact_paths.get("visual"), limit=8),
+            "model_context": _string_list(artifact_paths.get("model_context"), limit=8),
+        },
+        "model_facts": _string_list(value.get("model_facts"), limit=10),
+    }
+
+
+def _decision_artifact_summary(value: Any) -> dict[str, Any]:
+    summary = value if isinstance(value, dict) else {}
+    if not summary:
+        return {}
+    flags = _dict(summary.get("flags"))
+    return {
+        "count": summary.get("count"),
+        "by_role": _compact_dict(summary.get("by_role"), limit=8),
+        "final_paths": _string_list(summary.get("final_paths"), limit=6),
+        "visual_paths": _string_list(summary.get("visual_paths"), limit=6),
+        "model_context_paths": _string_list(summary.get("model_context_paths"), limit=6),
+        "has_final_artifacts": bool(flags.get("has_final_artifacts")),
+        "has_visual_artifacts": bool(flags.get("has_visual_artifacts")),
+        "has_model_context_artifacts": bool(flags.get("has_model_context_artifacts")),
+    }
+
+
+def _decision_verification_closure(value: Any) -> dict[str, Any]:
+    closure = value if isinstance(value, dict) else {}
+    if not closure:
+        return {}
+    flags = _dict(closure.get("flags"))
+    modalities = _dict(closure.get("modalities"))
+    return {
+        "result_status": str(closure.get("result_status") or ""),
+        "missing_modalities": _string_list(modalities.get("missing"), limit=8),
+        "gap_facts": _string_list(closure.get("gap_facts"), limit=8),
+        "gap_risks": _string_list(closure.get("gap_risks"), limit=8),
+        "has_required_gap": bool(flags.get("has_required_gap")),
+        "has_sufficient_verification": bool(flags.get("has_sufficient_verification")),
+        "has_runtime_errors": bool(flags.get("has_runtime_errors")),
+    }
+
+
 def _artifact_labels(value: Any) -> list[str]:
     records = value if isinstance(value, list) else []
     labels: list[str] = []
@@ -296,6 +409,29 @@ def _artifact_labels(value: Any) -> list[str]:
             label += f": {item['path']}"
         if item.get("status"):
             label += f" ({item['status']})"
+        labels.append(label)
+    return labels
+
+
+def _run_artifact_labels(value: Any) -> list[str]:
+    records = value if isinstance(value, list) else []
+    labels: list[str] = []
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("role") or "artifact")
+        kind = str(item.get("artifact_kind") or "").strip()
+        if kind:
+            label += f"/{kind}"
+        if item.get("path"):
+            label += f": {item['path']}"
+        if item.get("source_tool"):
+            label += f" via {item['source_tool']}"
+        if item.get("can_enter_model_context"):
+            label += " model_context"
+        relevance = str(item.get("verification_relevance") or "").strip()
+        if relevance:
+            label += f" verification={relevance}"
         labels.append(label)
     return labels
 
@@ -315,6 +451,48 @@ def _verification_records(value: Any) -> list[dict[str, Any]]:
             "modalities": _string_list(item.get("modalities"), limit=8),
         })
     return records
+
+
+def _append_artifact_summary(lines: list[str], value: Any) -> None:
+    item = value if isinstance(value, dict) else {}
+    if not item or not item.get("kind"):
+        return
+    bits = []
+    if item.get("count") is not None:
+        bits.append(f"count={item.get('count')}")
+    by_role = _dict(item.get("by_role"))
+    role_bits = [f"{key}:{by_role[key]}" for key in sorted(by_role) if by_role.get(key)]
+    if role_bits:
+        bits.append("roles=" + ",".join(role_bits[:8]))
+    for field in ("previewable_count", "model_context_eligible_count", "verification_relevant_count"):
+        if item.get(field) not in (None, "", 0, False):
+            bits.append(f"{field}={item.get(field)}")
+    if bits:
+        lines.append("- artifact summary: " + "; ".join(bits[:10]))
+    _append_string_list(lines, "final artifact paths", item.get("final_paths"))
+    _append_string_list(lines, "visual artifact paths", item.get("visual_paths"))
+    _append_string_list(lines, "model-context artifact paths", item.get("model_context_paths"))
+
+
+def _append_verification_closure(lines: list[str], value: Any) -> None:
+    item = value if isinstance(value, dict) else {}
+    if not item or item.get("kind") != "verification_closure":
+        return
+    bits = []
+    modalities = _dict(item.get("modalities"))
+    missing = ",".join(_string_list(modalities.get("missing"), limit=6))
+    if item.get("result_status"):
+        bits.append(f"status={item.get('result_status')}")
+    if missing:
+        bits.append(f"missing={missing}")
+    flags = _dict(item.get("flags"))
+    true_flags = [key for key in sorted(flags) if flags.get(key) is True]
+    if true_flags:
+        bits.append("flags=" + ",".join(true_flags[:8]))
+    if bits:
+        lines.append("- verification closure: " + "; ".join(bits))
+    _append_string_list(lines, "verification gap facts", item.get("gap_facts"))
+    _append_string_list(lines, "verification gap risks", item.get("gap_risks"))
 
 
 def _audit_digest(value: dict[str, Any]) -> dict[str, Any]:
@@ -559,6 +737,17 @@ def _string_list(value: Any, *, limit: int) -> list[str]:
 
 def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _compact_dict(value: Any, *, limit: int) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, Any] = {}
+    for key in sorted(value, key=lambda item: str(item)):
+        if len(result) >= limit:
+            break
+        result[str(key)] = value[key]
+    return result
 
 
 def _short(text: str, limit: int) -> str:

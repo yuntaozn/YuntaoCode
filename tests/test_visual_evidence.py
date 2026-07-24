@@ -28,6 +28,7 @@ def test_build_visual_evidence_records_artifact_source_and_model_context() -> No
     assert evidence["runtime"]["has_errors"] is False
     assert evidence["model_context"]["eligible"] is True
     assert evidence["model_context"]["modality"] == "image"
+    assert evidence["model_context"]["path"].endswith("viewer.png")
 
 
 def test_normalize_visual_evidence_accepts_legacy_screenshot_fields() -> None:
@@ -51,6 +52,7 @@ def test_normalize_visual_evidence_accepts_legacy_screenshot_fields() -> None:
     assert summary["has_runtime_errors"] is True
     assert summary["console_error_count"] == 1
     assert summary["model_context_eligible"] is True
+    assert summary["model_context_path"] == "D:/workspace/preview.png"
 
 
 def test_visual_evidence_summary_accepts_compact_summary() -> None:
@@ -75,6 +77,7 @@ def test_visual_evidence_summary_accepts_compact_summary() -> None:
         "failed_request_count": 1,
         "model_context_eligible": True,
         "model_context_modality": "image",
+        "model_context_path": "C:/Users/demo/AppData/Local/YuntaoCode/task-artifacts/run/preview/index.png",
     })
 
     assert summary is not None
@@ -84,3 +87,4 @@ def test_visual_evidence_summary_accepts_compact_summary() -> None:
     assert summary["status_code"] == 200
     assert summary["failed_request_count"] == 1
     assert summary["model_context_eligible"] is True
+    assert summary["model_context_path"].endswith("index.png")

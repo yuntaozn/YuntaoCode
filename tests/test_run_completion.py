@@ -20,6 +20,47 @@ def test_completion_evidence_pack_collects_audits_progress_and_decisions() -> No
         run_result={
             "status": "partial",
             "target_written_paths": ["viewer/index.html"],
+            "run_artifacts": [
+                {
+                    "role": "final",
+                    "artifact_kind": "html",
+                    "path": "viewer/index.html",
+                    "source_tool": "filesystem.write_file",
+                    "status": "success",
+                    "can_enter_model_context": True,
+                    "verification_relevance": "verification",
+                },
+                {
+                    "role": "screenshot",
+                    "artifact_kind": "screenshot",
+                    "path": "viewer/preview.png",
+                    "source_tool": "preview.capture_file",
+                    "status": "success",
+                    "can_enter_model_context": True,
+                    "verification_relevance": "diagnostic",
+                },
+            ],
+            "artifact_summary": {
+                "schema_version": "run_artifact_summary.v1",
+                "kind": "run_artifact_summary",
+                "count": 2,
+                "by_role": {"final": 1, "screenshot": 1},
+                "by_artifact_kind": {"html": 1, "screenshot": 1},
+                "previewable_count": 2,
+                "model_context_eligible_count": 2,
+                "verification_relevant_count": 2,
+                "changed_paths": ["viewer/index.html"],
+                "final_paths": ["viewer/index.html"],
+                "visual_paths": ["viewer/preview.png"],
+                "model_context_paths": ["viewer/preview.png"],
+                "flags": {
+                    "has_artifacts": True,
+                    "has_final_artifacts": True,
+                    "has_visual_artifacts": True,
+                    "has_model_context_artifacts": True,
+                    "has_verification_evidence": True,
+                },
+            },
             "verification_evidence": [
                 {
                     "tool": "preview.capture_file",
@@ -29,6 +70,47 @@ def test_completion_evidence_pack_collects_audits_progress_and_decisions() -> No
                     "modalities": ["visual", "runtime"],
                 }
             ],
+            "verification_closure": {
+                "schema_version": "verification_closure.v1",
+                "kind": "verification_closure",
+                "boundary": "evidence_only",
+                "result_status": "partial",
+                "required_strength": "standard",
+                "modalities": {
+                    "required": ["visual", "runtime", "behavioral"],
+                    "observed": ["visual", "runtime"],
+                    "missing": ["behavioral"],
+                },
+                "counts": {
+                    "verification_records": 1,
+                    "sufficient_verification_records": 1,
+                    "final_artifacts": 1,
+                    "visual_artifacts": 1,
+                    "gap_facts": 1,
+                },
+                "flags": {
+                    "has_required_gap": True,
+                    "has_verification_evidence": True,
+                    "has_sufficient_verification": True,
+                    "has_final_artifact": True,
+                    "has_visual_evidence": True,
+                    "visual_entered_model_context": True,
+                    "has_gap_risks": True,
+                },
+                "source_kinds": ["verification_evidence", "final_artifact", "visual_evidence"],
+                "gap_facts": ["missing_modality:behavioral"],
+                "risk_codes": ["test_not_observed"],
+                "gap_risks": ["test_not_observed"],
+                "artifact_paths": {
+                    "final": ["viewer/index.html"],
+                    "visual": ["viewer/preview.png"],
+                    "model_context": ["viewer/preview.png"],
+                },
+                "model_facts": [
+                    "result_status=partial",
+                    "modalities=required:visual, runtime, behavioral; observed:visual, runtime; missing:behavioral",
+                ],
+            },
             "visual_verification": {
                 "schema_version": "visual_verification.v1",
                 "kind": "visual_verification",
@@ -100,11 +182,24 @@ def test_completion_evidence_pack_collects_audits_progress_and_decisions() -> No
     assert pack["boundary"] == "evidence_only"
     assert pack["tool_progress"][0]["role"] == "dependency_install"
     assert pack["tool_attempts"][0]["missing_fields"] == ["path"]
+    assert pack["artifact_summary"]["by_role"] == {"final": 1, "screenshot": 1}
+    assert pack["artifact_summary"]["model_context_paths"] == ["viewer/preview.png"]
+    assert pack["run_artifacts"][0]["role"] == "final"
+    assert pack["verification_closure"]["modalities"]["missing"] == ["behavioral"]
+    assert pack["verification_closure"]["gap_facts"] == ["missing_modality:behavioral"]
     assert pack["visual_verification"]["flags"]["has_runtime_errors"] is True
     assert pack["debug_audit"]["flags"]["has_preview_service"] is True
     assert pack["previous_completion_decisions"][0]["action"] == "continue_with_tools"
     assert "Completion evidence pack" in text
+    assert "artifact summary" in text
+    assert "final artifact paths" in text
+    assert "model-context artifact paths" in text
+    assert "run artifacts" in text
+    assert "Verification closure facts" in text
+    assert "verification closure" in text
+    assert "missing_modality:behavioral" in text
     assert "viewer/index.html" in text
+    assert "viewer/preview.png" in text
     assert "recent tool progress" in text
     assert "recent unexecuted tool attempts" in text
     assert "dependency_install" in text
@@ -169,6 +264,29 @@ def test_completion_decision_records_compact_evidence_pack_summary() -> None:
             "result_status": "partial",
             "risks": ["visual_verification_not_observed"],
             "missing_verification_modalities": ["visual"],
+            "artifact_summary": {
+                "count": 2,
+                "by_role": {"final": 1, "screenshot": 1},
+                "final_paths": ["viewer/index.html"],
+                "visual_paths": ["viewer/preview.png"],
+                "model_context_paths": ["viewer/preview.png"],
+                "flags": {
+                    "has_final_artifacts": True,
+                    "has_visual_artifacts": True,
+                    "has_model_context_artifacts": True,
+                },
+            },
+            "verification_closure": {
+                "result_status": "partial",
+                "modalities": {"missing": ["visual"]},
+                "gap_facts": ["missing_modality:visual"],
+                "gap_risks": ["visual_verification_not_observed"],
+                "flags": {
+                    "has_required_gap": True,
+                    "has_sufficient_verification": False,
+                    "has_runtime_errors": False,
+                },
+            },
             "tool_progress": [
                 {"tool": "preview.capture_file", "status": "failure", "role": "preview_service"}
             ],
@@ -181,5 +299,14 @@ def test_completion_decision_records_compact_evidence_pack_summary() -> None:
     assert decision["evidence_pack"]["schema_version"] == "completion_evidence_pack.v1"
     assert decision["evidence_pack"]["result_status"] == "partial"
     assert decision["evidence_pack"]["missing_verification_modalities"] == ["visual"]
+    assert decision["evidence_pack"]["artifact_summary"]["final_paths"] == ["viewer/index.html"]
+    assert decision["evidence_pack"]["artifact_summary"]["model_context_paths"] == [
+        "viewer/preview.png"
+    ]
+    assert decision["evidence_pack"]["artifact_summary"]["has_visual_artifacts"] is True
+    assert decision["evidence_pack"]["verification_closure"]["missing_modalities"] == ["visual"]
+    assert decision["evidence_pack"]["verification_closure"]["gap_facts"] == [
+        "missing_modality:visual"
+    ]
     assert decision["evidence_pack"]["tool_progress"][0]["tool"] == "preview.capture_file"
     assert decision["evidence_pack"]["tool_attempts"][0]["tool"] == "filesystem.write_file"

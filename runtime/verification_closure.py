@@ -229,6 +229,7 @@ def _artifact_counts(
     final_paths = _string_list(summary.get("final_paths"))
     visual_paths = _string_list(summary.get("visual_paths"))
     changed_paths = _string_list(summary.get("changed_paths"))
+    summary_model_context_paths = _string_list(summary.get("model_context_paths"))
     if not final_paths:
         final_paths = _unique(item.get("path") for item in artifacts if item.get("role") == "final")
     if not visual_paths:
@@ -259,7 +260,7 @@ def _artifact_counts(
         or len(model_context_paths),
         "final_paths": final_paths or changed_paths,
         "visual_paths": visual_paths,
-        "model_context_paths": model_context_paths,
+        "model_context_paths": summary_model_context_paths or model_context_paths,
     }
 
 

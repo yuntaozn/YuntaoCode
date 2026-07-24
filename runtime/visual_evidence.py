@@ -183,6 +183,7 @@ def visual_evidence_summary(evidence: dict[str, Any] | None) -> dict[str, Any] |
             "failed_request_count": _optional_int(evidence.get("failed_request_count")) or 0,
             "model_context_eligible": bool(evidence.get("model_context_eligible")),
             "model_context_modality": evidence.get("model_context_modality"),
+            "model_context_path": evidence.get("model_context_path") or evidence.get("path") or "",
         }
     artifact = evidence.get("artifact") if isinstance(evidence.get("artifact"), dict) else {}
     source = evidence.get("source") if isinstance(evidence.get("source"), dict) else {}
@@ -214,6 +215,7 @@ def visual_evidence_summary(evidence: dict[str, Any] | None) -> dict[str, Any] |
         "failed_request_count": len(runtime.get("failed_requests") or []),
         "model_context_eligible": bool(model_context.get("eligible")),
         "model_context_modality": model_context.get("modality"),
+        "model_context_path": model_context.get("path") or "",
     }
 
 
@@ -226,6 +228,7 @@ def _is_visual_evidence_summary(value: dict[str, Any]) -> bool:
             "source_path",
             "artifact_kind",
             "model_context_eligible",
+            "model_context_path",
         )
     )
 
