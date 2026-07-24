@@ -49,6 +49,10 @@ def test_build_run_result_records_writes_verification_and_risks() -> None:
     assert result["debug_audit"]["schema_version"] == "debug_audit.v1"
     assert result["debug_audit"]["counts"]["debug_sessions"] == 1
     assert result["debug_audit"]["flags"]["has_debug_evidence"] is True
+    assert result["verification_closure"]["schema_version"] == "verification_closure.v1"
+    assert result["verification_closure"]["counts"]["final_artifacts"] == 1
+    assert result["verification_closure"]["counts"]["debug_sessions"] == 1
+    assert result["verification_closure"]["flags"]["has_debug_evidence"] is True
     assert result["debug_sessions"][0]["tool"] == "shell.run_command"
     assert result["debug_sessions"][0]["exit_code"] == 0
     assert result["risks"] == []
@@ -193,6 +197,8 @@ def test_build_run_result_accepts_visual_verification_for_visual_code_task() -> 
     assert screenshot["path"] == "preview.png"
     assert screenshot["can_enter_model_context"] is True
     assert result["artifact_summary"]["visual_paths"] == ["preview.png"]
+    assert result["verification_closure"]["counts"]["visual_artifacts"] == 1
+    assert result["verification_closure"]["flags"]["has_visual_evidence"] is True
     assert "test_not_observed" not in result["risks"]
 
 

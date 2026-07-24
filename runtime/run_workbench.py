@@ -44,6 +44,7 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
     context_audit = build_context_audit(evidence)
     visual_verification = _dict(evidence.get("visual_verification"))
     debug_audit = _dict(evidence.get("debug_audit"))
+    verification_closure = _dict(evidence.get("verification_closure"))
     timeline = _timeline(tool_steps, _dict_list(evidence.get("status_timeline")))[:80]
     audit = _audit_summary(
         artifacts=artifacts,
@@ -53,6 +54,7 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
         timeline=timeline,
         completion_decisions=completion_decisions,
         context_evidence=context_evidence,
+        verification_closure=verification_closure,
     )
 
     run_status = str(run.get("status") or "")
@@ -119,6 +121,7 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
         "context_audit": context_audit,
         "visual_verification": visual_verification,
         "debug_audit": debug_audit,
+        "verification_closure": verification_closure,
         "context_pack": _dict(evidence.get("context_pack")),
         "context_packs": _dict_list(evidence.get("context_packs"))[:8],
         "workspace": _dict(evidence.get("workspace_snapshot")),
@@ -262,6 +265,7 @@ def _audit_summary(
     timeline: list[dict[str, Any]],
     completion_decisions: list[dict[str, Any]],
     context_evidence: dict[str, Any],
+    verification_closure: dict[str, Any],
 ) -> dict[str, Any]:
     changed_paths = _changed_path_records(artifacts)
     visual_context = _dict_list(context_evidence.get("visual_context"))
@@ -270,6 +274,7 @@ def _audit_summary(
     verification_modalities = _unique_strings(item.get("modality") for item in verification)
     failure_tools = _unique_strings(item.get("tool") for item in failures)
     risk_codes = _unique_strings(risks)
+    closure_counts = _dict(verification_closure.get("counts"))
     return {
         "counts": {
             "artifacts": len(artifacts),
@@ -281,6 +286,7 @@ def _audit_summary(
             "visual_context": len(visual_context),
             "completion_decisions": len(completion_decisions),
             "timeline": len(timeline),
+            "verification_gap_facts": _safe_int(closure_counts.get("gap_facts"), 0),
         },
         "flags": {
             "has_artifacts": bool(artifacts),
@@ -290,6 +296,7 @@ def _audit_summary(
             "has_failures": bool(failures),
             "has_runtime_advisories": bool(runtime_advisories),
             "has_visual_context": bool(visual_context),
+            "has_verification_gap_facts": _safe_int(closure_counts.get("gap_facts"), 0) > 0,
         },
         "changed_paths": changed_paths[:24],
         "verification": {

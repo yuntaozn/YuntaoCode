@@ -216,6 +216,10 @@ def test_build_run_workbench_presents_artifacts_risks_and_timeline(tmp_path) -> 
     assert workbench["debug_audit"]["schema_version"] == "debug_audit.v1"
     assert workbench["debug_audit"]["counts"]["preview_sessions"] == 1
     assert workbench["debug_audit"]["flags"]["has_preview_service"] is True
+    assert workbench["verification_closure"]["schema_version"] == "verification_closure.v1"
+    assert workbench["verification_closure"]["counts"]["final_artifacts"] == 1
+    assert workbench["verification_closure"]["counts"]["gap_facts"] >= 1
+    assert workbench["audit"]["counts"]["verification_gap_facts"] >= 1
     assert workbench["plan"]["steps"][0]["title"] == "Write HTML"
     assert workbench["completion_decisions"][0]["action"] == "continue_with_tools"
     assert [item["kind"] for item in workbench["timeline"]] == ["status", "tool"]

@@ -15,6 +15,7 @@ from runtime.capability_evidence import build_capability_evidence_summary
 from runtime.context_pack import context_pack_summary
 from runtime.debug_audit import build_debug_audit
 from runtime.run_trace import build_run_trace_summary
+from runtime.verification_closure import build_verification_closure
 from runtime.visual_evidence import visual_evidence_summary
 from runtime.visual_verification import build_visual_verification_summary
 from runtime.workspace_snapshot import workspace_snapshot_summary
@@ -83,6 +84,12 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
         result_status=str(result.get("status") or ""),
         risks=_result_risks(result),
     )
+    verification_closure = _verification_closure_record(
+        result=result,
+        artifacts=artifacts,
+        visual_verification=visual_verification,
+        debug_audit=debug_audit,
+    )
     return {
         "schema_version": RUN_EVIDENCE_SCHEMA_VERSION,
         "kind": "run_evidence",
@@ -94,6 +101,7 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
         "visual_context": visual_context,
         "visual_verification": visual_verification,
         "debug_audit": debug_audit,
+        "verification_closure": verification_closure,
         "workspace_snapshot": workspace_snapshot_summary(workspace_snapshot),
         "capability_evidence": build_capability_evidence_summary(
             tool_events,
@@ -129,6 +137,31 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
             "boundary": "manual_start_required",
         },
     }
+
+
+def _verification_closure_record(
+    *,
+    result: dict[str, Any],
+    artifacts: list[dict[str, Any]],
+    visual_verification: dict[str, Any],
+    debug_audit: dict[str, Any],
+) -> dict[str, Any]:
+    existing = result.get("verification_closure")
+    if isinstance(existing, dict) and existing.get("kind") == "verification_closure":
+        return existing
+    return build_verification_closure(
+        result_status=str(result.get("status") or ""),
+        required_strength=str(result.get("required_verification_strength") or ""),
+        required_modalities=_string_list(result.get("required_verification_modalities")),
+        observed_modalities=_string_list(result.get("observed_verification_modalities")),
+        missing_modalities=_string_list(result.get("missing_verification_modalities")),
+        verification_evidence=_dict_list(result.get("verification_evidence")),
+        visual_verification=visual_verification,
+        debug_audit=debug_audit,
+        run_artifacts=artifacts,
+        artifact_summary=summarize_run_artifacts(artifacts),
+        risks=_result_risks(result),
+    )
 
 
 def _run_artifact_records(

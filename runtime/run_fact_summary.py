@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from runtime.verification_closure import format_verification_closure_for_model
+
 
 RUN_FACT_SUMMARY_VERSION = "run_fact_summary.v1"
 
@@ -34,6 +36,11 @@ def build_run_fact_summary(
         limit=limit,
     )
     verification = _verification_records(result.get("verification_evidence"), limit=limit)
+    verification_closure = (
+        result.get("verification_closure")
+        if isinstance(result.get("verification_closure"), dict)
+        else {}
+    )
     failures = _failure_records(result, events, workspace_path, limit=limit)
     risks = _string_list(result.get("risks"), limit=limit * 2)
     completed = _completed_evidence(
@@ -70,6 +77,7 @@ def build_run_fact_summary(
         "changed_paths": changed_paths,
         "written_paths": written_paths,
         "verification": verification,
+        "verification_closure": verification_closure,
         "failures": failures,
         "risks": risks,
         "completed_evidence": completed,
@@ -152,6 +160,13 @@ def format_run_fact_summary(summary: dict[str, Any]) -> str:
             suffix = f" [{modalities}]" if modalities else ""
             path = f" {item.get('path')}" if item.get("path") else ""
             lines.append(f"  - {item.get('tool') or 'unknown'}{path}{suffix}")
+    closure_text = format_verification_closure_for_model(
+        summary.get("verification_closure")
+        if isinstance(summary.get("verification_closure"), dict)
+        else None
+    ).strip()
+    if closure_text:
+        lines.append(closure_text)
     failures = summary.get("failures")
     if isinstance(failures, list) and failures:
         lines.append("- failures:")

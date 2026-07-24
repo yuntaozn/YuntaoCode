@@ -456,6 +456,7 @@ function renderRunWorkbench(workbench) {
     const workspace = workbench?.workspace || {};
     const contextEvidence = workbench?.context_evidence || {};
     const contextAudit = workbench?.context_audit || {};
+    const verificationClosure = workbench?.verification_closure || {};
     const visualVerification = workbench?.visual_verification || {};
     const debugAudit = workbench?.debug_audit || {};
     const contextPack = workbench?.context_pack || {};
@@ -481,6 +482,7 @@ function renderRunWorkbench(workbench) {
             ${renderWorkbenchSection(t('tasks.workspace_snapshot'), renderWorkbenchWorkspace(workspace))}
             ${renderWorkbenchSection(t('tasks.context_evidence'), renderWorkbenchContextEvidence(contextEvidence), "full")}
             ${renderWorkbenchSection(t('tasks.context_audit'), renderWorkbenchContextAudit(contextAudit), "full")}
+            ${renderWorkbenchSection(t('tasks.verification_closure'), renderWorkbenchVerificationClosure(verificationClosure), "full")}
             ${renderWorkbenchSection(t('tasks.visual_verification'), renderWorkbenchVisualVerification(visualVerification), "full")}
             ${renderWorkbenchSection(t('tasks.debug_audit'), renderWorkbenchDebugAudit(debugAudit), "full")}
             ${renderWorkbenchSection(t('tasks.context_pack'), renderWorkbenchContextPack(contextPack))}
@@ -746,6 +748,114 @@ function renderWorkbenchContextAuditRecord(title, item) {
             ${item.content_preview ? `<code>${escapeHtml(item.content_preview)}</code>` : ""}
         </li>
     `;
+}
+
+function renderWorkbenchVerificationClosure(closure) {
+    if (!closure || typeof closure !== "object" || closure.kind !== "verification_closure") {
+        return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    }
+    const counts = closure.counts && typeof closure.counts === "object" ? closure.counts : {};
+    const flags = closure.flags && typeof closure.flags === "object" ? closure.flags : {};
+    const modalities = closure.modalities && typeof closure.modalities === "object" ? closure.modalities : {};
+    const paths = closure.artifact_paths && typeof closure.artifact_paths === "object" ? closure.artifact_paths : {};
+    const sourceKinds = Array.isArray(closure.source_kinds) ? closure.source_kinds.filter(Boolean) : [];
+    const modelFacts = Array.isArray(closure.model_facts) ? closure.model_facts.filter(Boolean) : [];
+    const gapFacts = Array.isArray(closure.gap_facts) ? closure.gap_facts.filter(Boolean) : [];
+    const finalPaths = Array.isArray(paths.final) ? paths.final.filter(Boolean) : [];
+    const visualPaths = Array.isArray(paths.visual) ? paths.visual.filter(Boolean) : [];
+    const rows = [];
+
+    rows.push(`
+        <li>
+            <strong>${escapeHtml(t('tasks.verification_closure_boundary'))}</strong>
+            <span>${escapeHtml(closure.boundary === "evidence_only" ? t('tasks.verification_closure_boundary_evidence_only') : closure.boundary || "")}</span>
+        </li>
+    `);
+
+    rows.push(`
+        <li>
+            <strong>${escapeHtml(t('tasks.verification_closure_counts'))}</strong>
+            <span>${escapeHtml([
+                `${t('tasks.verification_evidence')}：${Number(counts.verification_records || 0)}`,
+                `${t('tasks.sufficient_verification')}：${Number(counts.sufficient_verification_records || 0)}`,
+                `${t('tasks.final_artifacts')}：${Number(counts.final_artifacts || 0)}`,
+                `${t('tasks.visual_artifacts')}：${Number(counts.visual_artifacts || 0)}`,
+                `${t('tasks.log_artifacts')}：${Number(counts.log_artifacts || 0)}`,
+                `${t('tasks.model_context_used')}：${Number(counts.model_context_artifacts || 0)}`,
+                `${t('tasks.verification_gap_facts')}：${Number(counts.gap_facts || 0)}`,
+            ].join(" · "))}</span>
+        </li>
+    `);
+
+    rows.push(`
+        <li>
+            <strong>${escapeHtml(t('tasks.verification_closure_facts'))}</strong>
+            <span>${escapeHtml([
+                flags.has_required_gap ? t('tasks.has_required_gap') : "",
+                flags.has_verification_evidence ? t('tasks.has_verification_evidence') : "",
+                flags.has_sufficient_verification ? t('tasks.has_sufficient_verification') : "",
+                flags.has_final_artifact ? t('tasks.has_final_artifact') : "",
+                flags.has_visual_evidence ? t('tasks.has_visual_evidence') : "",
+                flags.visual_entered_model_context ? t('tasks.visual_entered_model_context') : "",
+                flags.has_debug_evidence ? t('tasks.has_debug_evidence') : "",
+                flags.has_runtime_errors ? t('tasks.runtime_errors_seen') : "",
+            ].filter(Boolean).join(" · ") || t('tasks.none'))}</span>
+        </li>
+    `);
+
+    const modalityText = [
+        Array.isArray(modalities.required) && modalities.required.length ? `${t('tasks.required_modalities')}：${modalities.required.join(" · ")}` : "",
+        Array.isArray(modalities.observed) && modalities.observed.length ? `${t('tasks.observed_modalities')}：${modalities.observed.join(" · ")}` : "",
+        Array.isArray(modalities.missing) && modalities.missing.length ? `${t('tasks.missing_modalities')}：${modalities.missing.join(" · ")}` : "",
+    ].filter(Boolean).join(" · ");
+    if (modalityText) {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(t('tasks.verification_modalities'))}</strong>
+                <span>${escapeHtml(modalityText)}</span>
+            </li>
+        `);
+    }
+
+    if (sourceKinds.length) {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(t('tasks.verification_sources'))}</strong>
+                <span>${escapeHtml(sourceKinds.slice(0, 12).join(" · "))}</span>
+            </li>
+        `);
+    }
+
+    [...finalPaths.slice(0, 6).map((path) => [t('tasks.final_artifact'), path]),
+     ...visualPaths.slice(0, 6).map((path) => [t('tasks.visual_artifact'), path])]
+        .forEach(([label, path]) => {
+            rows.push(`
+                <li>
+                    <strong>${escapeHtml(label)}</strong>
+                    <code>${escapeHtml(path)}</code>
+                </li>
+            `);
+        });
+
+    gapFacts.slice(0, 8).forEach((item) => {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(t('tasks.verification_gap_fact'))}</strong>
+                <span>${escapeHtml(item)}</span>
+            </li>
+        `);
+    });
+
+    modelFacts.slice(0, 6).forEach((item) => {
+        rows.push(`
+            <li>
+                <strong>${escapeHtml(t('tasks.model_fact'))}</strong>
+                <span>${escapeHtml(item)}</span>
+            </li>
+        `);
+    });
+
+    return `<ul class="task-workbench-list">${rows.join("")}</ul>`;
 }
 
 function renderWorkbenchVisualVerification(summary) {

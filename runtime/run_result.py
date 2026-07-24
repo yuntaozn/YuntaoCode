@@ -32,6 +32,7 @@ from runtime.capability_evidence import build_capability_evidence_summary
 from runtime.core.result import RUN_RESULT_SCHEMA_VERSION
 from runtime.debug_audit import build_debug_audit
 from runtime.debug_session import debug_session_summary, normalize_debug_session
+from runtime.verification_closure import build_verification_closure
 from runtime.visual_evidence import normalize_visual_evidence, visual_evidence_summary
 from runtime.visual_verification import build_visual_verification_summary
 
@@ -482,6 +483,19 @@ def build_run_result(
         result_status=status,
         risks=risks,
     )
+    verification_closure = build_verification_closure(
+        result_status=status,
+        required_strength=required_strength,
+        required_modalities=list(required_modalities),
+        observed_modalities=observed_verification_modalities,
+        missing_modalities=missing_verification_modalities,
+        verification_evidence=verification_evidence,
+        visual_verification=visual_verification,
+        debug_audit=debug_audit,
+        run_artifacts=run_artifacts,
+        artifact_summary=artifact_summary,
+        risks=risks,
+    )
     return {
         "schema_version": RUN_RESULT_SCHEMA_VERSION,
         "kind": "run_result",
@@ -519,6 +533,7 @@ def build_run_result(
         "visual_verification": visual_verification,
         "debug_sessions": debug_sessions[:12],
         "debug_audit": debug_audit,
+        "verification_closure": verification_closure,
         "capability_evidence": capability_evidence,
         "capability_advisories": capability_advisories[:12],
         "required_verification_strength": required_strength,

@@ -293,6 +293,8 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
     assert final_artifact["artifact_kind"] == "file"
     assert final_artifact["path"] == "viewer.html"
     assert evidence["artifact_summary"]["changed_paths"] == ["viewer.html"]
+    assert evidence["verification_closure"]["schema_version"] == "verification_closure.v1"
+    assert evidence["verification_closure"]["counts"]["final_artifacts"] == 1
     assert evidence["tool_steps"][0]["declared_capability"] == "code.text_write"
     assert evidence["completion_decisions"][0]["action"] == "final_answer_candidate"
     assert evidence["risks"] == ["write_not_verified"]

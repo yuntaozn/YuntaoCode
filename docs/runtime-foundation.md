@@ -602,6 +602,14 @@ They help the model notice evidence without letting the runtime choose a fixed
 repair strategy. The risk pipeline is documented in
 [tool-result-risks.md](tool-result-risks.md).
 
+`verification_closure.v1` is the Run-level verification evidence package. It
+combines verification records, visual verification, debug audit, artifact
+roles, missing modalities, and risk codes into one compact fact view. It is
+evidence-only: it does not choose a verification route, block execution, or
+decide that a task is complete. Its purpose is to let the model and the user
+see the current evidence coverage and remaining gaps before the model decides
+whether to verify, revise, ask, or finish honestly.
+
 When `RunResult.status` is `partial` or `failure` and the model did not provide
 a usable final answer, the runtime presents a deterministic fact summary. It is
 a fallback audit view, not a model-authored completion claim. Intermediate text

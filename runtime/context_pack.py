@@ -13,6 +13,7 @@ from typing import Any
 
 from runtime.core.context import ContextRecord, select_records_for_phase
 from runtime.agent_strategy.task_lineage import format_task_candidates_for_model
+from runtime.verification_closure import format_verification_closure_for_model
 from runtime.workspace_snapshot import workspace_snapshot_summary
 
 
@@ -861,6 +862,11 @@ def _run_result_record(
         for item in verification
         if isinstance(item, dict)
     ]
+    closure_text = format_verification_closure_for_model(
+        run_result.get("verification_closure")
+        if isinstance(run_result.get("verification_closure"), dict)
+        else None
+    ).strip()
     content = (
         f"Run result facts: status={status or 'unknown'}; "
         f"artifacts={', '.join(artifact_paths[:8]) or 'none'}; "
@@ -869,6 +875,8 @@ def _run_result_record(
         f"risks={', '.join(risks[:12]) or 'none'}; "
         f"failure_count={len(failures)}"
     )
+    if closure_text:
+        content += "\n" + closure_text
     return ContextRecord(
         kind="tool_result",
         content=content,
@@ -887,6 +895,11 @@ def _run_result_record(
             "artifact_roles": artifact_roles[:12],
             "verification_count": len(verification),
             "failure_count": len(failures),
+            "verification_closure": (
+                run_result.get("verification_closure")
+                if isinstance(run_result.get("verification_closure"), dict)
+                else {}
+            ),
         },
     )
 
