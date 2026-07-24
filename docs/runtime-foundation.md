@@ -331,7 +331,10 @@ The pack is evidence-only: it does not decide completion, rank tools, force
 fallback, or block the model from changing strategy. The model remains
 responsible for deciding whether to continue with tools, verify or repair, ask
 the user for a missing boundary, or produce a final answer from the observed
-evidence.
+evidence. The pack also carries an explicit presentation budget: structural
+evidence preserves high-priority facts such as final artifacts, verification
+closure, tool progress, failures, and risk records, while repetitive paths and
+long rendered prompt text are bounded before they enter the next model round.
 
 ## Diagnostic Export
 

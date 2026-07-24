@@ -1,4 +1,5 @@
 from runtime.run_completion import (
+    COMPLETION_EVIDENCE_BUDGET,
     build_completion_decision,
     build_completion_evidence_pack,
     format_completion_evidence_pack,
@@ -204,6 +205,96 @@ def test_completion_evidence_pack_collects_audits_progress_and_decisions() -> No
     assert "recent unexecuted tool attempts" in text
     assert "dependency_install" in text
     assert "invalid_tool_input" in text
+
+
+def test_completion_evidence_pack_applies_presentation_budget() -> None:
+    pack = build_completion_evidence_pack(
+        workspace_path="D:/demo",
+        task_contract={
+            "goal": "create a long HTML article and verify it visually",
+            "intent": "write_required",
+        },
+        run_result={
+            "status": "partial",
+            "target_written_paths": [f"chapter-{index}.html" for index in range(40)],
+            "run_artifacts": [
+                {
+                    "role": "final" if index == 0 else "draft",
+                    "artifact_kind": "html",
+                    "path": f"chapter-{index}.html",
+                    "source_tool": "filesystem.append_text",
+                    "status": "success",
+                    "can_enter_model_context": index < 3,
+                    "verification_relevance": "verification" if index == 0 else "context",
+                }
+                for index in range(40)
+            ],
+            "artifact_summary": {
+                "schema_version": "run_artifact_summary.v1",
+                "kind": "run_artifact_summary",
+                "count": 40,
+                "by_role": {"final": 1, "draft": 39},
+                "final_paths": ["chapter-0.html"],
+                "visual_paths": [f"preview-{index}.png" for index in range(40)],
+                "model_context_paths": [f"context-{index}.png" for index in range(40)],
+                "flags": {
+                    "has_final_artifacts": True,
+                    "has_visual_artifacts": True,
+                    "has_model_context_artifacts": True,
+                },
+            },
+            "verification_closure": {
+                "schema_version": "verification_closure.v1",
+                "kind": "verification_closure",
+                "boundary": "evidence_only",
+                "result_status": "partial",
+                "required_strength": "standard",
+                "modalities": {
+                    "required": ["visual"],
+                    "observed": [],
+                    "missing": ["visual"],
+                },
+                "flags": {"has_required_gap": True},
+                "gap_facts": ["missing_modality:visual:0"],
+                "gap_risks": ["visual_verification_not_observed"],
+            },
+            "failures": [
+                {"tool": "preview.capture_file", "error": "screenshot failed"}
+                for _ in range(40)
+            ],
+            "failure_details": [
+                {
+                    "tool": "preview.capture_file",
+                    "impact": "verification_unobserved",
+                    "error": "screenshot failed",
+                }
+                for _ in range(40)
+            ],
+            "risks": [f"risk-{index}" for index in range(40)],
+        },
+    )
+
+    assert pack["budget"]["run_artifacts"] == COMPLETION_EVIDENCE_BUDGET["run_artifacts"]
+    assert len(pack["run_artifacts"]) == COMPLETION_EVIDENCE_BUDGET["run_artifacts"]
+    assert (
+        len(pack["artifact_summary"]["visual_paths"])
+        == COMPLETION_EVIDENCE_BUDGET["artifact_summary_paths"]
+    )
+    assert (
+        len(pack["artifact_summary"]["model_context_paths"])
+        == COMPLETION_EVIDENCE_BUDGET["artifact_summary_paths"]
+    )
+    assert len(pack["failures"]) == COMPLETION_EVIDENCE_BUDGET["failure_records"]
+    assert len(pack["risks"]) == COMPLETION_EVIDENCE_BUDGET["risks"]
+    assert pack["artifact_summary"]["final_paths"] == ["chapter-0.html"]
+    assert pack["verification_closure"]["gap_facts"] == ["missing_modality:visual:0"]
+
+    pack["budget"] = {**pack["budget"], "formatted_prompt_chars": 3000}
+    text = format_completion_evidence_pack(pack)
+
+    assert len(text) <= 3000
+    assert "Completion evidence pack" in text
+    assert "evidence pack truncated by presentation budget" in text
 
 
 def test_completion_decision_records_continue_with_tools_without_forcing_strategy() -> None:
