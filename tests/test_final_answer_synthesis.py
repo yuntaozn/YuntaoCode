@@ -63,4 +63,4 @@ def test_partial_run_uses_truthful_synthesized_answer() -> None:
     assert answer.startswith("运行事实摘要")
     assert "viewer.html" in answer
     assert "path is required" in answer
-    assert "建议：下一轮应基于这些事实继续修正或补充验证" in answer
+    assert "可继续依据：已观察产物、验证事实、失败事实和风险记录。" in answer

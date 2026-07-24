@@ -482,6 +482,6 @@ def max_rounds_message(max_rounds: int, tool_events: list[dict[str, Any]]) -> st
         lines.append("本轮没有成功产生可记录的工具调用。")
     lines.extend([
         "",
-        "建议：如果仍需继续，请补充下一步目标、关键文件、关键词或期望结果；后续可基于本轮事实继续验证、换工具、换参数或如实说明边界。",
+        "可继续依据：以上工具事实、用户后续补充、关键文件、关键词或期望结果。",
     ])
     return "\n".join(lines)

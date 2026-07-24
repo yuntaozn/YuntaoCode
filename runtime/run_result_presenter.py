@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from runtime.agent_strategy import tool_event_roles as _event_roles
+from runtime.agent_strategy.classifiers import strip_native_tool_call_blocks
 from runtime.run_fact_summary import build_run_fact_summary
 
 
@@ -15,6 +16,7 @@ ToolEventPath = Callable[[str, dict[str, Any]], str]
 ToolIdPredicate = Callable[[str], bool]
 VerificationToolPredicate = Callable[[str, str | None], bool]
 RelativePathFormatter = Callable[[str, Any], str]
+AssistantClaimPredicate = Callable[[str], bool]
 
 
 RISK_MESSAGES_ZH: dict[str, str] = {
@@ -60,6 +62,53 @@ def risk_message_zh(risk: Any) -> str:
     return RISK_MESSAGES_ZH.get(code, code or "未知风险")
 
 
+def run_status_from_result(run_result: dict[str, Any]) -> str:
+    status = str(run_result.get("status") or "")
+    if status == "stopped":
+        return "stopped"
+    if status == "failure":
+        return "failure"
+    if status == "partial":
+        return "partial"
+    return "success"
+
+
+def answer_only_final_answer_error(
+    content: str,
+    tool_events: list[dict[str, Any]],
+    task_contract: dict[str, Any] | None = None,
+) -> str:
+    """Return a display-level answer-only finalization gap, if observed."""
+
+    if tool_events or not isinstance(task_contract, dict):
+        return ""
+    if str(task_contract.get("intent") or "") != "answer_only":
+        return ""
+    text = (content or "").strip()
+    if not text or text == "模型没有返回内容。":
+        return "model did not return a final answer"
+    if strip_native_tool_call_blocks(text) != text:
+        return "model returned unresolved tool call markup instead of a final answer"
+    return ""
+
+
+def needs_synthesized_final_answer(
+    content: str,
+    tool_events: list[dict[str, Any]],
+    task_contract: dict[str, Any] | None = None,
+) -> bool:
+    """Return whether the final user-facing answer needs runtime synthesis."""
+
+    text = (content or "").strip()
+    if not tool_events:
+        return bool(answer_only_final_answer_error(content, tool_events, task_contract))
+    if not text or text == "模型没有返回内容。":
+        return True
+    if strip_native_tool_call_blocks(text) != text:
+        return True
+    return False
+
+
 def synthesize_failure_answer(
     workspace_path: str,
     tool_events: list[dict[str, Any]],
@@ -103,7 +152,7 @@ def synthesize_failure_answer(
     _append_risks(lines, summary.get("risks"))
     lines.extend([
         "",
-        "建议：请根据失败事实换策略、补参数、修正环境，或在确实无法继续时如实说明边界。",
+        "可继续依据：以上失败事实、风险记录和工具输出。",
     ])
     return "\n".join(lines)
 
@@ -147,9 +196,155 @@ def synthesize_partial_answer(
     _append_risks(lines, summary.get("risks"))
     lines.extend([
         "",
-        "建议：下一轮应基于这些事实继续修正或补充验证，而不是复述模型原始总结。",
+        "可继续依据：已观察产物、验证事实、失败事实和风险记录。",
     ])
     return "\n".join(lines)
+
+
+def build_max_rounds_after_write_message(
+    max_rounds: int,
+    tool_events: list[dict[str, Any]],
+    *,
+    is_write_tool: ToolIdPredicate,
+) -> str:
+    """Build a neutral max-rounds notice when writes already happened."""
+
+    paths: list[str] = []
+    for event in tool_events:
+        if not is_write_tool(str(event.get("tool") or "")) or event.get("status") != "success":
+            continue
+        event_input = event.get("input")
+        if isinstance(event_input, dict):
+            path = event_input.get("path")
+            if path:
+                paths.append(str(path))
+    unique_paths = list(dict.fromkeys(paths))
+    lines = [
+        f"运行事实摘要：本轮已有写入工具成功执行，当前工具执行预算已用完（{max_rounds} 轮）。",
+        "完整性状态：本轮变更是否完整仍以工具记录、变更清单和验证证据为准。",
+    ]
+    if unique_paths:
+        lines.append("")
+        lines.append("已观察到的写入路径：")
+        lines.extend(f"- {path}" for path in unique_paths[-8:])
+    lines.append("")
+    lines.append("可继续依据：上述写入路径、工具记录和后续验证事实。")
+    return "\n".join(lines)
+
+
+def build_execution_notice(
+    mode: str | None,
+    assistant_content: str,
+    tool_events: list[dict[str, Any]],
+    *,
+    requires_code_write: bool = False,
+    contract_failed: bool = False,
+    max_rounds_exceeded: bool = False,
+    run_result: dict[str, Any] | None = None,
+    is_write_tool: ToolIdPredicate,
+    is_invalid_verification_method_event: ToolEventPredicate,
+    assistant_claims_code_changed: AssistantClaimPredicate,
+) -> dict[str, Any] | None:
+    """Build a user-facing execution notice from observed runtime facts.
+
+    The notice is presentation evidence. It does not decide task intent,
+    continue/stop strategy, or whether the model may try another route.
+    """
+
+    if mode not in {"coding", "terminal"}:
+        return None
+
+    write_successes = [
+        event for event in tool_events
+        if is_write_tool(str(event.get("tool") or "")) and event.get("status") == "success"
+    ]
+    write_failures = [
+        event for event in tool_events
+        if is_write_tool(str(event.get("tool") or "")) and event.get("status") == "failure"
+    ]
+    invalid_verification_failures = [
+        event for event in tool_events
+        if is_invalid_verification_method_event(event)
+    ]
+    claims_change = assistant_claims_code_changed(assistant_content)
+    if write_successes and invalid_verification_failures:
+        failed_tools = _notice_failed_tools(invalid_verification_failures)
+        return {
+            "reason": "invalid_verification_method",
+            "message": "运行事实提示：本轮已观察到文件写入，同时观察到长驻服务命令被用作验证且未形成可退出验证结果。",
+            "facts": [
+                "write_observed",
+                "invalid_verification_method_observed",
+                "verification_result_not_observed",
+            ],
+            "failed_tools": failed_tools[:8],
+            "tool_event_count": len(tool_events),
+        }
+    if write_successes and write_failures:
+        failed_tools = _notice_failed_tools(write_failures)
+        return {
+            "reason": "partial_write_tool_failed",
+            "message": "运行事实提示：本轮既有写入成功，也有写入失败；完整性需要结合变更清单和工具记录确认。",
+            "facts": [
+                "write_success_observed",
+                "write_failure_observed",
+            ],
+            "failed_tools": failed_tools[:8],
+            "tool_event_count": len(tool_events),
+        }
+
+    result_risks = run_result.get("risks") if isinstance(run_result, dict) else []
+    if isinstance(result_risks, list) and "optional_write_not_verified" in result_risks:
+        written_paths = run_result.get("observed_written_paths") if isinstance(run_result, dict) else []
+        if not isinstance(written_paths, list):
+            written_paths = []
+        return {
+            "reason": "optional_write_not_verified",
+            "message": "运行事实提示：本轮已观察到本地文件写入，但没有观察到后续运行、预览或读取验证；当前状态为已修改、未验证。",
+            "facts": [
+                "write_observed",
+                "verification_not_observed",
+            ],
+            "written_paths": [str(path) for path in written_paths[:8]],
+            "tool_event_count": len(tool_events),
+        }
+
+    if write_successes:
+        return None
+
+    if not claims_change and not write_failures and not requires_code_write:
+        return None
+
+    failed_tools = _notice_failed_tools(write_failures)
+    facts: list[str] = []
+    if max_rounds_exceeded:
+        message = "运行事实提示：本轮工具执行预算已用完，诊断信息已保存；实际变更仍以工具调用和变更清单为准。"
+        reason = "max_tool_rounds"
+        facts.append("tool_round_budget_exhausted")
+    elif contract_failed:
+        message = "运行事实提示：本轮未观察到成功的本地写入工具记录；实际文件是否变更仍以工具调用、变更清单和后续验证为准。"
+        reason = "tool_contract_gap"
+        facts.append("required_write_not_observed")
+    elif write_failures:
+        message = "运行事实提示：本轮代码写入工具执行失败，实际文件可能没有变更；失败原因见工具调用记录。"
+        reason = "write_tool_failed"
+        facts.append("write_failure_observed")
+    elif tool_events:
+        message = "运行事实提示：本轮没有成功执行任何代码写入工具，因此没有观察到本地文件变更证据。"
+        reason = "no_successful_write_tool"
+        facts.append("successful_write_not_observed")
+    else:
+        message = "运行事实提示：本轮没有任何本地工具调用记录，因此没有观察到本地文件变更证据。"
+        reason = "no_tool_calls"
+        facts.append("tool_call_not_observed")
+
+    return {
+        "reason": reason,
+        "message": message,
+        "facts": facts,
+        "failed_tools": failed_tools[:8],
+        "tool_event_count": len(tool_events),
+    }
 
 
 def synthesize_final_answer(
@@ -285,6 +480,19 @@ def append_changed_files_footer(
     if omitted > 0:
         lines.append(f"- 另有 {omitted} 个文件未显示" if zh else f"- {omitted} more files omitted")
     return text + "\n".join(lines)
+
+
+def _notice_failed_tools(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "tool": event.get("tool") or "",
+            "name": event.get("name") or event.get("tool") or "",
+            "path": ((event.get("input") or {}).get("path") if isinstance(event.get("input"), dict) else "") or "",
+            "error": event.get("error") or "",
+            "task_id": event.get("task_id") or "",
+        }
+        for event in events
+    ]
 
 
 def _append_risks(lines: list[str], risks: Any) -> None:

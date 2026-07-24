@@ -3,7 +3,12 @@ from __future__ import annotations
 from runtime.core.result import RISK_CODES
 from runtime.run_result_presenter import (
     append_changed_files_footer,
+    answer_only_final_answer_error,
+    build_execution_notice,
+    build_max_rounds_after_write_message,
+    needs_synthesized_final_answer,
     risk_message_zh,
+    run_status_from_result,
     synthesize_final_answer,
     synthesize_partial_answer,
 )
@@ -27,6 +32,16 @@ def test_risk_presenter_uses_user_facing_message() -> None:
     assert "能力预检提示" in risk_message_zh("capability_preflight_advisory")
 
 
+def test_final_answer_gap_detection_is_presentation_fact() -> None:
+    contract = {"intent": "answer_only"}
+
+    assert answer_only_final_answer_error("", [], contract) == "model did not return a final answer"
+    assert needs_synthesized_final_answer("", [], contract)
+    assert not needs_synthesized_final_answer("直接回答。", [], contract)
+    assert run_status_from_result({"status": "partial"}) == "partial"
+    assert run_status_from_result({"status": "unknown"}) == "success"
+
+
 def test_partial_answer_maps_risks_to_user_facing_messages() -> None:
     answer = synthesize_partial_answer(
         r"D:\demo",
@@ -43,6 +58,55 @@ def test_partial_answer_maps_risks_to_user_facing_messages() -> None:
     assert "document_output_length_unknown" not in answer
     assert "无法确认文档输出长度" in answer
     assert answer.startswith("运行事实摘要")
+    assert "可继续依据" in answer
+    assert "建议：" not in answer
+
+
+def test_max_rounds_after_write_message_is_evidence_based() -> None:
+    message = build_max_rounds_after_write_message(
+        4,
+        [
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": "src/app.js"},
+            }
+        ],
+        is_write_tool=lambda tool_id: tool_id == "filesystem.write_file",
+    )
+
+    assert "运行事实摘要" in message
+    assert "src/app.js" in message
+    assert "可继续依据" in message
+    assert "建议：" not in message
+
+
+def test_execution_notice_is_neutral_presentation_evidence() -> None:
+    notice = build_execution_notice(
+        "terminal",
+        "已修改 viewer.html",
+        [
+            {
+                "tool": "filesystem.write_file",
+                "status": "success",
+                "input": {"path": "viewer.html"},
+            },
+        ],
+        run_result={
+            "risks": ["optional_write_not_verified"],
+            "observed_written_paths": ["viewer.html"],
+        },
+        is_write_tool=lambda tool_id: tool_id == "filesystem.write_file",
+        is_invalid_verification_method_event=lambda _event: False,
+        assistant_claims_code_changed=lambda _content: True,
+    )
+
+    assert notice is not None
+    assert notice["reason"] == "optional_write_not_verified"
+    assert notice["facts"] == ["write_observed", "verification_not_observed"]
+    assert notice["written_paths"] == ["viewer.html"]
+    assert "运行事实提示" in notice["message"]
+    assert "系统已判定" not in notice["message"]
 
 
 def test_final_answer_summarizes_changed_paths_and_verification() -> None:

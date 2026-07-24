@@ -336,6 +336,18 @@ evidence preserves high-priority facts such as final artifacts, verification
 closure, tool progress, failures, and risk records, while repetitive paths and
 long rendered prompt text are bounded before they enter the next model round.
 
+Run result presentation follows the same boundary. User-facing notices are
+derived from observed facts such as writes, failures, verification gaps,
+round-budget exhaustion, and risk codes. They should describe evidence and
+continuation basis, not prescribe a fixed strategy or replace the model's
+completion judgment. Model-backed result synthesis uses the same RunResult
+facts to write a final user-facing answer; it is a bounded presentation pass,
+not a second execution run or a new completion judge. The current user request
+is passed as a request-reference context rather than a raw tail slice: it keeps
+bounded request head/tail text, explicit request marker lines, and referenced
+files, paths, or URLs so early goals and late constraints can both remain
+visible without letting the original prompt override RunResult evidence.
+
 ## Diagnostic Export
 
 Diagnostic export helps compare task behavior across machines and should be

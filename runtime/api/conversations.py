@@ -53,10 +53,16 @@ from runtime.conversation_interactions import (
 )
 from runtime.prompt_context import build_system_prompt
 from runtime.run_result_presenter import (
+    answer_only_final_answer_error,
+    build_execution_notice,
+    build_max_rounds_after_write_message,
+    needs_synthesized_final_answer,
+    run_status_from_result,
     synthesize_failure_answer,
     synthesize_final_answer,
     synthesize_partial_answer,
 )
+from runtime.run_result_synthesis import generate_result_synthesis_answer
 from runtime.shell_command_facts import shell_command_facts
 from runtime.task_runner import ToolContext
 from runtime.user_guidance import add_user_guidance, pop_user_guidance
@@ -1038,29 +1044,15 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         run_result: dict[str, Any],
         previous_answer: str,
     ) -> tuple[str, dict[str, Any]]:
-        prompt = self._result_synthesis_prompt(
-            workspace_path,
-            task_contract,
-            run_result,
-            previous_answer=previous_answer,
-        )
-        synthesis_messages: list[dict[str, Any]] = [
-            {"role": "system", "content": prompt},
-        ]
-        if user_content:
-            synthesis_messages.append({
-                "role": "user",
-                "content": str(user_content)[-4000:],
-            })
-        answer, metadata = await generate_chat_completion(
+        return await generate_result_synthesis_answer(
             settings=self.runtime.settings,
             model=model,
-            messages=synthesis_messages,
-            enable_thinking=False,
-            reasoning_effort="low",
-            tools=None,
+            workspace_path=workspace_path,
+            user_content=user_content,
+            task_contract=task_contract,
+            run_result=run_result,
+            previous_answer=previous_answer,
         )
-        return answer.strip(), metadata
 
     async def _generate_execution_plan(
         self,
@@ -1421,16 +1413,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         tool_events: list[dict[str, Any]],
         task_contract: dict[str, Any] | None = None,
     ) -> str:
-        if tool_events or not isinstance(task_contract, dict):
-            return ""
-        if str(task_contract.get("intent") or "") != "answer_only":
-            return ""
-        text = (content or "").strip()
-        if not text or text == "模型没有返回内容。":
-            return "model did not return a final answer"
-        if _clf.strip_native_tool_call_blocks(text) != text:
-            return "model returned unresolved tool call markup instead of a final answer"
-        return ""
+        return answer_only_final_answer_error(content, tool_events, task_contract)
 
     def _needs_synthesized_final_answer(
         self,
@@ -1438,24 +1421,10 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         tool_events: list[dict[str, Any]],
         task_contract: dict[str, Any] | None = None,
     ) -> bool:
-        text = (content or "").strip()
-        if not tool_events:
-            return bool(self._answer_only_final_answer_error(content, tool_events, task_contract))
-        if not text or text == "模型没有返回内容。":
-            return True
-        if _clf.strip_native_tool_call_blocks(text) != text:
-            return True
-        return False
+        return needs_synthesized_final_answer(content, tool_events, task_contract)
 
     def _run_status_from_result(self, run_result: dict[str, Any]) -> str:
-        status = str(run_result.get("status") or "")
-        if status == "stopped":
-            return "stopped"
-        if status == "failure":
-            return "failure"
-        if status == "partial":
-            return "partial"
-        return "success"
+        return run_status_from_result(run_result)
 
     def _synthesize_failure_answer(
         self,
@@ -2592,21 +2561,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _final_answer_prompt(self, workspace_path: str) -> str:
         return _prp.final_answer_prompt(workspace_path)
 
-    def _result_synthesis_prompt(
-        self,
-        workspace_path: str,
-        task_contract: dict[str, Any] | None,
-        run_result: dict[str, Any],
-        *,
-        previous_answer: str = "",
-    ) -> str:
-        return _prp.result_synthesis_prompt(
-            workspace_path,
-            task_contract,
-            run_result,
-            previous_answer=previous_answer,
-        )
-
     def _oversized_tool_arguments_prompt(
         self,
         workspace_path: str,
@@ -2626,27 +2580,11 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         return _prp.max_rounds_message(max_rounds, tool_events)
 
     def _max_rounds_after_write_message(self, max_rounds: int, tool_events: list[dict[str, Any]]) -> str:
-        paths: list[str] = []
-        for event in tool_events:
-            if not self._is_write_tool(str(event.get("tool") or "")) or event.get("status") != "success":
-                continue
-            event_input = event.get("input")
-            if isinstance(event_input, dict):
-                path = event_input.get("path")
-                if path:
-                    paths.append(str(path))
-        unique_paths = list(dict.fromkeys(paths))
-        lines = [
-            f"本轮已有写入工具成功执行，但当前工具执行预算已用完（{max_rounds} 轮）。",
-            "本轮变更是否完整请以上方工具记录和变更清单为准。",
-        ]
-        if unique_paths:
-            lines.append("")
-            lines.append("已成功写入的文件：")
-            lines.extend(f"- {path}" for path in unique_paths[-8:])
-        lines.append("")
-        lines.append("建议：如结果不完整，请基于这些已写入文件继续下一轮；后续可利用本轮事实补写、验证、换工具或说明边界。")
-        return "\n".join(lines)
+        return build_max_rounds_after_write_message(
+            max_rounds,
+            tool_events,
+            is_write_tool=self._is_write_tool,
+        )
 
     def _build_execution_notice(
         self,
@@ -2659,107 +2597,18 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         max_rounds_exceeded: bool = False,
         run_result: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        if mode not in {"coding", "terminal"}:
-            return None
-
-        write_successes = [
-            event for event in tool_events
-            if self._is_write_tool(str(event.get("tool") or "")) and event.get("status") == "success"
-        ]
-        write_failures = [
-            event for event in tool_events
-            if self._is_write_tool(str(event.get("tool") or "")) and event.get("status") == "failure"
-        ]
-        invalid_verification_failures = [
-            event for event in tool_events
-            if _clf.is_invalid_verification_method_event(event)
-        ]
-        claims_change = self._assistant_claims_code_changed(assistant_content)
-        if write_successes and invalid_verification_failures:
-            failed_tools = [
-                {
-                    "tool": event.get("tool") or "",
-                    "name": event.get("name") or event.get("tool") or "",
-                    "path": ((event.get("input") or {}).get("path") if isinstance(event.get("input"), dict) else "") or "",
-                    "error": event.get("error") or "",
-                    "task_id": event.get("task_id") or "",
-                }
-                for event in invalid_verification_failures
-            ]
-            return {
-                "reason": "invalid_verification_method",
-                "message": "注意：本轮文件已写入，但模型尝试使用长驻服务命令作为验证方式。系统未把该命令视为有效自动验证，仍需运行可退出的检查命令或由用户手动打开页面确认。",
-                "failed_tools": failed_tools[:8],
-                "tool_event_count": len(tool_events),
-            }
-        if write_successes and write_failures:
-            failed_tools = [
-                {
-                    "tool": event.get("tool") or "",
-                    "name": event.get("name") or event.get("tool") or "",
-                    "path": ((event.get("input") or {}).get("path") if isinstance(event.get("input"), dict) else "") or "",
-                    "error": event.get("error") or "",
-                    "task_id": event.get("task_id") or "",
-                }
-                for event in write_failures
-            ]
-            return {
-                "reason": "partial_write_tool_failed",
-                "message": "注意：本轮已有写入工具成功执行，但也存在写入工具失败。请以变更清单和工具调用记录为准，失败项可能仍需继续处理。",
-                "failed_tools": failed_tools[:8],
-                "tool_event_count": len(tool_events),
-            }
-
-        result_risks = run_result.get("risks") if isinstance(run_result, dict) else []
-        if isinstance(result_risks, list) and "optional_write_not_verified" in result_risks:
-            written_paths = run_result.get("observed_written_paths") if isinstance(run_result, dict) else []
-            if not isinstance(written_paths, list):
-                written_paths = []
-            return {
-                "reason": "optional_write_not_verified",
-                "message": "注意：模型本轮主动写入了本地文件，但系统没有观察到后续运行、预览或读取验证。请把本轮结果视为已修改、未验证，而不是已确认修复。",
-                "written_paths": [str(path) for path in written_paths[:8]],
-                "tool_event_count": len(tool_events),
-            }
-
-        if write_successes:
-            return None
-
-        if not claims_change and not write_failures and not requires_code_write:
-            return None
-
-        failed_tools = [
-            {
-                "tool": event.get("tool") or "",
-                "name": event.get("name") or event.get("tool") or "",
-                "path": ((event.get("input") or {}).get("path") if isinstance(event.get("input"), dict) else "") or "",
-                "error": event.get("error") or "",
-                "task_id": event.get("task_id") or "",
-            }
-            for event in write_failures
-        ]
-        if max_rounds_exceeded:
-            message = "注意：本轮工具执行预算已用完，诊断信息已保存。实际文件是否变更请以工具调用和变更清单为准，可基于本轮事实继续或恢复。"
-            reason = "max_tool_rounds"
-        elif contract_failed:
-            message = "注意：本轮未观察到成功的本地写入工具记录；实际文件是否变更请以工具调用、变更清单和后续验证为准。"
-            reason = "tool_contract_gap"
-        elif write_failures:
-            message = "注意：本轮代码写入工具执行失败，实际文件可能没有变更。请展开上方工具调用查看失败原因。"
-            reason = "write_tool_failed"
-        elif tool_events:
-            message = "注意：本轮没有成功执行任何代码写入工具，因此不能确认实际文件已经变更。"
-            reason = "no_successful_write_tool"
-        else:
-            message = "注意：本轮没有任何本地工具调用记录，因此实际代码没有被修改。"
-            reason = "no_tool_calls"
-
-        return {
-            "reason": reason,
-            "message": message,
-            "failed_tools": failed_tools[:8],
-            "tool_event_count": len(tool_events),
-        }
+        return build_execution_notice(
+            mode,
+            assistant_content,
+            tool_events,
+            requires_code_write=requires_code_write,
+            contract_failed=contract_failed,
+            max_rounds_exceeded=max_rounds_exceeded,
+            run_result=run_result,
+            is_write_tool=self._is_write_tool,
+            is_invalid_verification_method_event=_clf.is_invalid_verification_method_event,
+            assistant_claims_code_changed=self._assistant_claims_code_changed,
+        )
 
     def _assistant_claims_code_changed(self, content: str) -> bool:
         text = content.lower()
