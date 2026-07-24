@@ -25,6 +25,10 @@ python scripts/sync_release_version.py --check
 
 CI runs this check on every pull request and push.
 
+After a public tag is fixed, `main` may use a semantic pre-release version such
+as `0.2.0-dev` to make the next development line explicit. Patch releases for a
+published line should use normal release versions such as `0.1.1`.
+
 ## Source Update Detection
 
 Before packaged desktop releases are available, source installations can check

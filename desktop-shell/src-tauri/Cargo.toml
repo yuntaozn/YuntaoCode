@@ -1,6 +1,6 @@
 [package]
 name = "yuntaocode"
-version = "0.1.0"
+version = "0.2.0-dev"
 description = "YuntaoCode desktop shell"
 authors = ["沈阳云涛智能科技有限公司 <wutaoplay@outlook.com>"]
 license = "Apache-2.0"

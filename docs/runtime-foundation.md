@@ -21,12 +21,12 @@ The foundation contract keeps these boundaries explicit:
 
 ## Development Direction Gate
 
-0.1 should be treated as a direction release for the runtime foundation. It is
-not a promise that every scenario is stable, every provider is mature, or every
-future extension path is finished.
+`v0.1.0` is the fixed direction release for the runtime foundation. It is not a
+promise that every scenario is stable, every provider is mature, or every future
+extension path is finished.
 
-Before a change enters the 0.1 foundation, it should make at least one runtime
-boundary clearer:
+The `main` branch now tracks `0.2.0-dev`. Before a change enters the 0.2
+mainline, it should make at least one runtime boundary clearer:
 
 - Task state, trace, recovery, verification, or result evidence;
 - Context selection, compression, memory scope, source trust, or stale-context
@@ -36,15 +36,17 @@ boundary clearer:
 - Experience/evaluation records derived from selected RunEvidence without
   becoming hidden prompts, automatic capability promotion, or trusted generated
   code.
+- Observation, verification, or artifact records that let the model and user see
+  what actually happened.
 
 The preferred direction is removal of hidden control, clearer observable facts,
 and stronger execution records. The model owns task semantics, route choice,
 self-correction, and final wording. The runtime owns protocol integrity,
 permissions, local safety boundaries, persisted state, and evidence surfaces.
 
-Changes that mainly add a scenario, product promise, marketplace idea, new
-tool list, or external concept should stay outside the 0.1 foundation until
-real runs show which boundary they clarify.
+Changes that mainly add a scenario, product promise, marketplace idea, new tool
+list, or external concept should stay outside the 0.2 mainline until real runs
+show which boundary they clarify.
 
 ## Runtime Lines
 
@@ -69,7 +71,8 @@ Above them is an evidence-learning layer:
   Experience Sample export, Evaluation Fixture, and Evaluation Report records;
   it does not control live task execution or make generated code trusted.
 
-Ideas beyond this boundary stay out of the 0.1 foundation contract.
+Ideas beyond this boundary stay out of the mainline runtime contract until real
+task evidence shows which boundary they improve.
 
 The model may propose task semantics, routing, next actions, and final wording.
 The runtime owns schema, permissions, state transitions, evidence, and

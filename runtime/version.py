@@ -5,4 +5,4 @@ settings migration, plugin, and static asset versions are intentionally
 independent.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0-dev"

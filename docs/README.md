@@ -11,6 +11,8 @@ new architecture note belongs.
   artifacts, and the 0.1 development direction gate.
 - [0.1-readiness.md](0.1-readiness.md) defines the focused release hygiene gate
   for treating the current tree as a 0.1 foundation candidate.
+- [0.2-direction.md](0.2-direction.md) anchors the current `0.2.0-dev`
+  development line around Observation, Verification, and Artifact Runtime.
 - [0.1-foundation-inventory.md](0.1-foundation-inventory.md) classifies source
   groups that belong in the 0.1 foundation candidate and paths that must stay
   local-only.

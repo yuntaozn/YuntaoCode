@@ -371,9 +371,15 @@ We believe that models keep changing, but a stable, open, and extensible Task Ru
 
 ---
 
-## Current 0.1 Implementation Snapshot
+## Current Development Line
 
-Current Development Version: **0.1.0**
+Current Development Version: **0.2.0-dev**
+
+`v0.1.0` is fixed as the first public preview release. The `main` branch now
+tracks 0.2.0 development; 0.1.x should be used only for clear fixes to the
+published installer or released source.
+
+## Published 0.1 Implementation Snapshot
 
 0.1 is not a feature-complete release, a scenario-coverage promise, or a stability guarantee. Its purpose is to make the local-first AI Task Runtime foundation clear and executable. The current code implements these foundations:
 
@@ -389,19 +395,24 @@ Current Development Version: **0.1.0**
 * Extension Contract foundation: plugin / MCP / CLI / Capability Pack boundaries, permissions, dependencies, and task artifact conventions
 * Experience / Evaluation foundation: RunEvidence, Experience Sample Export, Replay Fixture, Evaluation Fixture, Evaluation Report, and diagnostic packages
 
-## Development Direction Gate
+## 0.2 Development Direction Gate
 
-Recent changes should answer these questions before entering the 0.1 foundation:
+0.2.0 does not expand the tool list as its main goal. It focuses on
+Observation / Verification / Artifact Runtime: giving the model better
+execution facts, letting it judge gaps from evidence, and making task artifacts
+auditable.
+
+Recent changes should answer these questions before entering the 0.2 mainline:
 
 * Does this make one of Task / Context / Capability / Experience clearer?
 * Does this reduce Runtime-owned task semantics, route selection, or final conclusions?
-* Does this strengthen state, evidence, verification, recovery, audit, or permission boundaries?
+* Does this strengthen observation, state, evidence, verification, artifacts, recovery, audit, or permission boundaries?
 * Can its effect be checked through tests, diagnostic packages, or real task records?
 * Does it avoid turning a scenario, tool, MCP service, CLI provider, plugin, or Skill into a separate execution system?
 
-If a change only expands scenarios, follows a new concept, or grows the tool list without clarifying these boundaries, it should stay out of the 0.1 foundation.
+If a change only expands scenarios, follows a new concept, or grows the tool list without clarifying these boundaries, it should stay out of the 0.2 mainline.
 
-Before closing a 0.1 candidate, run the focused readiness gate:
+During development, the focused readiness gate is still useful as a regression hygiene check:
 
 ```bash
 python scripts/check_01_readiness.py
