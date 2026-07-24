@@ -32,7 +32,11 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
     plan = _dict(evidence.get("plan"))
     risks = _string_list(result.get("risks") or evidence.get("risks"))
     failures = _dict_list(result.get("failure_details")) or _dict_list(evidence.get("failure_details"))
-    artifacts = _artifact_records(result, fallback_paths=result.get("written_paths") or result.get("changed_paths"))
+    artifacts = _artifact_records(
+        result,
+        evidence=evidence,
+        fallback_paths=result.get("written_paths") or result.get("changed_paths"),
+    )
     verification = _verification_records(result, evidence)
     tool_steps = _dict_list(evidence.get("tool_steps"))
     completion_decisions = _dict_list(evidence.get("completion_decisions"))
@@ -132,8 +136,17 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
     }
 
 
-def _artifact_records(result: dict[str, Any], *, fallback_paths: Any) -> list[dict[str, Any]]:
-    artifacts = _dict_list(result.get("artifacts"))
+def _artifact_records(
+    result: dict[str, Any],
+    *,
+    evidence: dict[str, Any],
+    fallback_paths: Any,
+) -> list[dict[str, Any]]:
+    artifacts = (
+        _dict_list(evidence.get("artifacts"))
+        or _dict_list(result.get("run_artifacts"))
+        or _dict_list(result.get("artifacts"))
+    )
     if artifacts:
         return [_compact_artifact(item) for item in artifacts]
     return [
@@ -148,6 +161,29 @@ def _artifact_records(result: dict[str, Any], *, fallback_paths: Any) -> list[di
 
 
 def _compact_artifact(item: dict[str, Any]) -> dict[str, Any]:
+    if _is_run_artifact(item):
+        metadata = _dict(item.get("metadata"))
+        compact = {
+            "kind": str(item.get("artifact_kind") or "artifact"),
+            "path": str(item.get("path") or ""),
+            "tool": str(item.get("source_tool") or item.get("tool") or ""),
+            "status": str(item.get("status") or ""),
+            "role": str(item.get("role") or ""),
+            "can_preview": bool(item.get("can_preview")),
+            "can_enter_model_context": bool(item.get("can_enter_model_context")),
+            "verification_relevance": str(item.get("verification_relevance") or ""),
+        }
+        for field in ("size", "created", "changed", "deleted", "encoding", "draft_id"):
+            if field in metadata:
+                compact[field] = metadata.get(field)
+        validation = metadata.get("validation")
+        if isinstance(validation, dict):
+            compact["validation"] = {
+                key: validation.get(key)
+                for key in ("valid", "validator", "text_chars", "line_count")
+                if key in validation
+            }
+        return compact
     compact = {
         "kind": str(item.get("kind") or "artifact"),
         "path": str(item.get("path") or ""),
@@ -165,6 +201,14 @@ def _compact_artifact(item: dict[str, Any]) -> dict[str, Any]:
             if key in validation
         }
     return compact
+
+
+def _is_run_artifact(item: dict[str, Any]) -> bool:
+    return (
+        item.get("schema_version") == "run_artifact.v1"
+        or item.get("kind") == "run_artifact"
+        or "artifact_kind" in item
+    )
 
 
 def _verification_records(result: dict[str, Any], evidence: dict[str, Any]) -> list[dict[str, Any]]:
@@ -261,6 +305,9 @@ def _changed_path_records(artifacts: list[dict[str, Any]]) -> list[dict[str, Any
     records: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in artifacts:
+        role = str(item.get("role") or "")
+        if role and role not in {"final", "draft", "artifact"}:
+            continue
         path = str(item.get("path") or "").strip()
         if not path or path in seen:
             continue

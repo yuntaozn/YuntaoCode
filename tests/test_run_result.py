@@ -36,6 +36,12 @@ def test_build_run_result_records_writes_verification_and_risks() -> None:
             "status": "success",
         }
     ]
+    final_artifact = next(item for item in result["run_artifacts"] if item["role"] == "final")
+    assert final_artifact["artifact_kind"] == "file"
+    assert final_artifact["path"] == "src/app.py"
+    assert final_artifact["source_tool"] == "code.edit_file"
+    assert result["artifact_summary"]["flags"]["has_final_artifacts"] is True
+    assert result["counts"]["run_artifacts"] == len(result["run_artifacts"])
     assert result["counts"]["write_successes"] == 1
     assert result["counts"]["verification_successes"] == 1
     assert result["counts"]["test_successes"] == 1
@@ -183,6 +189,10 @@ def test_build_run_result_accepts_visual_verification_for_visual_code_task() -> 
     assert result["visual_evidence"][0]["tool"] == "preview.capture_local_html"
     assert result["visual_evidence"][0]["path"] == "D:/workspace/preview.png"
     assert result["visual_evidence"][0]["model_context_eligible"] is True
+    screenshot = next(item for item in result["run_artifacts"] if item["role"] == "screenshot")
+    assert screenshot["path"] == "preview.png"
+    assert screenshot["can_enter_model_context"] is True
+    assert result["artifact_summary"]["visual_paths"] == ["preview.png"]
     assert "test_not_observed" not in result["risks"]
 
 
@@ -264,6 +274,9 @@ def test_build_run_result_preserves_compact_visual_and_debug_summaries() -> None
     assert result["debug_sessions"][0]["command"].startswith("playwright capture")
     assert result["debug_sessions"][0]["exit_code"] == 0
     assert result["debug_sessions"][0]["service"]["status_code"] == 200
+    assert any(item["role"] == "screenshot" for item in result["run_artifacts"])
+    assert any(item["role"] == "log" for item in result["run_artifacts"])
+    assert result["artifact_summary"]["flags"]["has_visual_artifacts"] is True
 
 
 def test_build_run_result_tracks_verification_only_content_gap() -> None:

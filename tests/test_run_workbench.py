@@ -175,19 +175,24 @@ def test_build_run_workbench_presents_artifacts_risks_and_timeline(tmp_path) -> 
     assert workbench["task"]["goal"] == "Create a 3D model viewer"
     assert workbench["task"]["requires_write"] is True
     assert workbench["status"]["result_status"] == "partial"
-    assert workbench["artifacts"] == [
-        {
-            "kind": "text_file",
-            "path": "viewer.html",
-            "tool": "filesystem.finalize_text_file",
-            "status": "success",
-            "size": 4096,
-            "validation": {"valid": True, "text_chars": 3200},
-        }
-    ]
+    final_artifact = next(item for item in workbench["artifacts"] if item["role"] == "final")
+    assert final_artifact == {
+        "kind": "text_file",
+        "path": "viewer.html",
+        "tool": "filesystem.finalize_text_file",
+        "status": "success",
+        "role": "final",
+        "can_preview": True,
+        "can_enter_model_context": True,
+        "verification_relevance": "deliverable",
+        "size": 4096,
+        "validation": {"valid": True, "text_chars": 3200, "line_count": 80},
+    }
+    assert any(item["role"] == "log" for item in workbench["artifacts"])
+    assert any(item["role"] == "verification" for item in workbench["artifacts"])
     assert workbench["verification"][0]["tool"] == "filesystem.read_text_preview"
     assert workbench["risks"][0]["code"] == "write_not_verified"
-    assert workbench["audit"]["counts"]["artifacts"] == 1
+    assert workbench["audit"]["counts"]["artifacts"] == 3
     assert workbench["audit"]["counts"]["changed_paths"] == 1
     assert workbench["audit"]["counts"]["verification"] == 1
     assert workbench["audit"]["counts"]["runtime_advisories"] == 1

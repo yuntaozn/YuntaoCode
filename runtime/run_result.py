@@ -27,6 +27,7 @@ from runtime.agent_strategy.tool_event_roles import (
     verification_strength_meets,
 )
 from runtime.agent_strategy.tool_result_risks import assess_tool_result_risks
+from runtime.artifacts import build_run_artifacts, summarize_run_artifacts
 from runtime.capability_evidence import build_capability_evidence_summary
 from runtime.core.result import RUN_RESULT_SCHEMA_VERSION
 from runtime.debug_audit import build_debug_audit
@@ -187,6 +188,15 @@ def build_run_result(
     ]
     visual_evidence = _visual_evidence_records(tool_events)
     debug_sessions = _debug_session_records(tool_events)
+    run_artifacts = build_run_artifacts(
+        workspace_path=workspace_path,
+        tool_events=tool_events,
+        legacy_artifacts=artifacts,
+        visual_evidence=visual_evidence,
+        debug_sessions=debug_sessions,
+        verification_evidence=verification_evidence,
+    )
+    artifact_summary = summarize_run_artifacts(run_artifacts)
     observed_verification_modalities = _unique(
         modality
         for item in verification_evidence
@@ -489,6 +499,7 @@ def build_run_result(
             "test_successes": len(test_successes),
             "visual_evidence": len(visual_evidence),
             "debug_sessions": len(debug_sessions),
+            "run_artifacts": len(run_artifacts),
             "failures": len(failures),
             "blocking_failures": len(blocking_failures),
             "degraded_failures": len(degraded_failures),
@@ -500,6 +511,8 @@ def build_run_result(
         "target_written_paths": target_written_paths,
         "observed_written_paths": observed_written_paths,
         "artifacts": artifacts[:24],
+        "run_artifacts": run_artifacts[:48],
+        "artifact_summary": artifact_summary,
         "verified": verified[:12],
         "verification_evidence": verification_evidence[:12],
         "visual_evidence": visual_evidence[:12],

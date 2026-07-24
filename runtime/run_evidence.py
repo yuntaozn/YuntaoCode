@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from runtime.artifacts import build_run_artifacts, summarize_run_artifacts
 from runtime.capability_evidence import build_capability_evidence_summary
 from runtime.context_pack import context_pack_summary
 from runtime.debug_audit import build_debug_audit
@@ -60,6 +61,11 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
     run_info = _run_info(run)
     contract = task_contract if isinstance(task_contract, dict) else {}
     result = result if isinstance(result, dict) else {}
+    artifacts = _run_artifact_records(
+        result=result,
+        tool_events=tool_events,
+        workspace_snapshot=workspace_snapshot,
+    )
     visual_context = _visual_context_records(visual_context_events)
     visual_verification = build_visual_verification_summary(
         visual_evidence=_dict_list(result.get("visual_evidence")),
@@ -99,6 +105,8 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
         "status_timeline": [_status_step(event) for event in status_events[-24:]],
         "completion_decisions": completion_decisions[-12:],
         "result": result,
+        "artifacts": artifacts[:48],
+        "artifact_summary": summarize_run_artifacts(artifacts),
         "risks": _result_risks(result),
         "failures": [_tool_step(event) for event in failures],
         "failure_details": _dict_list(result.get("failure_details")),
@@ -121,6 +129,31 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
             "boundary": "manual_start_required",
         },
     }
+
+
+def _run_artifact_records(
+    *,
+    result: dict[str, Any],
+    tool_events: list[dict[str, Any]],
+    workspace_snapshot: Any,
+) -> list[dict[str, Any]]:
+    existing = _dict_list(result.get("run_artifacts"))
+    if existing:
+        return existing
+    return build_run_artifacts(
+        workspace_path=_workspace_path_from_snapshot(workspace_snapshot),
+        tool_events=tool_events,
+        legacy_artifacts=_dict_list(result.get("artifacts")),
+        visual_evidence=_dict_list(result.get("visual_evidence")),
+        debug_sessions=_dict_list(result.get("debug_sessions")),
+        verification_evidence=_dict_list(result.get("verification_evidence")),
+    )
+
+
+def _workspace_path_from_snapshot(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    return str(value.get("path") or "")
 
 
 def _run_info(run: Any) -> dict[str, Any]:

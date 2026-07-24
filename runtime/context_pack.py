@@ -826,7 +826,11 @@ def _run_result_record(
     if not isinstance(run_result, dict):
         return None
     status = str(run_result.get("status") or "").strip()
-    artifacts = run_result.get("artifacts") if isinstance(run_result.get("artifacts"), list) else []
+    artifacts = (
+        run_result.get("run_artifacts")
+        if isinstance(run_result.get("run_artifacts"), list)
+        else run_result.get("artifacts") if isinstance(run_result.get("artifacts"), list) else []
+    )
     verification = (
         run_result.get("verification_evidence")
         if isinstance(run_result.get("verification_evidence"), list)
@@ -847,6 +851,11 @@ def _run_result_record(
         for item in artifacts
         if isinstance(item, dict) and str(item.get("path") or "").strip()
     ]
+    artifact_roles = [
+        str(item.get("role") or item.get("artifact_kind") or item.get("kind") or "")
+        for item in artifacts
+        if isinstance(item, dict)
+    ]
     verification_bits = [
         _verification_summary(item)
         for item in verification
@@ -855,6 +864,7 @@ def _run_result_record(
     content = (
         f"Run result facts: status={status or 'unknown'}; "
         f"artifacts={', '.join(artifact_paths[:8]) or 'none'}; "
+        f"artifact_roles={', '.join(artifact_roles[:8]) or 'none'}; "
         f"verification={'; '.join(verification_bits[:8]) or 'none'}; "
         f"risks={', '.join(risks[:12]) or 'none'}; "
         f"failure_count={len(failures)}"
@@ -874,6 +884,7 @@ def _run_result_record(
             "risks": risks[:12],
             "artifact_count": len(artifacts),
             "artifact_paths": artifact_paths[:12],
+            "artifact_roles": artifact_roles[:12],
             "verification_count": len(verification),
             "failure_count": len(failures),
         },
