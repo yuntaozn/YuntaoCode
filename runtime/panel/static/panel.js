@@ -21,6 +21,7 @@ const state = {
         pageSize: 8,
         summaries: [],
         total: 0,
+        activeWorkbenchRunId: "",
     },
     pendingRunLaunch: null,
     pinnedWorkspaceIds: loadPinnedWorkspaceIds(),
@@ -406,7 +407,7 @@ function renderTaskHistoryControls() {
     if (next) next.disabled = state.taskHistory.page >= pageCount;
 }
 
-async function runTaskHistoryAction(action, runId, button) {
+async function runTaskHistoryAction(action, runId, button, payload = {}) {
     if (action === "start") {
         await startPreparedRun({
             id: runId,
@@ -418,10 +419,12 @@ async function runTaskHistoryAction(action, runId, button) {
     }
     const data = await api(`/runs/${encodeURIComponent(runId)}/actions`, {
         method: "POST",
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, ...payload }),
     });
     if (action === "workbench") {
         renderRunWorkbench(data);
+    } else if (action === "open_artifact") {
+        showToast(t('tasks.artifact_opened'));
     } else if (action === "runbook") {
         const output = $("task-runbook-output");
         output.textContent = JSON.stringify(data, null, 2);
@@ -435,7 +438,7 @@ async function runTaskHistoryAction(action, runId, button) {
     } else if (action === "replay" || (action === "resume" && data?.prepared_run)) {
         showToast(t('tasks.prepared'));
     }
-    if (!["export_diagnostic", "export_fixture"].includes(action)) {
+    if (!["export_diagnostic", "export_fixture", "open_artifact"].includes(action)) {
         await Promise.all([refreshActiveRuns(), refreshTaskHistory()]);
     }
 }
@@ -462,6 +465,8 @@ function renderRunWorkbench(workbench) {
     const contextPack = workbench?.context_pack || {};
     const completionDecisions = Array.isArray(workbench?.completion_decisions) ? workbench.completion_decisions : [];
     const timeline = Array.isArray(workbench?.timeline) ? workbench.timeline : [];
+    container.dataset.runId = run.id || "";
+    state.taskHistory.activeWorkbenchRunId = run.id || "";
     const chips = [
         `${t('tasks.run_status')}：${status.run_status || run.status || "-"}`,
         `${t('tasks.result_status')}：${status.result_status || "-"}`,
@@ -477,6 +482,16 @@ function renderRunWorkbench(workbench) {
             </div>
             ${status.result_summary ? `<div class="task-workbench-empty">${escapeHtml(status.result_summary)}</div>` : ""}
         </div>
+        ${renderWorkbenchEvidenceOverview(workbench?.evidence_overview || {
+            artifacts,
+            verification,
+            risks,
+            failures,
+            audit,
+            verificationClosure,
+            visualVerification,
+            debugAudit,
+        })}
         <div class="task-workbench-grid">
             ${renderWorkbenchSection(t('tasks.audit'), renderWorkbenchAudit(audit), "full")}
             ${renderWorkbenchSection(t('tasks.workspace_snapshot'), renderWorkbenchWorkspace(workspace))}
@@ -496,6 +511,146 @@ function renderRunWorkbench(workbench) {
         </div>
     `;
     container.classList.remove("hidden");
+}
+
+function renderWorkbenchEvidenceOverview(data) {
+    if (Array.isArray(data?.cards)) {
+        const cards = data.cards.map((card) => renderWorkbenchEvidenceCardFromPayload(card)).join("");
+        return `
+            <div class="task-workbench-overview" aria-label="${escapeHtml(t('tasks.evidence_overview'))}">
+                <div class="task-workbench-overview-title">${escapeHtml(t('tasks.evidence_overview'))}</div>
+                <div class="task-workbench-overview-grid">${cards}</div>
+            </div>
+        `;
+    }
+    const artifacts = Array.isArray(data.artifacts) ? data.artifacts : [];
+    const verification = Array.isArray(data.verification) ? data.verification : [];
+    const risks = Array.isArray(data.risks) ? data.risks : [];
+    const failures = Array.isArray(data.failures) ? data.failures : [];
+    const auditCounts = data.audit?.counts && typeof data.audit.counts === "object" ? data.audit.counts : {};
+    const closureCounts = data.verificationClosure?.counts && typeof data.verificationClosure.counts === "object"
+        ? data.verificationClosure.counts
+        : {};
+    const closureFlags = data.verificationClosure?.flags && typeof data.verificationClosure.flags === "object"
+        ? data.verificationClosure.flags
+        : {};
+    const closurePaths = data.verificationClosure?.artifact_paths && typeof data.verificationClosure.artifact_paths === "object"
+        ? data.verificationClosure.artifact_paths
+        : {};
+    const visualCounts = data.visualVerification?.counts && typeof data.visualVerification.counts === "object"
+        ? data.visualVerification.counts
+        : {};
+    const visualFlags = data.visualVerification?.flags && typeof data.visualVerification.flags === "object"
+        ? data.visualVerification.flags
+        : {};
+    const debugCounts = data.debugAudit?.counts && typeof data.debugAudit.counts === "object" ? data.debugAudit.counts : {};
+    const debugFlags = data.debugAudit?.flags && typeof data.debugAudit.flags === "object" ? data.debugAudit.flags : {};
+    const finalPaths = Array.isArray(closurePaths.final) ? closurePaths.final.filter(Boolean) : [];
+    const visualPaths = Array.isArray(closurePaths.visual) ? closurePaths.visual.filter(Boolean) : [];
+    const finalCount = Number(closureCounts.final_artifacts || 0) || artifacts.filter((item) => String(item.role || "") === "final").length;
+    const visualCount = Number(closureCounts.visual_artifacts || 0) || Number(visualCounts.visual_evidence || 0) || visualPaths.length;
+    const verificationCount = Number(closureCounts.verification_records || 0) || verification.length;
+    const gapCount = Number(closureCounts.gap_facts || 0);
+    const debugCount = Number(debugCounts.debug_sessions || 0);
+    const runtimeIssueCount = Number(debugCounts.failed_sessions || 0)
+        + Number(debugCounts.timed_out_sessions || 0)
+        + Number(debugCounts.runtime_error_sessions || 0)
+        + failures.length;
+
+    const cards = [
+        renderWorkbenchEvidenceCard({
+            title: t('tasks.evidence_deliverables'),
+            tone: finalCount ? "observed" : "quiet",
+            value: String(finalCount),
+            facts: [
+                `${t('tasks.final_artifacts')}：${finalCount}`,
+                `${t('tasks.changed_paths')}：${Number(auditCounts.changed_paths || 0)}`,
+                closureFlags.has_final_artifact ? t('tasks.has_final_artifact') : t('tasks.no_final_artifact'),
+            ],
+            paths: finalPaths.slice(0, 2).map((path) => ({ path, imagePreview: false })),
+        }),
+        renderWorkbenchEvidenceCard({
+            title: t('tasks.evidence_visual'),
+            tone: visualFlags.visual_missing ? "attention" : visualCount ? "observed" : "quiet",
+            value: String(visualCount),
+            facts: [
+                `${t('tasks.visual_evidence')}：${visualCount}`,
+                `${t('tasks.model_context_used')}：${Number(visualCounts.model_context_injected || closureCounts.model_context_artifacts || 0)}`,
+                visualFlags.visual_missing ? t('tasks.visual_missing') : visualFlags.visual_observed ? t('tasks.visual_observed') : t('tasks.no_visual_evidence'),
+            ],
+            paths: visualPaths.slice(0, 2).map((path) => ({ path, imagePreview: true })),
+        }),
+        renderWorkbenchEvidenceCard({
+            title: t('tasks.evidence_verification'),
+            tone: gapCount ? "attention" : verificationCount ? "observed" : "quiet",
+            value: String(verificationCount),
+            facts: [
+                `${t('tasks.verification_evidence')}：${verificationCount}`,
+                `${t('tasks.sufficient_verification')}：${Number(closureCounts.sufficient_verification_records || 0)}`,
+                `${t('tasks.verification_gap_facts')}：${gapCount}`,
+            ],
+            paths: [],
+        }),
+        renderWorkbenchEvidenceCard({
+            title: t('tasks.evidence_runtime'),
+            tone: runtimeIssueCount || debugFlags.has_runtime_errors ? "attention" : debugCount ? "observed" : "quiet",
+            value: String(debugCount),
+            facts: [
+                `${t('tasks.debug_sessions')}：${debugCount}`,
+                `${t('tasks.failures')}：${failures.length}`,
+                `${t('tasks.risks')}：${risks.length}`,
+                runtimeIssueCount ? t('tasks.runtime_issues_observed') : t('tasks.no_runtime_issues'),
+            ],
+            paths: [],
+        }),
+    ];
+    return `
+        <div class="task-workbench-overview" aria-label="${escapeHtml(t('tasks.evidence_overview'))}">
+            <div class="task-workbench-overview-title">${escapeHtml(t('tasks.evidence_overview'))}</div>
+            <div class="task-workbench-overview-grid">${cards.join("")}</div>
+        </div>
+    `;
+}
+
+function renderWorkbenchEvidenceCardFromPayload(card) {
+    const id = String(card?.id || "");
+    const title = card?.title_key ? t(card.title_key) : id || t('tasks.evidence_overview');
+    const tone = String(card?.tone || "quiet");
+    const value = String(card?.value ?? "0");
+    const facts = Array.isArray(card?.facts) ? card.facts : [];
+    const paths = Array.isArray(card?.paths) ? card.paths : [];
+    return renderWorkbenchEvidenceCard({
+        title,
+        tone,
+        value,
+        facts: facts.map((item) => renderWorkbenchEvidenceFact(item)),
+        paths: paths.map((item) => ({
+            path: item?.path || "",
+            imagePreview: Boolean(item?.image_preview),
+        })),
+    });
+}
+
+function renderWorkbenchEvidenceFact(item) {
+    if (!item || typeof item !== "object") return "";
+    if (item.message_key) return t(item.message_key);
+    if (item.label_key) return `${t(item.label_key)}：${String(item.value ?? 0)}`;
+    return String(item.text || item.message || "");
+}
+
+function renderWorkbenchEvidenceCard({ title, tone, value, facts, paths }) {
+    const factRows = (facts || []).filter(Boolean).slice(0, 4).map((item) => `<span>${escapeHtml(item)}</span>`).join("");
+    const pathRows = (paths || []).map((item) => renderWorkbenchPath(item.path, { imagePreview: item.imagePreview })).join("");
+    return `
+        <section class="task-workbench-overview-card ${escapeHtml(tone || "quiet")}">
+            <div class="task-workbench-overview-card-head">
+                <strong>${escapeHtml(title)}</strong>
+                <b>${escapeHtml(value)}</b>
+            </div>
+            <div class="task-workbench-overview-facts">${factRows}</div>
+            ${pathRows ? `<div class="task-workbench-overview-paths">${pathRows}</div>` : ""}
+        </section>
+    `;
 }
 
 function renderWorkbenchAudit(audit) {
@@ -541,7 +696,7 @@ function renderWorkbenchAudit(audit) {
             <li>
                 <strong>${escapeHtml(t('tasks.changed_path'))}</strong>
                 <span>${escapeHtml([item.kind, item.status, item.tool].filter(Boolean).join(" · "))}</span>
-                ${item.path ? `<code>${escapeHtml(item.path)}</code>` : ""}
+                ${renderWorkbenchPath(item.path, { imagePreview: isWorkbenchVisualRecord(item) })}
             </li>
         `);
     });
@@ -615,7 +770,7 @@ function renderWorkbenchContextEvidence(summary) {
                     item.has_runtime_errors ? t('tasks.runtime_errors_seen') : "",
                     item.width && item.height ? `${item.width}x${item.height}` : "",
                 ].filter(Boolean).join(" · "))}</span>
-                ${item.path ? `<code>${escapeHtml(item.path)}</code>` : ""}
+                ${renderWorkbenchPath(item.path, { imagePreview: true })}
             </li>
         `);
     });
@@ -778,6 +933,8 @@ function renderWorkbenchVerificationClosure(closure) {
             <span>${escapeHtml([
                 `${t('tasks.verification_evidence')}：${Number(counts.verification_records || 0)}`,
                 `${t('tasks.sufficient_verification')}：${Number(counts.sufficient_verification_records || 0)}`,
+                `${t('tasks.fresh_verification')}：${Number(counts.fresh_verification_records || 0)}`,
+                `${t('tasks.stale_verification')}：${Number(counts.stale_verification_records || 0)}`,
                 `${t('tasks.final_artifacts')}：${Number(counts.final_artifacts || 0)}`,
                 `${t('tasks.visual_artifacts')}：${Number(counts.visual_artifacts || 0)}`,
                 `${t('tasks.log_artifacts')}：${Number(counts.log_artifacts || 0)}`,
@@ -798,6 +955,8 @@ function renderWorkbenchVerificationClosure(closure) {
                 flags.has_visual_evidence ? t('tasks.has_visual_evidence') : "",
                 flags.visual_entered_model_context ? t('tasks.visual_entered_model_context') : "",
                 flags.has_debug_evidence ? t('tasks.has_debug_evidence') : "",
+                flags.verification_after_latest_change_observed ? t('tasks.fresh_verification') : "",
+                flags.has_stale_verification ? t('tasks.stale_verification') : "",
                 flags.has_runtime_errors ? t('tasks.runtime_errors_seen') : "",
             ].filter(Boolean).join(" · ") || t('tasks.none'))}</span>
         </li>
@@ -826,13 +985,13 @@ function renderWorkbenchVerificationClosure(closure) {
         `);
     }
 
-    [...finalPaths.slice(0, 6).map((path) => [t('tasks.final_artifact'), path]),
-     ...visualPaths.slice(0, 6).map((path) => [t('tasks.visual_artifact'), path])]
-        .forEach(([label, path]) => {
+    [...finalPaths.slice(0, 6).map((path) => [t('tasks.final_artifact'), path, false]),
+     ...visualPaths.slice(0, 6).map((path) => [t('tasks.visual_artifact'), path, true])]
+        .forEach(([label, path, imagePreview]) => {
             rows.push(`
                 <li>
                     <strong>${escapeHtml(label)}</strong>
-                    <code>${escapeHtml(path)}</code>
+                    ${renderWorkbenchPath(path, { imagePreview })}
                 </li>
             `);
         });
@@ -973,7 +1132,7 @@ function renderWorkbenchVisualRecord(title, item) {
                 item.has_runtime_errors ? t('tasks.runtime_errors_seen') : "",
                 item.injected_into_model_context ? t('tasks.model_context_injected') : "",
             ].filter(Boolean).join(" · "))}</span>
-            ${item.path ? `<code>${escapeHtml(item.path)}</code>` : ""}
+            ${renderWorkbenchPath(item.path, { imagePreview: isWorkbenchVisualRecord(item) })}
         </li>
     `;
 }
@@ -1085,6 +1244,60 @@ function renderWorkbenchSection(title, body, extraClass = "") {
     `;
 }
 
+function renderWorkbenchPath(path, options = {}) {
+    const text = String(path || "").trim();
+    if (!text) return "";
+    const safe = escapeHtml(text);
+    const runId = state.taskHistory.activeWorkbenchRunId || $("task-workbench")?.dataset.runId || "";
+    const previewUrl = options.imagePreview && runId
+        ? `/runs/${encodeURIComponent(runId)}/artifacts/content?path=${encodeURIComponent(text)}`
+        : "";
+    const safePreviewUrl = escapeHtml(previewUrl);
+    return `
+        <div class="task-workbench-path">
+            ${previewUrl ? `<a class="task-workbench-image-preview" href="${safePreviewUrl}" target="_blank" rel="noopener"><img src="${safePreviewUrl}" alt="${escapeHtml(t('tasks.artifact_preview'))}" loading="lazy"></a>` : ""}
+            <code title="${safe}">${safe}</code>
+            <div class="task-workbench-path-actions">
+                <button type="button" data-workbench-action="open_artifact" data-path="${safe}">${escapeHtml(t('tasks.open_artifact'))}</button>
+                <button type="button" data-workbench-action="copy_path" data-path="${safe}">${escapeHtml(t('tasks.copy_path'))}</button>
+            </div>
+        </div>
+    `;
+}
+
+function isWorkbenchVisualRecord(item) {
+    const kind = String(item?.kind || item?.artifact_kind || "").toLowerCase();
+    const role = String(item?.role || "").toLowerCase();
+    const format = String(item?.format || "").toLowerCase();
+    const path = String(item?.path || "").toLowerCase();
+    return Boolean(
+        role === "screenshot"
+        || role === "preview"
+        || ["image", "screenshot", "render", "render_image", "viewport_screenshot", "visual_capture", "pdf_page_render"].includes(kind)
+        || ["png", "jpeg", "jpg", "webp", "gif", "bmp"].includes(format)
+        || /\.(png|jpe?g|webp|gif|bmp)$/.test(path)
+    );
+}
+
+async function handleWorkbenchPathAction(button) {
+    const action = button.dataset.workbenchAction || "";
+    const path = button.dataset.path || "";
+    if (!path) return;
+    if (action === "copy_path") {
+        await navigator.clipboard.writeText(path);
+        showToast(t('tasks.path_copied'));
+        return;
+    }
+    if (action === "open_artifact") {
+        const runId = $("task-workbench")?.dataset.runId || "";
+        if (!runId) {
+            showToast(t('tasks.run_missing'));
+            return;
+        }
+        await runTaskHistoryAction("open_artifact", runId, button, { path });
+    }
+}
+
 function renderWorkbenchArtifacts(items) {
     if (!items.length) return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
     return `<ul class="task-workbench-list">${items.map((item) => {
@@ -1094,8 +1307,9 @@ function renderWorkbenchArtifacts(items) {
             : "";
         return `
             <li>
-                <strong>${escapeHtml(item.path || item.kind || t('tasks.artifact'))}</strong>
-                <span>${escapeHtml([item.kind, item.status, item.tool].filter(Boolean).join(" · "))}${escapeHtml(size + validation)}</span>
+                <strong>${escapeHtml([item.role, item.kind].filter(Boolean).join(" · ") || item.path || t('tasks.artifact'))}</strong>
+                <span>${escapeHtml([item.status, item.tool].filter(Boolean).join(" · "))}${escapeHtml(size + validation)}</span>
+                ${renderWorkbenchPath(item.path, { imagePreview: isWorkbenchVisualRecord(item) })}
             </li>
         `;
     }).join("")}</ul>`;
@@ -1152,7 +1366,7 @@ function renderWorkbenchVerification(items) {
         <li>
             <strong>${escapeHtml(item.tool || t('tasks.verification'))}</strong>
             <span>${escapeHtml([item.status, item.strength, item.modality].filter(Boolean).join(" · "))}</span>
-            ${item.path ? `<code>${escapeHtml(item.path)}</code>` : ""}
+            ${renderWorkbenchPath(item.path)}
         </li>
     `).join("")}</ul>`;
 }
@@ -1172,7 +1386,7 @@ function renderWorkbenchFailures(items) {
     return `<ul class="task-workbench-list">${items.map((item) => `
         <li>
             <strong>${escapeHtml(item.tool || t('tasks.failure'))}</strong>
-            ${item.path ? `<code>${escapeHtml(item.path)}</code>` : ""}
+            ${renderWorkbenchPath(item.path)}
             <span>${escapeHtml(item.error || item.message || "")}</span>
         </li>
     `).join("")}</ul>`;
@@ -1221,7 +1435,7 @@ function renderWorkbenchTimeline(items) {
         <li>
             <strong>${escapeHtml([formatWorkbenchTime(item.time), item.kind, item.status].filter(Boolean).join(" · "))}</strong>
             <span>${escapeHtml(item.label || item.message || "")}</span>
-            ${item.path ? `<code>${escapeHtml(item.path)}</code>` : ""}
+            ${renderWorkbenchPath(item.path)}
         </li>
     `).join("")}</ul>`;
 }
@@ -4017,6 +4231,12 @@ on("task-history-list", "click", (event) => {
     const button = event.target.closest("[data-run-action]");
     if (!button) return;
     runTaskHistoryAction(button.dataset.runAction, button.dataset.runId, button)
+        .catch((error) => showToast(error.message));
+});
+on("task-workbench", "click", (event) => {
+    const button = event.target.closest("[data-workbench-action]");
+    if (!button) return;
+    handleWorkbenchPathAction(button)
         .catch((error) => showToast(error.message));
 });
 on("open-login-btn", "click", () => $("login-dialog").showModal());

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from urllib.parse import quote
 
 import tornado.iostream
 import tornado.web
@@ -17,6 +18,12 @@ from runtime.conversation_interactions import (
 from runtime.diagnostic_export import build_diagnostic_export
 from runtime.evaluation.fixtures import build_evaluation_fixture_export
 from runtime.evaluation.reports import build_evaluation_report
+from runtime.local_open import open_path
+from runtime.run_artifact_access import (
+    RUN_ARTIFACT_IMAGE_PREVIEW_MAX_BYTES,
+    resolve_run_artifact_path,
+    run_artifact_image_preview_media_type,
+)
 from runtime.run_evidence import build_run_evidence
 from runtime.run_workbench import build_run_workbench
 from runtime.runbook import build_replay_request, build_runbook
@@ -50,6 +57,38 @@ class RunDetailHandler(ApiHandler):
         })
 
 
+class RunArtifactContentHandler(ApiHandler):
+    def get(self, run_id: str) -> None:
+        run = self.runtime.runs.get(run_id)
+        if not run:
+            raise tornado.web.HTTPError(404, reason="run not found")
+        try:
+            path = resolve_run_artifact_path(
+                run,
+                self.get_argument("path", ""),
+                path_guard=self.runtime.runner.path_guard,
+                data_dir=getattr(self.runtime.settings, "data_dir", None),
+            )
+        except ValueError as exc:
+            raise tornado.web.HTTPError(400, reason=str(exc)) from exc
+        except PermissionError as exc:
+            raise tornado.web.HTTPError(403, reason=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise tornado.web.HTTPError(404, reason=f"artifact path not found: {exc}") from exc
+
+        media_type = run_artifact_image_preview_media_type(path)
+        if not media_type:
+            raise tornado.web.HTTPError(415, reason="artifact is not a supported image preview")
+        size = path.stat().st_size
+        if size > RUN_ARTIFACT_IMAGE_PREVIEW_MAX_BYTES:
+            raise tornado.web.HTTPError(413, reason="artifact image preview is too large")
+
+        self.set_header("Content-Type", media_type)
+        self.set_header("X-Content-Type-Options", "nosniff")
+        self.set_header("Content-Disposition", f"inline; filename*=UTF-8''{quote(path.name)}")
+        self.finish(path.read_bytes())
+
+
 class RunActionHandler(ApiHandler):
     def post(self, run_id: str) -> None:
         run = self.runtime.runs.get(run_id)
@@ -72,6 +111,9 @@ class RunActionHandler(ApiHandler):
             return
         if action == "workbench":
             self.finish_json({"success": True, "data": build_run_workbench(run)})
+            return
+        if action == "open_artifact":
+            self._open_artifact(run, payload)
             return
         if action == "evidence":
             self.finish_json({"success": True, "data": build_run_evidence(run)})
@@ -101,9 +143,33 @@ class RunActionHandler(ApiHandler):
             400,
             reason=(
                 "action must be pause, stop, resume, evidence, runbook, export_diagnostic, "
-                "workbench, export_fixture, export_evaluation_fixture, evaluate_fixture, or replay"
+                "workbench, open_artifact, export_fixture, export_evaluation_fixture, "
+                "evaluate_fixture, or replay"
             ),
         )
+
+    def _open_artifact(self, run: object, payload: dict) -> None:
+        try:
+            path = resolve_run_artifact_path(
+                run,
+                str(payload.get("path") or ""),
+                path_guard=self.runtime.runner.path_guard,
+                data_dir=getattr(self.runtime.settings, "data_dir", None),
+            )
+            open_path(path)
+        except ValueError as exc:
+            raise tornado.web.HTTPError(400, reason=str(exc)) from exc
+        except PermissionError as exc:
+            raise tornado.web.HTTPError(403, reason=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise tornado.web.HTTPError(404, reason=f"artifact path not found: {exc}") from exc
+        except OSError as exc:
+            raise tornado.web.HTTPError(500, reason=f"failed to open artifact: {exc}") from exc
+
+        self.finish_json({
+            "success": True,
+            "data": {"opened_path": str(path)},
+        })
 
     def _pause(self, run_id: str, reason: str) -> None:
         run = self.runtime.runs.get(run_id)

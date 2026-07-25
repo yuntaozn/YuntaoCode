@@ -300,15 +300,44 @@ def _artifact_summary_digest(value: dict[str, Any]) -> dict[str, Any]:
         "count": value.get("count"),
         "by_role": _compact_dict(value.get("by_role"), limit=10),
         "by_artifact_kind": _compact_dict(value.get("by_artifact_kind"), limit=10),
+        "by_verification_relevance": _compact_dict(value.get("by_verification_relevance"), limit=8),
         "previewable_count": value.get("previewable_count"),
         "model_context_eligible_count": value.get("model_context_eligible_count"),
         "verification_relevant_count": value.get("verification_relevant_count"),
         "changed_paths": _string_list(value.get("changed_paths"), limit=path_limit),
         "final_paths": _string_list(value.get("final_paths"), limit=path_limit),
         "visual_paths": _string_list(value.get("visual_paths"), limit=path_limit),
+        "preview_paths": _string_list(value.get("preview_paths"), limit=path_limit),
         "model_context_paths": _string_list(value.get("model_context_paths"), limit=path_limit),
+        "verification_paths": _string_list(value.get("verification_paths"), limit=path_limit),
+        "diagnostic_paths": _string_list(value.get("diagnostic_paths"), limit=path_limit),
+        "path_index": _artifact_path_index_digest(value.get("path_index"), limit=path_limit),
         "flags": _compact_dict(value.get("flags"), limit=12),
     }
+
+
+def _artifact_path_index_digest(value: Any, *, limit: int) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    if not isinstance(value, list):
+        return records
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        if not path:
+            continue
+        records.append({
+            "path": path,
+            "roles": _string_list(item.get("roles"), limit=4),
+            "artifact_kinds": _string_list(item.get("artifact_kinds"), limit=4),
+            "source_tools": _string_list(item.get("source_tools"), limit=4),
+            "verification_relevance": _string_list(item.get("verification_relevance"), limit=4),
+            "can_preview": bool(item.get("can_preview")),
+            "can_enter_model_context": bool(item.get("can_enter_model_context")),
+        })
+        if len(records) >= limit:
+            break
+    return records
 
 
 def _verification_closure_digest(value: dict[str, Any]) -> dict[str, Any]:
@@ -316,6 +345,8 @@ def _verification_closure_digest(value: dict[str, Any]) -> dict[str, Any]:
         return {}
     modalities = _dict(value.get("modalities"))
     artifact_paths = _dict(value.get("artifact_paths"))
+    freshness = _dict(value.get("freshness"))
+    freshness_paths = _dict(freshness.get("paths"))
     return {
         "schema_version": str(value.get("schema_version") or ""),
         "kind": str(value.get("kind") or ""),
@@ -337,6 +368,19 @@ def _verification_closure_digest(value: dict[str, Any]) -> dict[str, Any]:
             "visual": _string_list(artifact_paths.get("visual"), limit=8),
             "model_context": _string_list(artifact_paths.get("model_context"), limit=8),
         },
+        "freshness": {
+            "kind": str(freshness.get("kind") or ""),
+            "boundary": str(freshness.get("boundary") or ""),
+            "latest_change_event_index": freshness.get("latest_change_event_index"),
+            "counts": _compact_dict(freshness.get("counts"), limit=8),
+            "flags": _compact_dict(freshness.get("flags"), limit=8),
+            "paths": {
+                "fresh": _string_list(freshness_paths.get("fresh"), limit=6),
+                "stale": _string_list(freshness_paths.get("stale"), limit=6),
+                "unknown": _string_list(freshness_paths.get("unknown"), limit=6),
+            },
+            "facts": _string_list(freshness.get("facts"), limit=8),
+        } if freshness else {},
         "model_facts": _string_list(value.get("model_facts"), limit=10),
     }
 
@@ -351,7 +395,9 @@ def _decision_artifact_summary(value: Any) -> dict[str, Any]:
         "by_role": _compact_dict(summary.get("by_role"), limit=8),
         "final_paths": _string_list(summary.get("final_paths"), limit=6),
         "visual_paths": _string_list(summary.get("visual_paths"), limit=6),
+        "preview_paths": _string_list(summary.get("preview_paths"), limit=6),
         "model_context_paths": _string_list(summary.get("model_context_paths"), limit=6),
+        "verification_paths": _string_list(summary.get("verification_paths"), limit=6),
         "has_final_artifacts": bool(flags.get("has_final_artifacts")),
         "has_visual_artifacts": bool(flags.get("has_visual_artifacts")),
         "has_model_context_artifacts": bool(flags.get("has_model_context_artifacts")),
@@ -369,6 +415,10 @@ def _decision_verification_closure(value: Any) -> dict[str, Any]:
         "missing_modalities": _string_list(modalities.get("missing"), limit=8),
         "gap_facts": _string_list(closure.get("gap_facts"), limit=8),
         "gap_risks": _string_list(closure.get("gap_risks"), limit=8),
+        "verification_freshness": {
+            "latest_change_event_index": _dict(closure.get("freshness")).get("latest_change_event_index"),
+            "counts": _compact_dict(_dict(closure.get("freshness")).get("counts"), limit=8),
+        },
         "has_required_gap": bool(flags.get("has_required_gap")),
         "has_sufficient_verification": bool(flags.get("has_sufficient_verification")),
         "has_runtime_errors": bool(flags.get("has_runtime_errors")),
@@ -448,7 +498,24 @@ def _append_artifact_summary(lines: list[str], value: Any) -> None:
         lines.append("- artifact summary: " + "; ".join(bits[:10]))
     _append_string_list(lines, "final artifact paths", item.get("final_paths"))
     _append_string_list(lines, "visual artifact paths", item.get("visual_paths"))
+    _append_string_list(lines, "previewable artifact paths", item.get("preview_paths"))
     _append_string_list(lines, "model-context artifact paths", item.get("model_context_paths"))
+    _append_string_list(lines, "verification artifact paths", item.get("verification_paths"))
+    path_index = item.get("path_index") if isinstance(item.get("path_index"), list) else []
+    if path_index:
+        lines.append("- artifact path index:")
+        for record in path_index[:6]:
+            if not isinstance(record, dict):
+                continue
+            roles = ",".join(_string_list(record.get("roles"), limit=4))
+            relevance = ",".join(_string_list(record.get("verification_relevance"), limit=4))
+            flags = []
+            if record.get("can_preview"):
+                flags.append("preview")
+            if record.get("can_enter_model_context"):
+                flags.append("model_context")
+            suffix = "; ".join(part for part in [f"roles={roles}" if roles else "", f"relevance={relevance}" if relevance else "", ",".join(flags)] if part)
+            lines.append(f"  - {record.get('path') or ''}" + (f" ({suffix})" if suffix else ""))
 
 
 def _append_verification_closure(lines: list[str], value: Any) -> None:
@@ -470,6 +537,11 @@ def _append_verification_closure(lines: list[str], value: Any) -> None:
         lines.append("- verification closure: " + "; ".join(bits))
     _append_string_list(lines, "verification gap facts", item.get("gap_facts"))
     _append_string_list(lines, "verification gap risks", item.get("gap_risks"))
+    freshness = _dict(item.get("freshness"))
+    if freshness:
+        _append_string_list(lines, "verification freshness facts", freshness.get("facts"))
+        freshness_paths = _dict(freshness.get("paths"))
+        _append_string_list(lines, "stale verification paths", freshness_paths.get("stale"))
 
 
 def _audit_digest(value: dict[str, Any]) -> dict[str, Any]:

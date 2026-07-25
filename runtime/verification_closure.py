@@ -52,6 +52,10 @@ def build_verification_closure(
     debug = debug_audit if isinstance(debug_audit, dict) else {}
     artifacts = _artifact_records(run_artifacts)
     artifact_counts = _artifact_counts(artifacts, artifact_summary)
+    freshness = _verification_freshness(
+        artifacts=artifacts,
+        verification_records=verification_records,
+    )
     visual_counts = visual.get("counts") if isinstance(visual.get("counts"), dict) else {}
     visual_flags = visual.get("flags") if isinstance(visual.get("flags"), dict) else {}
     debug_counts = debug.get("counts") if isinstance(debug.get("counts"), dict) else {}
@@ -73,6 +77,7 @@ def build_verification_closure(
         debug_flags=debug_flags,
         artifact_counts=artifact_counts,
         verification_records=verification_records,
+        freshness=freshness,
     )
     model_facts = _model_facts(
         result_status=str(result_status or ""),
@@ -86,6 +91,7 @@ def build_verification_closure(
         debug_counts=debug_counts,
         debug_flags=debug_flags,
         gap_facts=gap_facts,
+        freshness=freshness,
     )
 
     return {
@@ -115,6 +121,11 @@ def build_verification_closure(
             "debug_failures": _safe_int(debug_counts.get("failed_sessions")),
             "debug_warnings": _safe_int(debug_counts.get("warning_sessions")),
             "debug_timeouts": _safe_int(debug_counts.get("timed_out_sessions")),
+            "fresh_verification_records": _safe_int(freshness.get("counts", {}).get("fresh")),
+            "stale_verification_records": _safe_int(freshness.get("counts", {}).get("stale")),
+            "unknown_freshness_verification_records": _safe_int(
+                freshness.get("counts", {}).get("unknown")
+            ),
             "gap_facts": len(gap_facts),
         },
         "flags": {
@@ -133,6 +144,14 @@ def build_verification_closure(
                 or debug_flags.get("has_timeout")
             ),
             "has_gap_risks": bool(gap_risks),
+            "has_fresh_verification": bool(freshness.get("flags", {}).get("has_fresh_verification")),
+            "has_stale_verification": bool(freshness.get("flags", {}).get("has_stale_verification")),
+            "verification_after_latest_change_observed": bool(
+                freshness.get("flags", {}).get("verification_after_latest_change_observed")
+            ),
+            "verification_freshness_unknown": bool(
+                freshness.get("flags", {}).get("verification_freshness_unknown")
+            ),
         },
         "source_kinds": source_kinds,
         "gap_facts": gap_facts[:16],
@@ -143,6 +162,7 @@ def build_verification_closure(
             "visual": artifact_counts["visual_paths"][:12],
             "model_context": artifact_counts["model_context_paths"][:12],
         },
+        "freshness": freshness,
         "verification_records": verification_records[-12:],
         "model_facts": model_facts,
     }
@@ -178,6 +198,14 @@ def format_verification_closure_for_model(closure: dict[str, Any] | None) -> str
     gap_facts = _string_list(closure.get("gap_facts"))
     if gap_facts:
         lines.append("- evidence gaps: " + ", ".join(gap_facts[:8]))
+    freshness = closure.get("freshness") if isinstance(closure.get("freshness"), dict) else {}
+    freshness_facts = _string_list(freshness.get("facts")) if freshness else []
+    for fact in freshness_facts[:4]:
+        lines.append(f"- {fact}")
+    freshness_paths = freshness.get("paths") if isinstance(freshness.get("paths"), dict) else {}
+    stale_paths = _string_list(freshness_paths.get("stale"))
+    if stale_paths:
+        lines.append("- stale_verification_paths=" + ", ".join(stale_paths[:6]))
     paths = closure.get("artifact_paths") if isinstance(closure.get("artifact_paths"), dict) else {}
     final_paths = _string_list(paths.get("final"))
     visual_paths = _string_list(paths.get("visual"))
@@ -201,6 +229,7 @@ def _verification_records(value: list[dict[str, Any]] | None) -> list[dict[str, 
             "sufficient": bool(item.get("sufficient")),
             "modalities": _unique(item.get("modalities") or [item.get("modality")]),
             "status": str(item.get("status") or "success"),
+            "source_event_index": _optional_int(item.get("source_event_index")),
         })
     return records
 
@@ -215,6 +244,7 @@ def _artifact_records(value: list[dict[str, Any]] | None) -> list[dict[str, Any]
             "artifact_kind": str(item.get("artifact_kind") or item.get("kind") or ""),
             "path": str(item.get("path") or ""),
             "source_tool": str(item.get("source_tool") or item.get("tool") or ""),
+            "source_event_index": _optional_int(item.get("source_event_index")),
             "can_enter_model_context": bool(item.get("can_enter_model_context")),
             "verification_relevance": str(item.get("verification_relevance") or ""),
         })
@@ -264,6 +294,133 @@ def _artifact_counts(
     }
 
 
+def _verification_freshness(
+    *,
+    artifacts: list[dict[str, Any]],
+    verification_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Describe whether verification evidence is newer than observed changes."""
+
+    latest_change_index = _latest_change_event_index(artifacts)
+    items = _verification_freshness_items(
+        artifacts=artifacts,
+        verification_records=verification_records,
+    )
+    buckets: dict[str, list[dict[str, Any]]] = {"fresh": [], "stale": [], "unknown": []}
+    for item in items:
+        index = _optional_int(item.get("source_event_index"))
+        if latest_change_index is None or index is None:
+            buckets["unknown"].append(item)
+        elif index >= latest_change_index:
+            buckets["fresh"].append(item)
+        else:
+            buckets["stale"].append(item)
+
+    paths = {
+        key: _unique(item.get("path") for item in values if item.get("path"))
+        for key, values in buckets.items()
+    }
+    facts: list[str] = []
+    if latest_change_index is not None or items:
+        facts.append(
+            "verification_freshness="
+            f"latest_change:{latest_change_index if latest_change_index is not None else 'unknown'}; "
+            f"fresh:{len(buckets['fresh'])}; "
+            f"stale:{len(buckets['stale'])}; "
+            f"unknown:{len(buckets['unknown'])}"
+        )
+    if buckets["fresh"]:
+        facts.append("verification_after_latest_change_observed")
+    if buckets["stale"]:
+        facts.append("verification_before_latest_change_observed")
+    if buckets["unknown"]:
+        facts.append("verification_freshness_unknown")
+
+    return {
+        "kind": "verification_freshness",
+        "boundary": "evidence_only",
+        "latest_change_event_index": latest_change_index,
+        "counts": {
+            "observed": len(items),
+            "fresh": len(buckets["fresh"]),
+            "stale": len(buckets["stale"]),
+            "unknown": len(buckets["unknown"]),
+        },
+        "paths": paths,
+        "flags": {
+            "has_latest_change": latest_change_index is not None,
+            "has_fresh_verification": bool(buckets["fresh"]),
+            "has_stale_verification": bool(buckets["stale"]),
+            "verification_after_latest_change_observed": bool(buckets["fresh"]),
+            "verification_freshness_unknown": bool(buckets["unknown"]),
+        },
+        "facts": facts[:8],
+    }
+
+
+def _latest_change_event_index(artifacts: list[dict[str, Any]]) -> int | None:
+    indexes = [
+        index
+        for item in artifacts
+        if str(item.get("role") or "") in {"final", "draft"}
+        for index in [_optional_int(item.get("source_event_index"))]
+        if index is not None
+    ]
+    return max(indexes) if indexes else None
+
+
+def _verification_freshness_items(
+    *,
+    artifacts: list[dict[str, Any]],
+    verification_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    items_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def append(item: dict[str, Any]) -> None:
+        path = str(item.get("path") or "").strip()
+        tool = str(item.get("tool") or item.get("source_tool") or "").strip()
+        index = _optional_int(item.get("source_event_index"))
+        if not path and not tool:
+            return
+        key = (path, tool)
+        record = {
+            "path": path,
+            "tool": tool,
+            "source_event_index": index,
+            "role": str(item.get("role") or ""),
+            "artifact_kind": str(item.get("artifact_kind") or ""),
+            "strength": str(item.get("strength") or ""),
+        }
+        existing = items_by_key.get(key)
+        if existing is None or _freshness_record_is_newer(record, existing):
+            items_by_key[key] = record
+
+    for item in verification_records:
+        append(item)
+    for item in artifacts:
+        role = str(item.get("role") or "")
+        relevance = str(item.get("verification_relevance") or "")
+        if role in {"verification", "screenshot", "preview"}:
+            append(item)
+        elif role == "log" and relevance in {"verification", "diagnostic"}:
+            append(item)
+        elif relevance == "verification" and role not in {"final", "draft"}:
+            append(item)
+    return list(items_by_key.values())
+
+
+def _freshness_record_is_newer(candidate: dict[str, Any], existing: dict[str, Any]) -> bool:
+    candidate_index = _optional_int(candidate.get("source_event_index"))
+    existing_index = _optional_int(existing.get("source_event_index"))
+    if candidate_index is not None and existing_index is None:
+        return True
+    if candidate_index is None:
+        return False
+    if existing_index is None:
+        return True
+    return candidate_index > existing_index
+
+
 def _source_kinds(
     *,
     verification_records: list[dict[str, Any]],
@@ -297,6 +454,7 @@ def _gap_facts(
     debug_flags: dict[str, Any],
     artifact_counts: dict[str, Any],
     verification_records: list[dict[str, Any]],
+    freshness: dict[str, Any],
 ) -> list[str]:
     facts: list[str] = []
     if required and not verification_records:
@@ -315,6 +473,17 @@ def _gap_facts(
         facts.append("debug_failure_or_timeout_observed")
     if artifact_counts["final_artifacts"] and not verification_records:
         facts.append("final_artifact_without_verification_record")
+    freshness_flags = freshness.get("flags") if isinstance(freshness.get("flags"), dict) else {}
+    freshness_counts = freshness.get("counts") if isinstance(freshness.get("counts"), dict) else {}
+    if (
+        artifact_counts["final_artifacts"]
+        and _safe_int(freshness_counts.get("observed"))
+        and not freshness_flags.get("has_fresh_verification")
+    ):
+        if freshness_flags.get("has_stale_verification"):
+            facts.append("verification_before_latest_change")
+        if freshness_flags.get("verification_freshness_unknown"):
+            facts.append("verification_freshness_unknown")
     for risk in gap_risks:
         facts.append(f"risk:{risk}")
     return _unique(facts)
@@ -333,6 +502,7 @@ def _model_facts(
     debug_counts: dict[str, Any],
     debug_flags: dict[str, Any],
     gap_facts: list[str],
+    freshness: dict[str, Any],
 ) -> list[str]:
     facts: list[str] = []
     if result_status:
@@ -368,6 +538,8 @@ def _model_facts(
             f"warnings:{_safe_int(debug_counts.get('warning_sessions'))}; "
             f"timeouts:{_safe_int(debug_counts.get('timed_out_sessions'))}"
         )
+    freshness_facts = _string_list(freshness.get("facts")) if isinstance(freshness, dict) else []
+    facts.extend(freshness_facts[:3])
     if gap_facts:
         facts.append("gaps=" + ",".join(gap_facts[:8]))
     return facts
@@ -378,6 +550,15 @@ def _safe_int(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _unique(values: Any) -> list[str]:

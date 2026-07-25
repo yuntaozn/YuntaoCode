@@ -37,7 +37,7 @@ from .api.memories import MemoriesHandler, MemoryDetailHandler, MemoryPromptHand
 from .api.mcp_services import McpServiceActionHandler, McpServiceDetailHandler, McpServicesHandler
 from .api.panel import PanelHandler
 from .api.plugins import PluginsHandler
-from .api.runs import RunActionHandler, RunDetailHandler, RunEventsStreamHandler, RunsHandler
+from .api.runs import RunActionHandler, RunArtifactContentHandler, RunDetailHandler, RunEventsStreamHandler, RunsHandler
 from .api.settings import SettingsHandler
 from .api.tasks import TaskDetailHandler, TasksHandler
 from .api.tool_tasks import ToolTaskDetailHandler, ToolTasksHandler
@@ -339,6 +339,7 @@ def make_app(runtime: RuntimeState) -> tornado.web.Application:
         (r"/conversations/([^/]+)/messages", ConversationMessagesHandler, handler_kwargs),
         (r"/conversations/([^/]+)/confirm", ConversationConfirmHandler, handler_kwargs),
         (r"/conversations/([^/]+)/compress", ConversationCompressHandler, handler_kwargs),
+        (r"/runs/([^/]+)/artifacts/content", RunArtifactContentHandler, handler_kwargs),
         (r"/runs/([^/]+)/events/stream", RunEventsStreamHandler, handler_kwargs),
         (r"/runs/([^/]+)/actions", RunActionHandler, handler_kwargs),
         (r"/runs/([^/]+)", RunDetailHandler, handler_kwargs),

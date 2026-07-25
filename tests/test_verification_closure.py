@@ -18,6 +18,7 @@ def test_verification_closure_collects_visual_debug_artifact_and_gap_facts() -> 
                 "strength": "standard",
                 "sufficient": True,
                 "modalities": ["visual"],
+                "source_event_index": 1,
             }
         ],
         visual_verification={
@@ -50,6 +51,7 @@ def test_verification_closure_collects_visual_debug_artifact_and_gap_facts() -> 
                 "role": "final",
                 "path": "viewer.html",
                 "source_tool": "filesystem.finalize_text_file",
+                "source_event_index": 0,
                 "can_enter_model_context": True,
                 "verification_relevance": "deliverable",
             },
@@ -59,6 +61,7 @@ def test_verification_closure_collects_visual_debug_artifact_and_gap_facts() -> 
                 "role": "screenshot",
                 "path": "preview.png",
                 "source_tool": "preview.capture_local_html",
+                "source_event_index": 1,
                 "can_enter_model_context": True,
                 "verification_relevance": "verification",
             },
@@ -81,8 +84,11 @@ def test_verification_closure_collects_visual_debug_artifact_and_gap_facts() -> 
     assert closure["counts"]["final_artifacts"] == 1
     assert closure["counts"]["visual_artifacts"] == 1
     assert closure["counts"]["debug_sessions"] == 1
+    assert closure["counts"]["fresh_verification_records"] == 1
+    assert closure["counts"]["stale_verification_records"] == 0
     assert closure["flags"]["has_required_gap"] is True
     assert closure["flags"]["has_sufficient_verification"] is True
+    assert closure["flags"]["verification_after_latest_change_observed"] is True
     assert closure["flags"]["visual_entered_model_context"] is True
     assert closure["source_kinds"] == [
         "verification_evidence",
@@ -101,6 +107,50 @@ def test_verification_closure_collects_visual_debug_artifact_and_gap_facts() -> 
     assert "Verification closure facts:" in text
     assert "missing=behavioral" in text
     assert "final_artifacts=viewer.html" in text
+    assert "verification_after_latest_change_observed" in text
+
+
+def test_verification_closure_marks_stale_verification_as_evidence_gap() -> None:
+    closure = build_verification_closure(
+        result_status="partial",
+        verification_evidence=[
+            {
+                "tool": "preview.capture_local_html",
+                "path": "before.png",
+                "strength": "standard",
+                "sufficient": True,
+                "modalities": ["visual"],
+                "source_event_index": 1,
+            }
+        ],
+        run_artifacts=[
+            {
+                "kind": "run_artifact",
+                "artifact_kind": "screenshot",
+                "role": "screenshot",
+                "path": "before.png",
+                "source_tool": "preview.capture_local_html",
+                "source_event_index": 1,
+                "verification_relevance": "verification",
+            },
+            {
+                "kind": "run_artifact",
+                "artifact_kind": "file",
+                "role": "final",
+                "path": "viewer.html",
+                "source_tool": "filesystem.finalize_text_file",
+                "source_event_index": 3,
+                "verification_relevance": "deliverable",
+            },
+        ],
+    )
+
+    assert closure["freshness"]["latest_change_event_index"] == 3
+    assert closure["counts"]["fresh_verification_records"] == 0
+    assert closure["counts"]["stale_verification_records"] == 1
+    assert closure["flags"]["has_stale_verification"] is True
+    assert "verification_before_latest_change" in closure["gap_facts"]
+    assert closure["freshness"]["paths"]["stale"] == ["before.png"]
 
 
 def test_verification_closure_is_empty_but_still_evidence_only() -> None:

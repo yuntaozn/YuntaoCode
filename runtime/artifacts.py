@@ -134,17 +134,23 @@ def summarize_run_artifacts(records: list[dict[str, Any]] | None) -> dict[str, A
     artifacts = [item for item in (records or []) if isinstance(item, dict)]
     by_role: dict[str, int] = {}
     by_kind: dict[str, int] = {}
+    by_relevance: dict[str, int] = {}
     paths: list[str] = []
     final_paths: list[str] = []
     visual_paths: list[str] = []
+    preview_paths: list[str] = []
     model_context_paths: list[str] = []
+    verification_paths: list[str] = []
+    diagnostic_paths: list[str] = []
     changed_paths: list[str] = []
     for item in artifacts:
         role = str(item.get("role") or "artifact")
         artifact_kind = str(item.get("artifact_kind") or item.get("kind") or "artifact")
+        relevance = str(item.get("verification_relevance") or "context")
         metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
         by_role[role] = by_role.get(role, 0) + 1
         by_kind[artifact_kind] = by_kind.get(artifact_kind, 0) + 1
+        by_relevance[relevance] = by_relevance.get(relevance, 0) + 1
         path = str(item.get("path") or "").strip()
         model_context_path = str(metadata.get("model_context_path") or path).strip()
         if path and path not in paths:
@@ -158,8 +164,14 @@ def summarize_run_artifacts(records: list[dict[str, Any]] | None) -> dict[str, A
             or artifact_kind in _VISUAL_KINDS
         ) and path not in visual_paths:
             visual_paths.append(path)
+        if path and item.get("can_preview") and path not in preview_paths:
+            preview_paths.append(path)
         if item.get("can_enter_model_context") and model_context_path and model_context_path not in model_context_paths:
             model_context_paths.append(model_context_path)
+        if path and relevance == "verification" and path not in verification_paths:
+            verification_paths.append(path)
+        if path and relevance == "diagnostic" and path not in diagnostic_paths:
+            diagnostic_paths.append(path)
 
     return {
         "schema_version": RUN_ARTIFACT_SUMMARY_SCHEMA_VERSION,
@@ -167,6 +179,7 @@ def summarize_run_artifacts(records: list[dict[str, Any]] | None) -> dict[str, A
         "count": len(artifacts),
         "by_role": by_role,
         "by_artifact_kind": by_kind,
+        "by_verification_relevance": by_relevance,
         "previewable_count": sum(1 for item in artifacts if item.get("can_preview")),
         "model_context_eligible_count": sum(
             1 for item in artifacts if item.get("can_enter_model_context")
@@ -181,11 +194,16 @@ def summarize_run_artifacts(records: list[dict[str, Any]] | None) -> dict[str, A
         "changed_paths": changed_paths[:24],
         "final_paths": final_paths[:24],
         "visual_paths": visual_paths[:24],
+        "preview_paths": preview_paths[:24],
         "model_context_paths": model_context_paths[:24],
+        "verification_paths": verification_paths[:24],
+        "diagnostic_paths": diagnostic_paths[:24],
+        "path_index": _artifact_path_index(artifacts)[:24],
         "flags": {
             "has_artifacts": bool(artifacts),
             "has_final_artifacts": bool(final_paths),
             "has_visual_artifacts": bool(visual_paths),
+            "has_previewable_artifacts": bool(preview_paths),
             "has_model_context_artifacts": any(
                 bool(item.get("can_enter_model_context")) for item in artifacts
             ),
@@ -194,8 +212,64 @@ def summarize_run_artifacts(records: list[dict[str, Any]] | None) -> dict[str, A
                 str(item.get("verification_relevance") or "") == "verification"
                 for item in artifacts
             ),
+            "has_diagnostic_artifacts": any(
+                str(item.get("verification_relevance") or "") == "diagnostic"
+                for item in artifacts
+            ),
         },
     }
+
+
+def _artifact_path_index(artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return compact path-level artifact facts without duplicating content."""
+
+    by_path: dict[str, dict[str, Any]] = {}
+    for item in artifacts:
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        path = str(item.get("path") or metadata.get("model_context_path") or "").strip()
+        if not path:
+            continue
+        record = by_path.setdefault(
+            path,
+            {
+                "path": path,
+                "model_context_path": str(metadata.get("model_context_path") or "").strip(),
+                "roles": [],
+                "artifact_kinds": [],
+                "source_tools": [],
+                "statuses": [],
+                "verification_relevance": [],
+                "can_preview": False,
+                "can_enter_model_context": False,
+            },
+        )
+        _append_unique(record["roles"], item.get("role"))
+        _append_unique(record["artifact_kinds"], item.get("artifact_kind") or item.get("kind"))
+        _append_unique(record["source_tools"], item.get("source_tool") or item.get("tool"))
+        _append_unique(record["statuses"], item.get("status"))
+        _append_unique(record["verification_relevance"], item.get("verification_relevance"))
+        if not record.get("model_context_path") and metadata.get("model_context_path"):
+            record["model_context_path"] = str(metadata.get("model_context_path") or "").strip()
+        record["can_preview"] = bool(record.get("can_preview")) or bool(item.get("can_preview"))
+        record["can_enter_model_context"] = bool(record.get("can_enter_model_context")) or bool(
+            item.get("can_enter_model_context")
+        )
+    return list(by_path.values())
+
+
+def _append_unique(values: list[str], value: Any) -> None:
+    text = str(value or "").strip()
+    if text and text not in values:
+        values.append(text)
+
+
+def _optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _records_from_tool_event(
@@ -431,13 +505,16 @@ def _record_from_verification_evidence(
     query = str(item.get("query") or "").strip()
     if query:
         metadata["query"] = query
+    event_index = source_event_index
+    if event_index is None:
+        event_index = _optional_int(item.get("source_event_index"))
     return _make_record(
         artifact_kind="verification",
         role="verification",
         path=path,
         status=str(item.get("status") or "success"),
         source_tool=tool_id,
-        source_event_index=source_event_index,
+        source_event_index=event_index,
         metadata=metadata,
         can_preview=bool(path),
         can_enter_model_context=bool(path),

@@ -220,6 +220,18 @@ def test_build_run_workbench_presents_artifacts_risks_and_timeline(tmp_path) -> 
     assert workbench["verification_closure"]["counts"]["final_artifacts"] == 1
     assert workbench["verification_closure"]["counts"]["gap_facts"] >= 1
     assert workbench["audit"]["counts"]["verification_gap_facts"] >= 1
+    assert workbench["artifact_summary"]["schema_version"] == "run_artifact_summary.v1"
+    assert workbench["artifact_summary"]["by_role"]["final"] == 1
+    assert workbench["artifact_summary"]["path_index"][0]["path"] == "viewer.html"
+    assert workbench["evidence_overview"]["schema_version"] == "workbench_evidence_overview.v1"
+    assert workbench["evidence_overview"]["boundary"] == "presentation_only"
+    overview_cards = {item["id"]: item for item in workbench["evidence_overview"]["cards"]}
+    assert overview_cards["deliverables"]["value"] == 1
+    assert overview_cards["deliverables"]["paths"][0] == {"path": "viewer.html", "image_preview": False}
+    assert overview_cards["visual"]["value"] == 1
+    assert overview_cards["visual"]["paths"][0]["image_preview"] is True
+    assert overview_cards["verification"]["value"] == 1
+    assert overview_cards["runtime"]["value"] == 1
     assert workbench["plan"]["steps"][0]["title"] == "Write HTML"
     assert workbench["completion_decisions"][0]["action"] == "continue_with_tools"
     assert [item["kind"] for item in workbench["timeline"]] == ["status", "tool"]
@@ -247,6 +259,18 @@ def test_build_run_workbench_falls_back_to_written_paths_for_old_results(tmp_pat
 
     workbench = build_run_workbench(store.get(run.id))
 
-    assert workbench["artifacts"] == [
-        {"kind": "file", "path": "report.md", "tool": "", "status": "observed"}
-    ]
+    assert workbench["artifacts"] == [{
+        "kind": "file",
+        "path": "report.md",
+        "tool": "",
+        "status": "observed",
+        "role": "final",
+        "can_preview": True,
+        "can_enter_model_context": False,
+        "verification_relevance": "deliverable",
+    }]
+    assert workbench["artifact_summary"]["changed_paths"] == ["report.md"]
+    assert workbench["artifact_summary"]["path_index"][0]["roles"] == ["final"]
+    overview_cards = {item["id"]: item for item in workbench["evidence_overview"]["cards"]}
+    assert overview_cards["deliverables"]["value"] == 1
+    assert overview_cards["deliverables"]["paths"] == [{"path": "report.md", "image_preview": False}]

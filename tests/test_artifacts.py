@@ -87,12 +87,33 @@ def test_build_run_artifacts_unifies_file_visual_debug_and_verification_records(
     assert summary["by_role"]["final"] == 1
     assert summary["by_role"]["screenshot"] == 1
     assert summary["by_role"]["log"] == 1
+    assert summary["by_verification_relevance"]["deliverable"] == 1
+    assert summary["by_verification_relevance"]["verification"] >= 2
+    assert summary["by_verification_relevance"]["diagnostic"] == 1
     assert summary["changed_paths"] == ["viewer.html"]
     assert summary["visual_paths"] == ["task-artifacts/preview/viewer.png"]
+    assert summary["preview_paths"] == [
+        "viewer.html",
+        "task-artifacts/preview/viewer.png",
+    ]
+    assert summary["verification_paths"] == [
+        "task-artifacts/preview/viewer.png",
+        "viewer.html",
+    ]
     assert summary["model_context_paths"] == [
         "task-artifacts/preview/viewer.png",
         "viewer.html",
     ]
+    indexed = {item["path"]: item for item in summary["path_index"]}
+    assert indexed["viewer.html"]["roles"] == ["final", "verification"]
+    assert indexed["viewer.html"]["artifact_kinds"] == ["file", "verification"]
+    assert indexed["viewer.html"]["can_preview"] is True
+    assert indexed["viewer.html"]["can_enter_model_context"] is True
+    assert indexed["task-artifacts/preview/viewer.png"]["roles"] == ["screenshot", "verification"]
+    assert indexed["task-artifacts/preview/viewer.png"]["artifact_kinds"] == ["screenshot", "verification"]
+    assert indexed["task-artifacts/preview/viewer.png"]["can_enter_model_context"] is True
+    assert summary["flags"]["has_previewable_artifacts"] is True
+    assert summary["flags"]["has_diagnostic_artifacts"] is True
     assert summary["flags"]["has_model_context_artifacts"] is True
 
 

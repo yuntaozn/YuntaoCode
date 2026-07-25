@@ -35,6 +35,7 @@ REQUIRED_PATHS = (
     "runtime/run_result.py",
     "runtime/run_evidence.py",
     "runtime/run_workbench.py",
+    "runtime/run_artifact_access.py",
     "runtime/artifacts.py",
     "runtime/verification_closure.py",
     "runtime/run_fact_summary.py",
@@ -70,6 +71,7 @@ CORE_COMPILE_PATHS = (
     "runtime/run_result.py",
     "runtime/run_evidence.py",
     "runtime/run_workbench.py",
+    "runtime/run_artifact_access.py",
     "runtime/artifacts.py",
     "runtime/verification_closure.py",
     "runtime/run_fact_summary.py",
@@ -102,6 +104,7 @@ FOCUSED_TESTS = (
     "tests/test_run_result.py",
     "tests/test_run_evidence.py",
     "tests/test_run_workbench.py",
+    "tests/test_run_artifact_access.py",
     "tests/test_capability_preflight.py",
     "tests/test_context_pack.py",
 )

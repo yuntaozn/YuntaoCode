@@ -45,6 +45,7 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
     visual_verification = _dict(evidence.get("visual_verification"))
     debug_audit = _dict(evidence.get("debug_audit"))
     verification_closure = _dict(evidence.get("verification_closure"))
+    artifact_summary = _dict(evidence.get("artifact_summary"))
     timeline = _timeline(tool_steps, _dict_list(evidence.get("status_timeline")))[:80]
     audit = _audit_summary(
         artifacts=artifacts,
@@ -55,6 +56,17 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
         completion_decisions=completion_decisions,
         context_evidence=context_evidence,
         verification_closure=verification_closure,
+    )
+    evidence_overview = _evidence_overview(
+        artifacts=artifacts,
+        verification=verification,
+        risks=risks,
+        failures=failures,
+        audit=audit,
+        artifact_summary=artifact_summary,
+        verification_closure=verification_closure,
+        visual_verification=visual_verification,
+        debug_audit=debug_audit,
     )
 
     run_status = str(run.get("status") or "")
@@ -103,6 +115,7 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
             "failed_tool_count": _safe_int(trace.get("failed_tool_count"), 0),
         },
         "artifacts": artifacts[:24],
+        "artifact_summary": artifact_summary,
         "verification": verification[:24],
         "risks": [
             {"code": code, "message": risk_message_zh(code)}
@@ -110,6 +123,7 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
         ],
         "failures": failures[:24],
         "audit": audit,
+        "evidence_overview": evidence_overview,
         "plan": {
             "title": str(plan.get("title") or ""),
             "state": str(plan.get("state") or ""),
@@ -136,6 +150,180 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
             "can_export_diagnostic": True,
             "can_export_experience": True,
         },
+    }
+
+
+def _evidence_overview(
+    *,
+    artifacts: list[dict[str, Any]],
+    verification: list[dict[str, Any]],
+    risks: list[str],
+    failures: list[dict[str, Any]],
+    audit: dict[str, Any],
+    artifact_summary: dict[str, Any],
+    verification_closure: dict[str, Any],
+    visual_verification: dict[str, Any],
+    debug_audit: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a compact, presentation-only evidence overview for the workbench."""
+
+    audit_counts = _dict(audit.get("counts"))
+    closure_counts = _dict(verification_closure.get("counts"))
+    closure_flags = _dict(verification_closure.get("flags"))
+    closure_paths = _dict(verification_closure.get("artifact_paths"))
+    closure_modalities = _dict(verification_closure.get("modalities"))
+    closure_freshness = _dict(verification_closure.get("freshness"))
+    freshness_counts = _dict(closure_freshness.get("counts"))
+    freshness_flags = _dict(closure_freshness.get("flags"))
+    visual_counts = _dict(visual_verification.get("counts"))
+    visual_flags = _dict(visual_verification.get("flags"))
+    debug_counts = _dict(debug_audit.get("counts"))
+    debug_flags = _dict(debug_audit.get("flags"))
+    summary_counts_by_role = _dict(artifact_summary.get("by_role"))
+
+    final_paths = _string_list(artifact_summary.get("final_paths")) or _string_list(closure_paths.get("final"))
+    if not final_paths:
+        final_paths = [
+            str(item.get("path") or "")
+            for item in _dict_list(audit.get("changed_paths"))
+            if str(item.get("path") or "").strip()
+        ]
+    visual_paths = _string_list(artifact_summary.get("visual_paths")) or _string_list(closure_paths.get("visual"))
+    if not visual_paths:
+        visual_paths = _unique_strings(
+            item.get("path")
+            for item in (
+                _dict_list(visual_verification.get("records"))
+                + _dict_list(visual_verification.get("model_context_records"))
+            )
+        )
+    missing_modalities = _string_list(closure_modalities.get("missing"))
+    final_count = (
+        _safe_int(summary_counts_by_role.get("final"), 0)
+        or len(final_paths)
+        or _safe_int(closure_counts.get("final_artifacts"), 0)
+        or len([item for item in artifacts if str(item.get("role") or "") == "final"])
+    )
+    visual_count = (
+        _safe_int(summary_counts_by_role.get("screenshot"), 0)
+        + _safe_int(summary_counts_by_role.get("preview"), 0)
+        or len(visual_paths)
+        or _safe_int(closure_counts.get("visual_artifacts"), 0)
+        or _safe_int(visual_counts.get("visual_evidence"), 0)
+        or _safe_int(visual_counts.get("model_context_records"), 0)
+    )
+    verification_count = _safe_int(closure_counts.get("verification_records"), 0) or len(verification)
+    fresh_verification_count = _safe_int(
+        closure_counts.get("fresh_verification_records"),
+        0,
+    ) or _safe_int(freshness_counts.get("fresh"), 0)
+    stale_verification_count = _safe_int(
+        closure_counts.get("stale_verification_records"),
+        0,
+    ) or _safe_int(freshness_counts.get("stale"), 0)
+    gap_count = _safe_int(closure_counts.get("gap_facts"), 0)
+    debug_count = _safe_int(debug_counts.get("debug_sessions"), 0)
+    runtime_issue_count = (
+        _safe_int(debug_counts.get("failed_sessions"), 0)
+        + _safe_int(debug_counts.get("timed_out_sessions"), 0)
+        + _safe_int(debug_counts.get("runtime_error_sessions"), 0)
+        + len(failures)
+    )
+    visual_missing = (
+        "visual" in missing_modalities
+        or (
+            bool(closure_flags.get("has_required_gap"))
+            and not (bool(closure_flags.get("has_visual_evidence")) or visual_count)
+        )
+    )
+    runtime_has_errors = bool(closure_flags.get("has_runtime_errors") or debug_flags.get("has_runtime_errors"))
+
+    return {
+        "schema_version": "workbench_evidence_overview.v1",
+        "kind": "workbench_evidence_overview",
+        "boundary": "presentation_only",
+        "cards": [
+            {
+                "id": "deliverables",
+                "title_key": "tasks.evidence_deliverables",
+                "tone": "observed" if final_count else "quiet",
+                "value": final_count,
+                "facts": [
+                    {"label_key": "tasks.final_artifacts", "value": final_count},
+                    {
+                        "label_key": "tasks.changed_paths",
+                        "value": len(_string_list(artifact_summary.get("changed_paths")))
+                        or _safe_int(audit_counts.get("changed_paths"), 0),
+                    },
+                    {
+                        "message_key": "tasks.has_final_artifact"
+                        if closure_flags.get("has_final_artifact")
+                        else "tasks.no_final_artifact"
+                    },
+                ],
+                "paths": [{"path": path, "image_preview": False} for path in final_paths[:2]],
+            },
+            {
+                "id": "visual",
+                "title_key": "tasks.evidence_visual",
+                "tone": "attention" if visual_missing else "observed" if visual_count else "quiet",
+                "value": visual_count,
+                "facts": [
+                    {"label_key": "tasks.visual_evidence", "value": visual_count},
+                    {
+                        "label_key": "tasks.model_context_used",
+                        "value": _safe_int(visual_counts.get("model_context_injected"), 0)
+                        or _safe_int(closure_counts.get("model_context_artifacts"), 0),
+                    },
+                    {
+                        "message_key": "tasks.visual_missing"
+                        if visual_missing
+                        else "tasks.visual_observed"
+                        if closure_flags.get("has_visual_evidence") or visual_count
+                        else "tasks.no_visual_evidence"
+                    },
+                ],
+                "paths": [{"path": path, "image_preview": True} for path in visual_paths[:2]],
+            },
+            {
+                "id": "verification",
+                "title_key": "tasks.evidence_verification",
+                "tone": "attention"
+                if gap_count or freshness_flags.get("has_stale_verification")
+                else "observed"
+                if verification_count
+                else "quiet",
+                "value": verification_count,
+                "facts": [
+                    {"label_key": "tasks.verification_evidence", "value": verification_count},
+                    {
+                        "label_key": "tasks.sufficient_verification",
+                        "value": _safe_int(closure_counts.get("sufficient_verification_records"), 0),
+                    },
+                    {"label_key": "tasks.fresh_verification", "value": fresh_verification_count},
+                    {"label_key": "tasks.stale_verification", "value": stale_verification_count},
+                    {"label_key": "tasks.verification_gap_facts", "value": gap_count},
+                ],
+                "paths": [],
+            },
+            {
+                "id": "runtime",
+                "title_key": "tasks.evidence_runtime",
+                "tone": "attention" if runtime_issue_count or runtime_has_errors else "observed" if debug_count else "quiet",
+                "value": debug_count,
+                "facts": [
+                    {"label_key": "tasks.debug_sessions", "value": debug_count},
+                    {"label_key": "tasks.failures", "value": len(failures)},
+                    {"label_key": "tasks.risks", "value": len(risks)},
+                    {
+                        "message_key": "tasks.runtime_issues_observed"
+                        if runtime_issue_count or runtime_has_errors
+                        else "tasks.no_runtime_issues"
+                    },
+                ],
+                "paths": [],
+            },
+        ],
     }
 
 
@@ -287,6 +475,14 @@ def _audit_summary(
             "completion_decisions": len(completion_decisions),
             "timeline": len(timeline),
             "verification_gap_facts": _safe_int(closure_counts.get("gap_facts"), 0),
+            "fresh_verification_records": _safe_int(
+                closure_counts.get("fresh_verification_records"),
+                0,
+            ),
+            "stale_verification_records": _safe_int(
+                closure_counts.get("stale_verification_records"),
+                0,
+            ),
         },
         "flags": {
             "has_artifacts": bool(artifacts),
@@ -297,6 +493,10 @@ def _audit_summary(
             "has_runtime_advisories": bool(runtime_advisories),
             "has_visual_context": bool(visual_context),
             "has_verification_gap_facts": _safe_int(closure_counts.get("gap_facts"), 0) > 0,
+            "has_stale_verification": _safe_int(
+                closure_counts.get("stale_verification_records"),
+                0,
+            ) > 0,
         },
         "changed_paths": changed_paths[:24],
         "verification": {

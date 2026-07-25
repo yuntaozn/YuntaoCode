@@ -66,10 +66,65 @@ and `RunResult.artifact_summary`, then fall back to the legacy field.
 are eligible for future model context. This is evidence only: it does not force
 image injection or decide whether visual verification was sufficient.
 
+`artifact_summary.path_index` is the compact path-level view. It merges
+multiple records for the same path, such as a file that is both a final
+deliverable and later verification evidence. Each entry keeps roles, artifact
+kinds, source tools, statuses, verification relevance, previewability, and
+model-context eligibility. Consumers should use this index when they need to
+show or explain path meaning instead of reconstructing it from separate role
+arrays.
+
+`artifact_summary.preview_paths`, `verification_paths`, and
+`diagnostic_paths` are bounded helper buckets derived from the same artifact
+records. They are presentation and evidence aids; they do not make a path the
+target deliverable and do not change task completion rules.
+
+## Verification Freshness
+
+Verification evidence has a time relation to produced artifacts. A screenshot,
+test, preview, or query that happened before the latest observed final/draft
+artifact cannot prove the current state by itself.
+
+`verification_closure.v1` therefore exposes a nested
+`verification_freshness` evidence block:
+
+- `latest_change_event_index`: the latest Run tool-event index that produced a
+  final or draft artifact, when known.
+- `counts.fresh`: verification evidence observed at or after that latest
+  change.
+- `counts.stale`: verification evidence observed before that latest change.
+- `counts.unknown`: verification evidence whose event order is not known.
+- `paths.fresh`, `paths.stale`, and `paths.unknown`: bounded path buckets for
+  user inspection and model-facing context.
+
+This is still evidence only. It does not force the model to run another tool,
+stop execution, or mark a task failed. It gives the model and user the concrete
+fact that some evidence may no longer describe the latest artifact.
+
 `RunEvidence.artifacts` exposes the same normalized records for diagnostics,
 task history, future replay fixtures, and local evaluation. The task workbench
 uses artifact roles to keep screenshots and logs visible without counting them
 as changed project files.
+
+The task workbench may expose local "open" and "copy path" actions for paths
+that are explicitly present in the current Run evidence. Opening is a UI
+inspection affordance only: `runtime/run_artifact_access.py` verifies that the
+requested path was recorded by that Run and that the resolved local path stays
+inside either a configured workspace root or the YuntaoCode local data
+directory. This does not make arbitrary local files available, and it does not
+feed back into task routing or completion judgment.
+
+Browser thumbnails use the same boundary and are limited to common image
+formats under the Run artifact preview size limit. Non-image artifacts can
+still be opened by the local desktop/runtime action, but they are not served as
+inline preview bytes.
+
+The Workbench evidence overview is emitted by `run_workbench.v1` as
+`workbench_evidence_overview.v1`. It groups the same records into deliverable,
+visual, verification, and runtime-debug cards. This keeps the browser UI from
+reconstructing artifact meaning on its own, while preserving the same boundary:
+the overview is a presentation-only reading aid for users and contributors, not
+a second completion engine.
 
 ## User Attachments Are Different
 

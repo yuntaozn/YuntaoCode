@@ -160,6 +160,7 @@ def build_run_result(
     verified = [item for item in verified if item]
     required_strength = required_verification_strength(task_contract)
     required_modalities = required_verification_modalities(task_contract)
+    event_indexes = {id(event): index for index, event in enumerate(tool_events)}
     verification_evidence = [
         {
             **(_verification_record(workspace_path, event) or {
@@ -184,6 +185,7 @@ def build_run_result(
                 mode=mode,
                 task_contract=task_contract,
             )),
+            "source_event_index": event_indexes.get(id(event)),
         }
         for event in verification_successes
     ]

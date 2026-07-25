@@ -581,6 +581,85 @@ button {
     font-size: 12px;
 }
 
+.task-workbench-overview {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(250, 251, 249, 0.82);
+}
+
+.task-workbench-overview-title {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 650;
+}
+
+.task-workbench-overview-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.task-workbench-overview-card {
+    display: grid;
+    align-content: start;
+    gap: 7px;
+    min-width: 0;
+    padding: 9px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.74);
+}
+
+.task-workbench-overview-card.observed {
+    border-color: rgba(47, 111, 98, 0.24);
+    background: rgba(47, 111, 98, 0.07);
+}
+
+.task-workbench-overview-card.attention {
+    border-color: rgba(154, 103, 0, 0.24);
+    background: rgba(154, 103, 0, 0.07);
+}
+
+.task-workbench-overview-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.task-workbench-overview-card-head strong {
+    overflow: hidden;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-workbench-overview-card-head b {
+    flex: 0 0 auto;
+    color: var(--primary-strong);
+    font-size: 18px;
+}
+
+.task-workbench-overview-facts {
+    display: grid;
+    gap: 3px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.task-workbench-overview-facts span {
+    overflow-wrap: anywhere;
+}
+
+.task-workbench-overview-paths {
+    display: grid;
+    gap: 6px;
+}
+
 .task-workbench-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -639,6 +718,50 @@ button {
     font-size: 12px;
 }
 
+.task-workbench-path {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+}
+
+.task-workbench-image-preview {
+    display: block;
+    width: min(100%, 260px);
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+}
+
+.task-workbench-image-preview img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: contain;
+}
+
+.task-workbench-path-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.task-workbench-path-actions button {
+    min-height: 24px;
+    padding: 2px 7px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--text);
+    background: var(--panel);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.task-workbench-path-actions button:hover {
+    border-color: var(--line-strong);
+    background: #fff;
+}
+
 @media (max-width: 760px) {
     .task-history-controls {
         grid-template-columns: 1fr;
@@ -660,6 +783,10 @@ button {
     }
 
     .task-workbench-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .task-workbench-overview-grid {
         grid-template-columns: 1fr;
     }
 }

@@ -626,6 +626,13 @@ decide that a task is complete. Its purpose is to let the model and the user
 see the current evidence coverage and remaining gaps before the model decides
 whether to verify, revise, ask, or finish honestly.
 
+The closure also carries `verification_freshness` facts derived from Run tool
+event order. A verification record, screenshot, preview, or debug check that
+occurred before the latest observed final/draft artifact is marked stale;
+evidence with unknown event order stays unknown. This freshness fact is
+model-facing evidence, not a hidden route: the model still decides whether to
+verify again, revise, ask, or stop honestly.
+
 When `RunResult.status` is `partial` or `failure` and the model did not provide
 a usable final answer, the runtime presents a deterministic fact summary. It is
 a fallback audit view, not a model-authored completion claim. Intermediate text

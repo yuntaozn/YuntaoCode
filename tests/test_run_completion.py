@@ -47,17 +47,42 @@ def test_completion_evidence_pack_collects_audits_progress_and_decisions() -> No
                 "count": 2,
                 "by_role": {"final": 1, "screenshot": 1},
                 "by_artifact_kind": {"html": 1, "screenshot": 1},
+                "by_verification_relevance": {"verification": 1, "diagnostic": 1},
                 "previewable_count": 2,
                 "model_context_eligible_count": 2,
                 "verification_relevant_count": 2,
                 "changed_paths": ["viewer/index.html"],
                 "final_paths": ["viewer/index.html"],
                 "visual_paths": ["viewer/preview.png"],
+                "preview_paths": ["viewer/index.html", "viewer/preview.png"],
                 "model_context_paths": ["viewer/preview.png"],
+                "verification_paths": ["viewer/index.html"],
+                "diagnostic_paths": ["viewer/preview.png"],
+                "path_index": [
+                    {
+                        "path": "viewer/index.html",
+                        "roles": ["final"],
+                        "artifact_kinds": ["html"],
+                        "source_tools": ["filesystem.write_file"],
+                        "verification_relevance": ["verification"],
+                        "can_preview": True,
+                        "can_enter_model_context": True,
+                    },
+                    {
+                        "path": "viewer/preview.png",
+                        "roles": ["screenshot"],
+                        "artifact_kinds": ["screenshot"],
+                        "source_tools": ["preview.capture_file"],
+                        "verification_relevance": ["diagnostic"],
+                        "can_preview": True,
+                        "can_enter_model_context": True,
+                    },
+                ],
                 "flags": {
                     "has_artifacts": True,
                     "has_final_artifacts": True,
                     "has_visual_artifacts": True,
+                    "has_previewable_artifacts": True,
                     "has_model_context_artifacts": True,
                     "has_verification_evidence": True,
                 },
@@ -85,6 +110,8 @@ def test_completion_evidence_pack_collects_audits_progress_and_decisions() -> No
                 "counts": {
                     "verification_records": 1,
                     "sufficient_verification_records": 1,
+                    "fresh_verification_records": 1,
+                    "stale_verification_records": 0,
                     "final_artifacts": 1,
                     "visual_artifacts": 1,
                     "gap_facts": 1,
@@ -97,6 +124,7 @@ def test_completion_evidence_pack_collects_audits_progress_and_decisions() -> No
                     "has_visual_evidence": True,
                     "visual_entered_model_context": True,
                     "has_gap_risks": True,
+                    "verification_after_latest_change_observed": True,
                 },
                 "source_kinds": ["verification_evidence", "final_artifact", "visual_evidence"],
                 "gap_facts": ["missing_modality:behavioral"],
@@ -106,6 +134,24 @@ def test_completion_evidence_pack_collects_audits_progress_and_decisions() -> No
                     "final": ["viewer/index.html"],
                     "visual": ["viewer/preview.png"],
                     "model_context": ["viewer/preview.png"],
+                },
+                "freshness": {
+                    "kind": "verification_freshness",
+                    "boundary": "evidence_only",
+                    "latest_change_event_index": 1,
+                    "counts": {"observed": 1, "fresh": 1, "stale": 0, "unknown": 0},
+                    "flags": {
+                        "has_latest_change": True,
+                        "has_fresh_verification": True,
+                        "has_stale_verification": False,
+                        "verification_after_latest_change_observed": True,
+                        "verification_freshness_unknown": False,
+                    },
+                    "paths": {"fresh": ["viewer/preview.png"], "stale": [], "unknown": []},
+                    "facts": [
+                        "verification_freshness=latest_change:1; fresh:1; stale:0; unknown:0",
+                        "verification_after_latest_change_observed",
+                    ],
                 },
                 "model_facts": [
                     "result_status=partial",
@@ -184,20 +230,29 @@ def test_completion_evidence_pack_collects_audits_progress_and_decisions() -> No
     assert pack["tool_progress"][0]["role"] == "dependency_install"
     assert pack["tool_attempts"][0]["missing_fields"] == ["path"]
     assert pack["artifact_summary"]["by_role"] == {"final": 1, "screenshot": 1}
+    assert pack["artifact_summary"]["by_verification_relevance"] == {"diagnostic": 1, "verification": 1}
+    assert pack["artifact_summary"]["preview_paths"] == ["viewer/index.html", "viewer/preview.png"]
+    assert pack["artifact_summary"]["verification_paths"] == ["viewer/index.html"]
     assert pack["artifact_summary"]["model_context_paths"] == ["viewer/preview.png"]
+    assert pack["artifact_summary"]["path_index"][0]["path"] == "viewer/index.html"
+    assert pack["artifact_summary"]["path_index"][0]["can_preview"] is True
     assert pack["run_artifacts"][0]["role"] == "final"
     assert pack["verification_closure"]["modalities"]["missing"] == ["behavioral"]
     assert pack["verification_closure"]["gap_facts"] == ["missing_modality:behavioral"]
+    assert pack["verification_closure"]["freshness"]["counts"]["fresh"] == 1
     assert pack["visual_verification"]["flags"]["has_runtime_errors"] is True
     assert pack["debug_audit"]["flags"]["has_preview_service"] is True
     assert pack["previous_completion_decisions"][0]["action"] == "continue_with_tools"
     assert "Completion evidence pack" in text
     assert "artifact summary" in text
     assert "final artifact paths" in text
+    assert "previewable artifact paths" in text
     assert "model-context artifact paths" in text
+    assert "artifact path index" in text
     assert "run artifacts" in text
     assert "Verification closure facts" in text
     assert "verification closure" in text
+    assert "verification freshness facts" in text
     assert "missing_modality:behavioral" in text
     assert "viewer/index.html" in text
     assert "viewer/preview.png" in text
@@ -236,7 +291,20 @@ def test_completion_evidence_pack_applies_presentation_budget() -> None:
                 "by_role": {"final": 1, "draft": 39},
                 "final_paths": ["chapter-0.html"],
                 "visual_paths": [f"preview-{index}.png" for index in range(40)],
+                "preview_paths": [f"chapter-{index}.html" for index in range(40)],
                 "model_context_paths": [f"context-{index}.png" for index in range(40)],
+                "path_index": [
+                    {
+                        "path": f"chapter-{index}.html",
+                        "roles": ["final" if index == 0 else "draft"],
+                        "artifact_kinds": ["html"],
+                        "source_tools": ["filesystem.append_text"],
+                        "verification_relevance": ["verification" if index == 0 else "context"],
+                        "can_preview": True,
+                        "can_enter_model_context": index < 3,
+                    }
+                    for index in range(40)
+                ],
                 "flags": {
                     "has_final_artifacts": True,
                     "has_visual_artifacts": True,
@@ -282,6 +350,10 @@ def test_completion_evidence_pack_applies_presentation_budget() -> None:
     )
     assert (
         len(pack["artifact_summary"]["model_context_paths"])
+        == COMPLETION_EVIDENCE_BUDGET["artifact_summary_paths"]
+    )
+    assert (
+        len(pack["artifact_summary"]["path_index"])
         == COMPLETION_EVIDENCE_BUDGET["artifact_summary_paths"]
     )
     assert len(pack["failures"]) == COMPLETION_EVIDENCE_BUDGET["failure_records"]

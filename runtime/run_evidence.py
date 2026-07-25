@@ -173,10 +173,23 @@ def _run_artifact_records(
     existing = _dict_list(result.get("run_artifacts"))
     if existing:
         return existing
+    legacy_artifacts = _dict_list(result.get("artifacts"))
+    if not legacy_artifacts:
+        legacy_artifacts = [
+            {
+                "kind": "file",
+                "path": path,
+                "status": "observed",
+            }
+            for path in (
+                _string_list(result.get("written_paths"))
+                or _string_list(result.get("changed_paths"))
+            )
+        ]
     return build_run_artifacts(
         workspace_path=_workspace_path_from_snapshot(workspace_snapshot),
         tool_events=tool_events,
-        legacy_artifacts=_dict_list(result.get("artifacts")),
+        legacy_artifacts=legacy_artifacts,
         visual_evidence=_dict_list(result.get("visual_evidence")),
         debug_sessions=_dict_list(result.get("debug_sessions")),
         verification_evidence=_dict_list(result.get("verification_evidence")),
