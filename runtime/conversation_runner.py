@@ -16,6 +16,10 @@ from runtime.user_guidance import has_pending_user_guidance
 from runtime.tool_call_loop import ToolCallLoop
 from runtime.tool_execution_batch import ToolExecutionBatch, ToolExecutionState
 from runtime.agent_strategy.capability_grounding import ground_task_contract_with_capabilities
+from runtime.agent_strategy.capability_router import (
+    build_task_route_evidence,
+    format_task_route_evidence_for_prompt,
+)
 from runtime.agent_strategy import task_contract as _tc
 from runtime.agent_strategy import tool_event_roles as _event_roles
 from runtime.agent_strategy.project_context import build_active_focus_snapshot
@@ -448,6 +452,12 @@ class ConversationRunExecutor:
         self._active_capability_preflight = capability_preflight
         metadata["capability_snapshot"] = capability_snapshot
         metadata["capability_preflight"] = capability_preflight
+        task_route_evidence = build_task_route_evidence(
+            task_contract,
+            capability_snapshot,
+            capability_preflight,
+        )
+        metadata["task_route_evidence"] = task_route_evidence
         planning_context_pack = build_context_pack(
             phase="planning",
             user_content=content,
@@ -483,10 +493,17 @@ class ConversationRunExecutor:
             "snapshot": capability_snapshot,
             "preflight": capability_preflight,
         })
+        self.write_event({
+            "event": "task_route_evidence",
+            "evidence": task_route_evidence,
+        })
         await self.flush()
         capability_prompt = self._capability_boundary_prompt(capability_preflight)
         if capability_prompt:
             messages.append({"role": "system", "content": capability_prompt})
+        route_prompt = format_task_route_evidence_for_prompt(task_route_evidence)
+        if route_prompt:
+            messages.append({"role": "system", "content": route_prompt})
         metadata["task_intent"] = task_intent
         metadata["agent_profile"] = profile_to_public_dict(agent_profile)
         metadata["code_change_intent"] = code_change_intent

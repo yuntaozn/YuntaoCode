@@ -116,6 +116,7 @@ def default_task_contract(
         "expected_document_coverage": bool(expected_document_coverage),
         "expected_min_output_chars": _safe_int(expected_min_output_chars),
         "capability_ids": [],
+        "route_proposals": [],
         "deliverables": [],
         "first_action": "plan" if requires_plan else ("write" if requires_write else "answer"),
         "confidence": 0.0,
@@ -196,6 +197,12 @@ def merge_model_task_contract(
                 limit=6,
                 item_limit=120,
             ),
+            "route_proposals": _normalize_route_proposals(
+                raw_contract.get("route_proposals")
+                or raw_contract.get("task_route_proposals")
+                or raw_contract.get("route_proposal")
+                or raw_contract.get("task_route_proposal")
+            ),
             "deliverables": _normalize_deliverables(raw_contract.get("deliverables")),
             "first_action": _normalize_first_action(
                 raw_contract.get("first_action"),
@@ -249,6 +256,7 @@ def merge_model_task_contract(
     )
     contract.setdefault("revision_request", "")
     contract.setdefault("model_explicit_fields", [])
+    contract["route_proposals"] = _normalize_route_proposals(contract.get("route_proposals"))
     contract["execution_advisories"] = _normalize_advisories(contract.get("execution_advisories"))
     contract["expected_document_coverage"] = bool(
         contract.get("expected_document_coverage")
@@ -361,6 +369,7 @@ def task_contract_prompt(
         '  "required_verification_modalities": [],\n'
         '  "requires_plan": false,\n'
         '  "capability_ids": ["optional capability id from the runtime facts"],\n'
+        '  "route_proposals": [{"capability_id": "", "tool_id": "", "expected_artifacts": [], "requires_write": false, "requires_verification": false, "confidence": 0.0, "rationale": "why this route fits"}],\n'
         '  "deliverables": [{"kind": "file|answer|document|code|external_state", "path_hint": "", "path_policy": "hint|exact", "capability_id": "", "description": ""}],\n'
         '  "scope_relation": "new|continue|revise|replace",\n'
         '  "referenced_task_candidate_id": "",\n'
@@ -498,6 +507,45 @@ def _normalize_deliverables(value: Any) -> list[dict[str, str]]:
             "path_policy": _normalize_path_policy(item.get("path_policy")),
             "capability_id": _clean_text(item.get("capability_id"), 120),
             "description": _clean_text(item.get("description"), 240),
+        })
+    return result
+
+
+def _normalize_route_proposals(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        raw_items = [value]
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = []
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in raw_items[:6]:
+        if not isinstance(item, dict):
+            continue
+        capability_id = _clean_text(item.get("capability_id"), 120)
+        tool_id = _clean_text(item.get("tool_id"), 120)
+        if not capability_id and not tool_id:
+            continue
+        key = (capability_id, tool_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({
+            "capability_id": capability_id,
+            "tool_id": tool_id,
+            "expected_artifacts": _normalize_string_list(
+                item.get("expected_artifacts"),
+                limit=8,
+                item_limit=80,
+            ),
+            "requires_write": _bool_or_default(item.get("requires_write"), False),
+            "requires_verification": _bool_or_default(
+                item.get("requires_verification"),
+                False,
+            ),
+            "confidence": _normalize_confidence(item.get("confidence")),
+            "rationale": _clean_text(item.get("rationale"), 240),
         })
     return result
 

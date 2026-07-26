@@ -8,7 +8,7 @@ tools by tool ID prefix, such as `filesystem`, `code`, `shell`, `git`, and
 `web`, and may also show MCP-discovered capabilities, local Capability Packs,
 and legacy AI-built plugin drafts. These entries are capability provider views,
 not all third-party plugins. External plugin loading, remote indexes,
-auto-update, and marketplace distribution are outside the 0.1 foundation
+auto-update, and marketplace distribution are outside the current foundation
 boundary.
 
 A plugin is a versioned, distributable package. It may contain model-facing
@@ -42,9 +42,9 @@ and artifacts before execution. See
   imported through `runtime.skills.*` or registered by editing
   `runtime/skills/__init__.py`.
 
-## 0.1 Extension Gate
+## Extension Gate
 
-Extension work belongs in 0.1 only when it clarifies the Runtime boundary:
+Extension work belongs in the foundation only when it clarifies the Runtime boundary:
 
 - capability and provider identity are explicit before execution;
 - filesystem, shell, network, model, and external-application permissions are

@@ -35,6 +35,7 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
     plan = _latest_event_value(events, "plan", "plan")
     capability = _latest_event_value(events, "capability_snapshot", "snapshot")
     preflight = _latest_event_value(events, "capability_snapshot", "preflight")
+    task_route_evidence = _latest_event_value(events, "task_route_evidence", "evidence")
     context_packs = [
         event.get("pack")
         for event in events
@@ -108,6 +109,7 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
             task_contract=contract,
         ),
         "capability_snapshot": _capability_summary(capability, preflight),
+        "task_route_evidence": _task_route_evidence_summary(task_route_evidence),
         "plan": _plan_summary(plan),
         "tool_steps": [_tool_step(event) for event in tool_events],
         "status_timeline": [_status_step(event) for event in status_events[-24:]],
@@ -285,6 +287,29 @@ def _capability_summary(capability: Any, preflight: Any) -> dict[str, Any]:
     }
 
 
+def _task_route_evidence_summary(value: Any) -> dict[str, Any]:
+    evidence = value if isinstance(value, dict) else {}
+    if evidence.get("kind") != "task_route_evidence":
+        return {}
+    return {
+        "schema_version": str(evidence.get("schema_version") or ""),
+        "kind": "task_route_evidence",
+        "boundary": str(evidence.get("boundary") or ""),
+        "strategy_owner": str(evidence.get("strategy_owner") or ""),
+        "safety_owner": str(evidence.get("safety_owner") or ""),
+        "source": str(evidence.get("source") or ""),
+        "proposal_count": _safe_int(evidence.get("proposal_count")),
+        "valid_proposal_count": _safe_int(evidence.get("valid_proposal_count")),
+        "target_capability_ids": _string_list(evidence.get("target_capability_ids"))[:12],
+        "preflight_target_capability_ids": _string_list(
+            evidence.get("preflight_target_capability_ids")
+        )[:12],
+        "advisory_codes": _string_list(evidence.get("advisory_codes"))[:12],
+        "flags": _compact_bool_flags(evidence.get("flags")),
+        "model_facts": _string_list(evidence.get("model_facts"))[:12],
+    }
+
+
 def _evidence_affordance_records(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -382,3 +407,20 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if str(item or "").strip()]
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _compact_bool_flags(value: Any) -> dict[str, bool]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): bool(flag)
+        for key, flag in value.items()
+        if isinstance(key, str) and isinstance(flag, bool)
+    }

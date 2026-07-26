@@ -7,6 +7,7 @@ from runtime.core.capability import normalize_provider_kind
 
 
 CAPABILITY_ROUTER_SCHEMA_VERSION = "0.1"
+TASK_ROUTE_EVIDENCE_SCHEMA_VERSION = "task_route_evidence.v1"
 
 
 @dataclass(frozen=True)
@@ -463,3 +464,268 @@ def validate_task_route_proposal(
         "proposal": proposal.to_public_dict(),
         "capability": contract.to_public_dict() if contract else None,
     }
+
+
+def build_task_route_evidence(
+    task_contract: dict[str, Any],
+    capability_snapshot: dict[str, Any] | None,
+    capability_preflight: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build an evidence-only route record from the model task contract.
+
+    The model still owns semantic route selection.  The runtime only converts
+    the declared capability facts into a stable evidence shape and validates
+    them against the current capability snapshot.
+    """
+
+    contract = task_contract if isinstance(task_contract, dict) else {}
+    snapshot = capability_snapshot if isinstance(capability_snapshot, dict) else {}
+    preflight = capability_preflight if isinstance(capability_preflight, dict) else {}
+    capability_records = [
+        item for item in snapshot.get("capabilities") or []
+        if isinstance(item, dict)
+    ]
+    catalog = [_capability_contract_from_snapshot_item(item) for item in capability_records]
+    route_proposals = _route_proposals_from_contract(contract)
+    validations = [
+        validate_task_route_proposal(proposal, catalog)
+        for proposal in route_proposals
+    ]
+    advisory_codes = _validation_advisory_codes(validations)
+    preflight_advisories = [
+        str(item.get("code") or "").strip()
+        for item in preflight.get("advisories") or []
+        if isinstance(item, dict) and str(item.get("code") or "").strip()
+    ]
+    return {
+        "schema_version": TASK_ROUTE_EVIDENCE_SCHEMA_VERSION,
+        "kind": "task_route_evidence",
+        "boundary": "evidence_only",
+        "strategy_owner": "model",
+        "safety_owner": "runtime",
+        "source": str(contract.get("source") or "unknown"),
+        "goal": str(contract.get("goal") or "").strip(),
+        "proposal_count": len(route_proposals),
+        "valid_proposal_count": sum(1 for item in validations if item.get("ok")),
+        "proposals": [proposal.to_public_dict() for proposal in route_proposals],
+        "validations": validations,
+        "target_capability_ids": _contract_capability_ids(contract),
+        "preflight_target_capability_ids": _string_list(preflight.get("target_capability_ids")),
+        "advisory_codes": list(dict.fromkeys([*advisory_codes, *preflight_advisories])),
+        "flags": {
+            "has_model_route": bool(route_proposals),
+            "all_routes_valid": bool(route_proposals) and all(item.get("ok") for item in validations),
+            "has_route_advisories": bool(advisory_codes or preflight_advisories),
+            "has_unknown_capability": any(
+                "unknown_capability" in (item.get("errors") or [])
+                for item in validations
+            ),
+            "has_tool_mismatch": any(
+                "tool_not_in_capability" in (item.get("errors") or [])
+                for item in validations
+            ),
+        },
+        "model_facts": _route_model_facts(route_proposals, validations, preflight),
+    }
+
+
+def format_task_route_evidence_for_prompt(evidence: dict[str, Any] | None) -> str:
+    if not isinstance(evidence, dict):
+        return ""
+    if evidence.get("kind") != "task_route_evidence":
+        return ""
+    lines = [
+        "Task route evidence:",
+        "- Boundary: evidence only; the model owns task strategy, runtime validates capability facts.",
+    ]
+    for fact in _string_list(evidence.get("model_facts"))[:8]:
+        lines.append(f"- {fact}")
+    advisories = _string_list(evidence.get("advisory_codes"))
+    if advisories:
+        lines.append("- route_advisories=" + ", ".join(advisories[:8]))
+    return "\n".join(lines) + "\n"
+
+
+def _route_proposals_from_contract(contract: dict[str, Any]) -> list[TaskRouteProposal]:
+    explicit = contract.get("route_proposals") or contract.get("task_route_proposals")
+    if isinstance(explicit, list):
+        proposals = [
+            _route_proposal_with_contract_goal(parse_task_route_proposal(item), contract)
+            for item in explicit
+            if isinstance(item, dict)
+        ]
+        proposals = [item for item in proposals if item.capability_id or item.tool_id][:6]
+        if proposals:
+            return proposals
+    single = contract.get("route_proposal") or contract.get("task_route_proposal")
+    if isinstance(single, dict):
+        proposal = _route_proposal_with_contract_goal(parse_task_route_proposal(single), contract)
+        if proposal.capability_id or proposal.tool_id:
+            return [proposal]
+
+    capability_ids = _contract_capability_ids(contract)
+    tool_ids = _contract_tool_ids(contract)
+    expected_artifacts = _contract_expected_artifacts(contract)
+    proposals: list[TaskRouteProposal] = []
+    for index, capability_id in enumerate(capability_ids[:6]):
+        proposals.append(TaskRouteProposal(
+            goal=str(contract.get("goal") or "").strip(),
+            capability_id=capability_id,
+            tool_id=tool_ids[index] if index < len(tool_ids) else None,
+            expected_artifacts=tuple(expected_artifacts),
+            requires_write=bool(contract.get("requires_write")),
+            requires_verification=bool(contract.get("requires_verification")),
+            confidence=_contract_confidence(contract),
+            rationale="derived from model task_contract capability_ids",
+        ))
+    return proposals
+
+
+def _route_proposal_with_contract_goal(
+    proposal: TaskRouteProposal,
+    contract: dict[str, Any],
+) -> TaskRouteProposal:
+    if proposal.goal:
+        return proposal
+    return TaskRouteProposal(
+        goal=str(contract.get("goal") or "").strip(),
+        capability_id=proposal.capability_id,
+        tool_id=proposal.tool_id,
+        expected_artifacts=proposal.expected_artifacts,
+        requires_write=proposal.requires_write,
+        requires_verification=proposal.requires_verification,
+        confidence=proposal.confidence,
+        rationale=proposal.rationale,
+    )
+
+
+def _capability_contract_from_snapshot_item(item: dict[str, Any]) -> CapabilityContract:
+    tool_ids = _string_tuple(item.get("tool_ids"))
+    available_tool_ids = _string_tuple(item.get("available_tool_ids"))
+    return CapabilityContract(
+        id=str(item.get("id") or ""),
+        name=str(item.get("name") or item.get("id") or ""),
+        description=str(item.get("description") or ""),
+        tool_ids=tool_ids or available_tool_ids,
+        artifacts=tuple(sorted(set(_string_tuple(item.get("artifacts")) + _string_tuple(item.get("available_artifacts"))))),
+        effects=tuple(sorted(set(_string_tuple(item.get("effects")) + _string_tuple(item.get("available_effects"))))),
+        roles=tuple(sorted(set(_string_tuple(item.get("roles")) + _string_tuple(item.get("available_roles"))))),
+        verification_strengths=tuple(sorted(set(
+            _string_tuple(item.get("verification_strengths"))
+            + _string_tuple(item.get("available_verification_strengths"))
+        ))),
+        requires_confirmation=bool(item.get("requires_confirmation")),
+        long_running=bool(item.get("long_running")),
+        retry_safe=bool(item.get("retry_safe")),
+        idempotent=bool(item.get("idempotent")),
+        source=str(item.get("source") or "snapshot"),
+        provider_kinds=_string_tuple(item.get("provider_kinds")) or ("unknown",),
+        provider_ids=_string_tuple(item.get("provider_ids")),
+    )
+
+
+def _contract_capability_ids(contract: dict[str, Any]) -> list[str]:
+    result: list[str] = []
+    for key in ("capability_ids", "target_capability_ids"):
+        result.extend(_string_list(contract.get(key)))
+    single = str(contract.get("capability_id") or "").strip()
+    if single:
+        result.append(single)
+    for item in contract.get("deliverables") or []:
+        if not isinstance(item, dict):
+            continue
+        capability_id = str(item.get("capability_id") or "").strip()
+        if capability_id:
+            result.append(capability_id)
+    return list(dict.fromkeys(result))
+
+
+def _contract_tool_ids(contract: dict[str, Any]) -> list[str]:
+    result = _string_list(contract.get("tool_ids"))
+    single = str(contract.get("tool_id") or "").strip()
+    if single:
+        result.append(single)
+    for item in contract.get("deliverables") or []:
+        if not isinstance(item, dict):
+            continue
+        tool_id = str(item.get("tool_id") or "").strip()
+        if tool_id:
+            result.append(tool_id)
+    return list(dict.fromkeys(result))
+
+
+def _contract_expected_artifacts(contract: dict[str, Any]) -> list[str]:
+    result: list[str] = []
+    result.extend(_string_list(contract.get("expected_artifacts")))
+    for item in contract.get("deliverables") or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip()
+        if kind:
+            result.append(kind)
+    return list(dict.fromkeys(result))
+
+
+def _validation_advisory_codes(validations: list[dict[str, Any]]) -> list[str]:
+    result: list[str] = []
+    for item in validations:
+        for error in item.get("errors") or []:
+            text = str(error or "").strip()
+            if text:
+                result.append(text)
+    return list(dict.fromkeys(result))
+
+
+def _route_model_facts(
+    proposals: list[TaskRouteProposal],
+    validations: list[dict[str, Any]],
+    preflight: dict[str, Any],
+) -> list[str]:
+    facts: list[str] = []
+    if proposals:
+        facts.append(
+            "route_proposals="
+            + "; ".join(
+                f"{item.capability_id or 'unknown'}"
+                + (f"/{item.tool_id}" if item.tool_id else "")
+                for item in proposals[:6]
+            )
+        )
+    facts.append(
+        "route_validation="
+        f"valid:{sum(1 for item in validations if item.get('ok'))}; "
+        f"invalid:{sum(1 for item in validations if not item.get('ok'))}"
+    )
+    target_ids = _string_list(preflight.get("target_capability_ids"))
+    if target_ids:
+        facts.append("preflight_targets=" + ",".join(target_ids[:8]))
+    advisories = [
+        str(item.get("code") or "").strip()
+        for item in preflight.get("advisories") or []
+        if isinstance(item, dict) and str(item.get("code") or "").strip()
+    ]
+    if advisories:
+        facts.append("preflight_advisories=" + ",".join(advisories[:8]))
+    return facts
+
+
+def _contract_confidence(contract: dict[str, Any]) -> float:
+    try:
+        return max(0.0, min(1.0, float(contract.get("confidence") or 0.0)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _string_tuple(value: Any) -> tuple[str, ...]:
+    return tuple(_string_list(value))
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    result: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text and text not in result:
+            result.append(text)
+    return result

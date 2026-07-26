@@ -59,6 +59,44 @@ def test_model_contract_write_fact_does_not_rewrite_model_intent() -> None:
     assert "target_deliverable_success" in contract["success_conditions"]
 
 
+def test_model_contract_preserves_route_proposals_as_model_semantics() -> None:
+    contract = merge_model_task_contract(
+        {
+            "goal": "创建 HTML 示例页",
+            "intent": "write_required",
+            "requires_write": True,
+            "capability_ids": ["code.text_write"],
+            "route_proposals": [
+                {
+                    "capability_id": "code.text_write",
+                    "tool_id": "filesystem.finalize_text_file",
+                    "expected_artifacts": ["file"],
+                    "requires_write": True,
+                    "requires_verification": True,
+                    "confidence": 0.83,
+                    "rationale": "适合长文本或完整文件写入",
+                }
+            ],
+        },
+        _fallback("write_required"),
+    )
+
+    assert contract["route_proposals"] == [
+        {
+            "capability_id": "code.text_write",
+            "tool_id": "filesystem.finalize_text_file",
+            "expected_artifacts": ["file"],
+            "requires_write": True,
+            "requires_verification": True,
+            "confidence": 0.83,
+            "rationale": "适合长文本或完整文件写入",
+        }
+    ]
+    assert contract["requires_verification"] is True
+    assert contract["first_action"] == "write"
+    assert "target_deliverable_success" in contract["success_conditions"]
+
+
 def test_invalid_model_contract_falls_back_to_policy_contract() -> None:
     fallback = _fallback("read_only_analysis")
 

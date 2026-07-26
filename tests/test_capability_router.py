@@ -1,4 +1,5 @@
 from runtime.agent_strategy.capability_router import (
+    build_task_route_evidence,
     build_capability_catalog,
     capability_from_tool_spec,
     format_capability_catalog_for_prompt,
@@ -208,3 +209,91 @@ def test_validate_task_route_proposal_rejects_unknown_tool_for_capability() -> N
 
     assert result["ok"] is False
     assert result["errors"] == ["tool_not_in_capability"]
+
+
+def test_task_route_evidence_validates_model_declared_route_without_forcing_strategy() -> None:
+    snapshot = {
+        "capabilities": [
+            {
+                "id": "code.text_write",
+                "name": "Text Write",
+                "description": "Write text files",
+                "tool_ids": ["filesystem.write_file", "filesystem.finalize_text_file"],
+                "available_tool_ids": ["filesystem.write_file", "filesystem.finalize_text_file"],
+                "available_artifacts": ["file"],
+                "provider_kinds": ["builtin"],
+            }
+        ],
+    }
+    contract = {
+        "source": "model",
+        "goal": "创建 viewer.html",
+        "requires_write": True,
+        "requires_verification": True,
+        "capability_ids": ["code.text_write"],
+        "route_proposals": [
+            {
+                "capability_id": "code.text_write",
+                "tool_id": "filesystem.finalize_text_file",
+                "expected_artifacts": ["file"],
+                "confidence": 0.8,
+            }
+        ],
+    }
+
+    evidence = build_task_route_evidence(
+        contract,
+        snapshot,
+        {"target_capability_ids": ["code.text_write"], "advisories": []},
+    )
+
+    assert evidence["schema_version"] == "task_route_evidence.v1"
+    assert evidence["boundary"] == "evidence_only"
+    assert evidence["strategy_owner"] == "model"
+    assert evidence["safety_owner"] == "runtime"
+    assert evidence["valid_proposal_count"] == 1
+    assert evidence["flags"]["all_routes_valid"] is True
+    assert "route_proposals=code.text_write/filesystem.finalize_text_file" in evidence["model_facts"]
+
+
+def test_task_route_evidence_reports_unknown_capability_as_advisory_fact() -> None:
+    evidence = build_task_route_evidence(
+        {
+            "source": "model",
+            "goal": "操作三维场景",
+            "capability_ids": ["mcp.scene_editor"],
+        },
+        {"capabilities": []},
+        {"target_capability_ids": ["mcp.scene_editor"], "advisories": [{"code": "unknown_capability"}]},
+    )
+
+    assert evidence["proposal_count"] == 1
+    assert evidence["valid_proposal_count"] == 0
+    assert evidence["flags"]["has_unknown_capability"] is True
+    assert "unknown_capability" in evidence["advisory_codes"]
+
+
+def test_task_route_evidence_falls_back_to_capability_ids_when_route_is_empty() -> None:
+    evidence = build_task_route_evidence(
+        {
+            "source": "model",
+            "goal": "创建文件",
+            "capability_ids": ["code.text_write"],
+            "route_proposals": [{"rationale": "missing ids"}],
+        },
+        {
+            "capabilities": [
+                {
+                    "id": "code.text_write",
+                    "tool_ids": ["filesystem.finalize_text_file"],
+                    "available_artifacts": ["file"],
+                    "provider_kinds": ["builtin"],
+                }
+            ],
+        },
+        {"target_capability_ids": ["code.text_write"], "advisories": []},
+    )
+
+    assert evidence["proposal_count"] == 1
+    assert evidence["proposals"][0]["capability_id"] == "code.text_write"
+    assert evidence["flags"]["all_routes_valid"] is True

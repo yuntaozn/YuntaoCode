@@ -69,18 +69,18 @@ Runtime 只接受通过能力目录验证的提案。未知能力、未知工具
 
 ## Relation To Existing Policy
 
-现有 `Intent Classifier` 仍可保留，但应降级为执行提示和硬边界：
+现有 `Intent Classifier` 仍可保留，但应降级为执行提示和安全边界事实：
 
-- 明确“只分析不要修改”时加只读锁。
-- 明确安全边界时拒绝越权。
+- 明确安全边界时继续由 PathGuard、权限、确认和工具执行 guard 处理。
 - 简单寒暄可以直接回复。
-- 历史上下文可用于补充跟进任务。
+- 历史上下文可作为候选事实进入模型判断。
+- “只分析”“帮我看下”“继续”等自然语言语义由模型在 Task Contract 中判断，Runtime 不用关键词把它们改写成隐藏路线锁。
 
 它不应承担完整自然语言任务理解。
 
 ## Current Implementation Step
 
-当前代码已加入第一步基础：
+当前代码已具备最小闭环：
 
 - `runtime/core/capability.py`
   - CapabilityContract 和 PermissionSet 初始 schema。
@@ -89,11 +89,19 @@ Runtime 只接受通过能力目录验证的提案。未知能力、未知工具
   - 任务路由提案结构。
   - 提案验证。
   - 能力目录 prompt。
+- `runtime/agent_strategy/task_contract.py`
+  - 模型可以在 Task Contract 中声明 `capability_ids` 和可选
+    `route_proposals`。
+- `runtime/conversation_runner.py`
+  - 每个 Run 在 Task Contract 与 Capability Preflight 后生成
+    `task_route_evidence.v1`，作为 evidence-only 事件和模型上下文事实。
+- `runtime/run_evidence.py`
+  - RunEvidence 汇总 `task_route_evidence`，用于诊断、Runbook 和后续评测。
 - `runtime/tool_registry.py`
   - `ToolSpec` 支持能力元数据。
 - 系统提示中加入 Capability Router 原则和可用能力目录。
 
-下一步应做模型路由预检，但不要急于替换主循环：
+下一步可以继续做独立模型路由预检，但不要急于替换主循环：
 
 1. 在进入主循环前请求模型生成 `TaskRouteProposal`。
 2. Runtime 校验提案。

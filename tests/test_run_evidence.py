@@ -86,6 +86,31 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
         },
     })
     store.record_event(run.id, {
+        "event": "task_route_evidence",
+        "evidence": {
+            "schema_version": "task_route_evidence.v1",
+            "kind": "task_route_evidence",
+            "boundary": "evidence_only",
+            "strategy_owner": "model",
+            "safety_owner": "runtime",
+            "source": "model",
+            "proposal_count": 1,
+            "valid_proposal_count": 1,
+            "target_capability_ids": ["code.text_write"],
+            "preflight_target_capability_ids": ["code.text_write"],
+            "advisory_codes": [],
+            "flags": {
+                "has_model_route": True,
+                "all_routes_valid": True,
+                "has_route_advisories": False,
+            },
+            "model_facts": [
+                "route_proposals=code.text_write/filesystem.write_file",
+                "route_validation=valid:1; invalid:0",
+            ],
+        },
+    })
+    store.record_event(run.id, {
         "event": "context_pack",
         "pack": {
             "schema_version": "context_pack.v1",
@@ -273,6 +298,10 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
     assert evidence["capability_snapshot"]["target_capability_ids"] == ["code.text_write"]
     assert evidence["capability_snapshot"]["advisories"][0]["code"] == "visual_verification_path_uncertain"
     assert evidence["capability_snapshot"]["preferred_tool_ids"] == ["filesystem.write_file"]
+    assert evidence["task_route_evidence"]["schema_version"] == "task_route_evidence.v1"
+    assert evidence["task_route_evidence"]["strategy_owner"] == "model"
+    assert evidence["task_route_evidence"]["valid_proposal_count"] == 1
+    assert evidence["task_route_evidence"]["flags"]["all_routes_valid"] is True
     assert evidence["capability_snapshot"]["available_evidence_kinds"] == [
         "content",
         "runtime",

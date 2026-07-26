@@ -719,6 +719,10 @@ Current runtime-level capability guards:
 - `capability_preflight` reports readiness facts and advisories for tasks that
   appear to target external application state, missing services, degraded tools,
   or uncertain visual verification routes;
+- `task_route_evidence.v1` records the model-declared route proposal derived
+  from Task Contract `capability_ids` or explicit `route_proposals`, validates
+  it against the current capability snapshot, and exposes the result as
+  evidence-only facts for the model, diagnostics, Runbook, and evaluation;
 - when a target capability is declared for an external-state task, the runtime
   presents visible capability, provider, readiness, and evidence facts, while
   leaving route selection to the model unless a separate safety/permission
