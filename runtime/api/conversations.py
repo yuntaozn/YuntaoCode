@@ -1043,6 +1043,9 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         task_contract: dict[str, Any] | None,
         run_result: dict[str, Any],
         previous_answer: str,
+        tool_events: list[dict[str, Any]] | None = None,
+        completion_decisions: list[dict[str, Any]] | None = None,
+        task_route_evidence: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         return await generate_result_synthesis_answer(
             settings=self.runtime.settings,
@@ -1052,6 +1055,9 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             task_contract=task_contract,
             run_result=run_result,
             previous_answer=previous_answer,
+            tool_events=tool_events,
+            completion_decisions=completion_decisions,
+            task_route_evidence=task_route_evidence,
         )
 
     async def _generate_execution_plan(

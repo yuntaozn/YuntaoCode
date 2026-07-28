@@ -71,6 +71,9 @@ def build_result_synthesis_messages(
     task_contract: dict[str, Any] | None,
     run_result: dict[str, Any],
     previous_answer: str,
+    tool_events: list[dict[str, Any]] | None = None,
+    completion_decisions: list[dict[str, Any]] | None = None,
+    task_route_evidence: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Build the bounded messages used for final answer synthesis."""
 
@@ -79,6 +82,9 @@ def build_result_synthesis_messages(
         task_contract,
         run_result,
         previous_answer=previous_answer,
+        tool_events=tool_events,
+        completion_decisions=completion_decisions,
+        task_route_evidence=task_route_evidence,
     )
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": prompt},
@@ -167,6 +173,9 @@ async def generate_result_synthesis_answer(
     task_contract: dict[str, Any] | None,
     run_result: dict[str, Any],
     previous_answer: str,
+    tool_events: list[dict[str, Any]] | None = None,
+    completion_decisions: list[dict[str, Any]] | None = None,
+    task_route_evidence: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Generate the final user-facing answer from observed RunResult facts."""
 
@@ -179,6 +188,9 @@ async def generate_result_synthesis_answer(
             task_contract=task_contract,
             run_result=run_result,
             previous_answer=previous_answer,
+            tool_events=tool_events,
+            completion_decisions=completion_decisions,
+            task_route_evidence=task_route_evidence,
         ),
         enable_thinking=False,
         reasoning_effort="low",

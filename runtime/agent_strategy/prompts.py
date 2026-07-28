@@ -14,9 +14,7 @@ from .classifiers import (
     is_verification_tool,
 )
 from runtime.run_fact_summary import (
-    build_run_fact_summary,
     build_tool_failure_fact_summary,
-    format_run_fact_summary,
     format_tool_failure_fact_summary,
 )
 from runtime.run_completion import (
@@ -288,14 +286,21 @@ def result_synthesis_prompt(
     run_result: dict[str, Any],
     *,
     previous_answer: str = "",
+    tool_events: list[dict[str, Any]] | None = None,
+    completion_decisions: list[dict[str, Any]] | None = None,
+    task_route_evidence: dict[str, Any] | None = None,
+    evidence_pack: dict[str, Any] | None = None,
 ) -> str:
     """Ask the model to write the final user-facing result from runtime facts."""
-    facts = build_run_fact_summary(
-        workspace_path=workspace_path,
-        tool_events=[],
-        run_result=run_result,
-        task_contract=task_contract,
-    )
+    if not evidence_pack:
+        evidence_pack = build_completion_evidence_pack(
+            workspace_path=workspace_path,
+            task_contract=task_contract,
+            run_result=run_result,
+            tool_events=tool_events,
+            completion_decisions=completion_decisions,
+            task_route_evidence=task_route_evidence,
+        )
     previous = previous_answer.strip()
     previous_block = (
         "\nPrevious assistant draft, which may be incomplete or overclaiming:\n"
@@ -309,7 +314,7 @@ def result_synthesis_prompt(
         "but you must not claim work that is not supported by observed "
         "deliverables, verification evidence, or tool results.\n"
         f"Current project: {workspace_path}\n"
-        f"{format_run_fact_summary(facts)}"
+        f"{format_completion_evidence_pack(evidence_pack)}\n"
         f"{previous_block}\n"
         "Answer requirements:\n"
         "- If status is partial, failure, or stopped, say that clearly first.\n"

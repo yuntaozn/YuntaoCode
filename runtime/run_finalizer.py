@@ -78,6 +78,9 @@ class RunFinalizationHost(Protocol):
         task_contract: dict[str, Any],
         run_result: dict[str, Any],
         previous_answer: str,
+        tool_events: list[dict[str, Any]] | None = None,
+        completion_decisions: list[dict[str, Any]] | None = None,
+        task_route_evidence: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]: ...
 
     def _synthesize_failure_answer(
@@ -455,6 +458,9 @@ class RunFinalizer:
                         task_contract=request.task_contract,
                         run_result=run_result,
                         previous_answer=assistant_content,
+                        tool_events=request.tool_events,
+                        completion_decisions=metadata.get("completion_decisions"),
+                        task_route_evidence=metadata.get("task_route_evidence"),
                     )
                 )
                 if synthesized:

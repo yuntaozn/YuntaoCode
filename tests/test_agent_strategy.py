@@ -1293,7 +1293,7 @@ class TestPrompts:
         )
 
         assert "Write the final user-facing answer for this run from runtime facts" in prompt
-        assert "Runtime fact package" in prompt
+        assert "Completion evidence pack" in prompt
         assert "viewer/index.html" in prompt
         assert "test_not_observed" in prompt
         assert "Previous assistant draft" in prompt

@@ -187,6 +187,19 @@ class _FinalizationHost:
         self.flush_count += 1
 
 
+class _SynthesizingHost(_FinalizationHost):
+    def __init__(self, conversation: _Conversation) -> None:
+        super().__init__(conversation)
+        self.synthesis_kwargs: dict[str, Any] = {}
+
+    def _needs_synthesized_final_answer(self, *args: Any, **kwargs: Any) -> bool:
+        return True
+
+    async def _generate_result_synthesis_answer(self, **kwargs: Any) -> tuple[str, dict[str, Any]]:
+        self.synthesis_kwargs = kwargs
+        return "基于运行事实生成的最终总结。", {"model": "test-model"}
+
+
 @pytest.mark.asyncio
 async def test_finalizer_publishes_result_persists_answer_and_finishes(
     monkeypatch: pytest.MonkeyPatch,
@@ -270,3 +283,78 @@ async def test_finalizer_publishes_result_persists_answer_and_finishes(
     assert host.events[-1]["run_status"] == "no_tool_activity"
     assert host.events[-1]["context_tokens"] == 7
     assert host.flush_count == 2
+
+
+@pytest.mark.asyncio
+async def test_finalizer_passes_observed_evidence_to_result_synthesis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(finalizer_module, "count_messages_tokens", lambda messages: 9)
+    conversation = _Conversation()
+    host = _SynthesizingHost(conversation)
+    metadata: dict[str, Any] = {
+        "effective_context_limit": 4096,
+        "completion_decisions": [{"review_count": 1, "action": "continue_with_tools"}],
+        "task_route_evidence": {
+            "schema_version": "task_route_evidence.v1",
+            "kind": "task_route_evidence",
+            "strategy_owner": "model",
+            "proposal_count": 1,
+        },
+    }
+    workspace = SimpleNamespace(
+        path="D:/workspace",
+        to_public_dict=lambda: {"id": "workspace-1", "path": "D:/workspace"},
+    )
+    tool_events = [
+        {
+            "event": "tool",
+            "tool": "filesystem.write_file",
+            "status": "success",
+            "input": {"path": "viewer.html"},
+            "output": {"path": "viewer.html"},
+        }
+    ]
+
+    outcome = await RunFinalizer(host).finalize(
+        RunFinalizationRequest(
+            conversation_id="conversation-1",
+            conversation=conversation,
+            workspace=workspace,
+            model="test-model",
+            mode_config={},
+            effective_mode="terminal",
+            user_content="创建 viewer.html",
+            metadata=metadata,
+            content_parts=["Done."],
+            reasoning_parts=[],
+            tool_events=tool_events,
+            task_contract={
+                "goal": "创建 viewer.html",
+                "requires_write": True,
+                "requires_state_change": False,
+                "requires_verification": False,
+            },
+            workspace_snapshot={},
+            active_focus={},
+            capability_snapshot={},
+            capability_preflight={},
+            context_hygiene_report={},
+            run=SimpleNamespace(id="run-1", task_id=""),
+            execution_plan=None,
+            change_baseline=None,
+            execution_state=RunExecutionState.create(20),
+            requires_code_write=True,
+            recon_tool_count=0,
+            write_repair_mode=False,
+            context_tokens=4,
+        )
+    )
+
+    assert outcome.assistant_content.startswith("基于运行事实生成的最终总结。")
+    assert "本轮新增/变更文件" in outcome.assistant_content
+    assert "viewer.html" in outcome.assistant_content
+    assert host.synthesis_kwargs["tool_events"] == tool_events
+    assert host.synthesis_kwargs["completion_decisions"] == metadata["completion_decisions"]
+    assert host.synthesis_kwargs["task_route_evidence"] == metadata["task_route_evidence"]
+    assert metadata["synthesized_final_answer_source"] == "model_from_runtime_facts"
