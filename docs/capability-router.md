@@ -65,7 +65,7 @@ User Request
 }
 ```
 
-Runtime 只接受通过能力目录验证的提案。未知能力、未知工具、工具不属于能力、需要写入但没有确认、需要产物但未生成，都不能被视为完成。
+Runtime 会验证模型提案并形成事实证据。未知能力、未知工具、工具不属于能力、需要写入但没有确认、需要产物但未生成，都应作为证据缺口或风险进入 Trace、RunEvidence 和完成自审，而不是由运行时静默改写成另一条路线。
 
 ## Relation To Existing Policy
 
@@ -97,14 +97,17 @@ Runtime 只接受通过能力目录验证的提案。未知能力、未知工具
     `task_route_evidence.v1`，作为 evidence-only 事件和模型上下文事实。
 - `runtime/run_evidence.py`
   - RunEvidence 汇总 `task_route_evidence`，用于诊断、Runbook 和后续评测。
+- `runtime/completion_evidence_pack.py`
+  - Completion self-review 会携带 `task_route_evidence`，让模型基于路线
+    有效性、能力缺口、产物和验证事实自行判断继续、修复或总结。
 - `runtime/tool_registry.py`
   - `ToolSpec` 支持能力元数据。
 - 系统提示中加入 Capability Router 原则和可用能力目录。
 
-下一步可以继续做独立模型路由预检，但不要急于替换主循环：
+后续可以继续强化模型路由预检，但不要急于替换主循环：
 
 1. 在进入主循环前请求模型生成 `TaskRouteProposal`。
 2. Runtime 校验提案。
-3. 低置信度或提案不合法时，把修正提示交回模型。
-4. 通过提案后，把 `capability_id`、`tool_id`、`expected_artifacts` 写入 Task Trace。
+3. 低置信度或提案不合法时，把证据缺口交回模型。
+4. 把 `capability_id`、`tool_id`、`expected_artifacts` 写入 Task Trace。
 5. 最终结果根据工具事件和产物验证生成，而不是只相信模型总结。

@@ -2530,6 +2530,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         *,
         tool_events: list[dict[str, Any]] | None = None,
         completion_decisions: list[dict[str, Any]] | None = None,
+        task_route_evidence: dict[str, Any] | None = None,
+        evidence_pack: dict[str, Any] | None = None,
     ) -> str:
         return _prp.completion_review_prompt(
             workspace_path,
@@ -2537,6 +2539,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             run_result,
             tool_events=tool_events,
             completion_decisions=completion_decisions,
+            task_route_evidence=task_route_evidence,
+            evidence_pack=evidence_pack,
         )
 
     def _completion_reentry_prompt(
@@ -2548,6 +2552,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         *,
         tool_events: list[dict[str, Any]] | None = None,
         completion_decisions: list[dict[str, Any]] | None = None,
+        task_route_evidence: dict[str, Any] | None = None,
+        evidence_pack: dict[str, Any] | None = None,
     ) -> str:
         return _prp.completion_reentry_prompt(
             workspace_path,
@@ -2556,6 +2562,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             completion_decision,
             tool_events=tool_events,
             completion_decisions=completion_decisions,
+            task_route_evidence=task_route_evidence,
+            evidence_pack=evidence_pack,
         )
 
     def _final_answer_prompt(self, workspace_path: str) -> str:

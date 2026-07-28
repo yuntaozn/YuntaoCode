@@ -847,6 +847,8 @@ class ConversationRunExecutor:
                                 decision,
                                 tool_events=tool_events,
                                 completion_decisions=metadata.get("completion_decisions"),
+                                task_route_evidence=metadata.get("task_route_evidence"),
+                                evidence_pack=run_state.completion_review.latest_evidence_pack,
                             ),
                         })
                         self.write_event({
@@ -1204,6 +1206,7 @@ class ConversationRunExecutor:
                         run_result=provisional_result,
                         tool_events=tool_events,
                         completion_decisions=metadata.get("completion_decisions"),
+                        task_route_evidence=metadata.get("task_route_evidence"),
                     )
                     run_state.completion_review.begin(
                         event_count=len(tool_events),
@@ -1218,6 +1221,8 @@ class ConversationRunExecutor:
                             provisional_result,
                             tool_events=tool_events,
                             completion_decisions=metadata.get("completion_decisions"),
+                            task_route_evidence=metadata.get("task_route_evidence"),
+                            evidence_pack=completion_evidence_pack,
                         ),
                     })
                     self.write_event({

@@ -200,6 +200,8 @@ def completion_review_prompt(
     *,
     tool_events: list[dict[str, Any]] | None = None,
     completion_decisions: list[dict[str, Any]] | None = None,
+    task_route_evidence: dict[str, Any] | None = None,
+    evidence_pack: dict[str, Any] | None = None,
 ) -> str:
     """Prompt the model to self-audit completion from runtime facts.
 
@@ -207,13 +209,15 @@ def completion_review_prompt(
     runtime does not decide the next strategy; it exposes facts and asks the
     model to either continue with tools or finish honestly.
     """
-    evidence_pack = build_completion_evidence_pack(
-        workspace_path=workspace_path,
-        task_contract=task_contract,
-        run_result=run_result,
-        tool_events=tool_events,
-        completion_decisions=completion_decisions,
-    )
+    if not evidence_pack:
+        evidence_pack = build_completion_evidence_pack(
+            workspace_path=workspace_path,
+            task_contract=task_contract,
+            run_result=run_result,
+            tool_events=tool_events,
+            completion_decisions=completion_decisions,
+            task_route_evidence=task_route_evidence,
+        )
     return (
         "Completion self-review from runtime facts.\n"
         f"Current project: {workspace_path}\n"
@@ -237,15 +241,19 @@ def completion_reentry_prompt(
     *,
     tool_events: list[dict[str, Any]] | None = None,
     completion_decisions: list[dict[str, Any]] | None = None,
+    task_route_evidence: dict[str, Any] | None = None,
+    evidence_pack: dict[str, Any] | None = None,
 ) -> str:
     """Return an evidence prompt when a final candidate still has gaps."""
-    evidence_pack = build_completion_evidence_pack(
-        workspace_path=workspace_path,
-        task_contract=task_contract,
-        run_result=run_result,
-        tool_events=tool_events,
-        completion_decisions=completion_decisions,
-    )
+    if not evidence_pack:
+        evidence_pack = build_completion_evidence_pack(
+            workspace_path=workspace_path,
+            task_contract=task_contract,
+            run_result=run_result,
+            tool_events=tool_events,
+            completion_decisions=completion_decisions,
+            task_route_evidence=task_route_evidence,
+        )
     action = str(completion_decision.get("action") or "unknown")
     content_chars = completion_decision.get("content_chars")
     return (
@@ -482,6 +490,6 @@ def max_rounds_message(max_rounds: int, tool_events: list[dict[str, Any]]) -> st
         lines.append("本轮没有成功产生可记录的工具调用。")
     lines.extend([
         "",
-        "可继续依据：以上工具事实、用户后续补充、关键文件、关键词或期望结果。",
+        "后续可继续依据：以上工具事实、用户后续补充、关键文件、关键词或期望结果。",
     ])
     return "\n".join(lines)

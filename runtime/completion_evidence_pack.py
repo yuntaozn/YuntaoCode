@@ -29,6 +29,9 @@ COMPLETION_EVIDENCE_BUDGET: dict[str, int] = {
     "failure_records": 12,
     "risks": 18,
     "completion_decisions": 6,
+    "route_model_facts": 8,
+    "route_advisories": 8,
+    "route_capability_ids": 8,
     "formatted_prompt_chars": 12_000,
 }
 
@@ -40,6 +43,7 @@ def build_completion_evidence_pack(
     run_result: dict[str, Any] | None,
     tool_events: list[dict[str, Any]] | None = None,
     completion_decisions: list[dict[str, Any]] | None = None,
+    task_route_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a bounded model-facing evidence pack for completion self-review."""
 
@@ -57,6 +61,7 @@ def build_completion_evidence_pack(
     capability = _dict(result.get("capability_evidence"))
     artifact_summary = _dict(result.get("artifact_summary"))
     verification_closure = _dict(result.get("verification_closure"))
+    route_evidence = _dict(task_route_evidence) or _dict(result.get("task_route_evidence"))
     return {
         "schema_version": COMPLETION_EVIDENCE_PACK_SCHEMA_VERSION,
         "kind": "completion_evidence_pack",
@@ -89,6 +94,7 @@ def build_completion_evidence_pack(
         "debug_audit": _audit_digest(debug),
         "verification_closure": _verification_closure_digest(verification_closure),
         "capability_evidence": _capability_digest(capability),
+        "task_route_evidence": _task_route_evidence_digest(route_evidence),
         "tool_progress": _tool_progress_records(events),
         "tool_attempts": _tool_attempt_records(events),
         "failures": _failure_records(result),
@@ -130,6 +136,7 @@ def format_completion_evidence_pack(pack: dict[str, Any]) -> str:
     _append_audit_digest(lines, "visual verification", pack.get("visual_verification"))
     _append_audit_digest(lines, "debug audit", pack.get("debug_audit"))
     _append_capability(lines, pack.get("capability_evidence"))
+    _append_task_route_evidence(lines, pack.get("task_route_evidence"))
     _append_tool_progress(lines, pack.get("tool_progress"))
     _append_tool_attempts(lines, pack.get("tool_attempts"))
     _append_failures(lines, pack.get("failures"))
@@ -162,6 +169,9 @@ def summarize_completion_evidence_pack_for_decision(
         "verification_closure": _decision_verification_closure(pack.get("verification_closure")),
         "tool_progress": _tool_progress_records_from_pack(pack.get("tool_progress"))[:4],
         "tool_attempts": _tool_attempt_records_from_pack(pack.get("tool_attempts"))[:4],
+        "task_route_evidence": _decision_task_route_evidence(
+            pack.get("task_route_evidence")
+        ),
     }
 
 
@@ -605,6 +615,69 @@ def _capability_digest(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _task_route_evidence_digest(value: dict[str, Any]) -> dict[str, Any]:
+    if not value or value.get("kind") != "task_route_evidence":
+        return {}
+    flags = _dict(value.get("flags"))
+    return {
+        "schema_version": str(value.get("schema_version") or ""),
+        "kind": "task_route_evidence",
+        "boundary": str(value.get("boundary") or ""),
+        "strategy_owner": str(value.get("strategy_owner") or ""),
+        "safety_owner": str(value.get("safety_owner") or ""),
+        "proposal_count": value.get("proposal_count"),
+        "valid_proposal_count": value.get("valid_proposal_count"),
+        "target_capability_ids": _string_list(
+            value.get("target_capability_ids"),
+            limit=_budget("route_capability_ids"),
+        ),
+        "preflight_target_capability_ids": _string_list(
+            value.get("preflight_target_capability_ids"),
+            limit=_budget("route_capability_ids"),
+        ),
+        "advisory_codes": _string_list(
+            value.get("advisory_codes"),
+            limit=_budget("route_advisories"),
+        ),
+        "flags": {
+            key: flags.get(key)
+            for key in sorted(flags)
+            if key in {
+                "has_model_route",
+                "all_routes_valid",
+                "has_route_advisories",
+                "has_unknown_capability",
+                "has_tool_mismatch",
+            }
+        },
+        "model_facts": _string_list(
+            value.get("model_facts"),
+            limit=_budget("route_model_facts"),
+        ),
+    }
+
+
+def _decision_task_route_evidence(value: Any) -> dict[str, Any]:
+    route = value if isinstance(value, dict) else {}
+    if not route:
+        return {}
+    flags = _dict(route.get("flags"))
+    return {
+        "schema_version": str(route.get("schema_version") or ""),
+        "proposal_count": route.get("proposal_count"),
+        "valid_proposal_count": route.get("valid_proposal_count"),
+        "target_capability_ids": _string_list(
+            route.get("target_capability_ids"),
+            limit=6,
+        ),
+        "advisory_codes": _string_list(route.get("advisory_codes"), limit=6),
+        "has_model_route": bool(flags.get("has_model_route")),
+        "all_routes_valid": bool(flags.get("all_routes_valid")),
+        "has_unknown_capability": bool(flags.get("has_unknown_capability")),
+        "has_tool_mismatch": bool(flags.get("has_tool_mismatch")),
+    }
+
+
 def _failure_records(result: dict[str, Any]) -> list[dict[str, str]]:
     details = result.get("failure_details") if isinstance(result.get("failure_details"), list) else []
     failures = result.get("failures") if isinstance(result.get("failures"), list) else []
@@ -686,6 +759,30 @@ def _append_capability(lines: list[str], value: Any) -> None:
         "unobserved requested capabilities",
         item.get("unobserved_requested_capability_ids"),
     )
+
+
+def _append_task_route_evidence(lines: list[str], value: Any) -> None:
+    item = value if isinstance(value, dict) else {}
+    if not item or item.get("kind") != "task_route_evidence":
+        return
+    bits = []
+    if item.get("strategy_owner"):
+        bits.append(f"strategy_owner={item.get('strategy_owner')}")
+    if item.get("safety_owner"):
+        bits.append(f"safety_owner={item.get('safety_owner')}")
+    if item.get("proposal_count") is not None:
+        bits.append(f"proposals={item.get('proposal_count')}")
+    if item.get("valid_proposal_count") is not None:
+        bits.append(f"valid={item.get('valid_proposal_count')}")
+    flags = _dict(item.get("flags"))
+    true_flags = [key for key in sorted(flags) if flags.get(key) is True]
+    if true_flags:
+        bits.append("flags=" + ",".join(true_flags[:8]))
+    if bits:
+        lines.append("- task route evidence: " + "; ".join(bits))
+    _append_string_list(lines, "route target capabilities", item.get("target_capability_ids"))
+    _append_string_list(lines, "route advisories", item.get("advisory_codes"))
+    _append_string_list(lines, "route model facts", item.get("model_facts"))
 
 
 def _append_tool_progress(lines: list[str], value: Any) -> None:

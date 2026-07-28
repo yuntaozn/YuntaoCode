@@ -1236,12 +1236,26 @@ class TestPrompts:
                     "failures": 1,
                 },
             },
+            task_route_evidence={
+                "schema_version": "task_route_evidence.v1",
+                "kind": "task_route_evidence",
+                "boundary": "evidence_only",
+                "strategy_owner": "model",
+                "safety_owner": "runtime",
+                "proposal_count": 1,
+                "valid_proposal_count": 1,
+                "target_capability_ids": ["code.text_write"],
+                "flags": {"has_model_route": True, "all_routes_valid": True},
+                "model_facts": ["route_proposals=code.text_write/filesystem.write_file"],
+            },
         )
 
         assert "Completion self-review from runtime facts" in prompt
         assert "Runtime fact package" in prompt
         assert "viewer/index.html" in prompt
         assert "test_not_observed" in prompt
+        assert "task route evidence" in prompt
+        assert "route_proposals=code.text_write/filesystem.write_file" in prompt
         assert "Decide whether the task is actually complete" in prompt
         assert "Do not claim completion beyond the observed deliverables" in prompt
 

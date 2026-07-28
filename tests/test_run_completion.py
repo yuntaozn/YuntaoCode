@@ -222,6 +222,27 @@ def test_completion_evidence_pack_collects_audits_progress_and_decisions() -> No
         completion_decisions=[
             {"review_count": 1, "action": "continue_with_tools", "tool_call_count": 1}
         ],
+        task_route_evidence={
+            "schema_version": "task_route_evidence.v1",
+            "kind": "task_route_evidence",
+            "boundary": "evidence_only",
+            "strategy_owner": "model",
+            "safety_owner": "runtime",
+            "proposal_count": 1,
+            "valid_proposal_count": 1,
+            "target_capability_ids": ["code.text_write"],
+            "preflight_target_capability_ids": ["code.text_write"],
+            "advisory_codes": [],
+            "flags": {
+                "has_model_route": True,
+                "all_routes_valid": True,
+                "has_route_advisories": False,
+            },
+            "model_facts": [
+                "route_proposals=code.text_write/filesystem.write_file",
+                "route_validation=valid:1; invalid:0",
+            ],
+        },
     )
     text = format_completion_evidence_pack(pack)
 
@@ -242,6 +263,8 @@ def test_completion_evidence_pack_collects_audits_progress_and_decisions() -> No
     assert pack["verification_closure"]["freshness"]["counts"]["fresh"] == 1
     assert pack["visual_verification"]["flags"]["has_runtime_errors"] is True
     assert pack["debug_audit"]["flags"]["has_preview_service"] is True
+    assert pack["task_route_evidence"]["strategy_owner"] == "model"
+    assert pack["task_route_evidence"]["valid_proposal_count"] == 1
     assert pack["previous_completion_decisions"][0]["action"] == "continue_with_tools"
     assert "Completion evidence pack" in text
     assert "artifact summary" in text
@@ -260,6 +283,8 @@ def test_completion_evidence_pack_collects_audits_progress_and_decisions() -> No
     assert "recent unexecuted tool attempts" in text
     assert "dependency_install" in text
     assert "invalid_tool_input" in text
+    assert "task route evidence" in text
+    assert "route_proposals=code.text_write/filesystem.write_file" in text
 
 
 def test_completion_evidence_pack_applies_presentation_budget() -> None:
@@ -456,6 +481,19 @@ def test_completion_decision_records_compact_evidence_pack_summary() -> None:
             "tool_attempts": [
                 {"tool": "filesystem.write_file", "reason": "invalid_tool_input"}
             ],
+            "task_route_evidence": {
+                "schema_version": "task_route_evidence.v1",
+                "kind": "task_route_evidence",
+                "proposal_count": 1,
+                "valid_proposal_count": 0,
+                "target_capability_ids": ["preview.visual_debug"],
+                "advisory_codes": ["unknown_capability"],
+                "flags": {
+                    "has_model_route": True,
+                    "all_routes_valid": False,
+                    "has_unknown_capability": True,
+                },
+            },
         },
     )
 
@@ -473,3 +511,7 @@ def test_completion_decision_records_compact_evidence_pack_summary() -> None:
     ]
     assert decision["evidence_pack"]["tool_progress"][0]["tool"] == "preview.capture_file"
     assert decision["evidence_pack"]["tool_attempts"][0]["tool"] == "filesystem.write_file"
+    assert decision["evidence_pack"]["task_route_evidence"]["target_capability_ids"] == [
+        "preview.visual_debug"
+    ]
+    assert decision["evidence_pack"]["task_route_evidence"]["has_unknown_capability"] is True
