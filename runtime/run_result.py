@@ -9,7 +9,10 @@ from runtime.agent_strategy.classifiers import (
     is_write_tool,
     successful_verification_events,
 )
-from runtime.agent_strategy.document_completion import min_text_output_check
+from runtime.agent_strategy.document_completion import (
+    contract_expects_answer_output,
+    min_text_output_check,
+)
 from runtime.agent_strategy.tool_event_roles import (
     deliverable_path_deviations,
     event_effects,
@@ -53,6 +56,7 @@ def build_run_result(
     preflight_advisories: list[dict[str, Any]] | None = None,
     model_error: str = "",
     final_answer_error: str = "",
+    answer_text: str | None = None,
 ) -> dict[str, Any]:
     """Build deterministic run facts from tool events.
 
@@ -127,6 +131,8 @@ def build_run_result(
         write_failures = state_write_failures
         verification_successes = successful_verification_events(tool_events, mode)
         sufficient_verification_successes = verification_successes
+    answer_evidence = _answer_deliverable_evidence(task_contract, answer_text)
+    answer_deliverable_observed = bool(answer_evidence.get("observed"))
     write_partials = [
         event for event in write_successes
         if _effective_event_status(str(event.get("tool") or ""), event) == "partial"
@@ -268,14 +274,20 @@ def build_run_result(
                 risks.append(str(runtime_risk["code"]))
     if requires_code_write and not write_successes:
         risks.append("expected_write_not_observed")
-    requires_target_deliverable = (
+    requires_state_deliverable = (
         isinstance(task_contract, dict)
         and (
             bool(task_contract.get("requires_write"))
             or bool(task_contract.get("requires_state_change"))
         )
     )
-    missing_target_deliverable = bool(requires_target_deliverable and not write_successes)
+    requires_answer_deliverable = bool(
+        answer_text is not None and contract_expects_answer_output(task_contract)
+    )
+    missing_target_deliverable = bool(
+        (requires_state_deliverable and not write_successes)
+        or (requires_answer_deliverable and not answer_deliverable_observed)
+    )
     if missing_target_deliverable:
         risks.append("target_deliverable_not_observed")
     if write_successes and not verification_successes:
@@ -285,7 +297,7 @@ def build_run_result(
     requires_target_verification = bool(
         isinstance(task_contract, dict)
         and task_contract.get("requires_verification")
-        and (write_successes or not requires_target_deliverable)
+        and (write_successes or not requires_state_deliverable)
     )
     missing_required_verification = bool(
         requires_target_verification and not sufficient_verification_successes
@@ -353,8 +365,9 @@ def build_run_result(
         task_contract=task_contract,
         workspace_path=workspace_path,
         mode=mode,
+        answer_text=answer_text,
     )
-    min_output_failure = _document_min_output_failure(
+    min_output_failure = _minimum_text_output_failure(
         workspace_path,
         min_output_check,
     )
@@ -451,6 +464,7 @@ def build_run_result(
     status = _result_status(
         has_tool_events=bool(tool_events),
         has_write_success=bool(write_successes),
+        has_answer_deliverable=answer_deliverable_observed,
         has_failure=bool(blocking_failures),
         has_invalid_verification_failure=bool(invalid_verification_failures),
         has_partial_write=bool(write_successes and unrecovered_write_failures),
@@ -504,7 +518,10 @@ def build_run_result(
         "status": status,
         "counts": {
             "tool_events": len(tool_events),
-            "deliverable_successes": len(write_successes),
+            "deliverable_successes": (
+                len(write_successes) + int(answer_deliverable_observed)
+            ),
+            "answer_deliverable_successes": int(answer_deliverable_observed),
             "file_write_successes": len(state_write_successes),
             "external_state_changes": external_state_change_count,
             "write_successes": len(write_successes),
@@ -527,6 +544,7 @@ def build_run_result(
         "target_written_paths": target_written_paths,
         "observed_written_paths": observed_written_paths,
         "artifacts": artifacts[:24],
+        "answer_evidence": answer_evidence,
         "run_artifacts": run_artifacts[:48],
         "artifact_summary": artifact_summary,
         "verified": verified[:12],
@@ -555,7 +573,7 @@ def build_run_result(
             "expected_document_coverage": bool(expected_document_coverage),
             "expected_min_output_chars": max(0, int(expected_min_output_chars or 0)),
             "observed_text_output_chars": int(min_output_check.get("observed") or 0),
-            "text_length_evidence_observed": bool(min_output_check.get("event")),
+            "text_length_evidence_observed": bool(min_output_check.get("source")),
             "observed_state_change": observed_state_change,
             "optional_state_change_observed": optional_state_change_observed,
             "unverified_optional_write": unverified_optional_write,
@@ -570,6 +588,7 @@ def _result_status(
     *,
     has_tool_events: bool,
     has_write_success: bool,
+    has_answer_deliverable: bool,
     has_failure: bool,
     has_invalid_verification_failure: bool,
     has_partial_write: bool,
@@ -588,19 +607,19 @@ def _result_status(
     no_progress_budget_exhausted: bool,
 ) -> str:
     if contract_failed:
-        if has_write_success and not has_missing_target_deliverable:
+        if (has_write_success or has_answer_deliverable) and not has_missing_target_deliverable:
             return "partial"
         return "failure"
     if max_rounds_exceeded or no_progress_budget_exhausted:
-        if has_observed_state_change or has_write_success:
+        if has_observed_state_change or has_write_success or has_answer_deliverable:
             return "partial"
         return "stopped"
     if has_model_error:
-        if has_observed_state_change or has_write_success or has_tool_events:
+        if has_observed_state_change or has_write_success or has_answer_deliverable or has_tool_events:
             return "partial"
         return "failure"
     if has_invalid_final_answer:
-        if has_observed_state_change or has_write_success or has_tool_events:
+        if has_observed_state_change or has_write_success or has_answer_deliverable or has_tool_events:
             return "partial"
         return "failure"
     if has_document_coverage_failure or has_document_min_output_failure:
@@ -621,7 +640,7 @@ def _result_status(
         return "partial"
     if has_failure:
         return "failure"
-    if has_write_success or has_tool_events:
+    if has_write_success or has_answer_deliverable or has_tool_events:
         return "success"
     return "no_tool_activity"
 
@@ -1045,7 +1064,7 @@ def _document_coverage_failure(
     }
 
 
-def _document_min_output_failure(
+def _minimum_text_output_failure(
     workspace_path: str,
     check: dict[str, Any],
 ) -> dict[str, Any] | None:
@@ -1055,22 +1074,48 @@ def _document_min_output_failure(
     expected = _safe_int(check.get("expected"))
     observed = _safe_int(check.get("observed"))
     reason = str(check.get("reason") or "document_output_too_short")
-    if reason == "document_output_length_unknown":
+    answer_source = str(check.get("source") or "") == "assistant_answer"
+    if reason in {"document_output_length_unknown", "answer_output_length_unknown"}:
         return {
-            "tool": str((event.get("tool") if event else "") or "runtime.text_length_check"),
+            "tool": str(
+                (event.get("tool") if event else "")
+                or ("model.final_answer" if answer_source else "runtime.text_length_check")
+            ),
             "path": _event_path(workspace_path, event) if event else "",
             "error": (
-                "document output length evidence was not observed: "
+                ("answer" if answer_source else "document")
+                + " output length evidence was not observed: "
                 f"expected_min_chars={expected}, output_chars=0"
             ),
         }
     return {
-        "tool": str((event.get("tool") if event else "") or "runtime.text_length_check"),
+        "tool": str(
+            (event.get("tool") if event else "")
+            or ("model.final_answer" if answer_source else "runtime.text_length_check")
+        ),
         "path": _event_path(workspace_path, event) if event else "",
         "error": (
-            "document output is shorter than requested: "
+            ("answer" if answer_source else "document")
+            + " output is shorter than requested: "
             f"expected_min_chars={expected}, output_chars={observed}"
         ),
+    }
+
+
+def _answer_deliverable_evidence(
+    task_contract: dict[str, Any] | None,
+    answer_text: str | None,
+) -> dict[str, Any]:
+    required = contract_expects_answer_output(task_contract)
+    available = answer_text is not None
+    text = str(answer_text or "").strip() if available else ""
+    return {
+        "kind": "answer",
+        "required": required,
+        "available": available,
+        "observed": bool(required and text),
+        "chars": len(text) if required else 0,
+        "source": "model_final_answer" if required and text else "",
     }
 
 

@@ -37,6 +37,8 @@ RISK_CODES: frozenset[str] = frozenset({
     "document_output_coverage_low",
     "document_output_too_short",
     "document_output_length_unknown",
+    "answer_output_too_short",
+    "answer_output_length_unknown",
     "optional_write_not_verified",
     "invalid_verification_method",
     "runtime_verification_not_observed",

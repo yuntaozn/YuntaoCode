@@ -32,6 +32,8 @@ class RunFinalizationHost(Protocol):
         task_contract: dict[str, Any],
         tool_events: list[dict[str, Any]],
         mode: str | None,
+        *,
+        answer_text: str | None = None,
     ) -> list[str]: ...
 
     def _max_rounds_after_write_message(
@@ -182,17 +184,21 @@ class RunFinalizer:
         tool_events = request.tool_events
         task_contract = request.task_contract
         state = request.execution_state
+        model_content = strip_native_tool_call_blocks(
+            "".join(request.content_parts)
+        ).strip()
         contract_failures = self._host._task_contract_failures(
             task_contract,
             tool_events,
             request.effective_mode,
+            answer_text=model_content,
         )
         tool_contract_failed = bool(contract_failures)
         if contract_failures:
             metadata["contract_failures"] = contract_failures
 
         assistant_content = initial_assistant_content(
-            model_content="".join(request.content_parts).strip(),
+            model_content=model_content,
             model_provider_error=state.model_provider_error,
             no_progress_budget_exhausted=state.no_progress_budget_exhausted,
             has_successful_write=has_successful_write(tool_events),
@@ -290,6 +296,7 @@ class RunFinalizer:
             preflight_advisories=_preflight_advisories(request.capability_preflight),
             model_error=state.model_provider_error,
             final_answer_error=final_answer_error,
+            answer_text=model_content,
         )
         metadata["run_result"] = run_result
 
@@ -571,6 +578,8 @@ def initial_assistant_content(
     if tool_contract_failed and (
         "document_output_too_short" in contract_failures
         or "document_output_length_unknown" in contract_failures
+        or "answer_output_too_short" in contract_failures
+        or "answer_output_length_unknown" in contract_failures
     ):
         if model_content:
             return model_content

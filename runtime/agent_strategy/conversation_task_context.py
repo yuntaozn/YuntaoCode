@@ -59,6 +59,30 @@ def task_lineage_candidates(
     )
 
 
+def task_lineage_availability(
+    candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
+) -> dict[str, Any]:
+    """Return neutral lineage availability without exposing historical goals.
+
+    The runtime may know that historical task candidates exist, but it should
+    not decide whether the current request is a continuation.  Candidate details
+    are exposed only after the model-side task contract asks for lineage facts.
+    """
+
+    candidate_count = len([item for item in candidates or [] if isinstance(item, dict)])
+    return {
+        "schema_version": "task_lineage_availability.v1",
+        "kind": "task_lineage_availability",
+        "available": candidate_count > 0,
+        "candidate_count": candidate_count,
+        "candidate_content_exposure": "model_requested",
+        "rule": (
+            "Historical task candidates exist as auditable facts. Their goals "
+            "are not included until the model task contract asks for lineage."
+        ),
+    }
+
+
 def referenced_task_candidate_contract(
     candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
     candidate_id: Any,

@@ -716,7 +716,7 @@ class TestConsecutiveRepeatedFailureCount:
 
         assert repeated_failure_action(events) == "report_repetition"
 
-    def test_repeated_failure_pauses_only_after_larger_no_progress_route_budget(self):
+    def test_repeated_failure_escalates_after_larger_no_progress_route_budget(self):
         event = {
             "tool": "filesystem.write_file",
             "status": "failure",
@@ -726,7 +726,7 @@ class TestConsecutiveRepeatedFailureCount:
         }
 
         assert repeated_failure_action([event] * 8) == "report_repetition"
-        assert repeated_failure_action([event] * 9) == "pause_no_progress"
+        assert repeated_failure_action([event] * 9) == "escalate_no_progress"
 
     def test_repeated_failure_action_counts_same_route_across_failed_detours(self):
         write_failure = {

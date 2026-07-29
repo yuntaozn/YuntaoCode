@@ -12,7 +12,8 @@ COMPLETION_REVIEW = "completion_review"
 FINAL_ANSWER_VERIFIED = "final_answer_verified"
 FINAL_ANSWER_CONVERGED = "final_answer_converged"
 CONTINUE_VERIFICATION_GAP = "continue_verification_gap"
-PAUSE_STAGNANT_VERIFICATION_GAP = "pause_stagnant_verification_gap"
+ESCALATE_STAGNANT_VERIFICATION_GAP = "escalate_stagnant_verification_gap"
+PAUSE_STAGNANT_VERIFICATION_GAP = ESCALATE_STAGNANT_VERIFICATION_GAP
 ACCEPT_COMPLETION_CANDIDATE = "accept_completion_candidate"
 REENTER_COMPLETION_REVIEW = "reenter_completion_review"
 
@@ -51,8 +52,9 @@ class VerificationGapDecision:
 
     The runner should keep the model in charge of the next strategy. This
     helper only detects whether the same verification gap has remained
-    unchanged across repeated model rounds, so the runtime can avoid infinite
-    loops without stopping after the first incomplete self-review.
+    unchanged across repeated model rounds, so the runtime can escalate the
+    evidence without stopping after the first incomplete self-review. Global
+    round limits remain the resource boundary.
     """
 
     action: str
@@ -158,7 +160,7 @@ def build_verification_gap_decision(
     prompt_count: int,
     stagnant_rounds: int,
     max_stagnant_rounds: int = 4,
-    min_prompts_before_stop: int = 6,
+    min_prompts_before_escalation: int = 6,
 ) -> VerificationGapDecision:
     """Decide whether a missing-verification loop still has room to continue.
 
@@ -175,11 +177,11 @@ def build_verification_gap_decision(
         next_stagnant_rounds = 0
 
     if (
-        next_prompt_count >= max(1, min_prompts_before_stop)
+        next_prompt_count >= max(1, min_prompts_before_escalation)
         and next_stagnant_rounds >= max(1, max_stagnant_rounds)
     ):
         return VerificationGapDecision(
-            PAUSE_STAGNANT_VERIFICATION_GAP,
+            ESCALATE_STAGNANT_VERIFICATION_GAP,
             "verification gap remained unchanged across repeated rounds",
             next_prompt_count,
             next_stagnant_rounds,

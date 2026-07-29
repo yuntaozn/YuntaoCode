@@ -46,6 +46,8 @@ RISK_MESSAGES_ZH: dict[str, str] = {
     "document_output_coverage_low": "文档输出覆盖率过低：目标文件已生成，但内容明显少于源文档。",
     "document_output_too_short": "文档已导出，但实际内容字数少于用户要求。",
     "document_output_length_unknown": "无法确认文档输出长度，不应仅凭模型总结判断已完成。",
+    "answer_output_too_short": "最终回答已生成，但实际长度少于任务契约中的目标。",
+    "answer_output_length_unknown": "无法确认最终回答长度，回答型产物证据不完整。",
     "optional_write_not_verified": "可选写入结果没有验证。",
     "invalid_verification_method": "使用了无效的验证方式。",
     "runtime_verification_not_observed": "没有观察到可退出的运行时验证。",

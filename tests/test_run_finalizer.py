@@ -140,8 +140,10 @@ class _FinalizationHost:
         )
         self.events: list[dict[str, Any]] = []
         self.flush_count = 0
+        self.contract_answer_text: str | None = None
 
-    def _task_contract_failures(self, *args: Any) -> list[str]:
+    def _task_contract_failures(self, *args: Any, **kwargs: Any) -> list[str]:
+        self.contract_answer_text = kwargs.get("answer_text")
         return []
 
     def _max_rounds_after_write_message(self, *args: Any) -> str:
@@ -262,6 +264,7 @@ async def test_finalizer_publishes_result_persists_answer_and_finishes(
     )
 
     assert outcome.assistant_content == "这是模型的回答。"
+    assert host.contract_answer_text == "这是模型的回答。"
     assert outcome.run_result["status"] == "no_tool_activity"
     assert outcome.run_result["capability_advisories"][0]["code"] == "service_stopped"
     assert "capability_preflight_advisory" in outcome.run_result["risks"]

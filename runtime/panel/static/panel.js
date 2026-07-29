@@ -2943,7 +2943,11 @@ async function sendMessage(event) {
                     touchProgress(eventData.message || t('status.thinking'));
                     updateActiveStreamState("running", eventData.status || "status", eventData.message || t('status.thinking'));
                     showStatusBar(eventData.message || t('status.thinking'));
-                    if (eventData.status === "repeated_route_observed" || eventData.status === "repeated_tool_failure") {
+                    if (
+                        eventData.status === "repeated_route_observed"
+                        || eventData.status === "repeated_route_budget_observed"
+                        || eventData.status === "repeated_tool_failure"
+                    ) {
                         currentMetadata.executionConvergence = eventData.execution_convergence || eventData.convergence || null;
                         currentMetadata.routeAttemptCount = eventData.route_attempt_count || 0;
                         currentMetadata.lastFailedTool = eventData.tool || currentMetadata.lastFailedTool || "";

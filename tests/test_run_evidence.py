@@ -1,5 +1,6 @@
 from runtime.run_evidence import build_run_evidence
 from runtime.run_store import RunStore
+from runtime.tool_call_protocol import build_tool_attempt_observation
 
 
 def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
@@ -146,6 +147,26 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
             "effects": ["file_write"],
             "roles": ["deliverable"],
         },
+    })
+    tool_attempt = build_tool_attempt_observation(
+        tool_id="filesystem.write_file",
+        arguments={"content": "hello"},
+        reason="invalid_tool_input",
+        message="missing path",
+        missing_fields=["path"],
+    )
+    store.record_event(run.id, {
+        "event": "tool",
+        "tool": "filesystem.write_file",
+        "status": "failure",
+        "input": {"content": "hello"},
+        "output": {
+            "type": "tool_attempt_observation",
+            "reason": "invalid_tool_input",
+            "message": "missing path",
+            "observation": tool_attempt,
+        },
+        "tool_attempt_observation": tool_attempt,
     })
     store.record_event(run.id, {
         "event": "context_pack",
@@ -302,6 +323,10 @@ def test_build_run_evidence_collects_runtime_facts_once(tmp_path) -> None:
     assert evidence["task_route_evidence"]["strategy_owner"] == "model"
     assert evidence["task_route_evidence"]["valid_proposal_count"] == 1
     assert evidence["task_route_evidence"]["flags"]["all_routes_valid"] is True
+    assert evidence["tool_attempt_recovery"]["schema_version"] == "tool_attempt_recovery.v1"
+    assert evidence["tool_attempt_recovery"]["counts"]["attempts"] == 1
+    assert evidence["tool_attempt_recovery"]["reason_counts"] == {"invalid_tool_input": 1}
+    assert "missing_fields=path" in evidence["tool_attempt_recovery"]["model_facts"]
     assert evidence["capability_snapshot"]["available_evidence_kinds"] == [
         "content",
         "runtime",

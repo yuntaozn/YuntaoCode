@@ -15,6 +15,7 @@ from runtime.capability_evidence import build_capability_evidence_summary
 from runtime.context_pack import context_pack_summary
 from runtime.debug_audit import build_debug_audit
 from runtime.run_trace import build_run_trace_summary
+from runtime.tool_attempt_recovery import build_tool_attempt_recovery
 from runtime.verification_closure import build_verification_closure
 from runtime.visual_evidence import visual_evidence_summary
 from runtime.visual_verification import build_visual_verification_summary
@@ -91,6 +92,7 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
         visual_verification=visual_verification,
         debug_audit=debug_audit,
     )
+    tool_attempt_recovery = build_tool_attempt_recovery(tool_events)
     return {
         "schema_version": RUN_EVIDENCE_SCHEMA_VERSION,
         "kind": "run_evidence",
@@ -103,6 +105,7 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
         "visual_verification": visual_verification,
         "debug_audit": debug_audit,
         "verification_closure": verification_closure,
+        "tool_attempt_recovery": tool_attempt_recovery,
         "workspace_snapshot": workspace_snapshot_summary(workspace_snapshot),
         "capability_evidence": build_capability_evidence_summary(
             tool_events,

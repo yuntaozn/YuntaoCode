@@ -655,6 +655,26 @@ def test_task_contract_failures_accept_answer_evidence_for_read_only_analysis() 
     assert failures == []
 
 
+def test_task_contract_failures_use_final_answer_length_for_answer_deliverable() -> None:
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    failures = handler._task_contract_failures(
+        {
+            "intent": "read_only_analysis",
+            "workspace_path": "D:/workspace",
+            "requires_write": False,
+            "requires_state_change": False,
+            "requires_verification": False,
+            "expected_min_output_chars": 2000,
+            "deliverables": [{"kind": "answer"}],
+        },
+        [],
+        "terminal",
+        answer_text="a" * 1751,
+    )
+
+    assert failures == ["answer_output_too_short"]
+
+
 @pytest.mark.asyncio
 async def test_model_task_contract_receives_current_request_not_raw_history(monkeypatch: Any) -> None:
     captured: dict[str, Any] = {}

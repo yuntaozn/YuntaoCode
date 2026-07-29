@@ -1177,6 +1177,88 @@ def test_build_run_result_treats_read_only_evidence_as_answer_verification() -> 
     assert "execution_contract_failed" not in result["risks"]
 
 
+def test_build_run_result_counts_final_answer_as_declared_deliverable() -> None:
+    answer = "a" * 2200
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        expected_min_output_chars=2000,
+        answer_text=answer,
+        task_contract={
+            "intent": "read_only_analysis",
+            "requires_write": False,
+            "requires_state_change": False,
+            "requires_verification": False,
+            "expected_min_output_chars": 2000,
+            "deliverables": [{"kind": "answer"}],
+        },
+        tool_events=[],
+    )
+
+    assert result["status"] == "success"
+    assert result["counts"]["deliverable_successes"] == 1
+    assert result["counts"]["answer_deliverable_successes"] == 1
+    assert result["answer_evidence"] == {
+        "kind": "answer",
+        "required": True,
+        "available": True,
+        "observed": True,
+        "chars": 2200,
+        "source": "model_final_answer",
+    }
+    assert result["flags"]["observed_text_output_chars"] == 2200
+    assert result["flags"]["text_length_evidence_observed"] is True
+
+
+def test_build_run_result_reports_short_answer_with_actual_length() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        expected_min_output_chars=2000,
+        answer_text="a" * 1751,
+        contract_failed=True,
+        task_contract={
+            "intent": "read_only_analysis",
+            "requires_write": False,
+            "requires_state_change": False,
+            "requires_verification": True,
+            "expected_min_output_chars": 2000,
+            "deliverables": [{"kind": "answer"}],
+        },
+        tool_events=[
+            {
+                "tool": "filesystem.read_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/README.md"},
+                "output": {"path": "D:/workspace/README.md", "content": "# Demo"},
+            },
+            {
+                "tool": "git.status",
+                "status": "failure",
+                "input": {"path": "D:/workspace"},
+                "error": "not a git repository",
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["counts"]["deliverable_successes"] == 1
+    assert result["counts"]["incidental_failures"] == 1
+    assert result["flags"]["observed_text_output_chars"] == 1751
+    assert result["failures"][-1] == {
+        "tool": "model.final_answer",
+        "path": "",
+        "error": (
+            "answer output is shorter than requested: "
+            "expected_min_chars=2000, output_chars=1751"
+        ),
+    }
+    assert "answer_output_too_short" in result["risks"]
+    assert "document_output_length_unknown" not in result["risks"]
+
+
 def test_build_run_result_marks_recovered_delivery_and_weak_verification_partial() -> None:
     contract = {
         "requires_write": False,

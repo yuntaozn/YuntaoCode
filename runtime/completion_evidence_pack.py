@@ -10,6 +10,11 @@ from __future__ import annotations
 from typing import Any
 
 from runtime.run_fact_summary import build_run_fact_summary, format_run_fact_summary
+from runtime.tool_attempt_recovery import (
+    build_tool_attempt_recovery,
+    format_tool_attempt_recovery_for_model,
+    summarize_tool_attempt_recovery_for_decision,
+)
 
 
 COMPLETION_EVIDENCE_PACK_SCHEMA_VERSION = "completion_evidence_pack.v1"
@@ -26,6 +31,7 @@ COMPLETION_EVIDENCE_BUDGET: dict[str, int] = {
     "capability_ids": 8,
     "tool_progress": 8,
     "tool_attempts": 8,
+    "tool_attempt_recovery": 12,
     "failure_records": 12,
     "risks": 18,
     "completion_decisions": 6,
@@ -62,6 +68,10 @@ def build_completion_evidence_pack(
     artifact_summary = _dict(result.get("artifact_summary"))
     verification_closure = _dict(result.get("verification_closure"))
     route_evidence = _dict(task_route_evidence) or _dict(result.get("task_route_evidence"))
+    tool_attempt_recovery = build_tool_attempt_recovery(
+        events,
+        limit=_budget("tool_attempt_recovery"),
+    )
     return {
         "schema_version": COMPLETION_EVIDENCE_PACK_SCHEMA_VERSION,
         "kind": "completion_evidence_pack",
@@ -97,6 +107,7 @@ def build_completion_evidence_pack(
         "task_route_evidence": _task_route_evidence_digest(route_evidence),
         "tool_progress": _tool_progress_records(events),
         "tool_attempts": _tool_attempt_records(events),
+        "tool_attempt_recovery": tool_attempt_recovery,
         "failures": _failure_records(result),
         "risks": _string_list(result.get("risks"), limit=_budget("risks")),
         "previous_completion_decisions": _completion_decision_records(completion_decisions),
@@ -139,6 +150,7 @@ def format_completion_evidence_pack(pack: dict[str, Any]) -> str:
     _append_task_route_evidence(lines, pack.get("task_route_evidence"))
     _append_tool_progress(lines, pack.get("tool_progress"))
     _append_tool_attempts(lines, pack.get("tool_attempts"))
+    _append_tool_attempt_recovery(lines, pack.get("tool_attempt_recovery"))
     _append_failures(lines, pack.get("failures"))
     _append_string_list(lines, "risks", pack.get("risks"))
     _append_string_list(lines, "missing verification modalities", pack.get("missing_verification_modalities"))
@@ -169,6 +181,9 @@ def summarize_completion_evidence_pack_for_decision(
         "verification_closure": _decision_verification_closure(pack.get("verification_closure")),
         "tool_progress": _tool_progress_records_from_pack(pack.get("tool_progress"))[:4],
         "tool_attempts": _tool_attempt_records_from_pack(pack.get("tool_attempts"))[:4],
+        "tool_attempt_recovery": summarize_tool_attempt_recovery_for_decision(
+            pack.get("tool_attempt_recovery")
+        ),
         "task_route_evidence": _decision_task_route_evidence(
             pack.get("task_route_evidence")
         ),
@@ -824,6 +839,12 @@ def _append_tool_attempts(lines: list[str], value: Any) -> None:
         if item.get("recoverable_by_model") is True:
             bits.append("recoverable_by_model=true")
         lines.append(f"  - {' | '.join(bits)}")
+
+
+def _append_tool_attempt_recovery(lines: list[str], value: Any) -> None:
+    text = format_tool_attempt_recovery_for_model(value if isinstance(value, dict) else {})
+    if text:
+        lines.append(text)
 
 
 def _append_failures(lines: list[str], value: Any) -> None:

@@ -16,6 +16,7 @@ from runtime.run_result_presenter import (
 
 def test_known_run_result_risks_have_schema_codes() -> None:
     assert "document_output_length_unknown" in RISK_CODES
+    assert "answer_output_too_short" in RISK_CODES
     assert "target_deliverable_not_observed" in RISK_CODES
     assert "invalid_tool_call_protocol" in RISK_CODES
     assert "artifact_integrity_invalid" in RISK_CODES
@@ -30,6 +31,7 @@ def test_risk_presenter_uses_user_facing_message() -> None:
     assert risk_message_zh("max_rounds_exceeded") == "当前执行预算已用完。"
     assert "反复无新进展" in risk_message_zh("repeated_tool_failure")
     assert "能力预检提示" in risk_message_zh("capability_preflight_advisory")
+    assert "最终回答已生成" in risk_message_zh("answer_output_too_short")
 
 
 def test_final_answer_gap_detection_is_presentation_fact() -> None:

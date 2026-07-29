@@ -142,9 +142,15 @@ UI 历史和审计记录应完整保留，但模型侧上下文需要卫生处�
 当前方向是：
 
 1. 从历史消息中抽取可能相关的 task candidate。
-2. 在 Context Pack 中写入 `task_lineage` 记录。
-3. 由模型在 task contract 阶段决定是否引用某个 candidate。
-4. Runtime 只审计“模型引用了哪个候选任务”，不直接把旧任务目标强加给当前轮。
+2. 初始 Task Contract 上下文只写入 `task_lineage_availability`，说明候选可用和数量，
+   不包含旧任务 goal、路径、能力或路线。
+3. 由模型在 task contract 阶段决定是否需要历史候选。模型可以设置
+   `needs_task_lineage=true`、选择 `continue/revise/replace`，或引用
+   `referenced_task_candidate_id`。
+4. 只有模型请求后，Runtime 才在第二次 Task Contract 上下文中展开 `task_lineage`
+   候选事实。
+5. Runtime 只审计“模型请求并引用了哪个候选任务”，不直接判断本轮是普通新任务、
+   追问、续接或修订。
 
 续接关系也不等于目标冻结。只有模型在当前 Task Contract 中显式选择 `continue` 或
 `revise` 时，Runtime 才允许历史锚点补充当前模型遗漏的字段。当前轮明确给出的 goal、
@@ -160,6 +166,10 @@ deliverable、capability、状态变化和验证要求始终优先；“继续�
 Task Lineage 的审计记录可以保留完整候选元数据，但模型侧表示必须按候选独立限长，
 确保有限预算内仍能看到所有入选候选的 ID、目标、焦点和真实路径。不能先拼成一段很长
 的 JSON，再统一截断到只剩第一个候选。
+
+普通新任务不应因为同一对话中存在未完成旧 Run 就默认看到旧候选目标。Runtime 不
+再通过关键词判断“普通新任务”或“显式追问”；它只告诉模型历史候选是否可用。是否需要
+展开候选、是否引用候选、是否继承历史锚点，都由模型的 Task Contract 字段表达。
 
 候选按时间顺序展示，不根据当前文字与历史路径的关键词重合度重新排序，也不生成
 `active_target`。历史 Run 的真实写入路径保留在 `actual_paths` 证据中，不会被提升为

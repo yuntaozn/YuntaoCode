@@ -10,7 +10,8 @@ from runtime.tool_aliases import normalize_tool_id
 
 NO_ACTION = "none"
 REPORT_REPETITION = "report_repetition"
-PAUSE_NO_PROGRESS = "pause_no_progress"
+ESCALATE_NO_PROGRESS = "escalate_no_progress"
+PAUSE_NO_PROGRESS = ESCALATE_NO_PROGRESS
 
 
 @dataclass(frozen=True)
@@ -18,8 +19,9 @@ class ExecutionConvergenceDecision:
     """Observed convergence state for the current no-progress window.
 
     This is evidence about execution shape, not a planner.  The runtime can use
-    the action to avoid endless loops, while the model sees the rest as facts it
-    can use to choose a different route.
+    the action to decide how strongly to surface facts, while the model sees
+    the rest as facts it can use to choose a different route. Global round
+    limits remain the resource boundary.
     """
 
     action: str = NO_ACTION
@@ -67,8 +69,8 @@ def build_execution_convergence_decision(
     - any successful or partial tool result resets the no-progress window;
     - changing route is treated as self-correction evidence and expands the
       bounded budget;
-    - stopping happens only when the latest failed route repeats too many times
-      inside a window that produced no progress.
+    - a saturated local budget escalates the evidence, but does not choose the
+      next strategy or make the task verdict.
     """
 
     events = [item for item in tool_events or [] if isinstance(item, dict)]
@@ -105,7 +107,7 @@ def build_execution_convergence_decision(
     if route_attempt_count < 2:
         action = NO_ACTION
     elif route_attempt_count >= budget_limit:
-        action = PAUSE_NO_PROGRESS
+        action = ESCALATE_NO_PROGRESS
     else:
         action = REPORT_REPETITION
     return ExecutionConvergenceDecision(
@@ -289,7 +291,12 @@ def _model_decision(
             "Different failed routes were observed; keep the next action materially tied to new evidence instead of cycling."
         )
     remaining = max(0, budget_limit_route_attempts - route_attempt_count)
-    decisions.append(f"Repeated latest-route budget remaining in this no-progress window: {remaining}.")
+    if remaining:
+        decisions.append(f"Repeated latest-route budget remaining in this no-progress window: {remaining}.")
+    else:
+        decisions.append(
+            "The latest-route repetition budget is saturated; this is evidence for a materially different repair, verification, or boundary decision."
+        )
     if latest_tool:
         decisions.append(f"Latest route under observation: {latest_tool}.")
     return decisions

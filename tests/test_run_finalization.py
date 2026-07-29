@@ -7,7 +7,7 @@ from runtime.agent_strategy.run_finalization import (
     NEEDS_VERIFICATION_EVIDENCE,
     NO_TASK_EVIDENCE,
     NO_TARGET_DELIVERABLE,
-    PAUSE_STAGNANT_VERIFICATION_GAP,
+    ESCALATE_STAGNANT_VERIFICATION_GAP,
     REENTER_COMPLETION_REVIEW,
     build_completion_reentry_decision,
     build_finalization_gate,
@@ -129,7 +129,7 @@ def test_verification_gap_decision_continues_when_gap_changes() -> None:
     assert second.stagnant_rounds == 0
 
 
-def test_verification_gap_decision_pauses_only_after_repeated_stagnation() -> None:
+def test_verification_gap_decision_escalates_only_after_repeated_stagnation() -> None:
     decision = build_verification_gap_decision(
         previous_key="",
         current_key="missing=content",
@@ -153,7 +153,7 @@ def test_verification_gap_decision_pauses_only_after_repeated_stagnation() -> No
         stagnant_rounds=decision.stagnant_rounds,
     )
 
-    assert decision.action == PAUSE_STAGNANT_VERIFICATION_GAP
+    assert decision.action == ESCALATE_STAGNANT_VERIFICATION_GAP
 
 
 def test_completion_reentry_reopens_final_candidate_with_unresolved_gap() -> None:

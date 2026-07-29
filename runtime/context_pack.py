@@ -29,6 +29,7 @@ def build_context_pack(
     task_contract: dict[str, Any] | None = None,
     active_focus: dict[str, Any] | None = None,
     previous_contract: dict[str, Any] | None = None,
+    task_lineage_availability: dict[str, Any] | None = None,
     task_candidates: list[dict[str, Any]] | None = None,
     memory_context: dict[str, Any] | None = None,
     capability_snapshot: dict[str, Any] | None = None,
@@ -50,6 +51,7 @@ def build_context_pack(
         task_contract=task_contract,
         active_focus=active_focus,
         previous_contract=previous_contract,
+        task_lineage_availability=task_lineage_availability,
         task_candidates=task_candidates,
         memory_context=memory_context,
         capability_snapshot=capability_snapshot,
@@ -209,6 +211,7 @@ def _candidate_records(
     task_contract: dict[str, Any] | None,
     active_focus: dict[str, Any] | None,
     previous_contract: dict[str, Any] | None,
+    task_lineage_availability: dict[str, Any] | None,
     task_candidates: list[dict[str, Any]] | None,
     memory_context: dict[str, Any] | None,
     capability_snapshot: dict[str, Any] | None,
@@ -236,6 +239,12 @@ def _candidate_records(
     memory_record = _memory_record(memory_context, task_id=task_id)
     if memory_record:
         records.append(memory_record)
+    lineage_availability_record = _task_lineage_availability_record(
+        task_lineage_availability,
+        task_id=task_id,
+    )
+    if lineage_availability_record:
+        records.append(lineage_availability_record)
     lineage_record = _task_lineage_record(task_candidates, task_id=task_id)
     if lineage_record:
         records.append(lineage_record)
@@ -410,6 +419,43 @@ def _previous_contract_record(
             "capability_ids": capability_ids[:6],
             "deliverable_kinds": deliverable_kinds[:6],
             "inheritance_rule": "historical_reference_only_unless_current_request_continues_it",
+        },
+    )
+
+
+def _task_lineage_availability_record(
+    availability: dict[str, Any] | None,
+    *,
+    task_id: str,
+) -> ContextRecord | None:
+    if not isinstance(availability, dict):
+        return None
+    candidate_count = _safe_int(availability.get("candidate_count"))
+    if candidate_count <= 0 and not availability.get("available"):
+        return None
+    content = (
+        "Historical task lineage candidates are available for this conversation, "
+        "but their goals, paths, and routes are not included in this initial "
+        "context. If the current request depends on earlier task state, the "
+        "model task contract can request lineage facts; otherwise judge from "
+        "the current user request and current workspace facts."
+    )
+    return ContextRecord(
+        kind="task_lineage_availability",
+        content=content,
+        source_id="task_lineage_availability",
+        source_type="conversation_history",
+        trust="runtime_fact",
+        task_id=task_id,
+        freshness="recent",
+        token_estimate=_estimate_tokens_fast(content),
+        metadata={
+            "schema_version": str(availability.get("schema_version") or ""),
+            "available": bool(availability.get("available")),
+            "candidate_count": candidate_count,
+            "candidate_content_exposure": str(
+                availability.get("candidate_content_exposure") or "model_requested"
+            ),
         },
     )
 
@@ -1033,6 +1079,7 @@ def _model_record_char_limit(kind: str) -> int:
     return {
         "user_intent": 1200,
         "workspace_summary": 1600,
+        "task_lineage_availability": 900,
         "task_lineage": 2800,
         "project_context": 1400,
         "task_contract": 1800,

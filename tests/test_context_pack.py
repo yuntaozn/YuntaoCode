@@ -81,6 +81,33 @@ def test_context_pack_includes_task_lineage_candidates_as_candidates() -> None:
     assert lineage["metadata"]["candidates"][0]["actual_paths"] == ["scene.blend"]
 
 
+def test_context_pack_can_expose_lineage_availability_without_candidate_content() -> None:
+    pack = build_context_pack(
+        phase="task_contract",
+        user_content="分析当前项目情况",
+        task_lineage_availability={
+            "schema_version": "task_lineage_availability.v1",
+            "available": True,
+            "candidate_count": 1,
+            "candidate_content_exposure": "model_requested",
+            "rule": "Historical task candidates exist.",
+        },
+    )
+
+    assert [item["kind"] for item in pack["records"]] == [
+        "user_intent",
+        "task_lineage_availability",
+    ]
+    availability = pack["records"][1]
+    assert availability["metadata"]["candidate_count"] == 1
+    assert "goals, paths, and routes are not included" in availability["content"]
+
+    prompt = format_context_pack_for_prompt(pack)
+    assert "task_lineage_availability" in prompt
+    assert "Package this lesson" not in prompt
+    assert "tauri-exe" not in prompt
+
+
 def test_context_pack_exposes_selected_memory_as_audited_advisory_context() -> None:
     pack = build_context_pack(
         phase="task_contract",

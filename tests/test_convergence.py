@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from runtime.agent_strategy.convergence import (
-    PAUSE_NO_PROGRESS,
+    ESCALATE_NO_PROGRESS,
     REPORT_REPETITION,
     build_execution_convergence_decision,
     failure_route_signature,
@@ -27,7 +27,7 @@ def _failure(
     }
 
 
-def test_same_failed_route_reports_before_budget_pause() -> None:
+def test_same_failed_route_reports_before_budget_escalation() -> None:
     event = _failure()
 
     decision = build_execution_convergence_decision([event] * 2)
@@ -35,7 +35,7 @@ def test_same_failed_route_reports_before_budget_pause() -> None:
     assert decision.action == REPORT_REPETITION
     assert decision.route_attempt_count == 2
     assert decision.budget_limit_route_attempts == 9
-    assert repeated_failure_action([event] * 9) == PAUSE_NO_PROGRESS
+    assert repeated_failure_action([event] * 9) == ESCALATE_NO_PROGRESS
 
 
 def test_success_resets_no_progress_window() -> None:
@@ -70,7 +70,8 @@ def test_changed_failed_routes_expand_self_correction_budget() -> None:
     assert decision.distinct_failed_routes == 2
     assert decision.budget_limit_route_attempts == 11
     assert decision.route_attempt_count == 11
-    assert decision.action == PAUSE_NO_PROGRESS
+    assert decision.action == ESCALATE_NO_PROGRESS
+    assert any("budget is saturated" in item for item in decision.model_decision)
 
 
 def test_changed_route_does_not_pause_at_base_budget() -> None:

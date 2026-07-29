@@ -122,6 +122,8 @@ def default_task_contract(
         "confidence": 0.0,
         "scope_relation": "new",
         "scope_relation_source": "default",
+        "needs_task_lineage": False,
+        "task_lineage_request_reason": "",
         "referenced_task_candidate_id": "",
         "focus_relation": "unresolved",
         "focus_relation_source": "default",
@@ -216,6 +218,15 @@ def merge_model_task_contract(
                 if str(raw_contract.get("scope_relation") or "").strip().lower() in VALID_SCOPE_RELATIONS
                 else "default"
             ),
+            "needs_task_lineage": _bool_or_default(
+                raw_contract.get("needs_task_lineage"),
+                False,
+            ),
+            "task_lineage_request_reason": _clean_text(
+                raw_contract.get("task_lineage_request_reason")
+                or raw_contract.get("task_lineage_reason"),
+                240,
+            ),
             "referenced_task_candidate_id": _clean_text(
                 raw_contract.get("referenced_task_candidate_id")
                 or raw_contract.get("task_candidate_id")
@@ -244,6 +255,11 @@ def merge_model_task_contract(
     contract["referenced_task_candidate_id"] = _clean_text(
         contract.get("referenced_task_candidate_id"),
         160,
+    )
+    contract["needs_task_lineage"] = bool(contract.get("needs_task_lineage"))
+    contract["task_lineage_request_reason"] = _clean_text(
+        contract.get("task_lineage_request_reason"),
+        240,
     )
     contract["focus_relation"] = _project_context.normalize_focus_relation(
         contract.get("focus_relation")
@@ -308,6 +324,19 @@ def should_apply_task_continuity(
     )
 
 
+def contract_requests_task_lineage(contract: dict[str, Any] | None) -> bool:
+    """Return whether the model contract asked to see task lineage candidates."""
+
+    if not isinstance(contract, dict):
+        return False
+    if bool(contract.get("needs_task_lineage")):
+        return True
+    if str(contract.get("referenced_task_candidate_id") or "").strip():
+        return True
+    relation = str(contract.get("scope_relation") or "").strip().lower()
+    return relation in {"continue", "revise", "replace"}
+
+
 def task_continuity_anchor(contract: dict[str, Any]) -> dict[str, Any]:
     """Return the stable semantic target carried across continuation turns."""
     return _contract_evolution.task_continuity_anchor(contract)
@@ -357,6 +386,8 @@ def task_contract_prompt(
         "可观察状态；requires_verification 表示目标完成后仍需要证据。\n"
         "scope_relation 描述当前目标与历史任务的关系；focus_relation 独立描述当前工作对象的来源。"
         "只有确实沿用历史目标或工作对象时才引用候选 id；证据不足时使用 unresolved。\n"
+        "如果上下文只提示历史任务候选可用，而你判断当前请求需要查看历史候选才能决定关系，"
+        "请设置 needs_task_lineage=true 并说明 task_lineage_request_reason；否则保持 false。\n"
         "required_verification_modalities 可使用 structural、visual、behavioral、content；"
         "由目标所需证据决定，不绑定具体工具。execution_advisories 只能记录非约束性提醒。\n"
         "JSON 字段：\n"
@@ -372,6 +403,8 @@ def task_contract_prompt(
         '  "route_proposals": [{"capability_id": "", "tool_id": "", "expected_artifacts": [], "requires_write": false, "requires_verification": false, "confidence": 0.0, "rationale": "why this route fits"}],\n'
         '  "deliverables": [{"kind": "file|answer|document|code|external_state", "path_hint": "", "path_policy": "hint|exact", "capability_id": "", "description": ""}],\n'
         '  "scope_relation": "new|continue|revise|replace",\n'
+        '  "needs_task_lineage": false,\n'
+        '  "task_lineage_request_reason": "",\n'
         '  "referenced_task_candidate_id": "",\n'
         '  "focus_relation": "explicit|inherit|switch|unresolved",\n'
         '  "focus": {"kind": "workspace|project|subproject|directory|file|artifact|external_state|other", "name": "", "path_hint": "", "description": ""},\n'

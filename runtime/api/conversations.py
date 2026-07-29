@@ -22,7 +22,10 @@ from runtime.agent_strategy import confirmation_policy as _cp
 from runtime.agent_strategy import conversation_task_context as _task_ctx
 from runtime.agent_strategy import context_hygiene as _ctx_hygiene
 from runtime.agent_strategy.document_contract_guard import document_contract_tool_guard_message
-from runtime.agent_strategy.document_completion import min_text_output_check
+from runtime.agent_strategy.document_completion import (
+    contract_expects_answer_output,
+    min_text_output_check,
+)
 from runtime.agent_strategy import prompts as _prp
 from runtime.agent_strategy import plan_tracker as _pt
 from runtime.agent_strategy import policy as _pol
@@ -949,6 +952,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         contract: dict[str, Any],
         tool_events: list[dict[str, Any]],
         mode: str | None,
+        *,
+        answer_text: str | None = None,
     ) -> list[str]:
         failures: list[str] = []
         workspace_path = str(contract.get("workspace_path") or "")
@@ -964,14 +969,20 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             workspace_path=workspace_path,
             mode=mode,
         )
-        requires_target_deliverable = bool(
+        requires_state_deliverable = bool(
             contract.get("requires_write") or contract.get("requires_state_change")
         )
-        if requires_target_deliverable and not deliverables:
+        requires_answer_deliverable = bool(
+            answer_text is not None and contract_expects_answer_output(contract)
+        )
+        if (
+            (requires_state_deliverable and not deliverables)
+            or (requires_answer_deliverable and not str(answer_text or "").strip())
+        ):
             failures.append("missing_target_deliverable_success")
         if (
             contract.get("requires_verification")
-            and (deliverables or not requires_target_deliverable)
+            and (deliverables or not requires_state_deliverable)
             and not verifications
         ):
             failures.append("missing_target_verification")
@@ -981,6 +992,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             task_contract=contract,
             workspace_path=workspace_path,
             mode=mode,
+            answer_text=answer_text,
         )
         if min_output_check.get("required") and not min_output_check.get("ok"):
             failures.append(str(min_output_check.get("reason") or "document_output_too_short"))
@@ -2189,6 +2201,12 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         current_content: str,
     ) -> list[dict[str, Any]]:
         return _task_ctx.task_lineage_candidates(conversation, current_content)
+
+    def _task_lineage_availability(
+        self,
+        candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
+    ) -> dict[str, Any]:
+        return _task_ctx.task_lineage_availability(candidates)
 
     def _referenced_task_candidate_contract(
         self,

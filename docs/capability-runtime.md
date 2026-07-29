@@ -82,9 +82,11 @@ resolve tool id
   -> execute ToolTask
 ```
 
-Invalid calls, including calls missing required fields, fail before manual
-confirmation. This prevents users from approving an operation that cannot be
-executed.
+Invalid calls, including calls missing required fields, do not enter manual
+confirmation because there is no executable operation to approve. They should be
+recorded as `tool_attempt_observation.v1` and surfaced back to the model as
+recoverable evidence when possible, so the model can resend valid parameters or
+choose another visible route.
 
 | Policy | Workspace write | Shell / Git commit | Hard guards |
 | --- | --- | --- | --- |

@@ -32,6 +32,10 @@ DOCUMENT_DELIVERABLE_KINDS: frozenset[str] = frozenset({
     "docx",
 })
 
+ANSWER_DELIVERABLE_KINDS: frozenset[str] = frozenset({
+    "answer",
+})
+
 TEXT_FILE_EXTENSIONS: frozenset[str] = frozenset({
     ".docx",
     ".md",
@@ -61,7 +65,7 @@ def contract_expects_text_output(task_contract: dict[str, Any] | None) -> bool:
         for item in deliverables
         if str(item.get("kind") or "").strip()
     }
-    if kinds & DOCUMENT_DELIVERABLE_KINDS:
+    if kinds & (DOCUMENT_DELIVERABLE_KINDS | ANSWER_DELIVERABLE_KINDS):
         return True
     if kinds & {"code", "external_state"}:
         return False
@@ -81,6 +85,17 @@ def contract_expects_text_output(task_contract: dict[str, Any] | None) -> bool:
         if not suffix or suffix in TEXT_FILE_EXTENSIONS:
             return True
     return bool(not kinds and deliverables)
+
+
+def contract_expects_answer_output(task_contract: dict[str, Any] | None) -> bool:
+    """Return True when the declared deliverable includes the assistant answer."""
+    if not isinstance(task_contract, dict):
+        return False
+    return any(
+        isinstance(item, dict)
+        and str(item.get("kind") or "").strip().lower() in ANSWER_DELIVERABLE_KINDS
+        for item in task_contract.get("deliverables") or []
+    )
 
 
 def text_output_candidate_events(
@@ -132,6 +147,7 @@ def min_text_output_check(
     task_contract: dict[str, Any] | None,
     workspace_path: str,
     mode: str | None = None,
+    answer_text: str | None = None,
 ) -> dict[str, Any]:
     """Return a deterministic length-check result for long text outputs."""
     expected = _safe_int(expected_min_output_chars)
@@ -148,6 +164,7 @@ def min_text_output_check(
             "event": None,
         }
 
+    expects_answer = contract_expects_answer_output(task_contract)
     candidates = text_output_candidate_events(
         tool_events,
         task_contract=task_contract,
@@ -156,13 +173,36 @@ def min_text_output_check(
     )
     best_event: dict[str, Any] | None = None
     best_chars = 0
+    best_source = ""
     for event in candidates:
         chars = text_output_char_count(event)
         if best_event is None or chars > best_chars:
             best_event = event
             best_chars = chars
 
-    if best_event is None:
+    if best_event is not None:
+        best_source = "tool_event"
+
+    if expects_answer and answer_text is not None:
+        answer_chars = len(str(answer_text or "").strip())
+        if not best_source or answer_chars > best_chars:
+            best_event = None
+            best_chars = answer_chars
+            best_source = "assistant_answer"
+
+    if expects_answer and answer_text is None and not candidates:
+        return {
+            "required": False,
+            "deferred": True,
+            "ok": True,
+            "expected": expected,
+            "observed": 0,
+            "reason": "",
+            "event": None,
+            "source": "",
+        }
+
+    if not best_source:
         return {
             "required": True,
             "ok": False,
@@ -170,6 +210,7 @@ def min_text_output_check(
             "observed": 0,
             "reason": "document_output_length_unknown",
             "event": None,
+            "source": "",
         }
     if best_chars <= 0:
         return {
@@ -177,8 +218,13 @@ def min_text_output_check(
             "ok": False,
             "expected": expected,
             "observed": 0,
-            "reason": "document_output_length_unknown",
+            "reason": (
+                "answer_output_length_unknown"
+                if best_source == "assistant_answer"
+                else "document_output_length_unknown"
+            ),
             "event": best_event,
+            "source": best_source,
         }
     if best_chars < expected:
         return {
@@ -186,8 +232,13 @@ def min_text_output_check(
             "ok": False,
             "expected": expected,
             "observed": best_chars,
-            "reason": "document_output_too_short",
+            "reason": (
+                "answer_output_too_short"
+                if best_source == "assistant_answer"
+                else "document_output_too_short"
+            ),
             "event": best_event,
+            "source": best_source,
         }
     return {
         "required": True,
@@ -196,6 +247,7 @@ def min_text_output_check(
         "observed": best_chars,
         "reason": "",
         "event": best_event,
+        "source": best_source,
     }
 
 

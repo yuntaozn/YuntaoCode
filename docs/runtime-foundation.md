@@ -90,8 +90,8 @@ the remaining JSON stores and incremental SQLite direction are documented in
 
 ## Convergence Contract
 
-The runtime should not decide the task strategy for the model, but it must
-prevent an execution from repeating the same failed action indefinitely.
+The runtime should not decide the task strategy for the model, but it still
+needs bounded resource facts when execution repeats the same failed action.
 
 The current convergence rule is progress-driven:
 
@@ -102,9 +102,12 @@ The current convergence rule is progress-driven:
 3. A successful or partial tool result resets the no-progress window.
 4. Changing tool, arguments, or route is treated as self-correction evidence
    and expands the bounded retry budget.
-5. The runtime stops only when the latest failed route repeats too many times
-   in a no-progress window. This prevents an infinite loop without turning the
-   runtime into a planner.
+5. When the local repeated-route budget is saturated, the runtime escalates the
+   evidence as `repeated_route_budget_observed` and feeds it back to the model.
+   It does not make a task verdict from that local budget alone.
+6. The global model-round budget remains the hard resource boundary. If the
+   model keeps producing no observable progress until that budget is exhausted,
+   finalization records the budget fact and preserved evidence.
 
 This contract is deliberately narrower than task planning. It judges whether
 execution is converging; it does not hard-code which strategy the model must
@@ -169,6 +172,14 @@ start or refresh a dependency, verify existing output, ask the user, or stop
 honestly. Large write-like attempts are reported as evidence that incremental
 write/edit routes are usually more reliable, but the runtime does not forbid the
 model from choosing a different safe route.
+
+`tool_attempt_recovery.v1` is the Run-level digest of those observations. It
+groups recoverable tool protocol failures, capability/service boundaries, hard
+runtime boundaries, missing fields, available-tool hints, and large write-like
+payload facts into one model-facing evidence record. It is still evidence-only:
+it does not retry, select a replacement tool, mark the task impossible, or end
+the Run. Its purpose is to make repeated write/tool failures visible enough for
+the model to change strategy without the runner adding another hidden branch.
 
 ## Task And ToolTask
 
@@ -326,8 +337,8 @@ to close.
 self-review prompt. It groups RunResult, compact Run facts, legacy artifacts,
 typed Run artifacts, artifact summary, verification evidence, verification
 closure, visual verification summary, runtime debug audit, capability evidence,
-task route evidence, recent ToolTask progress, risks, failures, and previous
-completion decisions.
+task route evidence, recent ToolTask progress, tool attempt recovery evidence,
+risks, failures, and previous completion decisions.
 The pack is evidence-only: it does not decide completion, rank tools, force
 fallback, or block the model from changing strategy. The model remains
 responsible for deciding whether to continue with tools, verify or repair, ask
@@ -554,14 +565,18 @@ no-write instructions remain active under every policy.
 ## RunResult
 
 `RunResult` is the deterministic runtime-owned summary of what happened during
-a run. It is generated from tool events and change summaries, not from the
-model's final prose.
+a run. Its execution facts come from tool events and change summaries. When the
+task contract explicitly declares an `answer` deliverable, finalization also
+records bounded answer evidence: whether a final answer was observed and its
+character count. The answer text itself does not become runtime truth and is
+not used to judge semantic quality.
 
 The model can still write a user-facing answer, but `RunResult` is the source of
 truth for:
 
 - successful writes
 - successful target deliverables, including external-state changes
+- declared answer-deliverable presence and measured output length
 - failed writes
 - changed paths
 - verification tool calls
@@ -616,6 +631,12 @@ result as modified-but-unverified without blocking the model's chosen strategy.
 
 UI work should prefer showing facts from `RunResult` over inferring task state
 from assistant text.
+
+Answer evidence is evaluated only during finalization. Provisional completion
+reviews do not fail merely because the model has not generated its final answer
+yet. This keeps execution evidence and presentation timing separate while still
+preventing answer-only analysis tasks from being reported as `0` deliverables
+or `0` output characters after a real answer was produced.
 
 Tool-result risks are advisory runtime facts discovered after a tool finishes.
 They help the model notice evidence without letting the runtime choose a fixed

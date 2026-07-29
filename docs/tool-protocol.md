@@ -83,6 +83,10 @@ JSON 对象；无法解析、不是对象或缺少必要参数时，运行时记
 也不猜测、补全或修复参数。失败结果会回到模型上下文，由模型自行决定下一步策略。
 最终回复不得包含未执行的工具调用标签。
 
+这些未执行尝试应进入 `tool_attempt_observation.v1`；一个 Run 中的同类观察会进一步
+汇总为 `tool_attempt_recovery.v1`。这份汇总只描述事实，例如缺失字段、协议边界、
+是否可由模型修正、是否涉及硬安全边界或大写入式载荷；它不替模型选择重试路线。
+
 模型 Provider 的流事件应保留 `finish_reason`。当一轮因 `length`、
 `max_tokens` 或 `max_output_tokens` 停止时，本轮工具调用视为可能截断，不得执行。
 这条规则尤其保护 `filesystem.write_file`、Shell、Git 等会改变本地状态的工具。

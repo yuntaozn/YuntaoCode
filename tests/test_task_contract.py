@@ -1,6 +1,7 @@
 from runtime.agent_strategy.task_contract import (
     apply_task_continuity,
     contract_expects_text_output,
+    contract_requests_task_lineage,
     default_task_contract,
     extract_task_contract_json,
     merge_model_task_contract,
@@ -129,6 +130,8 @@ def test_task_contract_prompt_contains_only_contract_request() -> None:
     assert "requires_write" in prompt
     assert "requires_state_change" in prompt
     assert "referenced_task_candidate_id" in prompt
+    assert "needs_task_lineage" in prompt
+    assert "task_lineage_request_reason" in prompt
     assert "系统不会根据关键词替你改写这些字段" in prompt
     assert "当前用户请求是任务语义的第一依据" in prompt
     assert "系统回退契约" not in prompt
@@ -1329,6 +1332,25 @@ def test_model_contract_preserves_referenced_task_candidate_id() -> None:
 
     assert contract["scope_relation"] == "revise"
     assert contract["referenced_task_candidate_id"] == "run-1"
+    assert contract_requests_task_lineage(contract)
+
+
+def test_model_contract_can_request_task_lineage_without_runtime_text_heuristics() -> None:
+    contract = merge_model_task_contract(
+        {
+            "goal": "Clarify whether this should continue a previous task",
+            "intent": "read_only_analysis",
+            "needs_task_lineage": True,
+            "task_lineage_request_reason": "The current request refers to earlier execution state.",
+        },
+        _fallback("answer_only"),
+    )
+    fallback = _fallback("answer_only")
+
+    assert contract["needs_task_lineage"] is True
+    assert contract["task_lineage_request_reason"].startswith("The current request")
+    assert contract_requests_task_lineage(contract)
+    assert not contract_requests_task_lineage(fallback)
 
 
 def test_model_declared_document_size_is_preserved_by_contract_normalization() -> None:

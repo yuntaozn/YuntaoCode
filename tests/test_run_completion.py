@@ -250,6 +250,10 @@ def test_completion_evidence_pack_collects_audits_progress_and_decisions() -> No
     assert pack["boundary"] == "evidence_only"
     assert pack["tool_progress"][0]["role"] == "dependency_install"
     assert pack["tool_attempts"][0]["missing_fields"] == ["path"]
+    assert pack["tool_attempt_recovery"]["counts"]["attempts"] == 1
+    assert pack["tool_attempt_recovery"]["counts"]["recoverable_by_model"] == 1
+    assert pack["tool_attempt_recovery"]["reason_counts"] == {"invalid_tool_input": 1}
+    assert "missing_fields=path" in pack["tool_attempt_recovery"]["model_facts"]
     assert pack["artifact_summary"]["by_role"] == {"final": 1, "screenshot": 1}
     assert pack["artifact_summary"]["by_verification_relevance"] == {"diagnostic": 1, "verification": 1}
     assert pack["artifact_summary"]["preview_paths"] == ["viewer/index.html", "viewer/preview.png"]
@@ -281,6 +285,8 @@ def test_completion_evidence_pack_collects_audits_progress_and_decisions() -> No
     assert "viewer/preview.png" in text
     assert "recent tool progress" in text
     assert "recent unexecuted tool attempts" in text
+    assert "Tool attempt recovery evidence" in text
+    assert "missing_fields=path" in text
     assert "dependency_install" in text
     assert "invalid_tool_input" in text
     assert "task route evidence" in text
@@ -481,6 +487,25 @@ def test_completion_decision_records_compact_evidence_pack_summary() -> None:
             "tool_attempts": [
                 {"tool": "filesystem.write_file", "reason": "invalid_tool_input"}
             ],
+            "tool_attempt_recovery": {
+                "schema_version": "tool_attempt_recovery.v1",
+                "kind": "tool_attempt_recovery",
+                "boundary": "evidence_only",
+                "counts": {
+                    "attempts": 1,
+                    "recoverable_by_model": 1,
+                    "hard_runtime_boundary": 0,
+                    "large_write_like_payload": 0,
+                },
+                "reason_counts": {"invalid_tool_input": 1},
+                "boundary_counts": {"tool_call_protocol": 1},
+                "flags": {
+                    "has_recoverable_attempts": True,
+                    "has_hard_runtime_boundary": False,
+                    "has_large_write_like_payload": False,
+                },
+                "model_facts": ["missing_fields=path"],
+            },
             "task_route_evidence": {
                 "schema_version": "task_route_evidence.v1",
                 "kind": "task_route_evidence",
@@ -511,6 +536,11 @@ def test_completion_decision_records_compact_evidence_pack_summary() -> None:
     ]
     assert decision["evidence_pack"]["tool_progress"][0]["tool"] == "preview.capture_file"
     assert decision["evidence_pack"]["tool_attempts"][0]["tool"] == "filesystem.write_file"
+    assert decision["evidence_pack"]["tool_attempt_recovery"]["attempts"] == 1
+    assert decision["evidence_pack"]["tool_attempt_recovery"]["has_recoverable_attempts"] is True
+    assert decision["evidence_pack"]["tool_attempt_recovery"]["model_facts"] == [
+        "missing_fields=path"
+    ]
     assert decision["evidence_pack"]["task_route_evidence"]["target_capability_ids"] == [
         "preview.visual_debug"
     ]

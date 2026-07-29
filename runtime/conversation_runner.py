@@ -26,7 +26,7 @@ from runtime.agent_strategy.project_context import build_active_focus_snapshot
 from runtime.agent_strategy.policy import deterministic_plan_gate, resolve_profile
 from runtime.agent_strategy.profiles import profile_to_public_dict
 from runtime.agent_strategy.convergence import (
-    PAUSE_NO_PROGRESS,
+    ESCALATE_NO_PROGRESS,
     build_execution_convergence_decision,
 )
 from runtime.agent_strategy.run_finalization import (
@@ -34,7 +34,7 @@ from runtime.agent_strategy.run_finalization import (
     FINAL_ANSWER_CONVERGED,
     FINAL_ANSWER_VERIFIED,
     NEEDS_VERIFICATION_EVIDENCE,
-    PAUSE_STAGNANT_VERIFICATION_GAP,
+    ESCALATE_STAGNANT_VERIFICATION_GAP,
     REENTER_COMPLETION_REVIEW,
     build_completion_reentry_decision,
     build_task_evidence_finalization_gate,
@@ -326,12 +326,17 @@ class ConversationRunExecutor:
             confirmation_policy=confirmation_policy,
             workspace_path=workspace.path,
         )
-        task_lineage_candidates = self._task_lineage_candidates(conversation, content)
+        available_task_lineage_candidates = self._task_lineage_candidates(conversation, content)
+        task_lineage_candidates: list[dict[str, Any]] = []
+        task_lineage_availability = self._task_lineage_availability(
+            available_task_lineage_candidates
+        )
         context_pack = build_context_pack(
             phase="task_contract",
             user_content=content,
             workspace_snapshot=workspace_snapshot,
             previous_contract=None,
+            task_lineage_availability=task_lineage_availability,
             task_candidates=task_lineage_candidates,
             memory_context=memory_context,
             context_hygiene_report=context_hygiene_report,
@@ -340,8 +345,7 @@ class ConversationRunExecutor:
         context_pack_prompt = format_context_pack_for_prompt(context_pack)
         metadata["context_pack"] = context_pack
         metadata.setdefault("context_packs", []).append(context_pack)
-        if task_lineage_candidates:
-            metadata["task_lineage_candidates"] = task_lineage_candidates
+        metadata["task_lineage_availability"] = task_lineage_availability
         self.write_event({
             "event": "context_pack",
             "pack": context_pack,
@@ -366,6 +370,55 @@ class ConversationRunExecutor:
                 previous_contract=None,
                 workspace_context=context_pack_prompt,
             )
+            if (
+                available_task_lineage_candidates
+                and _tc.contract_requests_task_lineage(task_contract)
+            ):
+                task_lineage_candidates = available_task_lineage_candidates
+                lineage_context_pack = build_context_pack(
+                    phase="task_contract",
+                    user_content=content,
+                    workspace_snapshot=workspace_snapshot,
+                    previous_contract=None,
+                    task_lineage_availability=task_lineage_availability,
+                    task_candidates=task_lineage_candidates,
+                    memory_context=memory_context,
+                    context_hygiene_report=context_hygiene_report,
+                    task_id=str(getattr(run, "task_id", "") or ""),
+                )
+                lineage_context_pack_prompt = format_context_pack_for_prompt(
+                    lineage_context_pack
+                )
+                metadata["context_pack"] = lineage_context_pack
+                metadata.setdefault("context_packs", []).append(lineage_context_pack)
+                metadata["task_lineage_candidates"] = task_lineage_candidates
+                metadata["task_lineage_exposure"] = {
+                    "source": "model_task_contract",
+                    "reason": str(
+                        task_contract.get("task_lineage_request_reason") or ""
+                    ),
+                    "candidate_count": len(task_lineage_candidates),
+                }
+                self.write_event({
+                    "event": "status",
+                    "status": "task_lineage_context_requested",
+                    "message": "模型请求查看历史任务候选，正在展开候选事实",
+                })
+                self.write_event({
+                    "event": "context_pack",
+                    "pack": lineage_context_pack,
+                    "reason": "model_requested_task_lineage",
+                })
+                await self.flush()
+                task_contract = await self._decide_task_contract(
+                    model=model,
+                    messages=messages,
+                    workspace_path=workspace.path,
+                    user_content=content,
+                    fallback_contract=task_contract,
+                    previous_contract=None,
+                    workspace_context=lineage_context_pack_prompt,
+                )
             referenced_contract = self._referenced_task_candidate_contract(
                 task_lineage_candidates,
                 task_contract.get("referenced_task_candidate_id"),
@@ -818,19 +871,9 @@ class ConversationRunExecutor:
                             prompt_count=gap_decision.prompt_count,
                             stagnant_rounds=gap_decision.stagnant_rounds,
                         )
-                        if gap_decision.action == PAUSE_STAGNANT_VERIFICATION_GAP:
-                            run_state.completion_review.consume()
-                            self.write_event({
-                                "event": "status",
-                                "status": "verification_gap_stagnant",
-                                "message": "候选总结仍带同一验证缺口且多轮无新证据变化；当前循环正在保存可观察结果。",
-                                "verification_gap": {
-                                    "prompt_count": run_state.verification_gap.prompt_count,
-                                    "stagnant_rounds": run_state.verification_gap.stagnant_rounds,
-                                },
-                            })
-                            await self.flush()
-                            break
+                        gap_stagnant = (
+                            gap_decision.action == ESCALATE_STAGNANT_VERIFICATION_GAP
+                        )
                         self._discard_parts(content_parts, round_content_parts)
                         self._discard_parts(reasoning_parts, round_reasoning_parts)
                         self.write_event({
@@ -853,8 +896,16 @@ class ConversationRunExecutor:
                         })
                         self.write_event({
                             "event": "status",
-                            "status": "completion_reentry",
-                            "message": "候选总结仍带验证缺口，已把运行事实反馈给模型继续判断。",
+                            "status": (
+                                "verification_gap_budget_observed"
+                                if gap_stagnant
+                                else "completion_reentry"
+                            ),
+                            "message": (
+                                "候选总结仍带同一验证缺口且多轮无新证据变化；已把预算事实反馈给模型继续判断。"
+                                if gap_stagnant
+                                else "候选总结仍带验证缺口，已把运行事实反馈给模型继续判断。"
+                            ),
                             "review": {
                                 "count": run_state.completion_review.review_count,
                                 "reason": reentry_decision.reason,
@@ -1009,15 +1060,23 @@ class ConversationRunExecutor:
                 repeated_failure_count = convergence_decision.consecutive_failure_count
                 failure_route_attempt_count = convergence_decision.route_attempt_count
                 repeated_failure_action = convergence_decision.action
-                if repeated_failure_action == PAUSE_NO_PROGRESS:
-                    run_state.no_progress_budget_exhausted = True
+                if repeated_failure_action == ESCALATE_NO_PROGRESS:
                     repeated_tool = str(tool_events[-1].get("tool") or "unknown tool")
+                    messages.append({
+                        "role": "system",
+                        "content": self._repeated_failure_strategy_prompt(
+                            workspace.path,
+                            tool_events,
+                        ),
+                    })
+                    metadata["no_progress_budget_observed"] = True
+                    metadata["execution_convergence_budget"] = convergence_decision.to_dict()
                     self.write_event({
                         "event": "status",
-                        "status": "repeated_tool_failure",
+                        "status": "repeated_route_budget_observed",
                         "message": (
                             f"{repeated_tool} 在当前无进展窗口内已出现 {failure_route_attempt_count} 次同一路线失败，"
-                            "当前循环预算用尽，正在保存可观察结果。"
+                            "已将预算事实反馈给模型继续判断。"
                         ),
                         "tool": repeated_tool,
                         "failure_count": repeated_failure_count,
@@ -1025,7 +1084,7 @@ class ConversationRunExecutor:
                         "execution_convergence": convergence_decision.to_dict(),
                     })
                     await self.flush()
-                    break
+                    continue
                 if repeated_failure_action == "report_repetition":
                     repeated_tool = str(tool_events[-1].get("tool") or "unknown tool")
                     messages.append({
@@ -1130,18 +1189,28 @@ class ConversationRunExecutor:
                         prompt_count=gap_decision.prompt_count,
                         stagnant_rounds=gap_decision.stagnant_rounds,
                     )
-                    if gap_decision.action == PAUSE_STAGNANT_VERIFICATION_GAP:
+                    if gap_decision.action == ESCALATE_STAGNANT_VERIFICATION_GAP:
+                        messages.append({
+                            "role": "system",
+                            "content": self._verifier_retry_prompt(
+                                effective_mode,
+                                workspace.path,
+                                task_contract=task_contract,
+                                tool_events=tool_events,
+                                capability_preflight=capability_preflight,
+                            ),
+                        })
                         self.write_event({
                             "event": "status",
-                            "status": "verification_gap_stagnant",
-                            "message": "验证缺口已连续多轮无新证据变化；当前循环预算用尽，正在保存可观察结果。",
+                            "status": "verification_gap_budget_observed",
+                            "message": "验证缺口已连续多轮无新证据变化；已把预算事实反馈给模型继续判断。",
                             "verification_gap": {
                                 "prompt_count": run_state.verification_gap.prompt_count,
                                 "stagnant_rounds": run_state.verification_gap.stagnant_rounds,
                             },
                         })
                         await self.flush()
-                        break
+                        continue
                     if not run_state.verifier_retry_prompted:
                         run_state.verifier_retry_prompted = True
                         messages.append({
