@@ -32,13 +32,31 @@ def test_task_lineage_extracts_candidate_from_assistant_contract() -> None:
             },
         },
         index=1,
+        message_id="assistant-message-1",
+        user_request="Build a house in Blender",
+        user_message_id="user-message-1",
     )
 
     assert candidate is not None
     assert candidate["candidate_id"] == "run-1"
+    assert candidate["schema_version"] == "task_lineage_candidate.v2"
+    assert candidate["user_request"] == "Build a house in Blender"
+    assert candidate["declared_goal"] == "Create a Blender house"
+    assert candidate["model_response_excerpt"] == "done"
+    assert candidate["observed_status"] == ""
     assert candidate["goal"] == "Create a Blender house"
     assert candidate["deliverable_kinds"] == ["external_state"]
     assert candidate["contract_anchor"]["goal"] == "Create a Blender house"
+    provenance = candidate["field_provenance"]
+    assert provenance["schema_version"] == "task_lineage_provenance.v1"
+    assert provenance["fields"]["user_request"] == {
+        "source_type": "user_message",
+        "trust": "user_provided",
+        "source_id": "user-message-1",
+    }
+    assert provenance["fields"]["declared_goal"]["trust"] == "model_inferred"
+    assert provenance["fields"]["model_response_excerpt"]["trust"] == "model_inferred"
+    assert "observed_status" not in provenance["fields"]
 
 
 def test_task_lineage_extracts_runtime_observed_paths_from_run_result() -> None:
@@ -162,11 +180,63 @@ def test_task_lineage_candidates_can_be_referenced_by_model_contract() -> None:
     anchor = referenced_candidate_contract(candidates, "run-1")
 
     assert len(candidates) == 1
+    assert candidates[0]["user_request"] == "Create a Blender house"
     assert anchor is not None
     assert anchor["goal"] == "Create a Blender house"
     prompt = format_task_candidates_for_model(candidates)
-    assert "task_lineage_context.v1" in prompt
+    assert "task_lineage_context.v2" in prompt
     assert "run-1" in prompt
+
+
+def test_task_lineage_model_context_separates_user_model_and_runtime_fields() -> None:
+    conversation = SimpleNamespace(messages=[
+        _message("user", "Run the installed Cocos project and verify it"),
+        _message(
+            "assistant",
+            "I only inspected files and provided manual instructions.",
+            {
+                "run_id": "run-cocos",
+                "task_contract": {
+                    "source": "model",
+                    "goal": "Inspect the Cocos project and provide instructions",
+                    "intent": "read_only_analysis",
+                    "requires_state_change": False,
+                    "deliverables": [{"kind": "answer"}],
+                },
+                "run_result": {
+                    "status": "partial",
+                    "verified": [{"path": "project.json"}],
+                },
+            },
+        ),
+        _message("user", "That was not an effective verification; try again"),
+    ])
+
+    [candidate] = collect_task_lineage_candidates(
+        conversation,
+        "That was not an effective verification; try again",
+    )
+    payload = json.loads(format_task_candidates_for_model([candidate]))
+    [model_candidate] = payload["candidates"]
+
+    assert candidate["user_request"] == "Run the installed Cocos project and verify it"
+    assert candidate["declared_goal"] == "Inspect the Cocos project and provide instructions"
+    assert candidate["observed_status"] == "partial"
+    assert candidate["observed_actual_paths"] == ["project.json"]
+    assert "goal" not in model_candidate
+    assert model_candidate["user_request"].startswith("Run the installed Cocos")
+    assert model_candidate["declared_goal"].startswith("Inspect the Cocos")
+    assert model_candidate["model_response_excerpt"].startswith("I only inspected files")
+    assert model_candidate["observed_status"] == "partial"
+    assert model_candidate["observed_actual_paths"] == ["project.json"]
+    assert model_candidate["field_provenance"] == {
+        "user_request": "user_provided:user_message",
+        "declared_goal": "model_inferred:assistant_task_contract",
+        "model_response_excerpt": "model_inferred:assistant_message",
+        "observed_status": "runtime_fact:run_result",
+        "observed_actual_paths": "runtime_fact:run_result",
+    }
+    assert "current user request has priority" in payload["rule"]
 
 
 def test_task_lineage_candidates_are_ordered_most_recent_first_with_paths() -> None:

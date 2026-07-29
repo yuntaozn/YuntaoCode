@@ -155,6 +155,22 @@ UI 历史和审计记录应完整保留，但模型侧上下文需要卫生处�
 5. Runtime 只审计“模型请求并引用了哪个候选任务”，不直接判断本轮是普通新任务、
    追问、续接或修订。
 
+`task_lineage_candidate.v2` 不再把一个候选压成含混的历史 `goal`。它同时保留：
+
+- `user_request`：该 Run 前最近的用户原始请求，来源为 `user_message`，可信度为
+  `user_provided`。
+- `declared_goal`、`declared_focus`：历史 Task Contract 中的模型解释，可信度为
+  `model_inferred`；即使保存在 Runtime 记录中，也不因此升级成用户指令或已验证事实。
+- `model_response_excerpt`：历史助手最终回复的限长摘录，可信度为 `model_inferred`，
+  可用于理解旧结论，但不能替代工具证据，也不表示 Runtime 已对其重新总结。
+- `observed_status`、`observed_actual_paths`：来自 RunResult、工具事件或 Runtime 状态的
+  已观察事实，可信度为 `runtime_fact`。
+
+每个字段在 `task_lineage_provenance.v1` 中独立记录 `source_type`、`trust` 和
+`source_id`。因此整个 Context Record 使用 `mixed_sources`，不能再因为候选由 Runtime
+组装，就把其中旧模型写出的目标和总结统一标成 `runtime_fact`。模型侧收到的是紧凑的
+字段来源映射，审计元数据保留完整 provenance。
+
 续接关系也不等于目标冻结。只有模型在当前 Task Contract 中显式选择 `continue` 或
 `revise` 时，Runtime 才允许历史锚点补充当前模型遗漏的字段。当前轮明确给出的 goal、
 deliverable、capability、状态变化和验证要求始终优先；“继续”“再试一次”等关键词本身

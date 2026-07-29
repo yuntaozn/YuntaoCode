@@ -35,6 +35,10 @@ def test_recent_conversation_requests_model_contract_without_inheriting_semantic
     assert has_recent_task_context(conversation, "try again")
     candidates = task_lineage_candidates(conversation, "try again")
     assert [item["candidate_id"] for item in candidates] == ["run-1"]
+    assert candidates[0]["user_request"] == "Create a lesson page"
+    assert candidates[0]["declared_goal"] == "Create a lesson page"
+    assert candidates[0]["field_provenance"]["fields"]["user_request"]["trust"] == "user_provided"
+    assert candidates[0]["field_provenance"]["fields"]["declared_goal"]["trust"] == "model_inferred"
     assert referenced_task_candidate_contract(candidates, "") is None
     assert referenced_task_candidate_contract(candidates, "run-1")["goal"] == "Create a lesson page"
     availability = task_lineage_availability(candidates)

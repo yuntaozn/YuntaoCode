@@ -478,6 +478,12 @@ The runtime does not infer a previous write mode, document workflow, or output
 length from keywords. Continuity is applied only after the model explicitly
 references a candidate and declares `continue` or `revise`.
 
+Task lineage candidates preserve field-level provenance. Historical
+`user_request` values remain user-provided; `declared_goal`, `declared_focus`,
+and `model_response_excerpt` remain model-inferred; only observed Run status and actual
+paths are runtime facts. The containing Context Record is therefore marked
+`mixed_sources` instead of promoting every historical field to a runtime fact.
+
 Contract evolution after the initial judgment belongs in
 `runtime/agent_strategy/contract_evolution.py`. That layer handles explicit
 follow-up continuity without turning observed tool effects into new semantic

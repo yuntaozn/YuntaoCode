@@ -393,6 +393,9 @@ def task_contract_prompt(
         "只有当前请求本身足以确定目标和工作对象时才保持 false。\n"
         "required_verification_modalities 可使用 structural、visual、behavioral、content；"
         "由目标所需证据决定，不绑定具体工具。execution_advisories 只能记录非约束性提醒。\n"
+        "展开的 task_lineage 使用字段级来源：user_request 是历史用户原话；declared_goal、"
+        "model_response_excerpt 和 declared_focus 是旧模型解释；observed_status 与 observed_actual_paths "
+        "才是 Runtime 观察事实。请自行判断是否继承，不要把旧模型解释当成当前用户指令。\n"
         "JSON 字段：\n"
         "{\n"
         '  "goal": "用户真实目标的简短描述",\n'

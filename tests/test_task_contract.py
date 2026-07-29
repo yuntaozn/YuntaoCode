@@ -140,6 +140,9 @@ def test_task_contract_prompt_contains_only_contract_request() -> None:
     assert "不要把不完整目标弱化成“检查或提供指导”" in prompt
     assert "系统不会根据关键词替你改写这些字段" in prompt
     assert "当前用户请求是任务语义的第一依据" in prompt
+    assert "user_request 是历史用户原话" in prompt
+    assert "declared_goal" in prompt
+    assert "observed_actual_paths" in prompt
     assert "系统回退契约" not in prompt
     assert "focus_relation" in prompt
     assert '"blockers"' not in prompt

@@ -476,6 +476,17 @@ def _task_lineage_record(
             "candidate_id": candidate.get("candidate_id"),
             "lineage_rank": candidate.get("lineage_rank"),
             "recency_rank": candidate.get("recency_rank"),
+            "user_request": candidate.get("user_request") or "",
+            "declared_goal": candidate.get("declared_goal") or candidate.get("goal"),
+            "model_response_excerpt": candidate.get("model_response_excerpt") or "",
+            "observed_status": candidate.get("observed_status") or candidate.get("status"),
+            "observed_actual_paths": (
+                candidate.get("observed_actual_paths")
+                or candidate.get("actual_paths")
+                or []
+            ),
+            "field_provenance": candidate.get("field_provenance") or {},
+            # Compatibility metadata for existing audit/UI consumers.
             "goal": candidate.get("goal"),
             "intent": candidate.get("intent"),
             "status": candidate.get("status"),
@@ -495,11 +506,15 @@ def _task_lineage_record(
         content=content,
         source_id="task_lineage_candidates",
         source_type="conversation_history",
-        trust="runtime_fact",
+        trust="mixed_sources",
         task_id=task_id,
         freshness="recent",
         token_estimate=_estimate_tokens_fast(content),
-        metadata={"candidates": compact_candidates[:4]},
+        metadata={
+            "candidate_schema_version": "task_lineage_candidate.v2",
+            "provenance_schema_version": "task_lineage_provenance.v1",
+            "candidates": compact_candidates[:4],
+        },
     )
 
 

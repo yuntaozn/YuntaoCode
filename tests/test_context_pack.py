@@ -59,6 +59,31 @@ def test_context_pack_includes_task_lineage_candidates_as_candidates() -> None:
         task_candidates=[
             {
                 "candidate_id": "run-1",
+                "user_request": "Build a house in Blender",
+                "declared_goal": "Create a Blender house",
+                "model_response_excerpt": "The build was only partially completed.",
+                "observed_status": "partial",
+                "observed_actual_paths": ["scene.blend"],
+                "field_provenance": {
+                    "schema_version": "task_lineage_provenance.v1",
+                    "fields": {
+                        "user_request": {
+                            "source_type": "user_message",
+                            "trust": "user_provided",
+                            "source_id": "user-1",
+                        },
+                        "declared_goal": {
+                            "source_type": "assistant_task_contract",
+                            "trust": "model_inferred",
+                            "source_id": "run-1",
+                        },
+                        "observed_status": {
+                            "source_type": "run_result",
+                            "trust": "runtime_fact",
+                            "source_id": "run-1",
+                        },
+                    },
+                },
                 "goal": "Create a Blender house",
                 "intent": "write_required",
                 "status": "partial",
@@ -76,8 +101,14 @@ def test_context_pack_includes_task_lineage_candidates_as_candidates() -> None:
     assert [item["kind"] for item in pack["records"]] == ["user_intent", "task_lineage"]
     lineage = pack["records"][1]
     assert lineage["source_type"] == "conversation_history"
+    assert lineage["trust"] == "mixed_sources"
     assert "historical task candidates" in lineage["content"].lower()
+    assert "task_lineage_context.v2" in lineage["content"]
+    assert lineage["metadata"]["candidate_schema_version"] == "task_lineage_candidate.v2"
+    assert lineage["metadata"]["provenance_schema_version"] == "task_lineage_provenance.v1"
     assert lineage["metadata"]["candidates"][0]["candidate_id"] == "run-1"
+    assert lineage["metadata"]["candidates"][0]["user_request"] == "Build a house in Blender"
+    assert lineage["metadata"]["candidates"][0]["declared_goal"] == "Create a Blender house"
     assert lineage["metadata"]["candidates"][0]["actual_paths"] == ["scene.blend"]
 
 

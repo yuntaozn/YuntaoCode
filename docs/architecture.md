@@ -131,7 +131,8 @@ User Request
 - `classifiers.py`：工具事实分类、进度观察和协议辅助；不承担用户意图或执行路线判断。
 - `capability_router.py`：能力契约、模型路由提案和提案验证。
 - `conversation_task_context.py`：判断是否存在近期任务上下文，并暴露 Task Lineage
-  候选；只有模型显式引用 candidate 后，Runtime 才允许应用连续任务锚点。
+  候选；候选按字段区分用户原话、旧模型目标/总结和 Runtime 观察事实，只有模型显式
+  引用 candidate 后，Runtime 才允许应用连续任务锚点。
 - `project_context.py`：把任务关系与当前工作对象关系分开，生成当前任务理解、
   Runtime 可审计的 Active Focus Snapshot，不替模型选择目标。
 - `profiles.py`：模型任务契约可选的内部 Profile 描述，例如直接问答、项目分析、代码修改、外部能力执行、文档工作流、论文工作流；Profile 不生成固定阶段序列。

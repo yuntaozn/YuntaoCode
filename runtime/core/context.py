@@ -34,6 +34,7 @@ TrustLevel = Literal[
     "user_provided",
     "tool_verified",
     "runtime_fact",
+    "mixed_sources",
     "summary",
     "memory",
     "model_inferred",
