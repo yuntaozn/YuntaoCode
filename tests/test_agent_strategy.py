@@ -1258,6 +1258,9 @@ class TestPrompts:
         assert "route_proposals=code.text_write/filesystem.write_file" in prompt
         assert "Decide whether the task is actually complete" in prompt
         assert "Do not claim completion beyond the observed deliverables" in prompt
+        assert "completion_self_assessment.v1" in prompt
+        assert '"goal_closed":true' in prompt
+        assert '"remaining_work":[]' in prompt
 
     def test_completion_reentry_prompt_is_evidence_only(self):
         prompt = completion_reentry_prompt(

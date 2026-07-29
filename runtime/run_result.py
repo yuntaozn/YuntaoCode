@@ -56,6 +56,7 @@ def build_run_result(
     model_error: str = "",
     final_answer_error: str = "",
     answer_text: str | None = None,
+    completion_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build deterministic run facts from tool events.
 
@@ -451,7 +452,7 @@ def build_run_result(
     if degraded_failures:
         risks.append("degraded_verification_failure")
 
-    status = _result_status(
+    evidence_status = _result_status(
         has_tool_events=bool(tool_events),
         has_write_success=bool(write_successes),
         has_answer_deliverable=answer_deliverable_observed,
@@ -474,6 +475,12 @@ def build_run_result(
         max_rounds_exceeded=max_rounds_exceeded,
         no_progress_budget_exhausted=no_progress_budget_exhausted,
     )
+    completion_assessment = _completion_assessment(completion_decision)
+    status, assessment_risks = _reconcile_completion_assessment(
+        evidence_status,
+        completion_assessment,
+    )
+    risks.extend(assessment_risks)
     visual_verification = build_visual_verification_summary(
         visual_evidence=visual_evidence,
         debug_sessions=debug_sessions,
@@ -506,6 +513,8 @@ def build_run_result(
         "schema_version": RUN_RESULT_SCHEMA_VERSION,
         "kind": "run_result",
         "status": status,
+        "evidence_status": evidence_status,
+        "completion_assessment": completion_assessment,
         "counts": {
             "tool_events": len(tool_events),
             "deliverable_successes": (
@@ -633,6 +642,71 @@ def _result_status(
     if has_write_success or has_answer_deliverable or has_tool_events:
         return "success"
     return "no_tool_activity"
+
+
+def _completion_assessment(
+    completion_decision: dict[str, Any] | None,
+) -> dict[str, Any]:
+    decision = completion_decision if isinstance(completion_decision, dict) else {}
+    assessment = decision.get("self_assessment")
+    if not isinstance(assessment, dict):
+        return {}
+    if (
+        assessment.get("kind") != "completion_self_assessment"
+        or not isinstance(assessment.get("goal_closed"), bool)
+    ):
+        return {}
+    return {
+        "schema_version": str(
+            assessment.get("schema_version") or "completion_self_assessment.v1"
+        ),
+        "kind": "completion_self_assessment",
+        "source": "model_declared",
+        "goal_closed": bool(assessment["goal_closed"]),
+        "remaining_work": _bounded_strings(assessment.get("remaining_work")),
+        "verification_limits": _bounded_strings(
+            assessment.get("verification_limits")
+        ),
+    }
+
+
+def _reconcile_completion_assessment(
+    evidence_status: str,
+    assessment: dict[str, Any],
+) -> tuple[str, list[str]]:
+    """Keep Runtime evidence and the model's semantic conclusion consistent.
+
+    The model can lower a successful evidence status by declaring that its goal
+    remains open.  It cannot upgrade a partial/failure Runtime result.  Runtime
+    does not infer completion from prose or choose a repair strategy here.
+    """
+
+    if not assessment:
+        return evidence_status, []
+    goal_closed = bool(assessment.get("goal_closed"))
+    remaining_work = assessment.get("remaining_work") or []
+    if goal_closed and remaining_work:
+        if evidence_status == "success":
+            return "partial", ["model_completion_assessment_inconsistent"]
+        return evidence_status, ["model_completion_assessment_inconsistent"]
+    if goal_closed:
+        return evidence_status, []
+    if evidence_status == "success":
+        return "partial", ["model_reported_goal_open"]
+    return evidence_status, ["model_reported_goal_open"]
+
+
+def _bounded_strings(value: Any, *, limit: int = 12) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text and text not in result:
+            result.append(text[:500])
+        if len(result) >= limit:
+            break
+    return result
 
 
 def _unrecovered_failed_deliverable_events(

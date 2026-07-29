@@ -47,7 +47,11 @@ from runtime.context_pack import (
 )
 from runtime.run_finalizer import RunFinalizationRequest, RunFinalizer
 from runtime.run_execution_state import RunExecutionState
-from runtime.run_completion import build_completion_decision, build_completion_evidence_pack
+from runtime.run_completion import (
+    build_completion_decision,
+    build_completion_evidence_pack,
+    extract_completion_self_assessment,
+)
 from runtime.run_result import build_run_result
 from runtime.run_recovery import format_recovery_context
 from runtime.visual_context import build_visual_context_messages
@@ -826,6 +830,22 @@ class ConversationRunExecutor:
                         })
                         await self.flush()
                 round_text = "".join(round_content_parts).strip()
+                completion_self_assessment = None
+                if run_state.completion_review.pending and not tool_calls and round_text:
+                    cleaned_text, completion_self_assessment = (
+                        extract_completion_self_assessment(round_text)
+                    )
+                    if completion_self_assessment:
+                        self._discard_parts(content_parts, round_content_parts)
+                        round_content_parts = [cleaned_text]
+                        content_parts.extend(round_content_parts)
+                        round_text = cleaned_text
+                        self.write_event({
+                            "event": "message_replace",
+                            "message": "".join(content_parts),
+                            "clear_reasoning": False,
+                        })
+                        await self.flush()
                 raw_round_text = (
                     "".join(round_content_parts) + "\n" + "".join(round_reasoning_parts)
                 ).strip()
@@ -845,6 +865,7 @@ class ConversationRunExecutor:
                         finish_reason=round_finish_reason,
                         reason=decision_reason,
                         evidence_pack=run_state.completion_review.latest_evidence_pack,
+                        self_assessment=completion_self_assessment,
                     )
                     metadata.setdefault("completion_decisions", []).append(decision)
                     self.write_event({"event": "completion_decision", "decision": decision})

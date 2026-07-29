@@ -173,6 +173,16 @@ class RunFinalizationOutcome:
     max_rounds_exceeded: bool
 
 
+def _latest_completion_decision(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    values = metadata.get("completion_decisions")
+    if not isinstance(values, list):
+        return None
+    for item in reversed(values):
+        if isinstance(item, dict):
+            return item
+    return None
+
+
 class RunFinalizer:
     """Persist and present final Run facts after the execution loop ends."""
 
@@ -297,6 +307,7 @@ class RunFinalizer:
             model_error=state.model_provider_error,
             final_answer_error=final_answer_error,
             answer_text=model_content,
+            completion_decision=_latest_completion_decision(metadata),
         )
         metadata["run_result"] = run_result
 

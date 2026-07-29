@@ -99,6 +99,112 @@ def test_build_run_result_succeeds_when_code_write_has_real_test_verification() 
     assert "test_not_observed" not in result["risks"]
 
 
+def test_model_open_goal_downgrades_successful_evidence_to_partial() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="coding",
+        change_summary={"files": [{"path": "src/app.js"}]},
+        requires_code_write=True,
+        tool_events=[
+            {
+                "tool": "code.edit_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/src/app.js"},
+                "output": {"path": "D:/workspace/src/app.js"},
+            },
+            {
+                "tool": "shell.run_command",
+                "status": "success",
+                "input": {"command": "npm test"},
+                "output": {"exit_code": 0},
+            },
+        ],
+        completion_decision={
+            "self_assessment": {
+                "schema_version": "completion_self_assessment.v1",
+                "kind": "completion_self_assessment",
+                "goal_closed": False,
+                "remaining_work": ["rebuild the generated registry"],
+                "verification_limits": ["visual output not checked"],
+            }
+        },
+    )
+
+    assert result["evidence_status"] == "success"
+    assert result["status"] == "partial"
+    assert result["completion_assessment"]["goal_closed"] is False
+    assert result["completion_assessment"]["remaining_work"] == [
+        "rebuild the generated registry"
+    ]
+    assert "model_reported_goal_open" in result["risks"]
+    assert result["verification_closure"]["result_status"] == "partial"
+
+
+def test_model_closed_goal_does_not_upgrade_partial_runtime_evidence() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="coding",
+        change_summary={"files": [{"path": "src/app.js"}]},
+        requires_code_write=True,
+        tool_events=[
+            {
+                "tool": "code.edit_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/src/app.js"},
+                "output": {"path": "D:/workspace/src/app.js"},
+            }
+        ],
+        completion_decision={
+            "self_assessment": {
+                "schema_version": "completion_self_assessment.v1",
+                "kind": "completion_self_assessment",
+                "goal_closed": True,
+                "remaining_work": [],
+                "verification_limits": [],
+            }
+        },
+    )
+
+    assert result["evidence_status"] == "partial"
+    assert result["status"] == "partial"
+    assert "model_reported_goal_open" not in result["risks"]
+
+
+def test_inconsistent_model_completion_assessment_is_visible_and_partial() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="coding",
+        change_summary={"files": [{"path": "src/app.py"}]},
+        requires_code_write=True,
+        tool_events=[
+            {
+                "tool": "code.edit_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/src/app.py"},
+                "output": {"path": "D:/workspace/src/app.py"},
+            },
+            {
+                "tool": "shell.run_command",
+                "status": "success",
+                "input": {"command": "pytest"},
+                "output": {"exit_code": 0},
+            },
+        ],
+        completion_decision={
+            "self_assessment": {
+                "kind": "completion_self_assessment",
+                "goal_closed": True,
+                "remaining_work": ["one declared task remains"],
+                "verification_limits": [],
+            }
+        },
+    )
+
+    assert result["evidence_status"] == "success"
+    assert result["status"] == "partial"
+    assert "model_completion_assessment_inconsistent" in result["risks"]
+
+
 def test_build_run_result_does_not_treat_py_compile_as_behavioral_api_verification() -> None:
     contract = {
         "intent": "write_required",

@@ -28,6 +28,8 @@ RISK_MESSAGES_ZH: dict[str, str] = {
     "partial_write_failure": "同一轮既有写入成功，也有写入失败，产物可能不完整。",
     "partial_write_resumable": "部分写入失败，但已有成功产物可继续修正。",
     "deliverable_path_hint_changed": "最终产物路径与任务中的路径提示不一致，请确认是否符合预期。",
+    "model_reported_goal_open": "模型在完成自审中明确报告目标仍未闭合。",
+    "model_completion_assessment_inconsistent": "模型的完成自评同时声明目标已闭合和仍有剩余工作。",
     "execution_contract_failed": "本轮任务契约仍有证据缺口。",
     "max_rounds_exceeded": "当前执行预算已用完。",
     "repeated_tool_failure": "同一路线反复无新进展，需要换策略或检查环境。",

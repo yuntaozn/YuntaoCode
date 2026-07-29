@@ -2,6 +2,7 @@ from runtime.run_completion import (
     COMPLETION_EVIDENCE_BUDGET,
     build_completion_decision,
     build_completion_evidence_pack,
+    extract_completion_self_assessment,
     format_completion_evidence_pack,
 )
 from runtime.tool_call_protocol import build_tool_attempt_observation
@@ -430,6 +431,62 @@ def test_completion_decision_records_final_answer_candidate() -> None:
     assert decision["action"] == "final_answer_candidate"
     assert decision["content_chars"] == len(content)
     assert decision["risks"] == ["write_not_verified"]
+
+
+def test_completion_self_assessment_extracts_model_judgment_and_answer() -> None:
+    content = """```json
+{
+  "schema_version": "completion_self_assessment.v1",
+  "kind": "completion_self_assessment",
+  "goal_closed": false,
+  "remaining_work": ["rebuild the generated registry"],
+  "verification_limits": ["visual rendering was not checked"],
+  "final_answer": "The manifest exists, but the catalog is not fully registered."
+}
+```"""
+
+    answer, assessment = extract_completion_self_assessment(content)
+
+    assert answer == "The manifest exists, but the catalog is not fully registered."
+    assert assessment == {
+        "schema_version": "completion_self_assessment.v1",
+        "kind": "completion_self_assessment",
+        "source": "model_declared",
+        "goal_closed": False,
+        "remaining_work": ["rebuild the generated registry"],
+        "verification_limits": ["visual rendering was not checked"],
+    }
+
+
+def test_completion_self_assessment_does_not_infer_from_ordinary_prose() -> None:
+    content = "The file was written, but the generated index was not rebuilt."
+
+    answer, assessment = extract_completion_self_assessment(content)
+
+    assert answer == content
+    assert assessment is None
+
+
+def test_completion_decision_records_explicit_model_self_assessment() -> None:
+    assessment = {
+        "schema_version": "completion_self_assessment.v1",
+        "kind": "completion_self_assessment",
+        "source": "model_declared",
+        "goal_closed": False,
+        "remaining_work": ["rebuild registry"],
+        "verification_limits": [],
+    }
+
+    decision = build_completion_decision(
+        review_count=2,
+        run_result={"status": "success"},
+        tool_calls=[],
+        content="The manifest exists, but registration is incomplete.",
+        self_assessment=assessment,
+    )
+
+    assert decision["action"] == "final_answer_candidate"
+    assert decision["self_assessment"] == assessment
 
 
 def test_completion_decision_records_protocol_repair_evidence() -> None:

@@ -297,7 +297,17 @@ async def test_finalizer_passes_observed_evidence_to_result_synthesis(
     host = _SynthesizingHost(conversation)
     metadata: dict[str, Any] = {
         "effective_context_limit": 4096,
-        "completion_decisions": [{"review_count": 1, "action": "continue_with_tools"}],
+        "completion_decisions": [{
+            "review_count": 1,
+            "action": "final_answer_candidate",
+            "self_assessment": {
+                "schema_version": "completion_self_assessment.v1",
+                "kind": "completion_self_assessment",
+                "goal_closed": False,
+                "remaining_work": ["run the browser verification"],
+                "verification_limits": ["no rendered preview was observed"],
+            },
+        }],
         "task_route_evidence": {
             "schema_version": "task_route_evidence.v1",
             "kind": "task_route_evidence",
@@ -360,4 +370,8 @@ async def test_finalizer_passes_observed_evidence_to_result_synthesis(
     assert host.synthesis_kwargs["tool_events"] == tool_events
     assert host.synthesis_kwargs["completion_decisions"] == metadata["completion_decisions"]
     assert host.synthesis_kwargs["task_route_evidence"] == metadata["task_route_evidence"]
+    assert outcome.run_result["completion_assessment"]["goal_closed"] is False
+    assert outcome.run_result["completion_assessment"]["remaining_work"] == [
+        "run the browser verification"
+    ]
     assert metadata["synthesized_final_answer_source"] == "model_from_runtime_facts"

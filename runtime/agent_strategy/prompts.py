@@ -227,7 +227,16 @@ def completion_review_prompt(
         "was not verified, and any remaining risk. Do not claim completion "
         "beyond the observed deliverables and verification evidence. The runtime "
         "will record your observable choice as completion-loop evidence; this "
-        "record is for audit and replay, not a hard constraint on your strategy."
+        "record is for audit and replay, not a hard constraint on your strategy.\n"
+        "If you finish instead of calling another tool, return one JSON object "
+        "with this exact envelope shape (the runtime will display only "
+        "final_answer):\n"
+        '{"schema_version":"completion_self_assessment.v1",'
+        '"kind":"completion_self_assessment","goal_closed":true,'
+        '"remaining_work":[],"verification_limits":[],'
+        '"final_answer":"your user-facing answer"}\n'
+        "Set goal_closed from your own task judgment. Put concrete unfinished "
+        "work in remaining_work and evidence boundaries in verification_limits."
     )
 
 

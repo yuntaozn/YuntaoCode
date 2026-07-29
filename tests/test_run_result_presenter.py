@@ -32,6 +32,8 @@ def test_risk_presenter_uses_user_facing_message() -> None:
     assert "反复无新进展" in risk_message_zh("repeated_tool_failure")
     assert "能力预检提示" in risk_message_zh("capability_preflight_advisory")
     assert "最终回答已生成" in risk_message_zh("answer_output_too_short")
+    assert "目标仍未闭合" in risk_message_zh("model_reported_goal_open")
+    assert "完成自评" in risk_message_zh("model_completion_assessment_inconsistent")
 
 
 def test_final_answer_gap_detection_is_presentation_fact() -> None:

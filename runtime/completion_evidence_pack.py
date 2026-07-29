@@ -81,6 +81,10 @@ def build_completion_evidence_pack(
         "goal": str(contract.get("goal") or "").strip(),
         "intent": str(contract.get("intent") or "").strip(),
         "result_status": str(result.get("status") or "unknown"),
+        "evidence_status": str(result.get("evidence_status") or ""),
+        "completion_assessment": _completion_assessment_digest(
+            result.get("completion_assessment")
+        ),
         "fact_summary": fact_summary,
         "artifacts": _artifact_records(result.get("artifacts")),
         "run_artifacts": _run_artifact_records(result.get("run_artifacts")),
@@ -134,6 +138,7 @@ def format_completion_evidence_pack(pack: dict[str, Any]) -> str:
     goal = str(pack.get("goal") or "").strip()
     if goal:
         lines.append(f"- goal: {_short(goal, 240)}")
+    _append_completion_assessment(lines, pack.get("completion_assessment"))
     fact_summary = pack.get("fact_summary")
     if isinstance(fact_summary, dict):
         lines.append(format_run_fact_summary(fact_summary))
@@ -172,6 +177,10 @@ def summarize_completion_evidence_pack_for_decision(
         "kind": str(pack.get("kind") or ""),
         "boundary": str(pack.get("boundary") or ""),
         "result_status": str(pack.get("result_status") or ""),
+        "evidence_status": str(pack.get("evidence_status") or ""),
+        "completion_assessment": _completion_assessment_digest(
+            pack.get("completion_assessment")
+        ),
         "risks": _string_list(pack.get("risks"), limit=12),
         "missing_verification_modalities": _string_list(
             pack.get("missing_verification_modalities"),
@@ -188,6 +197,42 @@ def summarize_completion_evidence_pack_for_decision(
             pack.get("task_route_evidence")
         ),
     }
+
+
+def _completion_assessment_digest(value: Any) -> dict[str, Any]:
+    item = value if isinstance(value, dict) else {}
+    if (
+        item.get("kind") != "completion_self_assessment"
+        or not isinstance(item.get("goal_closed"), bool)
+    ):
+        return {}
+    return {
+        "schema_version": str(item.get("schema_version") or ""),
+        "kind": "completion_self_assessment",
+        "source": str(item.get("source") or "model_declared"),
+        "goal_closed": bool(item["goal_closed"]),
+        "remaining_work": _string_list(item.get("remaining_work"), limit=8),
+        "verification_limits": _string_list(
+            item.get("verification_limits"),
+            limit=8,
+        ),
+    }
+
+
+def _append_completion_assessment(lines: list[str], value: Any) -> None:
+    item = _completion_assessment_digest(value)
+    if not item:
+        return
+    lines.append(
+        "- model completion assessment: "
+        f"goal_closed={str(item.get('goal_closed')).lower()}"
+    )
+    _append_string_list(lines, "model remaining work", item.get("remaining_work"))
+    _append_string_list(
+        lines,
+        "model verification limits",
+        item.get("verification_limits"),
+    )
 
 
 def _tool_progress_records(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -723,6 +768,9 @@ def _completion_decision_records(value: Any) -> list[dict[str, Any]]:
             "reason": str(item.get("reason") or ""),
             "tool_call_count": item.get("tool_call_count"),
             "result_status": str(item.get("result_status") or ""),
+            "self_assessment": _completion_assessment_digest(
+                item.get("self_assessment")
+            ),
         })
     return records
 
@@ -879,6 +927,14 @@ def _append_previous_decisions(lines: list[str], value: Any) -> None:
             f"tools={item.get('tool_call_count')}; "
             f"reason={item.get('reason') or ''}"
         )
+        assessment = _completion_assessment_digest(item.get("self_assessment"))
+        if assessment:
+            lines.append(
+                "    model_assessment: "
+                f"goal_closed={str(assessment.get('goal_closed')).lower()}"
+            )
+            for remaining in assessment.get("remaining_work") or []:
+                lines.append(f"    remaining: {_short(str(remaining), 220)}")
 
 
 def _append_string_list(lines: list[str], title: str, value: Any) -> None:

@@ -82,6 +82,10 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ### Changed
 
+- Completion review now supports a model-declared
+  `completion_self_assessment.v1`. `RunResult` preserves the Runtime evidence
+  status separately and will not record success when the model explicitly
+  reports that the task goal remains open.
 - Main development now targets `0.2.0-dev` after the fixed `v0.1.0` public
   preview tag. The 0.2 direction is anchored around Observation, Verification,
   and Artifact Runtime rather than a broader tool or scenario list.
