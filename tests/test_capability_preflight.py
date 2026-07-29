@@ -84,6 +84,74 @@ def test_snapshot_groups_available_and_unavailable_capability_tools() -> None:
     assert capability["available_provider_kinds"] == ["mcp"]
 
 
+def test_snapshot_exposes_available_conditional_affordances_and_effects() -> None:
+    snapshot = build_capability_snapshot([
+        {
+            "id": "shell.run_command",
+            "capability": "shell.local_command",
+            "effects": ["shell_command"],
+            "artifacts": ["command_output"],
+            "roles": ["execution", "verification"],
+            "available": True,
+            "affordances": [
+                {
+                    "id": "process.start_background",
+                    "description": "Start an external program in the background.",
+                    "input_hints": ["set background=true"],
+                    "effects": ["external_state_change"],
+                    "artifacts": ["process"],
+                    "roles": ["execution", "deliverable", "evidence"],
+                    "evidence_limits": [
+                        "process creation is not behavioral verification"
+                    ],
+                }
+            ],
+        }
+    ])
+
+    [capability] = snapshot["capabilities"]
+
+    assert capability["available_effects"] == [
+        "external_state_change",
+        "shell_command",
+    ]
+    assert capability["conditional_effects"] == ["external_state_change"]
+    assert capability["available_artifacts"] == ["command_output", "process"]
+    assert capability["available_roles"] == [
+        "deliverable",
+        "evidence",
+        "execution",
+        "verification",
+    ]
+    assert capability["available_affordances"][0]["id"] == "process.start_background"
+    assert snapshot["external_state_tool_ids"] == ["shell.run_command"]
+    assert snapshot["external_state_capability_ids"] == ["shell.local_command"]
+    assert snapshot["conditional_tool_effects"] == {
+        "shell.run_command": ["external_state_change"],
+    }
+    assert snapshot["tool_affordances"]["shell.run_command"][0]["id"] == (
+        "process.start_background"
+    )
+
+    preflight = preflight_task_capabilities(
+        {
+            "requires_state_change": True,
+            "requires_write": False,
+            "capability_ids": ["shell.local_command"],
+            "deliverables": [{"kind": "external_state"}],
+        },
+        snapshot,
+    )
+
+    assert not any(
+        item["code"] in {
+            "missing_external_state_capability",
+            "target_capability_lacks_external_state_effect",
+        }
+        for item in preflight["advisories"]
+    )
+
+
 def test_snapshot_keeps_cli_and_mcp_as_provider_sources_not_capabilities() -> None:
     snapshot = build_capability_snapshot([
         {

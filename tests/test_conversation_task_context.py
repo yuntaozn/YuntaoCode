@@ -41,6 +41,7 @@ def test_recent_conversation_requests_model_contract_without_inheriting_semantic
     assert availability["available"] is True
     assert availability["candidate_count"] == 1
     assert availability["candidate_content_exposure"] == "model_requested"
+    assert "request lineage before finalizing the goal" in availability["rule"]
 
 
 def test_task_lineage_availability_does_not_classify_new_vs_followup() -> None:

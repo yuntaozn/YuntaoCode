@@ -29,6 +29,7 @@ MAX_LIVE_OUTPUT_EVENTS = 80
 MAX_LIVE_MESSAGE_CHARS = 1200
 PROGRESS_HEARTBEAT_SECONDS = 10.0
 TASK_TEMP_CWD_ALIASES = {"task_temp", "__task_temp__", "$TASK_TEMP", "{task_temp}"}
+_BACKGROUND_WAIT_TASKS: set[asyncio.Task[int]] = set()
 
 # Patterns that are clearly destructive on Windows or Unix
 DANGEROUS_PATTERNS = [
@@ -95,6 +96,49 @@ def _compose_command(command: str, args: Any) -> str:
 
 # On Windows, suppress the console window for child processes
 _WIN_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
+
+
+def _shell_dialect(*, direct_exec: bool) -> str:
+    if direct_exec:
+        return "direct_exec"
+    if sys.platform.startswith("win"):
+        return "windows_powershell_5_1"
+    return "posix_shell"
+
+
+def _track_background_process(process: asyncio.subprocess.Process) -> None:
+    """Reap a detached child without turning it into a foreground ToolTask."""
+
+    task = asyncio.create_task(process.wait())
+    _BACKGROUND_WAIT_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_WAIT_TASKS.discard)
+
+
+async def _start_background_process(
+    command: str,
+    argv: list[str],
+    *,
+    cwd: str,
+) -> asyncio.subprocess.Process:
+    process_kwargs: dict[str, Any] = {}
+    if sys.platform.startswith("win"):
+        process_kwargs["creationflags"] = _WIN_NO_WINDOW
+    else:
+        process_kwargs["start_new_session"] = True
+    try:
+        process = await asyncio.create_subprocess_exec(
+            command,
+            *argv,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            cwd=cwd,
+            **process_kwargs,
+        )
+    except OSError as exc:
+        raise ValueError(f"failed to start background process: {exc}") from exc
+    _track_background_process(process)
+    return process
 
 
 async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
@@ -291,6 +335,7 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
     command = (input_data.get("command") or "").strip()
     if not command:
         raise ValueError("command is required")
+    args_supplied = "args" in input_data
     argv = _normalize_args(input_data.get("args"))
     display_command = _compose_command(command, argv)
 
@@ -298,6 +343,9 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
         raise ValueError(f"command rejected as potentially destructive: {display_command[:100]}")
 
     cwd = _resolve_cwd(input_data, context)
+    background = bool(input_data.get("background"))
+    direct_exec = bool(args_supplied or background)
+    shell_dialect = _shell_dialect(direct_exec=direct_exec)
 
     command_facts = shell_command_facts(command, argv)
     timeout = _effective_timeout(input_data, command, argv)
@@ -310,9 +358,65 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
             "cwd": cwd,
             "timeout": timeout,
             "command_role": command_facts.role,
+            "execution_mode": "background" if background else "foreground",
+            "shell_dialect": shell_dialect,
             "observable": True,
         },
     )
+
+    if background:
+        process = await _start_background_process(command, argv, cwd=cwd)
+        started_at = _utc_now_iso()
+        debug_session = build_debug_session(
+            source_type="shell.run_command",
+            command=display_command,
+            executable=command,
+            args=argv,
+            cwd=cwd,
+            pid=process.pid,
+            exit_code=None,
+            timeout=None,
+            started_at=started_at,
+            finished_at="",
+            duration_seconds=0.0,
+            health_status="running",
+        )
+        context.log(
+            "info",
+            f"background process started with pid {process.pid}",
+            {
+                "kind": "command_background_started",
+                "pid": process.pid,
+                "shell_dialect": shell_dialect,
+                "observable": True,
+            },
+        )
+        return {
+            "command": display_command,
+            "executable": command,
+            "args": argv,
+            "display_command": display_command,
+            "cwd": cwd,
+            "task_temp_dir": str(getattr(context, "temp_dir", "") or ""),
+            "exit_code": None,
+            "stdout": "",
+            "stderr": "",
+            "timed_out": False,
+            "timeout": None,
+            "command_role": command_facts.role,
+            "effects": ["external_state_change"],
+            "roles": ["deliverable", "evidence"],
+            "artifacts": ["process"],
+            "execution_mode": "background",
+            "process_state": "running",
+            "background": True,
+            "shell_dialect": shell_dialect,
+            "observable": True,
+            "pid": process.pid,
+            "stdout_truncated": False,
+            "stderr_truncated": False,
+            "debug_session": debug_session,
+        }
 
     timed_out = False
     stdout_capture = _BoundedByteCapture(MAX_STDOUT)
@@ -324,7 +428,7 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
     observer = _LiveCommandObserver(context, started_monotonic)
     try:
         process_kwargs: dict[str, Any] = {}
-        if argv:
+        if direct_exec:
             if sys.platform.startswith("win"):
                 process_kwargs["creationflags"] = _WIN_NO_WINDOW
             else:
@@ -439,6 +543,10 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
         "timed_out": timed_out,
         "timeout": timeout,
         "command_role": command_facts.role,
+        "execution_mode": "foreground",
+        "process_state": "finished",
+        "background": False,
+        "shell_dialect": shell_dialect,
         "observable": True,
         "pid": process.pid if process is not None else None,
         "stdout_truncated": stdout_capture.truncated,
@@ -599,10 +707,18 @@ def register_shell_tools(registry: ToolRegistry) -> None:
             name="执行终端命令",
             description=(
                 "在允许工作区或当前任务临时目录内执行终端命令。适合运行构建、测试、安装依赖等操作。"
-                "跨平台任务建议使用 command+args 参数数组和 python/node 等可移植入口；不要假设 bash、PowerShell、cp、rm、"
-                "Copy-Item 等平台专属语法一定可用。运行 filesystem.write_temp_file 创建的临时脚本时，"
+                "跨平台任务和启动外部程序应显式传 command+args（即使 args=[]），此时运行时直接执行程序而不经过 shell。"
+                + (
+                    "当前 Windows 字符串命令使用 Windows PowerShell 5.1，不是 cmd.exe；不要使用 %VAR%、2>nul 或 ||，"
+                    "应使用 $env:VAR、2>$null 和 PowerShell 条件语句。"
+                    if sys.platform.startswith("win")
+                    else "当前字符串命令使用 POSIX shell；不要假设 PowerShell 或 cmd.exe 语法可用。"
+                )
+                + "不要假设 bash、PowerShell、cp、rm、Copy-Item 等平台专属语法在其他系统可用。"
+                "运行 filesystem.write_temp_file 创建的临时脚本时，"
                 "可传 cwd='task_temp' 或 use_task_temp=true。不要把 python -m http.server、npm run dev 等长驻服务命令"
-                "当作普通验证命令，除非用户明确要求启动服务。命令输出会在运行中持续显示；无输出时会显示心跳。"
+                "当作普通前台验证命令；需要启动 GUI 或长驻进程时传 background=true，运行时会直接执行程序并立即返回 PID。"
+                "前台命令输出会在运行中持续显示；无输出时会显示心跳。"
                 "普通命令超时默认30秒，依赖安装默认600秒，最大900秒。"
             ),
             input_schema={
@@ -616,6 +732,14 @@ def register_shell_tools(registry: ToolRegistry) -> None:
                     },
                     "cwd": {"type": "string", "description": "工作目录（可选，默认当前workspace；传 task_temp 使用任务临时目录）"},
                     "use_task_temp": {"type": "boolean", "default": False, "description": "是否在任务临时目录执行命令"},
+                    "background": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "是否直接在后台启动 command 指定的程序并立即返回 PID；"
+                            "适合 GUI 或长驻进程，不用于 shell 表达式"
+                        ),
+                    },
                     "timeout": {
                         "type": "integer",
                         "default": 30,
@@ -629,6 +753,58 @@ def register_shell_tools(registry: ToolRegistry) -> None:
             effects=["shell_command"],
             roles=["execution", "evidence", "verification"],
             verification_strength="standard",
+            affordances=[
+                {
+                    "id": "process.direct_exec",
+                    "description": (
+                        "Execute an external program directly without shell parsing. "
+                        "This is the portable route for executables and argument arrays."
+                    ),
+                    "input_hints": [
+                        "provide command as the executable path or name",
+                        "provide args as an array, including args=[] when there are no arguments",
+                    ],
+                    "artifacts": ["command_output", "debug_session"],
+                    "effects": ["shell_command"],
+                    "roles": ["execution", "evidence"],
+                    "evidence_limits": [
+                        "successful execution only verifies the task when the command itself is a relevant check"
+                    ],
+                },
+                {
+                    "id": "process.start_background",
+                    "description": (
+                        "Start a GUI or long-running executable directly and return its PID "
+                        "and running process state without waiting for it to exit."
+                    ),
+                    "input_hints": [
+                        "set background=true",
+                        "command must name an executable rather than a shell expression",
+                        "provide args as an array",
+                    ],
+                    "artifacts": ["process", "debug_session"],
+                    "effects": ["external_state_change"],
+                    "roles": ["execution", "deliverable", "evidence"],
+                    "evidence_limits": [
+                        "process creation is not behavioral verification of the application"
+                    ],
+                },
+                {
+                    "id": "shell.platform_expression",
+                    "description": (
+                        "Execute a shell expression using the current platform dialect when "
+                        "the task genuinely needs shell syntax."
+                    ),
+                    "input_hints": ["omit args to use the platform shell"],
+                    "artifacts": ["command_output", "debug_session"],
+                    "effects": ["shell_command"],
+                    "roles": ["execution", "evidence"],
+                    "evidence_limits": [
+                        "Windows uses Windows PowerShell 5.1; other platforms use a POSIX shell",
+                        "platform-specific syntax is not portable",
+                    ],
+                },
+            ],
         ),
         run_command,
     )

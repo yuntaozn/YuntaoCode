@@ -30,10 +30,15 @@ def build_debug_session(
     finished_at: str = "",
     duration_seconds: float | None = None,
     heartbeat: dict[str, Any] | None = None,
+    health_status: str = "",
 ) -> dict[str, Any]:
     """Build a stable, advisory debug-session evidence record."""
 
-    status = _status(exit_code=exit_code, timed_out=timed_out, stderr=stderr)
+    status = str(health_status or "").strip() or _status(
+        exit_code=exit_code,
+        timed_out=timed_out,
+        stderr=stderr,
+    )
     return {
         "schema_version": DEBUG_SESSION_SCHEMA_VERSION,
         "kind": "debug_session",
@@ -68,7 +73,7 @@ def build_debug_session(
         "heartbeat": heartbeat or {},
         "health": {
             "status": status,
-            "has_runtime_errors": status != "success",
+            "has_runtime_errors": status not in {"success", "running"},
         },
     }
 

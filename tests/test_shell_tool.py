@@ -12,8 +12,10 @@ from runtime.skills.shell import (
     _compose_command,
     _effective_timeout,
     _node_check_inline_script_diagnostic,
+    register_shell_tools,
     run_command,
 )
+from runtime.tool_registry import ToolRegistry
 
 
 @dataclass
@@ -71,6 +73,8 @@ async def test_run_command_uses_args_array(tmp_path: Path) -> None:
     assert "ARGS_OK" in result["stdout"]
     assert "python" in result["command"]
     assert "-c" in result["command"]
+    assert result["execution_mode"] == "foreground"
+    assert result["shell_dialect"] == "direct_exec"
 
 
 @pytest.mark.asyncio
@@ -177,6 +181,59 @@ async def test_run_command_emits_heartbeat_when_process_is_silent(
 
     assert result["exit_code"] == 0
     assert any(item["data"].get("kind") == "command_heartbeat" for item in context.logs)
+
+
+@pytest.mark.asyncio
+async def test_run_command_can_start_program_in_background(tmp_path: Path) -> None:
+    context = FakeContext(PathGuard([tmp_path]))
+
+    result = await run_command(
+        {
+            "command": sys.executable,
+            "args": ["-c", "import time; time.sleep(0.1)"],
+            "background": True,
+        },
+        context,
+    )
+
+    assert result["exit_code"] is None
+    assert result["background"] is True
+    assert result["execution_mode"] == "background"
+    assert result["process_state"] == "running"
+    assert result["shell_dialect"] == "direct_exec"
+    assert result["effects"] == ["external_state_change"]
+    assert result["roles"] == ["deliverable", "evidence"]
+    assert isinstance(result["pid"], int)
+    assert result["debug_session"]["health"] == {
+        "status": "running",
+        "has_runtime_errors": False,
+    }
+    await asyncio.sleep(0.2)
+
+
+def test_shell_spec_exposes_execution_dialect_and_background_mode() -> None:
+    registry = ToolRegistry()
+    register_shell_tools(registry)
+
+    spec = registry.get_public_spec("shell.run_command")
+
+    assert "command+args" in spec["description"]
+    assert "background=true" in spec["description"]
+    assert "background" in spec["input_schema"]["properties"]
+    affordances = {item["id"]: item for item in spec["affordances"]}
+    assert set(affordances) == {
+        "process.direct_exec",
+        "process.start_background",
+        "shell.platform_expression",
+    }
+    assert affordances["process.start_background"]["effects"] == [
+        "external_state_change"
+    ]
+    assert affordances["process.start_background"]["evidence_limits"] == [
+        "process creation is not behavioral verification of the application"
+    ]
+    if sys.platform.startswith("win"):
+        assert "Windows PowerShell 5.1" in spec["description"]
 
 
 def test_dependency_install_gets_long_default_timeout() -> None:

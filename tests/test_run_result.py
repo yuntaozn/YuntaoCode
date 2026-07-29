@@ -1133,6 +1133,92 @@ def test_build_run_result_keeps_auxiliary_failure_auditable_without_failing_anal
     assert "incidental_tool_failure" in result["risks"]
 
 
+def test_build_run_result_keeps_unclosed_required_verification_failure_degraded() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        answer_text="The application path was found, but launch was not verified.",
+        task_contract={
+            "intent": "read_only_analysis",
+            "requires_write": False,
+            "requires_state_change": False,
+            "requires_verification": True,
+            "required_verification_modalities": ["behavioral"],
+            "deliverables": [{"kind": "answer"}],
+        },
+        tool_events=[
+            {
+                "tool": "filesystem.read_file",
+                "status": "success",
+                "input": {"path": "D:/workspace/editor.json"},
+                "output": {"path": "D:/workspace/editor.json", "content": "{}"},
+            },
+            {
+                "tool": "shell.run_command",
+                "status": "failure",
+                "declared_roles": ["verification"],
+                "declared_verification_strength": "standard",
+                "input": {"command": "missing-app", "args": []},
+                "error": "executable not found",
+            },
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["counts"]["degraded_failures"] == 1
+    assert result["counts"]["recovered_failures"] == 0
+    assert result["counts"]["incidental_failures"] == 0
+    assert result["failure_details"][0]["impact"] == "degraded"
+    assert "degraded_verification_failure" in result["risks"]
+    assert "recovered_tool_failure" not in result["risks"]
+
+
+def test_build_run_result_does_not_treat_background_start_as_behavioral_verification() -> None:
+    result = build_run_result(
+        workspace_path="D:/workspace",
+        mode="terminal",
+        change_summary=None,
+        task_contract={
+            "intent": "write_required",
+            "requires_write": False,
+            "requires_state_change": True,
+            "requires_verification": True,
+            "required_verification_modalities": ["behavioral"],
+            "deliverables": [
+                {"kind": "external_state", "description": "Running application"}
+            ],
+        },
+        tool_events=[
+            {
+                "tool": "shell.run_command",
+                "status": "success",
+                "input": {
+                    "command": "C:/Program Files/Demo/Demo.exe",
+                    "args": [],
+                    "background": True,
+                },
+                "output": {
+                    "exit_code": None,
+                    "background": True,
+                    "process_state": "running",
+                    "pid": 1234,
+                    "effects": ["external_state_change"],
+                    "roles": ["deliverable", "evidence"],
+                    "artifacts": ["process"],
+                },
+            }
+        ],
+    )
+
+    assert result["status"] == "partial"
+    assert result["counts"]["deliverable_successes"] == 1
+    assert result["counts"]["external_state_changes"] == 1
+    assert result["counts"]["verification_successes"] == 0
+    assert result["missing_verification_modalities"] == ["behavioral"]
+    assert "required_verification_not_satisfied" in result["risks"]
+
+
 def test_build_run_result_treats_read_only_evidence_as_answer_verification() -> None:
     contract = {
         "intent": "read_only_analysis",

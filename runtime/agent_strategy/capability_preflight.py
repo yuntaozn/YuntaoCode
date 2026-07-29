@@ -124,21 +124,44 @@ def build_capability_snapshot(
             for tool_id in tool_ids
             if _tool_health(spec_by_id.get(tool_id, {})) != "available"
         }
+        available_affordances = [
+            item
+            for item in data.get("affordances") or []
+            if isinstance(item, dict)
+            and str(item.get("tool_id") or "") in set(available_tool_ids)
+        ]
+        conditional_effects = {
+            effect
+            for item in available_affordances
+            for effect in _string_list(item.get("effects"))
+        }
+        conditional_artifacts = {
+            artifact
+            for item in available_affordances
+            for artifact in _string_list(item.get("artifacts"))
+        }
+        conditional_roles = {
+            role
+            for item in available_affordances
+            for role in _string_list(item.get("roles"))
+        }
+        data["available_affordances"] = available_affordances
+        data["conditional_effects"] = sorted(conditional_effects)
         data["available_artifacts"] = sorted({
             item
             for spec in available_specs
             for item in _string_list(spec.get("artifacts"))
-        })
+        } | conditional_artifacts)
         data["available_effects"] = sorted({
             item
             for spec in available_specs
             for item in _string_list(spec.get("effects"))
-        })
+        } | conditional_effects)
         data["available_roles"] = sorted({
             item
             for spec in available_specs
             for item in _string_list(spec.get("roles"))
-        })
+        } | conditional_roles)
         data["provider_kinds"] = sorted({
             str(spec.get("provider_kind") or "unknown")
             for spec in [spec_by_id[tool_id] for tool_id in tool_ids]
@@ -168,7 +191,7 @@ def build_capability_snapshot(
     external_state_tool_ids = sorted(
         tool_id
         for tool_id, spec in spec_by_id.items()
-        if "external_state_change" in _string_set(spec.get("effects"))
+        if "external_state_change" in _tool_possible_effects(spec)
     )
     external_state_capability_ids = sorted({
         str(capability.get("id") or "")
@@ -232,6 +255,18 @@ def build_capability_snapshot(
             tool_id: _string_list(spec.get("effects"))
             for tool_id, spec in sorted(spec_by_id.items())
             if _string_list(spec.get("effects"))
+        },
+        "conditional_tool_effects": {
+            tool_id: sorted(
+                _tool_possible_effects(spec) - _string_set(spec.get("effects"))
+            )
+            for tool_id, spec in sorted(spec_by_id.items())
+            if _tool_possible_effects(spec) - _string_set(spec.get("effects"))
+        },
+        "tool_affordances": {
+            tool_id: [dict(item) for item in _tool_affordances(spec)]
+            for tool_id, spec in sorted(spec_by_id.items())
+            if _tool_affordances(spec)
         },
         "tool_artifacts": {
             tool_id: _string_list(spec.get("artifacts"))
@@ -544,6 +579,24 @@ def _string_set(value: Any) -> set[str]:
     return set(_string_list(value))
 
 
+def _tool_affordances(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    values = spec.get("affordances")
+    if not isinstance(values, list):
+        return []
+    return [item for item in values if isinstance(item, dict)]
+
+
+def _tool_possible_values(spec: dict[str, Any], key: str) -> set[str]:
+    values = _string_set(spec.get(key))
+    for affordance in _tool_affordances(spec):
+        values.update(_string_list(affordance.get(key)))
+    return values
+
+
+def _tool_possible_effects(spec: dict[str, Any]) -> set[str]:
+    return _tool_possible_values(spec, "effects")
+
+
 def _available_evidence_kinds(spec_by_id: dict[str, dict[str, Any]]) -> list[str]:
     kinds: set[str] = set()
     for tool_id, spec in spec_by_id.items():
@@ -576,9 +629,9 @@ def _evidence_affordances(spec_by_id: dict[str, dict[str, Any]]) -> list[dict[st
             )
             bucket["tool_ids"].append(tool_id)
             bucket["provider_kinds"].add(str(spec.get("provider_kind") or "unknown"))
-            bucket["artifacts"].update(_string_list(spec.get("artifacts")))
-            bucket["effects"].update(_string_list(spec.get("effects")))
-            bucket["roles"].update(_string_list(spec.get("roles")))
+            bucket["artifacts"].update(_tool_possible_values(spec, "artifacts"))
+            bucket["effects"].update(_tool_possible_effects(spec))
+            bucket["roles"].update(_tool_possible_values(spec, "roles"))
             strength = str(spec.get("verification_strength") or "").strip()
             if strength:
                 bucket["verification_strengths"].add(strength)
@@ -600,9 +653,9 @@ def _evidence_affordances(spec_by_id: dict[str, dict[str, Any]]) -> list[dict[st
 def _tool_evidence_kinds(tool_id: str, spec: dict[str, Any]) -> set[str]:
     normalized = str(tool_id or "").strip()
     prefix = normalized.split(".", 1)[0]
-    roles = _string_set(spec.get("roles"))
-    artifacts = _string_set(spec.get("artifacts"))
-    effects = _string_set(spec.get("effects"))
+    roles = _tool_possible_values(spec, "roles")
+    artifacts = _tool_possible_values(spec, "artifacts")
+    effects = _tool_possible_effects(spec)
     strength = str(spec.get("verification_strength") or "").strip().lower()
     kinds: set[str] = set()
 

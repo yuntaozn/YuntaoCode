@@ -1006,6 +1006,8 @@ def _shell_command_verifies_behavior(
 ) -> bool:
     event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    if output.get("background") is True or output.get("process_state") == "running":
+        return False
     if is_long_running_service_command(event_input):
         return False
     if output.get("timed_out") is True:
@@ -1071,6 +1073,8 @@ def _shell_command_verifies_behavior(
 def _shell_command_has_structural_check_marker(event: dict[str, Any]) -> bool:
     event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    if output.get("background") is True or output.get("process_state") == "running":
+        return False
     if is_long_running_service_command(event_input):
         return False
     if output.get("timed_out") is True:

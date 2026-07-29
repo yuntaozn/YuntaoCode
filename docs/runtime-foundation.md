@@ -527,7 +527,10 @@ Result convergence is role-aware. A failed target-deliverable action can block
 the Run, a failed required verification can degrade it to partial, and a failed
 auxiliary/evidence action remains auditable without automatically overriding a
 satisfied task goal. Failures that are followed by a successful replacement
-deliverable or sufficient verification are recorded as recovered.
+deliverable, sufficient verification, or a successful retry of the same tool
+route are recorded as recovered. A later unrelated success does not by itself
+turn an earlier failure into a recovered failure; the `failure_details` impact,
+recovered count, and risk codes share the same role-aware evidence source.
 
 Verification is evidence with strength, not only a boolean tool role. Providers
 may declare `verification_strength` as `weak`, `standard`, or `strong`.

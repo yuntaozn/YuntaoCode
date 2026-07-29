@@ -8,6 +8,32 @@ from runtime.core.capability import normalize_provider_kind
 
 CAPABILITY_ROUTER_SCHEMA_VERSION = "0.1"
 TASK_ROUTE_EVIDENCE_SCHEMA_VERSION = "task_route_evidence.v1"
+CAPABILITY_AFFORDANCE_SCHEMA_VERSION = "capability_affordance.v1"
+
+
+@dataclass(frozen=True)
+class CapabilityAffordance:
+    id: str
+    description: str
+    tool_id: str
+    input_hints: tuple[str, ...] = ()
+    artifacts: tuple[str, ...] = ()
+    effects: tuple[str, ...] = ()
+    roles: tuple[str, ...] = ()
+    evidence_limits: tuple[str, ...] = ()
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": CAPABILITY_AFFORDANCE_SCHEMA_VERSION,
+            "id": self.id,
+            "description": self.description,
+            "tool_id": self.tool_id,
+            "input_hints": list(self.input_hints),
+            "artifacts": list(self.artifacts),
+            "effects": list(self.effects),
+            "roles": list(self.roles),
+            "evidence_limits": list(self.evidence_limits),
+        }
 
 
 @dataclass(frozen=True)
@@ -20,6 +46,7 @@ class CapabilityContract:
     effects: tuple[str, ...] = ()
     roles: tuple[str, ...] = ()
     verification_strengths: tuple[str, ...] = ()
+    affordances: tuple[CapabilityAffordance, ...] = ()
     requires_confirmation: bool = False
     long_running: bool = False
     retry_safe: bool = False
@@ -39,6 +66,7 @@ class CapabilityContract:
             "effects": list(self.effects),
             "roles": list(self.roles),
             "verification_strengths": list(self.verification_strengths),
+            "affordances": [item.to_public_dict() for item in self.affordances],
             "requires_confirmation": self.requires_confirmation,
             "long_running": self.long_running,
             "retry_safe": self.retry_safe,
@@ -245,6 +273,7 @@ def capability_from_tool_spec(spec: dict[str, Any]) -> CapabilityContract:
             if str(spec.get("verification_strength") or "").strip()
             else ()
         ),
+        affordances=_affordances_from_tool_spec(spec, tool_id=tool_id),
         requires_confirmation=bool(spec.get("requires_confirmation")),
         long_running=bool(spec.get("long_running")),
         retry_safe=bool(spec.get("retry_safe")),
@@ -268,6 +297,7 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
                 "effects": set(),
                 "roles": set(),
                 "verification_strengths": set(),
+                "affordances": [],
                 "requires_confirmation": False,
                 "long_running": False,
                 "retry_safe": False,
@@ -282,6 +312,7 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
         bucket["effects"].update(item.effects)
         bucket["roles"].update(item.roles)
         bucket["verification_strengths"].update(item.verification_strengths)
+        bucket["affordances"].extend(item.affordances)
         bucket["requires_confirmation"] = bool(bucket["requires_confirmation"] or item.requires_confirmation)
         bucket["long_running"] = bool(bucket["long_running"] or item.long_running)
         bucket["retry_safe"] = bool(bucket["retry_safe"] or item.retry_safe)
@@ -301,6 +332,7 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
             effects=tuple(sorted(bucket["effects"])),
             roles=tuple(sorted(bucket["roles"])),
             verification_strengths=tuple(sorted(bucket["verification_strengths"])),
+            affordances=_deduplicate_affordances(bucket["affordances"]),
             requires_confirmation=bool(bucket["requires_confirmation"]),
             long_running=bool(bucket["long_running"]),
             retry_safe=bool(bucket["retry_safe"]),
@@ -315,6 +347,106 @@ def merge_capability_contracts(items: list[CapabilityContract]) -> list[Capabili
 
 def build_capability_catalog(tool_specs: list[dict[str, Any]]) -> list[CapabilityContract]:
     return merge_capability_contracts([capability_from_tool_spec(spec) for spec in tool_specs])
+
+
+def _affordances_from_tool_spec(
+    spec: dict[str, Any],
+    *,
+    tool_id: str,
+) -> tuple[CapabilityAffordance, ...]:
+    values = spec.get("affordances")
+    if not isinstance(values, list):
+        return ()
+    result: list[CapabilityAffordance] = []
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        affordance_id = str(value.get("id") or "").strip()
+        if not affordance_id:
+            continue
+        result.append(
+            CapabilityAffordance(
+                id=affordance_id[:120],
+                description=str(value.get("description") or "").strip()[:500],
+                tool_id=tool_id,
+                input_hints=_bounded_string_tuple(value.get("input_hints"), max_items=8),
+                artifacts=_bounded_string_tuple(value.get("artifacts"), max_items=12),
+                effects=_bounded_string_tuple(value.get("effects"), max_items=12),
+                roles=_bounded_string_tuple(value.get("roles"), max_items=12),
+                evidence_limits=_bounded_string_tuple(value.get("evidence_limits"), max_items=8),
+            )
+        )
+    return _deduplicate_affordances(result)
+
+
+def _affordances_from_snapshot_item(item: dict[str, Any]) -> tuple[CapabilityAffordance, ...]:
+    values = item.get("available_affordances")
+    if not isinstance(values, list):
+        values = item.get("affordances")
+    if not isinstance(values, list):
+        return ()
+    grouped: list[CapabilityAffordance] = []
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        tool_id = str(value.get("tool_id") or "").strip()
+        grouped.extend(_affordances_from_tool_spec(
+            {"affordances": [value]},
+            tool_id=tool_id,
+        ))
+    return _deduplicate_affordances(grouped)
+
+
+def _deduplicate_affordances(
+    values: list[CapabilityAffordance] | tuple[CapabilityAffordance, ...],
+) -> tuple[CapabilityAffordance, ...]:
+    result: list[CapabilityAffordance] = []
+    seen: set[tuple[str, str]] = set()
+    for value in values:
+        key = (value.tool_id, value.id)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+    return tuple(result)
+
+
+def _bounded_string_tuple(value: Any, *, max_items: int) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(
+        dict.fromkeys(
+            str(item).strip()[:240]
+            for item in value
+            if str(item).strip()
+        )
+    )[:max(0, max_items)]
+
+
+def _format_affordance_for_prompt(
+    affordance: CapabilityAffordance,
+    *,
+    compact: bool,
+) -> str:
+    facts: list[str] = []
+    if affordance.input_hints:
+        facts.append(f"when={'; '.join(affordance.input_hints)}")
+    if affordance.effects:
+        facts.append(f"effects={','.join(affordance.effects)}")
+    if affordance.artifacts:
+        facts.append(f"artifacts={','.join(affordance.artifacts)}")
+    if affordance.roles:
+        facts.append(f"roles={','.join(affordance.roles)}")
+    if affordance.evidence_limits:
+        facts.append(f"limits={'; '.join(affordance.evidence_limits)}")
+    description = affordance.description
+    if compact:
+        description = description[:240]
+    suffix = f" ({'; '.join(facts)})" if facts else ""
+    return (
+        f"  - affordance={affordance.id} via {affordance.tool_id}: "
+        f"{description}{suffix}"
+    )
 
 
 def _ordered_tool_ids(capability_id: str, tool_ids: list[str]) -> tuple[str, ...]:
@@ -383,6 +515,8 @@ def format_capability_catalog_for_prompt(
                 labels.append(f"providers={','.join(item.provider_kinds[:3])}")
             suffix = f" ({'; '.join(labels)})" if labels else ""
             lines.append(f"- {item.id}: tools={', '.join(item.tool_ids[:8])}{suffix}")
+            for affordance in item.affordances[:4]:
+                lines.append(_format_affordance_for_prompt(affordance, compact=True))
         if len(catalog) > len(visible):
             lines.append(f"- ... {len(catalog) - len(visible)} more capabilities omitted")
         lines.append("</available_capabilities>")
@@ -417,6 +551,8 @@ def format_capability_catalog_for_prompt(
             flags.append(f"providers={','.join(item.provider_kinds)}")
         suffix = f" ({'; '.join(flags)})" if flags else ""
         lines.append(f"- {item.id}: {item.description}; tools={', '.join(item.tool_ids)}{suffix}")
+        for affordance in item.affordances[:6]:
+            lines.append(_format_affordance_for_prompt(affordance, compact=False))
     if len(catalog) > len(visible):
         lines.append(f"- ... {len(catalog) - len(visible)} more capabilities omitted from prompt")
     lines.append("</available_capabilities>")
@@ -614,6 +750,7 @@ def _capability_contract_from_snapshot_item(item: dict[str, Any]) -> CapabilityC
             _string_tuple(item.get("verification_strengths"))
             + _string_tuple(item.get("available_verification_strengths"))
         ))),
+        affordances=_affordances_from_snapshot_item(item),
         requires_confirmation=bool(item.get("requires_confirmation")),
         long_running=bool(item.get("long_running")),
         retry_safe=bool(item.get("retry_safe")),

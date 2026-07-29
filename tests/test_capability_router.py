@@ -174,6 +174,40 @@ def test_compact_capability_prompt_exposes_roles_and_verification_strengths() ->
     assert "verification=standard" in prompt
 
 
+def test_capability_prompt_exposes_conditional_affordances_without_selecting_route() -> None:
+    catalog = build_capability_catalog([
+        {
+            "id": "shell.run_command",
+            "capability": "shell.local_command",
+            "effects": ["shell_command"],
+            "affordances": [
+                {
+                    "id": "process.start_background",
+                    "description": "Start a GUI executable and return its PID.",
+                    "input_hints": ["set background=true", "provide args as an array"],
+                    "artifacts": ["process"],
+                    "effects": ["external_state_change"],
+                    "roles": ["execution", "deliverable", "evidence"],
+                    "evidence_limits": [
+                        "process creation is not behavioral verification"
+                    ],
+                }
+            ],
+        }
+    ])
+
+    [capability] = catalog
+    prompt = format_capability_catalog_for_prompt(catalog, compact=True)
+
+    assert capability.affordances[0].id == "process.start_background"
+    assert capability.affordances[0].tool_id == "shell.run_command"
+    assert capability.affordances[0].effects == ("external_state_change",)
+    assert "affordance=process.start_background via shell.run_command" in prompt
+    assert "when=set background=true; provide args as an array" in prompt
+    assert "limits=process creation is not behavioral verification" in prompt
+    assert "must use" not in prompt.lower()
+
+
 def test_validate_task_route_proposal_accepts_known_capability_tool_pair() -> None:
     catalog = build_capability_catalog([
         {"id": "document.extract_pdf_to_docx", "capability": "document.pdf_to_docx", "artifacts": ["docx"]},

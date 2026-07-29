@@ -48,6 +48,23 @@ User Request
 }
 ```
 
+## Capability Affordance
+
+同一工具可能因参数不同而具有不同的执行形态。Capability Router 会把
+`ToolSpec.affordances` 聚合为条件能力事实，并在任务契约判断前提供给模型：
+
+```text
+affordance=process.start_background via shell.run_command:
+Start a GUI process and return its PID
+(when=background=true; effects=external_state_change;
+limits=process creation is not behavioral verification)
+```
+
+这不是 Runtime 生成的路线提案，也不是“出现某类任务就必须调用某工具”的规则。
+模型仍负责理解用户是否要求真实运行、选择哪项能力以及需要哪些验证；Runtime 只负责
+确认该 affordance 是否来自当前可用 ToolSpec，并把条件效果、证据边界和执行后的真实
+结果记录到 Snapshot、Trace 与 RunResult。
+
 ## Task Route Proposal
 
 模型路由层可以输出结构化提案：
@@ -86,6 +103,7 @@ Runtime 会验证模型提案并形成事实证据。未知能力、未知工具
   - CapabilityContract 和 PermissionSet 初始 schema。
 - `runtime/agent_strategy/capability_router.py`
   - 能力契约聚合。
+  - 条件 Capability Affordance 聚合和模型可见事实。
   - 任务路由提案结构。
   - 提案验证。
   - 能力目录 prompt。
@@ -101,7 +119,7 @@ Runtime 会验证模型提案并形成事实证据。未知能力、未知工具
   - Completion self-review 会携带 `task_route_evidence`，让模型基于路线
     有效性、能力缺口、产物和验证事实自行判断继续、修复或总结。
 - `runtime/tool_registry.py`
-  - `ToolSpec` 支持能力元数据。
+  - `ToolSpec` 支持能力元数据和可选条件 affordance。
 - 系统提示中加入 Capability Router 原则和可用能力目录。
 
 后续可以继续强化模型路由预检，但不要急于替换主循环：

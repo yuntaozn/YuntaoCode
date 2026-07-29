@@ -31,6 +31,7 @@ class ToolSpec:
     effects: list[str] | None = None
     roles: list[str] | None = None
     verification_strength: str | None = None
+    affordances: list[dict[str, Any]] | None = None
     long_running: bool = False
     retry_safe: bool = False
     idempotent: bool = False
@@ -74,6 +75,13 @@ class ToolSpec:
         }
         if self.verification_strength:
             data["verification_strength"] = self.verification_strength
+        affordances = [
+            dict(item)
+            for item in (self.affordances or [])
+            if isinstance(item, dict)
+        ]
+        if affordances:
+            data["affordances"] = affordances
         message = str(readiness.get("message") or "").strip()
         if message:
             data["tool_last_error"] = message

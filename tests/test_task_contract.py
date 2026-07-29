@@ -1,3 +1,7 @@
+from runtime.agent_strategy.capability_router import (
+    build_capability_catalog,
+    format_capability_catalog_for_prompt,
+)
 from runtime.agent_strategy.task_contract import (
     apply_task_continuity,
     contract_expects_text_output,
@@ -132,6 +136,8 @@ def test_task_contract_prompt_contains_only_contract_request() -> None:
     assert "referenced_task_candidate_id" in prompt
     assert "needs_task_lineage" in prompt
     assert "task_lineage_request_reason" in prompt
+    assert "先判断当前请求能否脱离历史内容独立成立" in prompt
+    assert "不要把不完整目标弱化成“检查或提供指导”" in prompt
     assert "系统不会根据关键词替你改写这些字段" in prompt
     assert "当前用户请求是任务语义的第一依据" in prompt
     assert "系统回退契约" not in prompt
@@ -249,6 +255,45 @@ def test_task_contract_prompt_includes_runtime_capabilities_when_provided() -> N
     assert "current capability facts" in prompt
     assert "not a required execution route" in prompt
     assert "required_verification_modalities" in prompt
+
+
+def test_task_contract_prompt_receives_conditional_capability_affordances() -> None:
+    capability_context = format_capability_catalog_for_prompt(
+        build_capability_catalog([
+            {
+                "id": "shell.run_command",
+                "capability": "shell.local_command",
+                "effects": ["shell_command"],
+                "affordances": [
+                    {
+                        "id": "process.start_background",
+                        "description": "Start a GUI process and return its PID.",
+                        "input_hints": ["set background=true"],
+                        "effects": ["external_state_change"],
+                        "artifacts": ["process"],
+                        "roles": ["execution", "deliverable", "evidence"],
+                        "evidence_limits": [
+                            "process creation is not behavioral verification"
+                        ],
+                    }
+                ],
+            }
+        ]),
+        compact=True,
+    )
+
+    prompt = task_contract_prompt(
+        "D:\\code\\demo",
+        _fallback(),
+        capability_context=capability_context,
+    )
+
+    assert "affordance=process.start_background via shell.run_command" in prompt
+    assert "when=set background=true" in prompt
+    assert "effects=external_state_change" in prompt
+    assert "process creation is not behavioral verification" in prompt
+    assert "current capability facts" in prompt
+    assert "not a required execution route" in prompt
 
 
 def test_task_contract_prompt_does_not_embed_scenario_repair_policy() -> None:

@@ -147,6 +147,9 @@ UI 历史和审计记录应完整保留，但模型侧上下文需要卫生处�
 3. 由模型在 task contract 阶段决定是否需要历史候选。模型可以设置
    `needs_task_lineage=true`、选择 `continue/revise/replace`，或引用
    `referenced_task_candidate_id`。
+   在输出完整契约前，模型应先检查当前请求能否独立确定目标和工作对象；当请求依赖
+   先前动作、状态、产物或省略指代时，应先请求 lineage，而不是把目标弱化为“检查或
+   提供指导”或自行猜测缺失语义。
 4. 只有模型请求后，Runtime 才在第二次 Task Contract 上下文中展开 `task_lineage`
    候选事实。
 5. Runtime 只审计“模型请求并引用了哪个候选任务”，不直接判断本轮是普通新任务、

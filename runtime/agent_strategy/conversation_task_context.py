@@ -77,8 +77,11 @@ def task_lineage_availability(
         "candidate_count": candidate_count,
         "candidate_content_exposure": "model_requested",
         "rule": (
-            "Historical task candidates exist as auditable facts. Their goals "
-            "are not included until the model task contract asks for lineage."
+            "Historical task candidates exist as auditable facts, but their content is "
+            "intentionally withheld until the model task contract requests lineage. "
+            "If the current request depends on prior actions, state, artifacts, objects, "
+            "or omitted references and cannot stand alone, request lineage before "
+            "finalizing the goal instead of weakening or guessing it."
         ),
     }
 

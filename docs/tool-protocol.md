@@ -21,6 +21,11 @@
 }
 ```
 
+当同一工具在特定参数下会产生不同效果时，可在 `ToolSpec.affordances` 中声明条件能力，
+包括 `input_hints`、`artifacts`、`effects`、`roles` 和 `evidence_limits`。它们是提供给
+模型判断的可用性事实，不是参数默认值、自动路由或成功证明；实际状态改变和验证强度
+仍以执行后的 ToolResult 为准。
+
 ## 提交任务
 
 ```http
@@ -70,7 +75,12 @@ filesystem.write_temp_file
 
 `filesystem.write_temp_file` 产物属于 ToolTask 的临时产物，不应视为真实项目变更，也不能满足“已完成代码修改/已生成项目文件”的成功条件。
 
-跨平台命令建议使用 `command` + `args` 参数数组。只有任务明确依赖某个平台时，才使用 PowerShell、bash、cp、rm、Copy-Item 等平台专属语法。
+跨平台命令建议使用 `command` + `args` 参数数组，即使程序没有参数也显式传
+`args=[]`。这种形式使用 `direct_exec`，不会经过平台 shell。省略 `args` 时，Windows
+使用 Windows PowerShell 5.1，其他平台使用 POSIX shell；工具结果会返回
+`shell_dialect`。只有任务明确依赖某个平台时，才使用 PowerShell、bash、cp、rm、
+Copy-Item 等平台专属语法。GUI 或长驻程序可传 `background=true` 直接启动，工具会
+立即返回 PID 和 `process_state=running`，而不是把程序等待退出当成普通命令验证。
 
 ## 模型工具调用边界
 

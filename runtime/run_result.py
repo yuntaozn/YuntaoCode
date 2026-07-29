@@ -16,7 +16,6 @@ from runtime.agent_strategy.document_completion import (
 from runtime.agent_strategy.tool_event_roles import (
     deliverable_path_deviations,
     event_effects,
-    event_declared_roles,
     failed_tool_event_role,
     failed_deliverable_events,
     missing_required_verification_modalities,
@@ -82,12 +81,9 @@ def build_run_result(
             ),
         })
     invalid_verification_failures: list[dict[str, Any]] = []
-    effective_statuses: list[str] = []
-
     for event in tool_events:
         tool_id = str(event.get("tool") or "")
         status = _effective_event_status(tool_id, event)
-        effective_statuses.append(status)
         if status == "failure":
             failed_events.append(event)
             failures.append(_failure_record(workspace_path, event))
@@ -344,13 +340,6 @@ def build_run_result(
             "error": final_answer_error_text[:500],
         })
         risks.append("invalid_final_answer")
-    if failures and _failures_recovered(
-            tool_events,
-            effective_statuses,
-            write_failures=state_write_failures,
-        ):
-        risks.append("recovered_tool_failure")
-
     coverage_failure = _document_coverage_failure(
         workspace_path,
         tool_events,
@@ -415,6 +404,7 @@ def build_run_result(
         mode=mode,
         successful_deliverables=write_successes,
         sufficient_verifications=sufficient_verification_successes,
+        answer_deliverable_observed=answer_deliverable_observed,
     )
     for preflight_advisory in preflight_advisories or []:
         advisory = preflight_advisory if isinstance(preflight_advisory, dict) else {}
@@ -707,6 +697,7 @@ def _failure_details(
     mode: str | None,
     successful_deliverables: list[dict[str, Any]],
     sufficient_verifications: list[dict[str, Any]],
+    answer_deliverable_observed: bool,
 ) -> list[dict[str, Any]]:
     failed_ids = {id(event) for event in failed_events}
     deliverable_ids = {id(event) for event in successful_deliverables}
@@ -717,6 +708,10 @@ def _failure_details(
         if _effective_event_status(str(event.get("tool") or ""), event) in {"success", "partial"}
     }
     has_success = bool(success_indexes)
+    verification_required = bool(
+        isinstance(task_contract, dict) and task_contract.get("requires_verification")
+    )
+    deliverable_observed = bool(successful_deliverables or answer_deliverable_observed)
     details: list[dict[str, Any]] = []
     for index, event in enumerate(tool_events):
         if id(event) not in failed_ids:
@@ -735,17 +730,24 @@ def _failure_details(
             id(candidate) in verification_ids
             for candidate in tool_events[index + 1:]
         )
-        later_success = any(candidate_index > index for candidate_index in success_indexes)
+        failed_tool_id = str(event.get("tool") or "")
+        later_same_tool_success = any(
+            candidate_index > index
+            and str(tool_events[candidate_index].get("tool") or "") == failed_tool_id
+            for candidate_index in success_indexes
+        )
         if role == "deliverable":
             impact = "recovered" if later_deliverable or later_verification else "blocking"
         elif role == "verification":
             if later_verification:
                 impact = "recovered"
-            elif successful_deliverables:
+            elif verification_required:
+                impact = "degraded" if has_success or deliverable_observed else "blocking"
+            elif deliverable_observed:
                 impact = "degraded"
             else:
                 impact = "incidental" if has_success else "blocking"
-        elif later_success:
+        elif later_same_tool_success:
             impact = "recovered"
         else:
             impact = "incidental" if has_success else "blocking"
@@ -954,44 +956,6 @@ def _event_failure_message(event: dict[str, Any]) -> str:
     if output.get("exit_code") is not None:
         return f"exit_code={output.get('exit_code')}"
     return ""
-
-
-def _failures_recovered(
-    tool_events: list[dict[str, Any]],
-    effective_statuses: list[str],
-    *,
-    write_failures: list[dict[str, Any]],
-) -> bool:
-    if write_failures:
-        return False
-    failure_indexes = [index for index, status in enumerate(effective_statuses) if status == "failure"]
-    if not failure_indexes:
-        return False
-    last_failure = max(failure_indexes)
-    return any(
-        effective_statuses[index] == "success"
-        and _event_indicates_progress(tool_events[index])
-        for index in range(last_failure + 1, len(tool_events))
-    )
-
-
-def _event_indicates_progress(event: dict[str, Any]) -> bool:
-    tool_id = str(event.get("tool") or "")
-    if is_write_tool(tool_id):
-        return True
-    if "external_state_change" in event_effects(event):
-        return True
-    if "deliverable" in event_declared_roles(event):
-        return True
-    output = event.get("output") if isinstance(event.get("output"), dict) else {}
-    if tool_id == "shell.run_command":
-        if output.get("timed_out") is True:
-            return False
-        try:
-            return int(output.get("exit_code", 0) or 0) == 0
-        except (TypeError, ValueError):
-            return False
-    return False
 
 
 def _document_coverage_failure(

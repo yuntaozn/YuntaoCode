@@ -56,6 +56,34 @@ Registered Tool / Capability Provider
 }
 ```
 
+## Conditional Affordances
+
+一个工具的静态 `effects`、`artifacts` 和 `roles` 不能完整表达它在不同参数下的
+行为。例如 `shell.run_command` 的前台命令产生命令输出，而
+`background=true` 可以启动外部进程并产生 `external_state_change`。如果任务契约
+只看到前者，模型可能在执行前错误地认为 Runtime 没有启动或调试能力。
+
+`ToolSpec.affordances` 用 `capability_affordance.v1` 表达这种条件能力事实：
+
+```json
+{
+  "id": "process.start_background",
+  "description": "Start a GUI or long-running process and return its PID.",
+  "input_hints": ["set background=true", "provide args as an array"],
+  "artifacts": ["process", "debug_session"],
+  "effects": ["external_state_change"],
+  "roles": ["execution", "deliverable", "evidence"],
+  "evidence_limits": [
+    "process creation is not behavioral verification"
+  ]
+}
+```
+
+Affordance 只说明“在什么输入条件下可能获得什么效果和证据”。它会进入 Capability
+Catalog、Capability Snapshot 和模型的 Task Contract 上下文，但不会替模型选择工具、
+改写任务目标、绕过权限确认，也不会把可能效果当成已经发生的事实。Runtime 只有在
+工具实际执行后，才根据真实 ToolResult 记录 effect、artifact 和 verification evidence。
+
 ## Permission Model
 
 权限先保持小而清晰：
@@ -271,6 +299,15 @@ Evidence Context 的增强，不是任务路由、验证替代品或系统级自
 RunResult 理解“实际运行过什么、运行到哪里、失败在哪里”，而不是让 Runtime 替模型
 决定下一步策略。
 
+`shell.run_command` 同时显式返回 `shell_dialect`、`execution_mode`、`process_state`
+和 `background`。传入 `command + args`（包括空参数数组）时使用 `direct_exec`，避免
+模型把 cmd、PowerShell 或 POSIX shell 语法混在一起；省略 `args` 的字符串命令才进入
+当前平台 shell。GUI 和长驻程序可用 `background=true` 直接启动并立即获得 PID，后续
+观察和验证仍由模型根据任务目标选择，不被 Shell Provider 固定成特定应用流程。
+后台启动本身作为带 PID 的 `external_state_change` 产物，只证明进程创建，不计作
+behavioral verification；进程状态、日志、端口、外部应用观察或截图等后续证据是否
+需要、如何获取，继续由模型根据目标判断。
+
 `debug_audit.v1` 从 `debug_session.v1` 汇总运行调试证据，标记依赖安装、预览服务、
 端口/进程检查、服务会话、长时间运行、超时、stderr 和诊断等事实。它只进入
 RunResult、RunEvidence 和 RunWorkbench 作为审计视图，不参与任务路由、工具选择、
@@ -305,7 +342,7 @@ RunResult、RunEvidence 和 RunWorkbench 作为审计视图，不参与任务路
 YuntaoCode 宣称支持 Windows、macOS 和 Linux 时，默认含义不是所有外部工具在三端都天然存在，而是 Runtime 核心和基础能力在三端都有清晰边界：
 
 1. Runtime 核心必须跨平台：设置目录、工作区路径、PathGuard、任务状态、Run/RunEvent、附件、记忆、工具注册、HTTP API 和前端不能依赖单一操作系统。
-2. 内置基础能力应提供跨平台入口：文件读写使用 Python/Pathlib；代码写入走统一文件能力；Shell 建议使用 `command + args`，不要把 PowerShell、bash、cp、rm、Copy-Item 等语法当作通用协议。
+2. 内置基础能力应提供跨平台入口：文件读写使用 Python/Pathlib；代码写入走统一文件能力；Shell 建议使用 `command + args` 直接执行，并在结果中暴露实际 dialect；不要把 PowerShell、bash、cp、rm、Copy-Item 等语法当作通用协议。
 3. 可选能力可以有平台适配器：打开文件夹、Word/LibreOffice 转换、浏览器、Git、MCP 服务和桌面壳可以按系统走不同实现，但缺依赖时必须结构化失败并给出可理解诊断。
 4. 文档转换和 GUI 能力不能成为 Runtime 启动前提：缺少 Office、LibreOffice、xdg-open、open、Explorer、浏览器或 MCP 二进制时，只应影响对应 capability。
 5. 新增 `runtime/skills/` 能力时，需要回答：Windows/macOS/Linux 是否都可运行？如果不能，是否有明确降级、错误提示、测试或文档说明？
