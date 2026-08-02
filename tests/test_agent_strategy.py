@@ -1261,6 +1261,7 @@ class TestPrompts:
         assert "completion_self_assessment.v1" in prompt
         assert '"goal_closed":true' in prompt
         assert '"remaining_work":[]' in prompt
+        assert "ordinary user-facing Markdown answer below it" in prompt
 
     def test_completion_reentry_prompt_is_evidence_only(self):
         prompt = completion_reentry_prompt(

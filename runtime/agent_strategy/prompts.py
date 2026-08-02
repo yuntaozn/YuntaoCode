@@ -228,13 +228,13 @@ def completion_review_prompt(
         "beyond the observed deliverables and verification evidence. The runtime "
         "will record your observable choice as completion-loop evidence; this "
         "record is for audit and replay, not a hard constraint on your strategy.\n"
-        "If you finish instead of calling another tool, return one JSON object "
-        "with this exact envelope shape (the runtime will display only "
-        "final_answer):\n"
+        "If you finish instead of calling another tool, put this compact JSON "
+        "assessment on the first line, then write the ordinary user-facing "
+        "Markdown answer below it. The runtime removes only the first line:\n"
         '{"schema_version":"completion_self_assessment.v1",'
         '"kind":"completion_self_assessment","goal_closed":true,'
-        '"remaining_work":[],"verification_limits":[],'
-        '"final_answer":"your user-facing answer"}\n'
+        '"remaining_work":[],"verification_limits":[]}\n'
+        "Your normal final answer starts on the next line.\n"
         "Set goal_closed from your own task judgment. Put concrete unfinished "
         "work in remaining_work and evidence boundaries in verification_limits."
     )

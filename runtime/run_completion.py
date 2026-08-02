@@ -30,15 +30,18 @@ def extract_completion_self_assessment(
 ) -> tuple[str, dict[str, Any] | None]:
     """Extract an explicit model-owned completion assessment.
 
-    Completion review uses a small JSON envelope when the model elects to
-    finish.  The envelope keeps semantic completion separate from Runtime's
-    tool evidence without asking Runtime to infer intent from prose.  Ordinary
-    prose remains a supported fallback for models that do not follow the
-    envelope protocol.
+    Completion review uses a compact JSON header on the first line when the
+    model elects to finish.  The user-facing answer remains ordinary Markdown
+    below that header, avoiding a large JSON string around the whole answer.
+    Ordinary prose remains a supported fallback for models that do not follow
+    the header protocol.
     """
 
     original = str(content or "").strip()
-    candidate = _strip_json_fence(original)
+    if not original:
+        return original, None
+    lines = original.splitlines()
+    candidate = lines[0].strip()
     try:
         payload = json.loads(candidate)
     except (TypeError, ValueError, json.JSONDecodeError):
@@ -51,7 +54,7 @@ def extract_completion_self_assessment(
         or not isinstance(payload.get("goal_closed"), bool)
     ):
         return original, None
-    final_answer = str(payload.get("final_answer") or "").strip()
+    final_answer = "\n".join(lines[1:]).strip()
     if not final_answer:
         return original, None
     assessment = {
@@ -118,16 +121,6 @@ def _observable_action(tool_calls: list[dict[str, Any]], content: str, reason: s
     if content.strip():
         return "final_answer_candidate"
     return "no_observable_decision"
-
-
-def _strip_json_fence(content: str) -> str:
-    text = str(content or "").strip()
-    if not text.startswith("```") or not text.endswith("```"):
-        return text
-    lines = text.splitlines()
-    if len(lines) < 3 or lines[-1].strip() != "```":
-        return text
-    return "\n".join(lines[1:-1]).strip()
 
 
 def _assessment_strings(value: Any, *, limit: int = 12) -> list[str]:

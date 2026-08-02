@@ -1,4 +1,4 @@
-# YuntaoCode — 云涛智能终端
+# YuntaoCode
 
 **Local-First AI Task Runtime**
 

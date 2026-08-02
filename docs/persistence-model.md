@@ -29,6 +29,16 @@ The runtime currently uses a mixed backend:
 
 The Store API remains stable across those backends.
 
+Conversation messages are a display and follow-up context record, not a second
+RunEvent archive. Assistant-message metadata preserves visible process state
+such as tool events, plans, reasoning history, change summaries, the task
+contract, and a lineage-safe RunResult. Full Context Packs, capability
+snapshots, preflight records, route evidence, and completion evidence remain in
+the RunEvent repository; conversation metadata keeps bounded Context and
+capability summaries where they help display and omits the other duplicate
+records. This keeps chat restoration useful without duplicating the complete
+audit trace in `conversations.json`.
+
 ## Run Repository
 
 `RunStore` owns run lifecycle and event-driven state transitions.

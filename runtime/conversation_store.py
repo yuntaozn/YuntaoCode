@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .conversation_message_metadata import compact_conversation_message_metadata
 from .persistence import AtomicJsonDocumentStorage, DocumentStorage
 
 
@@ -37,12 +38,14 @@ class MessageRecord:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "MessageRecord":
+        role = str(value.get("role", ""))
+        metadata = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
         return cls(
             id=str(value.get("id") or uuid4()),
-            role=str(value.get("role", "")),
+            role=role,
             content=str(value.get("content", "")),
             created_at=str(value.get("created_at") or utc_now()),
-            metadata=value.get("metadata") if isinstance(value.get("metadata"), dict) else {},
+            metadata=compact_conversation_message_metadata(role, metadata),
         )
 
 
@@ -127,7 +130,12 @@ class ConversationStore:
         metadata: dict[str, Any] | None = None,
     ) -> MessageRecord:
         conversation = self._require(conversation_id)
-        message = MessageRecord(id=str(uuid4()), role=role, content=content, metadata=metadata or {})
+        message = MessageRecord(
+            id=str(uuid4()),
+            role=role,
+            content=content,
+            metadata=compact_conversation_message_metadata(role, metadata),
+        )
         conversation.messages.append(message)
         conversation.updated_at = utc_now()
         if conversation.title == "新对话" and role == "user" and content.strip():

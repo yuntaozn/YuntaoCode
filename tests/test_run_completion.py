@@ -434,16 +434,8 @@ def test_completion_decision_records_final_answer_candidate() -> None:
 
 
 def test_completion_self_assessment_extracts_model_judgment_and_answer() -> None:
-    content = """```json
-{
-  "schema_version": "completion_self_assessment.v1",
-  "kind": "completion_self_assessment",
-  "goal_closed": false,
-  "remaining_work": ["rebuild the generated registry"],
-  "verification_limits": ["visual rendering was not checked"],
-  "final_answer": "The manifest exists, but the catalog is not fully registered."
-}
-```"""
+    content = """{"schema_version":"completion_self_assessment.v1","kind":"completion_self_assessment","goal_closed":false,"remaining_work":["rebuild the generated registry"],"verification_limits":["visual rendering was not checked"]}
+The manifest exists, but the catalog is not fully registered."""
 
     answer, assessment = extract_completion_self_assessment(content)
 
@@ -460,6 +452,16 @@ def test_completion_self_assessment_extracts_model_judgment_and_answer() -> None
 
 def test_completion_self_assessment_does_not_infer_from_ordinary_prose() -> None:
     content = "The file was written, but the generated index was not rebuilt."
+
+    answer, assessment = extract_completion_self_assessment(content)
+
+    assert answer == content
+    assert assessment is None
+
+
+def test_completion_self_assessment_keeps_malformed_header_as_visible_prose() -> None:
+    content = """{"schema_version":"completion_self_assessment.v1","goal_closed":false}
+The task remains incomplete."""
 
     answer, assessment = extract_completion_self_assessment(content)
 
