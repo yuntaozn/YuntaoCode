@@ -302,9 +302,10 @@ Task Template 是比 prompt 更稳定的复用单元。
 - `runtime/task_store.py`：本地工具任务记录。
 - `runtime/run_events.py`：版本化运行事件与规范事件名。
 - `runtime/run_result.py`：基于工具事件生成确定性运行结果。
-- `runtime/run_completion.py`：记录模型在完成自审中的可观察选择，并解析模型显式
-  声明的首行短记录 `completion_self_assessment.v1`；用户答复正文保持普通 Markdown，
-  Runtime 不从最终答复关键词推断任务完成状态。
+- `runtime/run_completion.py`：记录模型在完成自审中的可观察选择；普通非空答复表示
+  模型选择结束执行循环，工具调用表示继续。它也解析模型可选声明的首行短记录
+  `completion_self_assessment.v1`；用户答复正文保持普通 Markdown，Runtime 不从
+  最终答复关键词推断任务完成状态，也不因验证缺口强制重入。
 - `runtime/panel/static/panel.js`：流式过程展示。
 
 RunResult 将执行证据和语义闭合判断分开记录：

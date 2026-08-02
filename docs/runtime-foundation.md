@@ -331,7 +331,9 @@ self-review prompt, the runtime records the model's observable choice: continue
 with tools, produce a final-answer candidate, repair malformed tool-call
 protocol, or make no observable decision. This event does not force a route; it
 exists so the Workbench, Replay, and Evaluation can inspect how a run attempted
-to close.
+to close. A tool call continues execution; an ordinary non-empty final-answer
+candidate ends the execution loop. Verification gaps remain visible in
+`RunResult`, but do not force the model back into another round.
 
 `completion_evidence_pack.v1` is the model-facing fact package used by that
 self-review prompt. It groups RunResult, compact Run facts, legacy artifacts,

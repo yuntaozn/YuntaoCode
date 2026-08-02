@@ -1,5 +1,4 @@
 from runtime.agent_strategy.run_finalization import (
-    ACCEPT_COMPLETION_CANDIDATE,
     COMPLETION_REVIEW,
     CONTINUE_VERIFICATION_GAP,
     FINAL_ANSWER_CONVERGED,
@@ -8,8 +7,6 @@ from runtime.agent_strategy.run_finalization import (
     NO_TASK_EVIDENCE,
     NO_TARGET_DELIVERABLE,
     ESCALATE_STAGNANT_VERIFICATION_GAP,
-    REENTER_COMPLETION_REVIEW,
-    build_completion_reentry_decision,
     build_finalization_gate,
     build_task_evidence_finalization_gate,
     build_verification_gap_decision,
@@ -154,38 +151,3 @@ def test_verification_gap_decision_escalates_only_after_repeated_stagnation() ->
     )
 
     assert decision.action == ESCALATE_STAGNANT_VERIFICATION_GAP
-
-
-def test_completion_reentry_reopens_final_candidate_with_unresolved_gap() -> None:
-    decision = build_completion_reentry_decision(
-        completion_decision={
-            "action": "final_answer_candidate",
-            "risks": ["test_not_observed"],
-        },
-        run_result={
-            "status": "partial",
-            "risks": ["test_not_observed"],
-            "missing_verification_modalities": ["behavioral"],
-        },
-    )
-
-    assert decision.action == REENTER_COMPLETION_REVIEW
-    assert "unresolved verification" in decision.reason
-
-
-def test_completion_reentry_accepts_candidate_without_unresolved_gap() -> None:
-    decision = build_completion_reentry_decision(
-        completion_decision={"action": "final_answer_candidate", "risks": []},
-        run_result={"status": "success", "risks": [], "missing_verification_modalities": []},
-    )
-
-    assert decision.action == ACCEPT_COMPLETION_CANDIDATE
-
-
-def test_completion_reentry_does_not_override_model_tool_continuation() -> None:
-    decision = build_completion_reentry_decision(
-        completion_decision={"action": "continue_with_tools"},
-        run_result={"status": "partial", "risks": ["test_not_observed"]},
-    )
-
-    assert decision.action == ACCEPT_COMPLETION_CANDIDATE

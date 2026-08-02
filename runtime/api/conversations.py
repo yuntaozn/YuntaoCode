@@ -2567,29 +2567,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             evidence_pack=evidence_pack,
         )
 
-    def _completion_reentry_prompt(
-        self,
-        workspace_path: str,
-        task_contract: dict[str, Any] | None,
-        run_result: dict[str, Any],
-        completion_decision: dict[str, Any],
-        *,
-        tool_events: list[dict[str, Any]] | None = None,
-        completion_decisions: list[dict[str, Any]] | None = None,
-        task_route_evidence: dict[str, Any] | None = None,
-        evidence_pack: dict[str, Any] | None = None,
-    ) -> str:
-        return _prp.completion_reentry_prompt(
-            workspace_path,
-            task_contract,
-            run_result,
-            completion_decision,
-            tool_events=tool_events,
-            completion_decisions=completion_decisions,
-            task_route_evidence=task_route_evidence,
-            evidence_pack=evidence_pack,
-        )
-
     def _final_answer_prompt(self, workspace_path: str) -> str:
         return _prp.final_answer_prompt(workspace_path)
 

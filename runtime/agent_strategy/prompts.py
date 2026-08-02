@@ -228,53 +228,19 @@ def completion_review_prompt(
         "beyond the observed deliverables and verification evidence. The runtime "
         "will record your observable choice as completion-loop evidence; this "
         "record is for audit and replay, not a hard constraint on your strategy.\n"
-        "If you finish instead of calling another tool, put this compact JSON "
-        "assessment on the first line, then write the ordinary user-facing "
-        "Markdown answer below it. The runtime removes only the first line:\n"
+        "A non-empty answer without another tool call is your decision to end "
+        "the execution loop. Runtime evidence may still record the result as "
+        "partial or failed; that evidence does not force another model round. "
+        "For stronger audit detail, you may put this compact JSON assessment "
+        "on the first line, then write the ordinary user-facing Markdown answer "
+        "below it. The runtime removes only the recognized first line:\n"
         '{"schema_version":"completion_self_assessment.v1",'
         '"kind":"completion_self_assessment","goal_closed":true,'
         '"remaining_work":[],"verification_limits":[]}\n'
         "Your normal final answer starts on the next line.\n"
         "Set goal_closed from your own task judgment. Put concrete unfinished "
-        "work in remaining_work and evidence boundaries in verification_limits."
-    )
-
-
-def completion_reentry_prompt(
-    workspace_path: str,
-    task_contract: dict[str, Any] | None,
-    run_result: dict[str, Any],
-    completion_decision: dict[str, Any],
-    *,
-    tool_events: list[dict[str, Any]] | None = None,
-    completion_decisions: list[dict[str, Any]] | None = None,
-    task_route_evidence: dict[str, Any] | None = None,
-    evidence_pack: dict[str, Any] | None = None,
-) -> str:
-    """Return an evidence prompt when a final candidate still has gaps."""
-    if not evidence_pack:
-        evidence_pack = build_completion_evidence_pack(
-            workspace_path=workspace_path,
-            task_contract=task_contract,
-            run_result=run_result,
-            tool_events=tool_events,
-            completion_decisions=completion_decisions,
-            task_route_evidence=task_route_evidence,
-        )
-    action = str(completion_decision.get("action") or "unknown")
-    content_chars = completion_decision.get("content_chars")
-    return (
-        "Completion candidate re-entry from runtime facts.\n"
-        f"Current project: {workspace_path}\n"
-        f"Observed model decision: action={action}; content_chars={content_chars}\n"
-        f"{format_completion_evidence_pack(evidence_pack)}\n"
-        "The previous response looked like a final answer, but the evidence pack "
-        "still contains unresolved verification facts. This is not a forced route "
-        "and not a denial of your judgment. Choose the next step yourself: gather "
-        "more evidence, inspect how to verify, run a suitable check, repair the "
-        "result, ask the user for an external boundary, or finish with an explicit "
-        "limitation if further verification is not useful or possible. Do not turn "
-        "a partial or weakly verified result into a success claim."
+        "work in remaining_work and evidence boundaries in verification_limits. "
+        "This header is optional; ordinary Markdown remains supported."
     )
 
 

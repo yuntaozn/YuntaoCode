@@ -82,6 +82,10 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ### Changed
 
+- Completion review now treats the model's observable choice as authoritative
+  for loop control: tool calls continue execution, while an ordinary final
+  answer ends the loop. Runtime verification gaps remain in `RunResult` and
+  audit evidence instead of forcing repeated completion re-entry rounds.
 - Completion review now supports a model-declared
   `completion_self_assessment.v1`. `RunResult` preserves the Runtime evidence
   status separately and will not record success when the model explicitly
