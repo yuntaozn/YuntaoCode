@@ -21,7 +21,7 @@ Python Tornado sidecar
 ```
 
 模型调用边界进一步分为两类：主执行循环由 `ToolCallLoop` 处理流式响应、
-工具调用和心跳；任务契约、计划判断、结果整理等辅助非流式请求由
+工具调用和心跳；任务契约、结果整理等辅助非流式请求由
 `runtime/model_calls.py` 统一记录目的、耗时、超时、取消和审计事件。后者只
 管理调用生命周期，不解释任务语义，也不替模型决定执行路线。
 
@@ -141,7 +141,7 @@ User Request
 - `project_context.py`：把任务关系与当前工作对象关系分开，生成当前任务理解、
   Runtime 可审计的 Active Focus Snapshot，不替模型选择目标。
 - `profiles.py`：模型任务契约可选的内部 Profile 描述，例如直接问答、项目分析、代码修改、外部能力执行、文档工作流、论文工作流；Profile 不生成固定阶段序列。
-- `policy.py`：只处理用户显式的计划开关；自动模式由模型任务契约或模型计划判断器决定，不使用关键词和请求长度路由。
+- `policy.py`：把用户显式的计划开关与模型任务契约中的 `requires_plan` 合并为单一计划决定；契约辅助调用不可用时直接进入主执行，不再串联第二个语义判断器。
 - `prompts.py`：运行事实提示、修复建议、验证建议和最终回答提示等 prompt 构建；提示不替模型指定工具路线。
 - `plan_tracker.py`：执行计划的提取、归一化、推进和收尾。
 
@@ -164,6 +164,10 @@ User Request
 `runtime/run_finalizer.py` 在模型/工具循环结束后，把已观察事实收束为
 `RunResult`、恢复 Checkpoint、最终答复、摘要 Context Pack、持久化消息和
 `done` 事件；它不判断是否继续循环，也不替模型选择任务、工具或验证路线。
+执行模型已经给出可用最终答复时，该答复保持为用户可见内容的权威来源；
+`RunResult` 的 partial、failure、stopped 等状态作为独立事实和风险保留，不触发
+第二次模型调用改写答复。只有最终内容缺失或仍含未解析工具协议时，才允许结果合成
+补齐展示内容。
 工具事件的前端预览、进度摘要和回填给模型的压缩 payload 由
 `runtime/tool_event_presentation.py` 负责，避免 API Handler 直接承载展示规则。
 

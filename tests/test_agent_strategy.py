@@ -64,8 +64,7 @@ from runtime.agent_strategy.prompts import (
 
 # ── profiles / policy ─────────────────────────────────────────────────────
 from runtime.agent_strategy.policy import (
-    deterministic_plan_gate,
-    heuristic_plan_execution,
+    resolve_plan_execution,
     resolve_profile,
 )
 from runtime.agent_strategy.profiles import (
@@ -141,47 +140,45 @@ class TestAgentProfiles:
         assert get_profile("missing").id == "analysis"
 
 class TestPlanningPolicy:
-    def test_answer_only_auto_uses_model_plan_judge(self):
-        decision = deterministic_plan_gate("你好", "answer_only", "terminal", "auto")
-        assert decision.enabled is None
-        assert decision.needs_model_judge
+    def test_auto_uses_model_task_contract_plan_decision(self):
+        decision = resolve_plan_execution(
+            {"source": "model", "requires_plan": True},
+            "auto",
+        )
+        assert decision.enabled is True
+        assert decision.source == "task_contract"
 
     def test_always_plan_respects_user_setting(self):
-        decision = deterministic_plan_gate("你好", "answer_only", "terminal", "always")
+        decision = resolve_plan_execution(None, "always")
         assert decision.enabled is True
         assert decision.source == "user"
 
     def test_off_plan_respects_user_setting(self):
-        decision = deterministic_plan_gate("分析当前项目", "read_only_analysis", "terminal", "off")
+        decision = resolve_plan_execution(
+            {"source": "model", "requires_plan": True},
+            "off",
+        )
         assert decision.enabled is False
         assert decision.source == "user"
 
-    def test_project_analysis_does_not_trigger_keyword_plan_rule(self):
-        decision = deterministic_plan_gate("分析当前项目架构并输出风险清单", "read_only_analysis", "terminal", "auto")
-        assert decision.enabled is None
-        assert decision.source == "model"
+    def test_auto_does_not_chain_another_judge_after_contract_failure(self):
+        decision = resolve_plan_execution(
+            {
+                "source": "policy_fallback",
+                "model_contract_error": "request timeout",
+            },
+            "auto",
+        )
+        assert decision.enabled is False
+        assert decision.source == "main_execution"
 
-    def test_document_export_does_not_trigger_scenario_plan_rule(self):
-        decision = deterministic_plan_gate("重新将PDF导一个图片加文字的word", "document_export", "terminal", "auto")
-        assert decision.enabled is None
-        assert decision.source == "model"
-
-    def test_simple_read_only_still_uses_model_plan_judge(self):
-        decision = deterministic_plan_gate("解释一下这个函数的作用", "read_only_analysis", "terminal", "auto")
-        assert decision.enabled is None
-
-    def test_ambiguous_analysis_can_use_model_judge(self):
-        decision = deterministic_plan_gate("看一下这个项目", "read_only_analysis", "terminal", "auto")
-        assert decision.enabled is None
-        assert decision.needs_model_judge
+    def test_auto_direct_input_starts_main_execution_without_auxiliary_judge(self):
+        decision = resolve_plan_execution({"source": "policy"}, "auto")
+        assert decision.enabled is False
+        assert decision.source == "main_execution"
 
     def test_resolve_profile_uses_policy_entrypoint(self):
         assert resolve_profile("document_export", "terminal").id == "document"
-
-    def test_neutral_plan_fallback_does_not_route_by_keywords(self):
-        assert not heuristic_plan_execution("你好", "terminal")
-        assert not heuristic_plan_execution("重构整个项目并生成报告", "paper")
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 5b: Tool classification

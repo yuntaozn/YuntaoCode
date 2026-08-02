@@ -8,10 +8,20 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ### Added
 
+- End-to-end scripted Run scenarios around the real
+  `ConversationRunExecutor`, `ToolCallLoop`, `ToolExecutionBatch`, and
+  `RunFinalizer`, covering verified completion and model-selected route
+  recovery without replacing the runtime with a second test-only loop.
 - Observable lifecycle records for auxiliary non-streaming model calls. Task
-  contract interpretation, automatic plan judgment, and result synthesis now
+  contract interpretation and result synthesis now
   share purpose, timeout, heartbeat, cancellation, and audit events without
   exposing prompts or turning transport failure into a task verdict.
+- Removed the separate automatic plan-judge model call. A valid Task Contract
+  now owns pre-execution plan generation; if contract interpretation is
+  unavailable, the Run returns directly to the main execution model instead of
+  cascading through another semantic auxiliary call.
+- Invalid Task Contract model output is now recorded as a protocol fallback
+  instead of silently appearing to be an ordinary policy-sourced contract.
 
 - Auditable memory selection in Context Runtime: relevant global/workspace
   memories now enter task-contract and planning Context Packs with source IDs,
@@ -87,6 +97,14 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ### Changed
 
+- A valid final answer from the execution model remains the canonical
+  user-facing answer even when `RunResult` is partial, failed, or stopped.
+  Result synthesis is now reserved for missing or protocol-invalid final
+  content; evidence status and risks remain separate audit facts.
+- Runtime repair, convergence, read-range, and completion-review notices now
+  have a one-response model-context lifecycle. A successful model response
+  consumes them, while transport errors retain them for retry, preventing stale
+  execution advice from accumulating across later routes and final review.
 - Completion review now treats the model's observable choice as authoritative
   for loop control: tool calls continue execution, while an ordinary final
   answer ends the loop. Runtime verification gaps remain in `RunResult` and
@@ -118,9 +136,9 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
   strategy or whether the model/tool loop should continue.
 - Cross-round lifecycle facts now live in an explicit `RunExecutionState`
   instead of scattered runner locals. Round budgets, guidance resets,
-  completion review, and transport counters share one tested state contract
-  that does not choose model strategy. Repeated execution evidence remains a
-  pure `ExecutionConvergence` concern.
+  completion review, transient model-context notices, and transport counters
+  share one tested state contract that does not choose model strategy. Repeated
+  execution evidence remains a pure `ExecutionConvergence` concern.
 - Removed an unreachable target-deliverable-gap prompt path and its unused
   strategy-change classifier instead of carrying dead intervention policy into
   the new lifecycle state.

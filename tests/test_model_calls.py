@@ -57,7 +57,7 @@ async def test_model_call_emits_heartbeats_and_times_out() -> None:
 
     with pytest.raises(ModelCallTimeoutError):
         await run_model_call(
-            purpose="plan_decision",
+            purpose="result_synthesis",
             settings=object(),
             model="slow-model",
             messages=[],

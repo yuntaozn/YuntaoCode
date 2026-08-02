@@ -18,6 +18,10 @@ A good test usually protects one of these foundations:
   inheritance.
 - RunEvidence, RunResult, verification strength, result synthesis, and user
   facing completion truth.
+- Scripted end-to-end Run scenarios that pass through the real conversation
+  executor, model-round protocol loop, tool batch, completion review, and final
+  persistence boundary. These scenarios script provider/tool facts instead of
+  reimplementing runtime decisions in a test-only orchestrator.
 - Persistence boundaries, migration, startup recovery, and cross-platform
   settings paths.
 - Built-in tool safety: PathGuard, write/delete boundaries, shell execution,
@@ -57,6 +61,28 @@ The suite currently has four useful layers:
   `test_evaluation_fixture.py`, `test_evaluation_report.py`,
   `test_plugins_api.py`, `test_settings_policies.py`,
   `test_automation_store.py`, and `test_source_update.py`.
+
+## Core Run Scenario Baseline
+
+Pure helper coverage is not evidence that the assembled Runtime improved. The
+scripted scenarios in `tests/test_run_scenarios.py` therefore keep a small,
+explicit call-shape baseline through the real executor:
+
+- direct answer: one execution-loop model round, no tool call and no
+  result-synthesis call; auxiliary task-contract calls are measured separately;
+- task-contract transport failure: one failed contract attempt returns directly
+  to one main execution round, with no legacy plan-judge call in between;
+- write plus independent verification: write, verification, completion review,
+  then a final answer, with no duplicate completion-review prompt;
+- failed write followed by a model-selected route change: failures remain
+  auditable, the new route executes, and the execution model's answer remains
+  canonical;
+- repeated failure followed by route change: convergence evidence appears for
+  the next decision only and does not leak into later completion review.
+
+These counts are regression budgets, not universal task limits. A new scenario
+may need more rounds, but a refactor that increases calls or repeats prompts in
+an existing scenario must explain the new observable value.
 
 ## High-Signal Areas
 

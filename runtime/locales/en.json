@@ -58,10 +58,6 @@
     "contract.verify_rule": "Choose an appropriate verification method when feasible. The runtime records evidence but does not choose the strategy for you.\n",
     "contract.summary_rule": "Base the final summary on actual tool events, and state incomplete or unverified work truthfully.",
 
-    "plan_judge.prompt": "You are the plan execution judge for YuntaoCode. Determine whether the user's current request requires generating a plan before execution.\nCurrent mode: {mode}\nCurrent project directory: {workspace_path}\nRequires plan: complex tasks, multi-file/document processing, code modification or refactoring, review, summarization, multi-step tool calls, verification or outputting checklists/reports.\nDoes not require plan: greetings, simple explanations, single fact Q&A, user only wants to discuss ideas without execution.\nOutput strict JSON only: {\"use_plan\":true or false,\"reason\":\"one-line reason\",\"confidence\":0 to 1}",
-    "plan_judge.reason_auto": "Decided by the model from the current task and context",
-    "plan_judge.reason_direct": "Current request is better answered directly",
-
     "planner.intro": "You are generating an execution plan for YuntaoCode. Output strict JSON only, no Markdown, no explanation, do not execute the task.\nCurrent project directory: {workspace_path}\n",
     "planner.focus_coding": "The current task contract may involve code changes. Decide from the user goal whether to read files, edit code, run checks, or state risks; treat these notes as advisory, not a fixed route.",
     "planner.focus_paper": "The current task contract may involve research or academic writing. Decide from the user goal which materials, fact boundaries, quality checks, and output steps are needed; treat these notes as advisory, not a fixed route.",

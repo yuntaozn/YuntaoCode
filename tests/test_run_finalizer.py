@@ -358,3 +358,72 @@ async def test_finalizer_passes_observed_evidence_to_result_synthesis(
         "run the browser verification"
     ]
     assert metadata["synthesized_final_answer_source"] == "model_from_runtime_facts"
+
+
+@pytest.mark.asyncio
+async def test_finalizer_preserves_valid_model_answer_when_result_is_partial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(finalizer_module, "count_messages_tokens", lambda messages: 9)
+    conversation = _Conversation()
+    host = _FinalizationHost(conversation)
+    metadata: dict[str, Any] = {
+        "completion_decisions": [{
+            "self_assessment": {
+                "schema_version": "completion_self_assessment.v1",
+                "kind": "completion_self_assessment",
+                "goal_closed": False,
+                "remaining_work": ["visual verification"],
+                "verification_limits": ["no rendered preview was observed"],
+            },
+        }],
+    }
+    workspace = SimpleNamespace(
+        path="D:/workspace",
+        to_public_dict=lambda: {"id": "workspace-1", "path": "D:/workspace"},
+    )
+    tool_events = [{
+        "tool": "filesystem.write_file",
+        "status": "success",
+        "input": {"path": "viewer.html"},
+        "output": {"path": "viewer.html"},
+    }]
+
+    outcome = await RunFinalizer(host).finalize(
+        RunFinalizationRequest(
+            conversation_id="conversation-1",
+            conversation=conversation,
+            workspace=workspace,
+            model="test-model",
+            mode_config={},
+            effective_mode="terminal",
+            user_content="创建并验证 viewer.html",
+            metadata=metadata,
+            content_parts=["已创建 viewer.html，但还没有完成视觉验证。"],
+            reasoning_parts=[],
+            tool_events=tool_events,
+            task_contract={
+                "goal": "创建并验证 viewer.html",
+                "requires_write": True,
+                "requires_state_change": True,
+                "requires_verification": True,
+            },
+            workspace_snapshot={},
+            active_focus={},
+            capability_snapshot={},
+            capability_preflight={},
+            context_hygiene_report={},
+            run=SimpleNamespace(id="run-1", task_id=""),
+            execution_plan=None,
+            change_baseline=None,
+            execution_state=RunExecutionState.create(20),
+            requires_code_write=True,
+            recon_tool_count=0,
+            write_repair_mode=False,
+            context_tokens=4,
+        )
+    )
+
+    assert outcome.run_result["status"] == "partial"
+    assert outcome.assistant_content.startswith("已创建 viewer.html，但还没有完成视觉验证。")
+    assert "synthesized_final_answer" not in metadata

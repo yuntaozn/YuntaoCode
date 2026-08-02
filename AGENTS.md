@@ -25,7 +25,8 @@ foundation easier to understand, test, and extend.
   - Avoid adding new policy branches here when a pure helper can own the rule.
 - `runtime/run_execution_state.py`
   - Owns mutable cross-round lifecycle facts such as round budgets, model
-    transport counters, guidance resets, and completion review.
+    transport counters, guidance resets, completion review, and one-response
+    runtime notices that must not become durable model history.
   - It must not classify task intent, select tools, or become a hidden planner.
 - `runtime/tool_call_loop.py`
   - Owns provider-facing model-round streaming facts: deltas, heartbeats,

@@ -1,8 +1,8 @@
 """Routing and planning policy for the agent runtime.
 
-This module is the first stop for request-level decisions.  It keeps cheap,
-deterministic policy decisions out of the model loop and reserves model-based
-planning judgment for genuinely ambiguous requests.
+Planning has one semantic authority: the task contract model.  This module
+only reconciles that declaration with the user's explicit planning setting;
+it does not run a second task-classification path.
 """
 
 from __future__ import annotations
@@ -13,14 +13,10 @@ from .profiles import AgentProfile, profile_for_task_intent
 
 
 @dataclass(frozen=True)
-class PlanGateDecision:
-    enabled: bool | None
+class PlanExecutionDecision:
+    enabled: bool
     source: str
     reason: str
-
-    @property
-    def needs_model_judge(self) -> bool:
-        return self.enabled is None
 
     def to_public_dict(self, mode: str) -> dict[str, object]:
         return {
@@ -48,30 +44,32 @@ def resolve_profile(
     )
 
 
-def deterministic_plan_gate(
-    content: str,
-    task_intent: str,
-    mode: str | None,
+def resolve_plan_execution(
+    task_contract: dict[str, object] | None,
     planning_policy: str,
-    *,
-    profile: AgentProfile | None = None,
-) -> PlanGateDecision:
-    """Apply only the user's explicit planning policy.
+) -> PlanExecutionDecision:
+    """Resolve pre-execution plan generation without another model call.
 
-    In auto mode the model owns the planning decision. Content keywords and
-    request length are not runtime routing rules.
+    Explicit user settings remain authoritative.  In auto mode a valid model
+    task contract owns ``requires_plan``.  If that auxiliary contract is
+    unavailable, execution starts without a separately generated plan and the
+    main execution model retains strategy ownership.
     """
     normalized_planning_policy = str(planning_policy or "auto").lower()
     if normalized_planning_policy == "off":
-        return PlanGateDecision(False, "user", "计划执行已关闭")
+        return PlanExecutionDecision(False, "user", "计划执行已关闭")
     if normalized_planning_policy == "always":
-        return PlanGateDecision(True, "user", "已选择总是使用计划执行")
+        return PlanExecutionDecision(True, "user", "已选择总是使用计划执行")
 
-    _ = (content, task_intent, mode, profile)
-    return PlanGateDecision(None, "model", "自动模式由模型判断是否需要计划执行")
-
-
-def heuristic_plan_execution(content: str, mode: str | None) -> bool:
-    """Neutral fallback when the plan-judge call is unavailable."""
-    _ = (content, mode)
-    return False
+    contract = task_contract if isinstance(task_contract, dict) else {}
+    if str(contract.get("source") or "").startswith("model"):
+        return PlanExecutionDecision(
+            bool(contract.get("requires_plan")),
+            "task_contract",
+            "模型任务契约已给出 requires_plan",
+        )
+    return PlanExecutionDecision(
+        False,
+        "main_execution",
+        "未获得可用的模型任务契约计划判断；直接进入主执行，由执行模型选择策略",
+    )

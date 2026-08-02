@@ -28,7 +28,6 @@ from runtime.agent_strategy.document_completion import (
 )
 from runtime.agent_strategy import prompts as _prp
 from runtime.agent_strategy import plan_tracker as _pt
-from runtime.agent_strategy import policy as _pol
 from runtime.agent_strategy import task_contract as _tc
 from runtime.agent_strategy.tool_execution_guard import (
     ToolExecutionGuardChecks,
@@ -847,6 +846,17 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 tools=None,
             )
             parsed = _tc.extract_task_contract_json(answer)
+            if parsed is None:
+                contract = _tc.merge_model_task_contract(None, fallback_contract)
+                contract["source"] = "policy_fallback"
+                contract["model_contract_error"] = (
+                    "invalid task contract response: expected a JSON object"
+                )
+                return _tc.apply_task_continuity(
+                    contract,
+                    previous_contract=previous_contract,
+                    current_user_content=user_content,
+                )
             contract = _tc.merge_model_task_contract(
                 parsed,
                 fallback_contract,
@@ -1025,54 +1035,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             failures.append(str(min_output_check.get("reason") or "document_output_too_short"))
         return failures
 
-    async def _decide_plan_execution(
-        self,
-        *,
-        model: str,
-        messages: list[dict[str, Any]],
-        workspace_path: str,
-        mode: str | None,
-        user_content: str,
-    ) -> dict[str, Any]:
-        lang = self.get_lang()
-        prompt = i18n.t("plan_judge.prompt", lang, mode=mode or "document", workspace_path=workspace_path)
-        try:
-            decision_messages: list[dict[str, Any]] = []
-            if messages and messages[0].get("role") == "system":
-                decision_messages.append(messages[0])
-            decision_messages.append({"role": "user", "content": user_content})
-            decision_messages.append({"role": "system", "content": prompt})
-            answer, _metadata = await self._run_auxiliary_model_call(
-                purpose="plan_decision",
-                model=model,
-                messages=decision_messages,
-                enable_thinking=False,
-                reasoning_effort="low",
-                tools=None,
-            )
-            parsed = self._extract_plan_json(answer)
-            if parsed and "use_plan" in parsed:
-                return {
-                    "mode": "auto",
-                    "enabled": bool(parsed.get("use_plan")),
-                    "reason": str(parsed.get("reason") or "")[:160],
-                    "confidence": parsed.get("confidence"),
-                    "source": "model",
-                }
-        except Exception:
-            pass
-
-        enabled = self._heuristic_plan_execution(user_content, mode)
-        return {
-            "mode": "auto",
-            "enabled": enabled,
-            "reason": self.t("plan_judge.reason_auto") if enabled else self.t("plan_judge.reason_direct"),
-            "source": "heuristic",
-        }
-
-    def _heuristic_plan_execution(self, content: str, mode: str | None) -> bool:
-        return _pol.heuristic_plan_execution(content, mode)
-
     async def _generate_result_synthesis_answer(
         self,
         *,
@@ -1160,9 +1122,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
 
     def _normalize_execution_plan(self, raw_plan: str, mode: str | None) -> dict[str, Any]:
         return _pt.normalize_execution_plan(raw_plan, mode)
-
-    def _extract_plan_json(self, raw_plan: str) -> dict[str, Any] | None:
-        return _pt.extract_plan_json(raw_plan)
 
     def _fallback_execution_plan(self, mode: str | None) -> dict[str, Any]:
         return _pt.fallback_execution_plan(mode)

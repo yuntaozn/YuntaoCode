@@ -58,10 +58,6 @@
     "contract.verify_rule": "在可行时自行选择合适的验证方式；运行时记录证据，但不替你决定策略。\n",
     "contract.summary_rule": "最终总结应基于真实工具事件，并如实说明未完成或未验证的内容。",
 
-    "plan_judge.prompt": "你是 YuntaoCode 的计划执行判断器。请判断用户当前请求是否需要先生成计划再执行。\n当前模式：{mode}\n当前项目目录：{workspace_path}\n需要计划执行的情况：复杂任务、多文件/多文档处理、代码修改或重构、方案审核、资料汇总、需要多步工具调用、需要验证或输出清单/报告。\n不需要计划执行的情况：问候、简单解释、单个事实问答、用户只要求讨论思路且不执行。\n只输出严格 JSON：{\"use_plan\":true或false,\"reason\":\"一句话原因\",\"confidence\":0到1}",
-    "plan_judge.reason_auto": "由模型根据当前任务与上下文判断",
-    "plan_judge.reason_direct": "当前请求更适合直接回答",
-
     "planner.intro": "你正在为 YuntaoCode 生成计划执行方案。只输出严格 JSON，不要 Markdown，不要解释，不要执行任务。\n当前项目目录：{workspace_path}\n",
     "planner.focus_coding": "当前任务契约显示可能涉及代码变更。请根据用户目标自行决定是否需要读取文件、修改代码、运行检查或说明风险；不要把这些提示当成固定路线。",
     "planner.focus_paper": "当前任务契约显示可能涉及论文或学术写作。请根据用户目标自行决定需要哪些材料、事实区分、质量检查和产出步骤；不要把这些提示当成固定路线。",

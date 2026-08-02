@@ -449,16 +449,13 @@ class RunFinalizer:
         metadata: dict[str, Any],
     ) -> str:
         status = str(run_result.get("status") or "")
-        needs_fact_based_answer = (
-            status in {"failure", "partial", "stopped"}
-            or self._host._needs_synthesized_final_answer(
-                assistant_content,
-                request.tool_events,
-                task_contract=request.task_contract,
-            )
+        needs_answer_repair = self._host._needs_synthesized_final_answer(
+            assistant_content,
+            request.tool_events,
+            task_contract=request.task_contract,
         )
         model_synthesized = False
-        if needs_fact_based_answer and not request.execution_state.model_provider_error:
+        if needs_answer_repair and not request.execution_state.model_provider_error:
             try:
                 synthesized, synthesis_metadata = (
                     await self._host._generate_result_synthesis_answer(
@@ -491,7 +488,7 @@ class RunFinalizer:
 
         if model_synthesized:
             return assistant_content
-        if status == "failure" and not (
+        if needs_answer_repair and status == "failure" and not (
             request.execution_state.max_rounds_exceeded or tool_contract_failed
         ):
             metadata["synthesized_final_answer"] = True
@@ -501,7 +498,7 @@ class RunFinalizer:
                 request.tool_events,
                 run_result,
             )
-        if status == "partial":
+        if needs_answer_repair and status == "partial":
             metadata["synthesized_final_answer"] = True
             metadata["synthesized_final_answer_source"] = "runtime_fallback"
             return self._host._synthesize_partial_answer(
@@ -509,11 +506,7 @@ class RunFinalizer:
                 request.tool_events,
                 run_result,
             )
-        if self._host._needs_synthesized_final_answer(
-            assistant_content,
-            request.tool_events,
-            task_contract=request.task_contract,
-        ):
+        if needs_answer_repair:
             metadata["synthesized_final_answer"] = True
             metadata["synthesized_final_answer_source"] = "runtime_fallback"
             return self._host._synthesize_final_answer(

@@ -4,7 +4,7 @@ from dataclasses import fields
 
 import pytest
 
-from runtime.run_execution_state import RunExecutionState
+from runtime.run_execution_state import RunExecutionState, TransientModelContext
 
 
 def test_round_budget_advances_and_extends_to_hard_limit() -> None:
@@ -58,3 +58,17 @@ def test_execution_state_does_not_own_convergence_policy() -> None:
         "last_progress_key",
         "no_progress_budget_exhausted",
     })
+
+
+def test_transient_model_context_is_consumed_by_identity_after_one_response() -> None:
+    state = TransientModelContext()
+    persistent = {"role": "system", "content": "task contract"}
+    transient = {"role": "system", "content": "retry facts"}
+    equal_but_distinct = {"role": "system", "content": "retry facts"}
+    messages = [persistent, transient, equal_but_distinct]
+    state.add(transient)
+
+    remaining = state.consume_from(messages)
+
+    assert remaining == [persistent, equal_but_distinct]
+    assert state.pending_messages == []

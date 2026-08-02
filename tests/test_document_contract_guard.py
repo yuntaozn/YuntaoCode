@@ -567,6 +567,41 @@ async def test_model_task_contract_receives_current_request_not_raw_history(monk
 
 
 @pytest.mark.asyncio
+async def test_invalid_model_task_contract_response_is_auditable_fallback(
+    monkeypatch: Any,
+) -> None:
+    async def fake_generate_chat_completion(**_kwargs: Any) -> tuple[str, dict[str, Any]]:
+        return "I should inspect the project first.", {}
+
+    monkeypatch.setattr(conversations_api, "generate_chat_completion", fake_generate_chat_completion)
+    handler = object.__new__(ConversationMessagesStreamHandler)
+    handler.runtime = SimpleNamespace(
+        settings=SimpleNamespace(get_access_scope=lambda: "project_only"),
+    )
+    fallback = handler._build_task_contract(
+        task_intent="answer_only",
+        mode="terminal",
+        planning_policy="auto",
+        confirmation_policy="auto",
+        workspace_path=r"D:\project",
+    )
+
+    contract = await handler._decide_task_contract(
+        model="fake-model",
+        messages=[{"role": "user", "content": "Analyze the project"}],
+        workspace_path=r"D:\project",
+        user_content="Analyze the project",
+        fallback_contract=fallback,
+    )
+
+    assert contract["source"] == "policy_fallback"
+    assert contract["model_contract_error"] == (
+        "invalid task contract response: expected a JSON object"
+    )
+    assert contract["requires_plan"] is False
+
+
+@pytest.mark.asyncio
 async def test_model_task_contract_does_not_infer_revision_from_retry_wording(
     monkeypatch: Any,
 ) -> None:

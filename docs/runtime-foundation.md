@@ -121,9 +121,13 @@ another verification round.
 ## Model Call Lifecycle
 
 The main model/tool loop streams through `ToolCallLoop`. Auxiliary model calls
-used for task-contract interpretation, automatic plan judgment, and final
-result synthesis use `runtime/model_calls.py` instead of making invisible HTTP
-requests directly.
+used for task-contract interpretation and final result synthesis use
+`runtime/model_calls.py` instead of making invisible HTTP requests directly.
+
+Automatic planning has no separate model judge. A valid model task contract
+owns `requires_plan`; if that auxiliary interpretation is unavailable, the Run
+starts its main execution loop and lets the execution model choose its working
+strategy. This avoids cascading semantic calls before any task work begins.
 
 This boundary records `model_call.v1` facts:
 
@@ -358,6 +362,13 @@ to close. A tool call continues execution; an ordinary non-empty final-answer
 candidate ends the execution loop. Verification gaps remain visible in
 `RunResult`, but do not force the model back into another round.
 
+Runtime notices used for one model response are transient context, not task
+history. Completion review, write-repair, malformed-call, read-range, and
+execution-convergence notices remain available across a provider transport
+retry, then are removed after the model returns a usable response. Tool results,
+user guidance, task contracts, and audit events remain durable. This prevents
+old repair or completion instructions from competing with newer Run evidence.
+
 `completion_evidence_pack.v1` is the model-facing fact package used by that
 self-review prompt. It groups RunResult, compact Run facts, legacy artifacts,
 typed Run artifacts, artifact summary, verification evidence, verification
@@ -378,11 +389,13 @@ Run result presentation follows the same boundary. User-facing notices are
 derived from observed facts such as writes, failures, verification gaps,
 round-budget exhaustion, and risk codes. They should describe evidence and
 continuation basis, not prescribe a fixed strategy or replace the model's
-completion judgment. Model-backed result synthesis uses the same completion
-evidence pack shape as completion self-review, including route evidence,
-artifacts, verification closure, tool progress, failures, and risks. It is a
-bounded presentation pass, not a second execution run or a new completion
-judge. The current user request is passed as a request-reference context rather
+completion judgment. A valid final answer from the execution model stays
+canonical regardless of the `RunResult` status. Model-backed result synthesis
+is reserved for missing or protocol-invalid final content and uses the same
+completion evidence pack shape as completion self-review, including route
+evidence, artifacts, verification closure, tool progress, failures, and risks.
+It is a bounded presentation fallback, not a second execution run or a new
+completion judge. The current user request is passed as a request-reference context rather
 than a raw tail slice: it keeps bounded request head/tail text, explicit
 request marker lines, and referenced files, paths, or URLs so early goals and
 late constraints can both remain visible without letting the original prompt

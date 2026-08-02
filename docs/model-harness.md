@@ -90,8 +90,8 @@ task routing.
 ## Auxiliary Non-Streaming Calls
 
 `runtime/model_calls.py` is adjacent to the Harness but has a different job.
-Task-contract interpretation, automatic plan judgment, and final result
-synthesis use non-streaming model requests. Their lifecycle is now observable
+Task-contract interpretation and final result synthesis use non-streaming
+model requests. Their lifecycle is now observable
 through `model_call.v1` events and live heartbeats.
 
 The lifecycle layer may bound a request and report transport failure, but it

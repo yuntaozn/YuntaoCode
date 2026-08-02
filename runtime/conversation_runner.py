@@ -23,7 +23,7 @@ from runtime.agent_strategy.capability_router import (
 from runtime.agent_strategy import task_contract as _tc
 from runtime.agent_strategy import tool_event_roles as _event_roles
 from runtime.agent_strategy.project_context import build_active_focus_snapshot
-from runtime.agent_strategy.policy import deterministic_plan_gate, resolve_profile
+from runtime.agent_strategy.policy import resolve_plan_execution, resolve_profile
 from runtime.agent_strategy.profiles import profile_to_public_dict
 from runtime.agent_strategy.convergence import (
     ESCALATE_NO_PROGRESS,
@@ -373,13 +373,6 @@ class ConversationRunExecutor:
             state_change_intent=state_change_intent,
             first_action=str(task_contract.get("first_action") or ""),
         )
-        plan_gate = deterministic_plan_gate(
-            content,
-            task_intent,
-            effective_mode,
-            planning_policy,
-            profile=agent_profile,
-        )
         self._active_task_contract = task_contract
         self._active_confirmation_policy = confirmation_policy
         capability_preflight = self._preflight_task_capabilities(task_contract, capability_snapshot)
@@ -538,31 +531,9 @@ class ConversationRunExecutor:
                 })
                 await self.flush()
 
-            if (
-                str(task_contract.get("source") or "").startswith("model")
-                and planning_policy == "auto"
-            ):
-                plan_execution = bool(task_contract.get("requires_plan"))
-                plan_decision = {
-                    "mode": planning_policy,
-                    "enabled": plan_execution,
-                    "reason": "模型任务契约已给出 requires_plan",
-                    "source": "task_contract",
-                }
-            elif not plan_gate.needs_model_judge:
-                plan_execution = bool(plan_gate.enabled)
-                plan_decision = plan_gate.to_public_dict(planning_policy)
-            elif planning_policy == "auto":
-                self.write_event({"event": "status", "status": "plan_deciding", "message": "正在判断是否需要计划执行"})
-                await self.flush()
-                plan_decision = await self._decide_plan_execution(
-                    model=model,
-                    messages=messages,
-                    workspace_path=workspace.path,
-                    mode=effective_mode,
-                    user_content=content,
-                )
-                plan_execution = bool(plan_decision.get("enabled"))
+            resolved_plan = resolve_plan_execution(task_contract, planning_policy)
+            plan_execution = bool(resolved_plan.enabled)
+            plan_decision = resolved_plan.to_public_dict(planning_policy)
             metadata["plan_decision"] = plan_decision
             self.write_event({"event": "plan_decision", "decision": plan_decision})
             await self.flush()
@@ -660,6 +631,8 @@ class ConversationRunExecutor:
                     metadata.setdefault("model_finish_reasons", []).extend(
                         round_result.finish_reasons
                     )
+                if not round_result.model_error and not round_result.idle_timeout:
+                    messages = run_state.transient_model_context.consume_from(messages)
                 if round_result.model_error:
                     run_state.model_provider_error = round_result.model_error
                     if round_result.fatal:
@@ -791,13 +764,15 @@ class ConversationRunExecutor:
                             "message": "检测到不可执行的工具调用格式，正在要求模型重新发送结构化调用。",
                         })
                         await self.flush()
-                        messages.append({
+                        malformed_message = {
                             "role": "system",
                             "content": self._malformed_tool_call_prompt(
                                 workspace.path,
                                 raw_round_text,
                             ),
-                        })
+                        }
+                        messages.append(malformed_message)
+                        run_state.transient_model_context.add(malformed_message)
                         continue
                     break
 
@@ -826,6 +801,7 @@ class ConversationRunExecutor:
                 tool_execution_state = batch_result.state
                 tool_events.extend(batch_result.tool_events)
                 messages.extend(batch_result.model_messages)
+                run_state.transient_model_context.add_from(batch_result.model_messages)
                 round_events = tool_events[round_start_event_count:]
                 if (
                     run_state.round_number >= run_state.round_limit
@@ -919,13 +895,15 @@ class ConversationRunExecutor:
                 }:
                     repeated_tool = str(tool_events[-1].get("tool") or "unknown tool")
                     escalated = repeated_failure_action == ESCALATE_NO_PROGRESS
-                    messages.append({
+                    convergence_message = {
                         "role": "system",
                         "content": self._execution_convergence_prompt(
                             workspace.path,
                             tool_events,
                         ),
-                    })
+                    }
+                    messages.append(convergence_message)
+                    run_state.transient_model_context.add(convergence_message)
                     metadata["execution_convergence"] = convergence_decision.to_dict()
                     if escalated:
                         metadata["execution_convergence_escalated"] = True
@@ -1004,7 +982,7 @@ class ConversationRunExecutor:
                         run_result=provisional_result,
                         evidence_pack=completion_evidence_pack,
                     )
-                    messages.append({
+                    completion_review_message = {
                         "role": "system",
                         "content": self._completion_review_prompt(
                             workspace.path,
@@ -1015,7 +993,9 @@ class ConversationRunExecutor:
                             task_route_evidence=metadata.get("task_route_evidence"),
                             evidence_pack=completion_evidence_pack,
                         ),
-                    })
+                    }
+                    messages.append(completion_review_message)
+                    run_state.transient_model_context.add(completion_review_message)
                     self.write_event({
                         "event": "status",
                         "status": "completion_review",
@@ -1040,13 +1020,15 @@ class ConversationRunExecutor:
                         and read_summary_key != run_state.last_read_summary_key
                     ):
                         run_state.last_read_summary_key = read_summary_key
-                        messages.append({
+                        read_summary_message = {
                             "role": "system",
                             "content": self._read_range_summary_prompt(
                                 workspace.path,
                                 tool_execution_state.read_file_ranges[-8:],
                             ),
-                        })
+                        }
+                        messages.append(read_summary_message)
+                        run_state.transient_model_context.add(read_summary_message)
             else:
                 run_state.max_rounds_exceeded = True
                 self.write_event({

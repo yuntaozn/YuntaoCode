@@ -102,6 +102,7 @@ FOCUSED_TESTS = (
     "tests/test_desktop_observation_provider.py",
     "tests/test_run_execution_state.py",
     "tests/test_run_finalizer.py",
+    "tests/test_run_scenarios.py",
     "tests/test_tool_call_loop.py",
     "tests/test_tool_result_risks.py",
     "tests/test_artifacts.py",

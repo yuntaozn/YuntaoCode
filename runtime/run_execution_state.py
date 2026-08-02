@@ -44,6 +44,31 @@ class CompletionReviewState:
 
 
 @dataclass
+class TransientModelContext:
+    """One-response runtime notices that must not become task history."""
+
+    pending_messages: list[dict[str, Any]] = field(default_factory=list)
+
+    def add(self, message: dict[str, Any]) -> None:
+        if isinstance(message, dict) and all(
+            message is not existing for existing in self.pending_messages
+        ):
+            self.pending_messages.append(message)
+
+    def add_from(self, messages: list[dict[str, Any]]) -> None:
+        for message in messages:
+            if isinstance(message, dict) and message.get("role") == "system":
+                self.add(message)
+
+    def consume_from(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not self.pending_messages:
+            return messages
+        pending_ids = {id(message) for message in self.pending_messages}
+        self.pending_messages.clear()
+        return [message for message in messages if id(message) not in pending_ids]
+
+
+@dataclass
 class RunExecutionState:
     """Explicit mutable state for the model/tool lifecycle of one Run."""
 
@@ -54,6 +79,9 @@ class RunExecutionState:
     last_read_summary_key: str = ""
     completion_review: CompletionReviewState = field(
         default_factory=CompletionReviewState
+    )
+    transient_model_context: TransientModelContext = field(
+        default_factory=TransientModelContext
     )
     consecutive_idle_timeouts: int = 0
     malformed_tool_call_retries: int = 0
