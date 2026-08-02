@@ -28,6 +28,7 @@ async def generate_chat_completion(
     reasoning_effort: str = "medium",
     tools: list[dict[str, Any]] | None = None,
     tool_choice: Any | None = None,
+    request_timeout: float = 300.0,
 ) -> tuple[str, dict[str, Any]]:
     model_config, provider, provider_id = settings.resolve_model(model)
     api_model = model_config.get("api_model") or model
@@ -69,7 +70,7 @@ async def generate_chat_completion(
         method="POST",
         headers=request_headers(api_key),
         body=json.dumps(body, ensure_ascii=False),
-        request_timeout=300,
+        request_timeout=max(0.1, float(request_timeout)),
     )
     try:
         response = await tornado.httpclient.AsyncHTTPClient().fetch(request, raise_error=False)

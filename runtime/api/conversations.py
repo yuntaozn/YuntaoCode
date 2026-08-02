@@ -38,6 +38,7 @@ from runtime.agent_strategy import tool_event_roles as _event_roles
 from runtime.agent_strategy import tool_result_risks as _tool_risks
 from runtime.model_providers import generate_chat_completion
 from runtime.model_providers.client import stream_chat_completion
+from runtime.model_calls import run_model_call
 from runtime.terminal_profile import get_terminal_config
 from runtime.context_manager import (
     compress_context,
@@ -779,6 +780,32 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             has_recent_task_context=self._has_recent_task_context(conversation, text),
         )
 
+    async def _run_auxiliary_model_call(
+        self,
+        *,
+        purpose: str,
+        model: str,
+        messages: list[dict[str, Any]],
+        enable_thinking: bool,
+        reasoning_effort: str,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        observable = bool(getattr(self, "_active_run_id", ""))
+        return await run_model_call(
+            purpose=purpose,
+            settings=self.runtime.settings,
+            model=model,
+            messages=messages,
+            enable_thinking=enable_thinking,
+            reasoning_effort=reasoning_effort,
+            tools=tools,
+            tool_choice=tool_choice,
+            generate=generate_chat_completion,
+            emit=self.write_event if observable else None,
+            flush=self.flush if observable else None,
+        )
+
     async def _decide_task_contract(
         self,
         *,
@@ -811,8 +838,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                     include_history=False,
                 ),
             ]
-            answer, _metadata = await generate_chat_completion(
-                settings=self.runtime.settings,
+            answer, _metadata = await self._run_auxiliary_model_call(
+                purpose="task_contract",
                 model=model,
                 messages=decision_messages,
                 enable_thinking=False,
@@ -1015,8 +1042,8 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 decision_messages.append(messages[0])
             decision_messages.append({"role": "user", "content": user_content})
             decision_messages.append({"role": "system", "content": prompt})
-            answer, _metadata = await generate_chat_completion(
-                settings=self.runtime.settings,
+            answer, _metadata = await self._run_auxiliary_model_call(
+                purpose="plan_decision",
                 model=model,
                 messages=decision_messages,
                 enable_thinking=False,
@@ -1059,6 +1086,12 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         completion_decisions: list[dict[str, Any]] | None = None,
         task_route_evidence: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
+        async def model_call(**kwargs: Any) -> tuple[str, dict[str, Any]]:
+            return await self._run_auxiliary_model_call(
+                purpose="result_synthesis",
+                **kwargs,
+            )
+
         return await generate_result_synthesis_answer(
             settings=self.runtime.settings,
             model=model,
@@ -1070,6 +1103,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             tool_events=tool_events,
             completion_decisions=completion_decisions,
             task_route_evidence=task_route_evidence,
+            model_call=model_call,
         )
 
     async def _generate_execution_plan(
@@ -1398,12 +1432,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         except Exception:
             return []
 
-    def _progress_key(self, tool_events: list[dict[str, Any]], mode: str | None) -> str:
-        return _clf.progress_key(tool_events, mode)
-
-    def _round_has_only_non_progress(self, round_events: list[dict[str, Any]]) -> bool:
-        return _clf.round_has_only_non_progress(round_events)
-
     def _consecutive_repeated_failure_count(self, tool_events: list[dict[str, Any]]) -> int:
         return _clf.consecutive_repeated_failure_count(tool_events)
 
@@ -1544,53 +1572,12 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             tool_event_failure_message=self._tool_event_failure_message,
         )
 
-    def _progress_observer_prompt(
-        self,
-        workspace_path: str,
-        tool_events: list[dict[str, Any]],
-        code_change_intent: bool,
-        reason: str,
-        *,
-        target_deliverable_observed: bool | None = None,
-    ) -> str:
-        contract = getattr(self, "_active_task_contract", None)
-        required, observed, missing = self._verification_modality_status(
-            contract if isinstance(contract, dict) else None,
-            tool_events,
-            workspace_path,
-            getattr(self, "_active_mode", None),
-        )
-        runtime_diagnostics = self._verification_runtime_diagnostics(
-            contract if isinstance(contract, dict) else None,
-            tool_events,
-            workspace_path,
-            getattr(self, "_active_mode", None),
-        )
-        visual_tools = []
-        preflight = getattr(self, "_active_capability_preflight", None)
-        if isinstance(preflight, dict):
-            raw_tools = preflight.get("visual_verification_tool_ids")
-            if isinstance(raw_tools, list):
-                visual_tools = [str(item) for item in raw_tools if str(item or "").strip()]
-        return _prp.progress_observer_prompt(
-            workspace_path,
-            tool_events,
-            code_change_intent,
-            reason,
-            target_deliverable_observed=target_deliverable_observed,
-            required_modalities=required,
-            observed_modalities=observed,
-            missing_modalities=missing,
-            visual_verification_tool_ids=visual_tools,
-            runtime_diagnostics=runtime_diagnostics,
-        )
-
-    def _repeated_failure_strategy_prompt(
+    def _execution_convergence_prompt(
         self,
         workspace_path: str,
         tool_events: list[dict[str, Any]],
     ) -> str:
-        return _prp.repeated_failure_strategy_prompt(workspace_path, tool_events)
+        return _prp.execution_convergence_prompt(workspace_path, tool_events)
 
     def _runtime_confirmation_decision(self, tool_id: str) -> _cp.ConfirmationDecision:
         try:
@@ -2230,9 +2217,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _has_successful_write(self, tool_events: list[dict[str, Any]]) -> bool:
         return _clf.has_successful_write(tool_events)
 
-    def _has_successful_verification(self, tool_events: list[dict[str, Any]], mode: str | None) -> bool:
-        return _clf.has_successful_verification(tool_events, mode)
-
     def _has_successful_target_deliverable(
         self,
         task_contract: dict[str, Any] | None,
@@ -2243,31 +2227,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         if not isinstance(task_contract, dict):
             return self._has_successful_write(tool_events)
         return bool(_event_roles.successful_deliverable_events(
-            tool_events,
-            task_contract=task_contract,
-            workspace_path=workspace_path,
-            mode=mode,
-        ))
-
-    def _has_successful_target_verification(
-        self,
-        task_contract: dict[str, Any] | None,
-        tool_events: list[dict[str, Any]],
-        workspace_path: str,
-        mode: str | None,
-    ) -> bool:
-        if not isinstance(task_contract, dict):
-            return self._has_successful_verification(tool_events, mode)
-        min_output_check = min_text_output_check(
-            tool_events,
-            expected_min_output_chars=task_contract.get("expected_min_output_chars") or 0,
-            task_contract=task_contract,
-            workspace_path=workspace_path,
-            mode=mode,
-        )
-        if min_output_check.get("required") and not min_output_check.get("ok"):
-            return False
-        return bool(_event_roles.sufficient_task_verification_events(
             tool_events,
             task_contract=task_contract,
             workspace_path=workspace_path,
@@ -2361,191 +2320,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return "", ""
         return batch.prompt, batch.text
 
-    def _verification_modality_status(
-        self,
-        task_contract: dict[str, Any] | None,
-        tool_events: list[dict[str, Any]] | None,
-        workspace_path: str,
-        mode: str | None,
-    ) -> tuple[list[str], list[str], list[str]]:
-        if not isinstance(task_contract, dict):
-            return [], [], []
-        workspace = str(workspace_path or task_contract.get("workspace_path") or "")
-        required = list(_event_roles.required_verification_modalities(task_contract))
-        verifications = _event_roles.task_verification_events(
-            tool_events or [],
-            task_contract=task_contract,
-            workspace_path=workspace,
-            mode=mode,
-        )
-        observed: list[str] = []
-        for event in verifications:
-            for item in _event_roles.verification_evidence_modalities(
-                event,
-                mode=mode,
-                task_contract=task_contract,
-            ):
-                if item not in observed:
-                    observed.append(item)
-        missing = list(
-            _event_roles.missing_required_verification_modalities(
-                verifications,
-                task_contract,
-                mode=mode,
-            )
-        )
-        return required, observed, missing
-
-    def _verification_runtime_diagnostics(
-        self,
-        task_contract: dict[str, Any] | None,
-        tool_events: list[dict[str, Any]] | None,
-        workspace_path: str,
-        mode: str | None,
-    ) -> list[dict[str, Any]]:
-        if not isinstance(task_contract, dict):
-            return []
-        workspace = str(workspace_path or task_contract.get("workspace_path") or "")
-        events = tool_events or []
-        verifications = _event_roles.verification_attempt_events(events, mode=mode)
-        deliverables = _event_roles.successful_deliverable_events(
-            events,
-            task_contract=task_contract,
-            workspace_path=workspace,
-            mode=mode,
-        )
-        event_indexes = {id(event): index for index, event in enumerate(events)}
-        latest_deliverable_index = max(
-            (event_indexes.get(id(event), -1) for event in deliverables),
-            default=-1,
-        )
-        latest_verification_index = max(
-            (event_indexes.get(id(event), -1) for event in verifications),
-            default=-1,
-        )
-        result: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        if (
-            latest_verification_index >= 0
-            and latest_deliverable_index > latest_verification_index
-        ):
-            result.append({
-                "code": "verification_evidence_stale_after_state_change",
-                "severity": "warning",
-                "message": (
-                    "The latest deliverable change happened after the most recent "
-                    "verification attempt. Earlier evidence does not verify the current state."
-                ),
-                "source": "tool_event_timeline",
-            })
-        for event in verifications[-4:]:
-            stale_after_change = (
-                latest_deliverable_index > event_indexes.get(id(event), -1)
-            )
-            output = event.get("output") if isinstance(event.get("output"), dict) else {}
-            diagnostics = output.get("runtime_diagnostics")
-            if isinstance(diagnostics, list):
-                for item in diagnostics[:8]:
-                    if not isinstance(item, dict):
-                        continue
-                    diagnostic = dict(item)
-                    if stale_after_change:
-                        diagnostic["stale_after_state_change"] = True
-                        diagnostic["message"] = (
-                            "Earlier verification attempt before the latest state change: "
-                            + str(item.get("message") or "runtime diagnostic")
-                        )
-                    key = json.dumps(diagnostic, ensure_ascii=False, sort_keys=True)[:600]
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    result.append(diagnostic)
-                    if len(result) >= 10:
-                        return result
-            dom_snapshot = output.get("dom_snapshot") if isinstance(output.get("dom_snapshot"), dict) else {}
-            if dom_snapshot.get("loading_visible"):
-                item = {
-                    "code": "page_loading_state_visible",
-                    "severity": "warning",
-                    "message": "Page still shows visible loading/progress UI after verification.",
-                    "source": "dom_snapshot",
-                    "loading_texts": list(dom_snapshot.get("loading_texts") or [])[:6],
-                }
-                key = json.dumps(item, ensure_ascii=False, sort_keys=True)
-                if key not in seen:
-                    seen.add(key)
-                    result.append(item)
-            resource_responses = (
-                output.get("resource_responses")
-                if isinstance(output.get("resource_responses"), list)
-                else []
-            )
-            if resource_responses:
-                script_items = []
-                for resource in resource_responses[:20]:
-                    if not isinstance(resource, dict):
-                        continue
-                    resource_type = str(resource.get("resource_type") or "").lower()
-                    url = str(resource.get("url") or "").lower().split("?", 1)[0]
-                    if resource_type == "script" or url.endswith((".js", ".mjs")):
-                        script_items.append({
-                            "url": resource.get("url"),
-                            "status": resource.get("status"),
-                            "content_type": resource.get("content_type"),
-                            "content_length": resource.get("content_length"),
-                        })
-                if script_items:
-                    item = {
-                        "code": "verification_script_resource_facts",
-                        "severity": "info",
-                        "message": "Script/module resource response facts observed during verification.",
-                        "source": "response",
-                        "resources": script_items[:8],
-                    }
-                    key = json.dumps(item, ensure_ascii=False, sort_keys=True)[:600]
-                    if key not in seen:
-                        seen.add(key)
-                        result.append(item)
-            if len(result) >= 10:
-                break
-        return result[:10]
-
-    def _verifier_retry_prompt(
-        self,
-        mode: str | None,
-        workspace_path: str,
-        *,
-        task_contract: dict[str, Any] | None = None,
-        tool_events: list[dict[str, Any]] | None = None,
-        capability_preflight: dict[str, Any] | None = None,
-    ) -> str:
-        required, observed, missing = self._verification_modality_status(
-            task_contract,
-            tool_events,
-            workspace_path,
-            mode,
-        )
-        runtime_diagnostics = self._verification_runtime_diagnostics(
-            task_contract,
-            tool_events,
-            workspace_path,
-            mode,
-        )
-        visual_tools = []
-        if isinstance(capability_preflight, dict):
-            raw_tools = capability_preflight.get("visual_verification_tool_ids")
-            if isinstance(raw_tools, list):
-                visual_tools = [str(item) for item in raw_tools if str(item or "").strip()]
-        return _prp.verifier_retry_prompt(
-            mode,
-            workspace_path,
-            required_modalities=required,
-            observed_modalities=observed,
-            missing_modalities=missing,
-            visual_verification_tool_ids=visual_tools,
-            runtime_diagnostics=runtime_diagnostics,
-        )
-
     def _completion_review_prompt(
         self,
         workspace_path: str,
@@ -2566,9 +2340,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             task_route_evidence=task_route_evidence,
             evidence_pack=evidence_pack,
         )
-
-    def _final_answer_prompt(self, workspace_path: str) -> str:
-        return _prp.final_answer_prompt(workspace_path)
 
     def _oversized_tool_arguments_prompt(
         self,

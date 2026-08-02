@@ -84,6 +84,25 @@ def test_build_run_workbench_presents_artifacts_risks_and_timeline(tmp_path) -> 
         },
     })
     store.record_event(run.id, {
+        "event": "model_call",
+        "call_id": "call-1",
+        "purpose": "task_contract",
+        "status": "started",
+        "model": "fake-model",
+        "timeout_seconds": 90,
+        "elapsed_seconds": 0,
+    })
+    store.record_event(run.id, {
+        "event": "model_call",
+        "call_id": "call-1",
+        "purpose": "task_contract",
+        "status": "completed",
+        "model": "fake-model",
+        "provider": "fake-provider",
+        "timeout_seconds": 90,
+        "elapsed_seconds": 12.5,
+    })
+    store.record_event(run.id, {
         "event": "status",
         "status": "thinking",
         "message": "model is preparing the file",
@@ -234,6 +253,12 @@ def test_build_run_workbench_presents_artifacts_risks_and_timeline(tmp_path) -> 
     assert overview_cards["runtime"]["value"] == 1
     assert workbench["plan"]["steps"][0]["title"] == "Write HTML"
     assert workbench["completion_decisions"][0]["action"] == "continue_with_tools"
+    assert workbench["audit"]["counts"]["model_calls"] == 1
+    assert workbench["model_calls"][0]["call_id"] == "call-1"
+    assert workbench["model_calls"][0]["purpose"] == "task_contract"
+    assert workbench["model_calls"][0]["status"] == "completed"
+    assert workbench["model_calls"][0]["provider"] == "fake-provider"
+    assert workbench["model_calls"][0]["elapsed_seconds"] == 12.5
     assert [item["kind"] for item in workbench["timeline"]] == ["status", "tool"]
     assert workbench["actions"]["can_continue"] is True
     assert workbench["actions"]["can_replay"] is True

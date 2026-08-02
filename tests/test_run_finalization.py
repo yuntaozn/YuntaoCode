@@ -1,153 +1,77 @@
+from __future__ import annotations
+
+import inspect
+
 from runtime.agent_strategy.run_finalization import (
     COMPLETION_REVIEW,
-    CONTINUE_VERIFICATION_GAP,
-    FINAL_ANSWER_CONVERGED,
-    FINAL_ANSWER_VERIFIED,
-    NEEDS_VERIFICATION_EVIDENCE,
+    EVIDENCE_ALREADY_REVIEWED,
     NO_TASK_EVIDENCE,
     NO_TARGET_DELIVERABLE,
-    ESCALATE_STAGNANT_VERIFICATION_GAP,
-    build_finalization_gate,
-    build_task_evidence_finalization_gate,
-    build_verification_gap_decision,
+    build_completion_review_gate,
 )
 
 
-def test_missing_verification_evidence_blocks_converged_finalization() -> None:
-    gate = build_finalization_gate(
+def test_fresh_target_evidence_enters_model_completion_review() -> None:
+    gate = build_completion_review_gate(
+        requires_target_deliverable=True,
         has_target_deliverable=True,
-        has_target_verification=False,
-        needs_verification_evidence=True,
-        completion_review_stale=False,
-    )
-
-    assert gate.action == NEEDS_VERIFICATION_EVIDENCE
-
-
-def test_verified_new_evidence_enters_completion_review() -> None:
-    gate = build_finalization_gate(
-        has_target_deliverable=True,
-        has_target_verification=True,
-        needs_verification_evidence=False,
-        completion_review_stale=True,
+        has_task_evidence=True,
+        has_unreviewed_evidence=True,
     )
 
     assert gate.action == COMPLETION_REVIEW
 
 
-def test_verified_reviewed_evidence_can_enter_final_answer() -> None:
-    gate = build_finalization_gate(
+def test_reviewed_target_evidence_does_not_force_another_round() -> None:
+    gate = build_completion_review_gate(
+        requires_target_deliverable=True,
         has_target_deliverable=True,
-        has_target_verification=True,
-        needs_verification_evidence=False,
-        completion_review_stale=False,
+        has_task_evidence=True,
+        has_unreviewed_evidence=False,
     )
 
-    assert gate.action == FINAL_ANSWER_VERIFIED
+    assert gate.action == EVIDENCE_ALREADY_REVIEWED
 
 
-def test_unverified_target_enters_model_completion_review() -> None:
-    gate = build_finalization_gate(
-        has_target_deliverable=True,
-        has_target_verification=False,
-        needs_verification_evidence=False,
-        completion_review_stale=True,
-    )
-
-    assert gate.action == COMPLETION_REVIEW
-
-
-def test_reviewed_target_can_enter_final_answer_without_required_verification() -> None:
-    gate = build_finalization_gate(
-        has_target_deliverable=True,
-        has_target_verification=False,
-        needs_verification_evidence=False,
-        completion_review_stale=False,
-    )
-
-    assert gate.action == FINAL_ANSWER_CONVERGED
-
-
-def test_answer_evidence_enters_completion_review_without_target_deliverable() -> None:
-    gate = build_task_evidence_finalization_gate(
+def test_answer_evidence_enters_review_without_target_deliverable() -> None:
+    gate = build_completion_review_gate(
         requires_target_deliverable=False,
         has_target_deliverable=False,
         has_task_evidence=True,
-        has_target_verification=True,
-        needs_verification_evidence=False,
-        completion_review_stale=True,
+        has_unreviewed_evidence=True,
     )
 
     assert gate.action == COMPLETION_REVIEW
 
 
-def test_task_without_observed_evidence_does_not_enter_completion_review() -> None:
-    gate = build_task_evidence_finalization_gate(
+def test_task_without_observed_evidence_does_not_enter_review() -> None:
+    gate = build_completion_review_gate(
         requires_target_deliverable=False,
         has_target_deliverable=False,
         has_task_evidence=False,
-        has_target_verification=False,
-        needs_verification_evidence=False,
-        completion_review_stale=True,
+        has_unreviewed_evidence=True,
     )
 
     assert gate.action == NO_TASK_EVIDENCE
 
 
-def test_target_contract_still_requires_target_deliverable_before_review() -> None:
-    gate = build_task_evidence_finalization_gate(
+def test_target_contract_requires_target_deliverable_before_review() -> None:
+    gate = build_completion_review_gate(
         requires_target_deliverable=True,
         has_target_deliverable=False,
         has_task_evidence=True,
-        has_target_verification=True,
-        needs_verification_evidence=False,
-        completion_review_stale=True,
+        has_unreviewed_evidence=True,
     )
 
     assert gate.action == NO_TARGET_DELIVERABLE
 
 
-def test_verification_gap_decision_continues_when_gap_changes() -> None:
-    first = build_verification_gap_decision(
-        previous_key="",
-        current_key="missing=content",
-        prompt_count=0,
-        stagnant_rounds=0,
-    )
-    second = build_verification_gap_decision(
-        previous_key=first.key,
-        current_key="missing=behavioral",
-        prompt_count=first.prompt_count,
-        stagnant_rounds=first.stagnant_rounds,
-    )
+def test_review_gate_cannot_reintroduce_verification_as_loop_control() -> None:
+    parameters = set(inspect.signature(build_completion_review_gate).parameters)
 
-    assert first.action == CONTINUE_VERIFICATION_GAP
-    assert second.action == CONTINUE_VERIFICATION_GAP
-    assert second.stagnant_rounds == 0
-
-
-def test_verification_gap_decision_escalates_only_after_repeated_stagnation() -> None:
-    decision = build_verification_gap_decision(
-        previous_key="",
-        current_key="missing=content",
-        prompt_count=0,
-        stagnant_rounds=0,
-    )
-    for _ in range(4):
-        decision = build_verification_gap_decision(
-            previous_key=decision.key,
-            current_key=decision.key,
-            prompt_count=decision.prompt_count,
-            stagnant_rounds=decision.stagnant_rounds,
-        )
-
-    assert decision.action == CONTINUE_VERIFICATION_GAP
-
-    decision = build_verification_gap_decision(
-        previous_key=decision.key,
-        current_key=decision.key,
-        prompt_count=decision.prompt_count,
-        stagnant_rounds=decision.stagnant_rounds,
-    )
-
-    assert decision.action == ESCALATE_STAGNANT_VERIFICATION_GAP
+    assert parameters == {
+        "requires_target_deliverable",
+        "has_target_deliverable",
+        "has_task_evidence",
+        "has_unreviewed_evidence",
+    }

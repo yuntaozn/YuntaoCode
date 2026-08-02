@@ -2025,56 +2025,6 @@ def test_build_run_result_allows_recovered_non_write_failure() -> None:
     assert result["counts"]["failures"] == 1
 
 
-def test_build_run_result_marks_no_progress_budget_without_progress_as_stopped() -> None:
-    result = build_run_result(
-        workspace_path="D:/workspace",
-        mode="coding",
-        change_summary=None,
-        no_progress_budget_exhausted=True,
-        tool_events=[
-            {
-                "tool": "filesystem.write_file",
-                "status": "failure",
-                "input": {},
-                "output": {"reason": "invalid_tool_input"},
-                "error": "missing required: path, content",
-            },
-        ],
-    )
-
-    assert result["status"] == "stopped"
-    assert result["flags"]["no_progress_budget_exhausted"] is True
-    assert "repeated_tool_failure" in result["risks"]
-    assert "invalid_tool_call_protocol" in result["risks"]
-
-
-def test_build_run_result_marks_no_progress_budget_after_write_as_partial() -> None:
-    result = build_run_result(
-        workspace_path="D:/workspace",
-        mode="coding",
-        change_summary=None,
-        no_progress_budget_exhausted=True,
-        tool_events=[
-            {
-                "tool": "filesystem.write_file",
-                "status": "success",
-                "input": {"path": "D:/workspace/src/app.js"},
-                "output": {"path": "D:/workspace/src/app.js"},
-            },
-            {
-                "tool": "shell.run_command",
-                "status": "failure",
-                "input": {"command": "npm run dev"},
-                "error": "command timed out",
-            },
-        ],
-    )
-
-    assert result["status"] == "partial"
-    assert result["flags"]["no_progress_budget_exhausted"] is True
-    assert "repeated_tool_failure" in result["risks"]
-
-
 def test_build_run_result_surfaces_tool_call_protocol_failures() -> None:
     result = build_run_result(
         workspace_path="D:/workspace",

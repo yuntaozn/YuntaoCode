@@ -730,43 +730,6 @@ def finish_reason_indicates_truncation(reason: Any) -> bool:
     }
 
 
-# ---------------------------------------------------------------------------
-# Progress observation
-# ---------------------------------------------------------------------------
-
-def progress_key(tool_events: list[dict[str, Any]], mode: str | None) -> str:
-    """Compute a stagnation-detection key from recent tool events."""
-    significant: list[dict[str, Any]] = []
-    for event in tool_events[-16:]:
-        tool_id = str(event.get("tool") or "")
-        status = str(event.get("status") or "")
-        event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
-        if status != "success":
-            continue
-        if (
-            is_write_tool(tool_id)
-            or is_verification_tool(tool_id, mode)
-            or is_recon_tool(tool_id)
-        ):
-            significant.append({
-                "tool": tool_id,
-                "path": event_input.get("path") or event_input.get("output_path") or event_input.get("cwd") or "",
-                "query": event_input.get("query") or event_input.get("old_text") or event_input.get("old_string") or "",
-                "task_id": event.get("task_id") or "",
-            })
-    return json.dumps(significant, ensure_ascii=False, sort_keys=True)
-
-
-def round_has_only_non_progress(round_events: list[dict[str, Any]]) -> bool:
-    """Return True if every event in the round is non-successful (stalled)."""
-    if not round_events:
-        return False
-    for event in round_events:
-        if event.get("status") == "success":
-            return False
-    return True
-
-
 def consecutive_repeated_failure_count(tool_events: list[dict[str, Any]]) -> int:
     return _convergence.consecutive_repeated_failure_count(tool_events)
 

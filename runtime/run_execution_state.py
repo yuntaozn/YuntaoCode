@@ -12,22 +12,8 @@ from typing import Any
 
 
 @dataclass
-class EvidenceGapState:
-    """Progress counters for one evidence gap observed across rounds."""
-
-    key: str = ""
-    prompt_count: int = 0
-    stagnant_rounds: int = 0
-
-    def update(self, *, key: str, prompt_count: int, stagnant_rounds: int) -> None:
-        self.key = str(key or "")
-        self.prompt_count = max(0, int(prompt_count or 0))
-        self.stagnant_rounds = max(0, int(stagnant_rounds or 0))
-
-
-@dataclass
 class CompletionReviewState:
-    """Model self-review state after target evidence has been observed."""
+    """Model self-review state after task evidence has been observed."""
 
     event_count: int = -1
     review_count: int = 0
@@ -70,14 +56,7 @@ class RunExecutionState:
         default_factory=CompletionReviewState
     )
     consecutive_idle_timeouts: int = 0
-    final_answer_mode: bool = False
-    verifier_retry_prompted: bool = False
-    verification_gap: EvidenceGapState = field(default_factory=EvidenceGapState)
     malformed_tool_call_retries: int = 0
-    progress_observer_count: int = 0
-    stagnant_rounds: int = 0
-    last_progress_key: str = ""
-    no_progress_budget_exhausted: bool = False
     argument_observation_threshold: int = 24_000
     large_argument_observations: int = 0
     guidance_count: int = 0
@@ -120,7 +99,6 @@ class RunExecutionState:
 
     def record_guidance(self) -> None:
         self.guidance_count += 1
-        self.final_answer_mode = False
         self.completion_review.reset_pending()
 
     @property
@@ -132,19 +110,3 @@ class RunExecutionState:
     @runtime_intervention_count.setter
     def runtime_intervention_count(self, value: int) -> None:
         self.guidance_count = max(0, int(value or 0))
-
-    def leave_final_answer_mode(self) -> None:
-        self.final_answer_mode = False
-        self.completion_review.reset_pending()
-
-    def enter_final_answer_mode(self) -> None:
-        self.final_answer_mode = True
-
-    def observe_progress(self, progress_key: str) -> int:
-        normalized_key = str(progress_key or "")
-        if normalized_key and normalized_key == self.last_progress_key:
-            self.stagnant_rounds += 1
-        else:
-            self.stagnant_rounds = 0
-            self.last_progress_key = normalized_key
-        return self.stagnant_rounds

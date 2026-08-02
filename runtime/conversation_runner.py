@@ -27,16 +27,12 @@ from runtime.agent_strategy.policy import deterministic_plan_gate, resolve_profi
 from runtime.agent_strategy.profiles import profile_to_public_dict
 from runtime.agent_strategy.convergence import (
     ESCALATE_NO_PROGRESS,
+    REPORT_REPETITION,
     build_execution_convergence_decision,
 )
 from runtime.agent_strategy.run_finalization import (
     COMPLETION_REVIEW,
-    FINAL_ANSWER_CONVERGED,
-    FINAL_ANSWER_VERIFIED,
-    NEEDS_VERIFICATION_EVIDENCE,
-    ESCALATE_STAGNANT_VERIFICATION_GAP,
-    build_task_evidence_finalization_gate,
-    build_verification_gap_decision,
+    build_completion_review_gate,
 )
 from runtime.context_pack import (
     build_context_pack,
@@ -78,96 +74,6 @@ class ConversationRunExecutor:
                 or task_contract.get("requires_state_change")
             )
         )
-
-    def _needs_task_verification_evidence(
-        self,
-        task_contract: dict[str, Any] | None,
-        tool_events: list[dict[str, Any]],
-        workspace_path: str,
-        mode: str | None,
-    ) -> bool:
-        if not isinstance(task_contract, dict) or not task_contract.get("requires_verification"):
-            return False
-        if self._has_successful_target_verification(
-            task_contract,
-            tool_events,
-            workspace_path,
-            mode,
-        ):
-            return False
-        requires_deliverable = self._task_requires_target_deliverable(task_contract)
-        if requires_deliverable and not self._has_successful_target_deliverable(
-            task_contract,
-            tool_events,
-            workspace_path,
-            mode,
-        ):
-            return False
-        return True
-
-    def _needs_progress_observer(
-        self,
-        round_events: list[dict[str, Any]],
-        *,
-        stagnant_rounds: int,
-    ) -> bool:
-        return stagnant_rounds >= 2 or self._round_has_only_non_progress(round_events)
-
-    def _verification_gap_key(
-        self,
-        task_contract: dict[str, Any] | None,
-        tool_events: list[dict[str, Any]],
-        workspace_path: str,
-        mode: str | None,
-    ) -> str:
-        if not isinstance(task_contract, dict):
-            return json.dumps({"tool_count": len(tool_events)}, sort_keys=True)
-        required, observed, missing = self._verification_modality_status(
-            task_contract,
-            tool_events,
-            workspace_path,
-            mode,
-        )
-        deliverables = _event_roles.successful_deliverable_events(
-            tool_events,
-            task_contract=task_contract,
-            workspace_path=workspace_path,
-            mode=mode,
-        )
-        verifications = _event_roles.task_verification_events(
-            tool_events,
-            task_contract=task_contract,
-            workspace_path=workspace_path,
-            mode=mode,
-        )
-        return json.dumps(
-            {
-                "required": required,
-                "observed": observed,
-                "missing": missing,
-                "tool_count": len(tool_events),
-                "deliverable_count": len(deliverables),
-                "verification_count": len(verifications),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-
-    def _verification_retry_status_message(
-        self,
-        task_contract: dict[str, Any] | None,
-        tool_events: list[dict[str, Any]],
-        workspace_path: str,
-        mode: str | None,
-    ) -> str:
-        if self._has_successful_target_deliverable(
-            task_contract,
-            tool_events,
-            workspace_path,
-            mode,
-        ):
-            return "目标产物已出现但尚未取得足够验证证据，正在把证据缺口反馈给模型。"
-        return "当前任务要求验证，但尚未取得足够验证证据，正在把证据缺口反馈给模型。"
 
     def write_event(self, payload: dict[str, Any]) -> None:
         self.runtime.run_events.emit(self._active_run_id, payload)
@@ -717,10 +623,6 @@ class ConversationRunExecutor:
                         "message": guidance_text,
                     })
                     await self.flush()
-                if run_state.final_answer_mode:
-                    round_tools = None
-                    round_enable_thinking = False
-                    round_reasoning_effort = "low"
                 self.write_event({"event": "status", "status": "thinking", "message": "正在连接模型"})
                 await self.flush()
                 round_result = await tool_call_loop.run_model_round(
@@ -1011,78 +913,41 @@ class ConversationRunExecutor:
                 repeated_failure_count = convergence_decision.consecutive_failure_count
                 failure_route_attempt_count = convergence_decision.route_attempt_count
                 repeated_failure_action = convergence_decision.action
-                if repeated_failure_action == ESCALATE_NO_PROGRESS:
+                if repeated_failure_action in {
+                    REPORT_REPETITION,
+                    ESCALATE_NO_PROGRESS,
+                }:
                     repeated_tool = str(tool_events[-1].get("tool") or "unknown tool")
+                    escalated = repeated_failure_action == ESCALATE_NO_PROGRESS
                     messages.append({
                         "role": "system",
-                        "content": self._repeated_failure_strategy_prompt(
+                        "content": self._execution_convergence_prompt(
                             workspace.path,
                             tool_events,
                         ),
                     })
-                    metadata["no_progress_budget_observed"] = True
-                    metadata["execution_convergence_budget"] = convergence_decision.to_dict()
+                    metadata["execution_convergence"] = convergence_decision.to_dict()
+                    if escalated:
+                        metadata["execution_convergence_escalated"] = True
                     self.write_event({
                         "event": "status",
-                        "status": "repeated_route_budget_observed",
+                        "status": (
+                            "repeated_route_budget_observed"
+                            if escalated
+                            else "repeated_route_observed"
+                        ),
                         "message": (
                             f"{repeated_tool} 在当前无进展窗口内已出现 {failure_route_attempt_count} 次同一路线失败，"
-                            "已将预算事实反馈给模型继续判断。"
+                            + (
+                                "已将预算事实反馈给模型继续判断。"
+                                if escalated
+                                else "已将重复事实反馈给模型自行判断下一步。"
+                            )
                         ),
                         "tool": repeated_tool,
                         "failure_count": repeated_failure_count,
                         "route_attempt_count": failure_route_attempt_count,
                         "execution_convergence": convergence_decision.to_dict(),
-                    })
-                    await self.flush()
-                    continue
-                if repeated_failure_action == "report_repetition":
-                    repeated_tool = str(tool_events[-1].get("tool") or "unknown tool")
-                    messages.append({
-                        "role": "system",
-                        "content": self._repeated_failure_strategy_prompt(
-                            workspace.path,
-                            tool_events,
-                        ),
-                    })
-                    self.write_event({
-                        "event": "status",
-                        "status": "repeated_route_observed",
-                        "message": (
-                            f"{repeated_tool} 在当前无进展窗口内已出现 {failure_route_attempt_count} 次同一路线失败，"
-                            "已将重复事实反馈给模型自行判断下一步。"
-                        ),
-                        "tool": repeated_tool,
-                        "failure_count": repeated_failure_count,
-                        "route_attempt_count": failure_route_attempt_count,
-                        "execution_convergence": convergence_decision.to_dict(),
-                    })
-                    await self.flush()
-                    continue
-                run_state.observe_progress(
-                    self._progress_key(tool_events, effective_mode)
-                )
-                if (
-                    run_state.progress_observer_count < 1
-                    and self._needs_progress_observer(
-                        round_events,
-                        stagnant_rounds=run_state.stagnant_rounds,
-                    )
-                ):
-                    run_state.progress_observer_count += 1
-                    messages.append({
-                        "role": "system",
-                        "content": self._progress_observer_prompt(
-                            workspace.path,
-                            tool_events,
-                            code_change_intent,
-                            "stagnant_progress_observed",
-                        ),
-                    })
-                    self.write_event({
-                        "event": "status",
-                        "status": "progress_observer",
-                        "message": "进度观察器发现执行进展停滞，已把运行事实反馈给模型继续判断。",
                     })
                     await self.flush()
                     continue
@@ -1093,115 +958,22 @@ class ConversationRunExecutor:
                     effective_mode,
                 )
                 requires_target_deliverable = self._task_requires_target_deliverable(task_contract)
-                has_target_verification = self._has_successful_target_verification(
-                    task_contract,
-                    tool_events,
-                    workspace.path,
-                    effective_mode,
-                )
                 has_task_evidence = bool(_event_roles.successful_task_evidence_events(
                     tool_events,
                     task_contract=task_contract,
                     workspace_path=workspace.path,
                     mode=effective_mode,
                 ))
-                finalization_gate = build_task_evidence_finalization_gate(
+                completion_review_gate = build_completion_review_gate(
                     requires_target_deliverable=requires_target_deliverable,
                     has_target_deliverable=has_target_deliverable,
                     has_task_evidence=has_task_evidence,
-                    has_target_verification=has_target_verification,
-                    needs_verification_evidence=self._needs_task_verification_evidence(
-                        task_contract,
-                        tool_events,
-                        workspace.path,
-                        effective_mode,
-                    ),
-                    completion_review_stale=(
+                    has_unreviewed_evidence=(
                         len(tool_events)
                         > run_state.completion_review.event_count
                     ),
                 )
-                if finalization_gate.action == NEEDS_VERIFICATION_EVIDENCE:
-                    run_state.leave_final_answer_mode()
-                    verification_gap_key = self._verification_gap_key(
-                        task_contract,
-                        tool_events,
-                        workspace.path,
-                        effective_mode,
-                    )
-                    gap_decision = build_verification_gap_decision(
-                        previous_key=run_state.verification_gap.key,
-                        current_key=verification_gap_key,
-                        prompt_count=run_state.verification_gap.prompt_count,
-                        stagnant_rounds=run_state.verification_gap.stagnant_rounds,
-                    )
-                    run_state.verification_gap.update(
-                        key=gap_decision.key,
-                        prompt_count=gap_decision.prompt_count,
-                        stagnant_rounds=gap_decision.stagnant_rounds,
-                    )
-                    if gap_decision.action == ESCALATE_STAGNANT_VERIFICATION_GAP:
-                        messages.append({
-                            "role": "system",
-                            "content": self._verifier_retry_prompt(
-                                effective_mode,
-                                workspace.path,
-                                task_contract=task_contract,
-                                tool_events=tool_events,
-                                capability_preflight=capability_preflight,
-                            ),
-                        })
-                        self.write_event({
-                            "event": "status",
-                            "status": "verification_gap_budget_observed",
-                            "message": "验证缺口已连续多轮无新证据变化；已把预算事实反馈给模型继续判断。",
-                            "verification_gap": {
-                                "prompt_count": run_state.verification_gap.prompt_count,
-                                "stagnant_rounds": run_state.verification_gap.stagnant_rounds,
-                            },
-                        })
-                        await self.flush()
-                        continue
-                    if not run_state.verifier_retry_prompted:
-                        run_state.verifier_retry_prompted = True
-                        messages.append({
-                            "role": "system",
-                            "content": self._verifier_retry_prompt(
-                                effective_mode,
-                                workspace.path,
-                                task_contract=task_contract,
-                                tool_events=tool_events,
-                                capability_preflight=capability_preflight,
-                            ),
-                        })
-                        self.write_event({
-                            "event": "status",
-                            "status": "verifier_retry",
-                            "message": self._verification_retry_status_message(
-                                task_contract,
-                                tool_events,
-                                workspace.path,
-                                effective_mode,
-                            ),
-                        })
-                    else:
-                        messages.append({
-                            "role": "system",
-                            "content": self._progress_observer_prompt(
-                                workspace.path,
-                                tool_events,
-                                code_change_intent,
-                                "target_verification_still_missing",
-                            ),
-                        })
-                        self.write_event({
-                            "event": "status",
-                            "status": "progress_observer",
-                            "message": "任务仍缺少足够验证证据，正在把证据缺口反馈给模型继续判断。",
-                        })
-                    await self.flush()
-                    continue
-                if finalization_gate.action == COMPLETION_REVIEW:
+                if completion_review_gate.action == COMPLETION_REVIEW:
                     task_contract_facts = task_contract if isinstance(task_contract, dict) else {}
                     provisional_result = build_run_result(
                         workspace_path=workspace.path,
@@ -1218,7 +990,6 @@ class ConversationRunExecutor:
                         task_contract=task_contract,
                         contract_failed=False,
                         max_rounds_exceeded=run_state.max_rounds_exceeded,
-                        no_progress_budget_exhausted=run_state.no_progress_budget_exhausted,
                     )
                     completion_evidence_pack = build_completion_evidence_pack(
                         workspace_path=workspace.path,
@@ -1255,32 +1026,6 @@ class ConversationRunExecutor:
                             "risks": provisional_result.get("risks") or [],
                             "evidence_pack_schema": completion_evidence_pack.get("schema_version"),
                         },
-                    })
-                    await self.flush()
-                    continue
-                if finalization_gate.action == FINAL_ANSWER_VERIFIED:
-                    messages.append({
-                        "role": "system",
-                        "content": self._final_answer_prompt(workspace.path),
-                    })
-                    run_state.enter_final_answer_mode()
-                    self.write_event({
-                        "event": "status",
-                        "status": "success_conditions_met",
-                        "message": "任务证据与验证均已观察到，正在生成最终结果",
-                    })
-                    await self.flush()
-                    continue
-                if finalization_gate.action == FINAL_ANSWER_CONVERGED:
-                    messages.append({
-                        "role": "system",
-                        "content": self._final_answer_prompt(workspace.path),
-                    })
-                    run_state.enter_final_answer_mode()
-                    self.write_event({
-                        "event": "status",
-                        "status": "finalizing",
-                        "message": "任务证据自审后已收束，正在生成最终结果",
                     })
                     await self.flush()
                     continue

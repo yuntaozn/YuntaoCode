@@ -351,161 +351,6 @@ def test_task_contract_uses_declared_deliverable_role_for_write_and_verification
     assert handler._task_contract_failures(contract, events, "coding") == []
 
 
-def test_verifier_retry_prompt_uses_observed_modality_status() -> None:
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    contract = {
-        "requires_write": True,
-        "requires_verification": True,
-        "workspace_path": r"D:\workspace\site",
-        "deliverables": [
-            {"kind": "code", "path_hint": r"D:\workspace\site\index.html"}
-        ],
-        "required_verification_modalities": ["visual", "behavioral", "content"],
-    }
-    events = [
-        {
-            "tool": "code.edit_file",
-            "status": "success",
-            "input": {"path": r"D:\workspace\site\index.html"},
-            "output": {"path": r"D:\workspace\site\index.html"},
-        },
-        {
-            "tool": "preview.capture_local_html",
-            "status": "success",
-            "input": {"path": r"D:\workspace\site\index.html"},
-            "output": {
-                "screenshot_path": r"C:\Users\demo\AppData\Local\YuntaoCode\task-artifacts\run\preview\index.png",
-                "title": "demo",
-                "artifacts": ["screenshot", "visual_evidence"],
-                "runtime_diagnostics": [
-                    {
-                        "code": "browser_page_error",
-                        "severity": "error",
-                        "message": "Unexpected end of input",
-                    }
-                ],
-                "page_errors": [],
-                "console_errors": [],
-            },
-        },
-    ]
-
-    prompt = handler._verifier_retry_prompt(
-        "coding",
-        r"D:\workspace\site",
-        task_contract=contract,
-        tool_events=events,
-        capability_preflight={
-            "visual_verification_tool_ids": [
-                "preview.capture_local_html",
-                "preview.interact_page",
-            ],
-        },
-    )
-
-    assert "observed_modalities=visual" in prompt
-    assert "missing_modalities=behavioral, content" in prompt
-    assert "preview.interact_page" in prompt
-    assert "runtime_diagnostic=browser_page_error" in prompt
-
-
-def test_verifier_retry_prompt_uses_task_level_evidence_for_verification_only_task() -> None:
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    contract = {
-        "intent": "read_only_analysis",
-        "requires_write": False,
-        "requires_state_change": False,
-        "requires_verification": True,
-        "workspace_path": r"D:\workspace\site",
-        "deliverables": [{"kind": "answer", "description": "验证结论"}],
-        "required_verification_modalities": ["content", "behavioral"],
-    }
-    events = [
-        {
-            "tool": "filesystem.read_file",
-            "status": "success",
-            "input": {"path": r"D:\workspace\site\src\app.js"},
-            "output": {
-                "path": r"D:\workspace\site\src\app.js",
-                "content": "function renderStep() {}",
-            },
-        },
-    ]
-
-    prompt = handler._verifier_retry_prompt(
-        "coding",
-        r"D:\workspace\site",
-        task_contract=contract,
-        tool_events=events,
-        capability_preflight={
-            "visual_verification_tool_ids": [
-                "preview.capture_local_html",
-                "preview.interact_page",
-            ],
-        },
-    )
-
-    assert "observed_modalities=content" in prompt
-    assert "missing_modalities=behavioral" in prompt
-    assert "preview.interact_page" in prompt
-
-
-def test_verifier_retry_prompt_marks_evidence_stale_after_later_write() -> None:
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    path = r"D:\workspace\site\index.html"
-    contract = {
-        "requires_write": True,
-        "requires_verification": True,
-        "workspace_path": r"D:\workspace\site",
-        "deliverables": [{"kind": "code", "path_hint": path}],
-        "required_verification_modalities": ["visual"],
-    }
-    events = [
-        {
-            "tool": "code.edit_file",
-            "status": "success",
-            "input": {"path": path},
-            "output": {"path": path},
-        },
-        {
-            "tool": "preview.capture_local_html",
-            "status": "success",
-            "declared_roles": ["verification"],
-            "input": {"path": path},
-            "output": {
-                "path": r"D:\runtime\before.png",
-                "artifact_kind": "screenshot",
-                "has_runtime_errors": True,
-                "runtime_diagnostics": [
-                    {
-                        "code": "browser_page_error",
-                        "severity": "error",
-                        "message": "Unexpected identifier 'time'",
-                    }
-                ],
-            },
-        },
-        {
-            "tool": "code.edit_file",
-            "status": "success",
-            "input": {"path": path},
-            "output": {"path": path},
-        },
-    ]
-
-    prompt = handler._verifier_retry_prompt(
-        "coding",
-        r"D:\workspace\site",
-        task_contract=contract,
-        tool_events=events,
-        capability_preflight={"visual_verification_tool_ids": ["preview.capture_local_html"]},
-    )
-
-    assert "verification_evidence_stale_after_state_change" in prompt
-    assert "Earlier verification attempt before the latest state change" in prompt
-    assert "Unexpected identifier 'time'" in prompt
-
-
 def test_execution_notice_reports_invalid_verification_method() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
 
@@ -680,7 +525,7 @@ async def test_model_task_contract_receives_current_request_not_raw_history(monk
     captured: dict[str, Any] = {}
 
     async def fake_generate_chat_completion(**kwargs: Any) -> tuple[str, dict[str, Any]]:
-        captured["messages"] = kwargs["messages"]
+        captured.update(kwargs)
         return (
             '{"intent":"write_required","requires_write":true,"goal":"添加构件选择功能"}',
             {},
@@ -714,6 +559,7 @@ async def test_model_task_contract_receives_current_request_not_raw_history(monk
     assert contract["intent"] == "write_required"
     assert [item["role"] for item in captured["messages"]] == ["system", "user"]
     assert captured["messages"][-1]["content"] == "现在想加能选构件的能力"
+    assert captured["request_timeout"] == 90.0
     contents = "\n".join(item["content"] for item in captured["messages"])
     assert "重写一个 3D 模型查看器" not in contents
     assert "已创建 viewer.html" not in contents

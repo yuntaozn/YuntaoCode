@@ -210,7 +210,6 @@ class RunFinalizer:
         assistant_content = initial_assistant_content(
             model_content=model_content,
             model_provider_error=state.model_provider_error,
-            no_progress_budget_exhausted=state.no_progress_budget_exhausted,
             has_successful_write=has_successful_write(tool_events),
             max_rounds_exceeded=state.max_rounds_exceeded,
             max_rounds_after_write_message=self._host._max_rounds_after_write_message(
@@ -243,11 +242,6 @@ class RunFinalizer:
             metadata["runtime_intervention_count"] = state.guidance_count
         if state.malformed_tool_call_retries:
             metadata["malformed_tool_call_retries"] = state.malformed_tool_call_retries
-        if state.progress_observer_count:
-            metadata["progress_observer_count"] = state.progress_observer_count
-            metadata["stagnant_rounds"] = state.stagnant_rounds
-        if state.no_progress_budget_exhausted:
-            metadata["no_progress_budget_exhausted"] = True
         if state.completion_review.review_count:
             metadata["completion_review_count"] = state.completion_review.review_count
 
@@ -255,8 +249,7 @@ class RunFinalizer:
             complete_remaining_plan_steps(
                 request.execution_plan,
                 failed=(
-                    state.no_progress_budget_exhausted
-                    or state.max_rounds_exceeded
+                    state.max_rounds_exceeded
                     or bool(state.model_provider_error)
                     or (
                         any(event.get("status") == "failure" for event in tool_events)
@@ -302,7 +295,6 @@ class RunFinalizer:
             task_contract=task_contract,
             contract_failed=tool_contract_failed,
             max_rounds_exceeded=state.max_rounds_exceeded,
-            no_progress_budget_exhausted=state.no_progress_budget_exhausted,
             preflight_advisories=_preflight_advisories(request.capability_preflight),
             model_error=state.model_provider_error,
             final_answer_error=final_answer_error,
@@ -553,7 +545,6 @@ def initial_assistant_content(
     *,
     model_content: str,
     model_provider_error: str,
-    no_progress_budget_exhausted: bool,
     has_successful_write: bool,
     max_rounds_exceeded: bool,
     max_rounds_after_write_message: str,
@@ -569,16 +560,6 @@ def initial_assistant_content(
             "模型服务在工具执行后返回错误，本轮没有继续获得可用模型响应。"
             "运行记录会按已观察到的工具结果保存事实；如果已经发生写入或外部状态变化，"
             "本轮会标记为部分完成，便于继续恢复或人工检查。"
-        )
-    if no_progress_budget_exhausted and has_successful_write:
-        return (
-            "运行事实提示：本轮已有文件写入成功，但后续同一路线反复无新进展。"
-            "当前 Run 已保留失败事实和已写入产物，可基于这些事实继续恢复、换参数或换工具。"
-        )
-    if no_progress_budget_exhausted:
-        return (
-            "运行事实提示：同一路线反复无新进展。"
-            "当前 Run 已保留失败事实，可基于这些事实继续恢复、换参数、换工具或说明边界。"
         )
     if max_rounds_exceeded:
         return (

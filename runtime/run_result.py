@@ -51,7 +51,6 @@ def build_run_result(
     task_contract: dict[str, Any] | None = None,
     contract_failed: bool = False,
     max_rounds_exceeded: bool = False,
-    no_progress_budget_exhausted: bool = False,
     preflight_advisories: list[dict[str, Any]] | None = None,
     model_error: str = "",
     final_answer_error: str = "",
@@ -321,8 +320,6 @@ def build_run_result(
         risks.append("deliverable_path_hint_changed")
     if max_rounds_exceeded:
         risks.append("max_rounds_exceeded")
-    if no_progress_budget_exhausted:
-        risks.append("repeated_tool_failure")
     if preflight_advisories:
         risks.append("capability_preflight_advisory")
     model_error_text = str(model_error or "").strip()
@@ -473,7 +470,6 @@ def build_run_result(
         has_observed_state_change=observed_state_change,
         contract_failed=unresolved_contract_failed,
         max_rounds_exceeded=max_rounds_exceeded,
-        no_progress_budget_exhausted=no_progress_budget_exhausted,
     )
     completion_assessment = _completion_assessment(completion_decision)
     status, assessment_risks = _reconcile_completion_assessment(
@@ -568,7 +564,6 @@ def build_run_result(
             "contract_failed": bool(contract_failed),
             "unresolved_contract_failed": bool(unresolved_contract_failed),
             "max_rounds_exceeded": bool(max_rounds_exceeded),
-            "no_progress_budget_exhausted": bool(no_progress_budget_exhausted),
             "expected_document_coverage": bool(expected_document_coverage),
             "expected_min_output_chars": max(0, int(expected_min_output_chars or 0)),
             "observed_text_output_chars": int(min_output_check.get("observed") or 0),
@@ -603,13 +598,12 @@ def _result_status(
     has_observed_state_change: bool,
     contract_failed: bool,
     max_rounds_exceeded: bool,
-    no_progress_budget_exhausted: bool,
 ) -> str:
     if contract_failed:
         if (has_write_success or has_answer_deliverable) and not has_missing_target_deliverable:
             return "partial"
         return "failure"
-    if max_rounds_exceeded or no_progress_budget_exhausted:
+    if max_rounds_exceeded:
         if has_observed_state_change or has_write_success or has_answer_deliverable:
             return "partial"
         return "stopped"

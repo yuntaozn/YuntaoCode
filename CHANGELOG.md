@@ -8,6 +8,11 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ### Added
 
+- Observable lifecycle records for auxiliary non-streaming model calls. Task
+  contract interpretation, automatic plan judgment, and result synthesis now
+  share purpose, timeout, heartbeat, cancellation, and audit events without
+  exposing prompts or turning transport failure into a task verdict.
+
 - Auditable memory selection in Context Runtime: relevant global/workspace
   memories now enter task-contract and planning Context Packs with source IDs,
   trust, freshness, and workspace scope instead of being hidden in the base
@@ -113,8 +118,9 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
   strategy or whether the model/tool loop should continue.
 - Cross-round lifecycle facts now live in an explicit `RunExecutionState`
   instead of scattered runner locals. Round budgets, guidance resets,
-  completion review, transport counters, and stagnation evidence share one
-  tested state contract that does not choose model strategy.
+  completion review, and transport counters share one tested state contract
+  that does not choose model strategy. Repeated execution evidence remains a
+  pure `ExecutionConvergence` concern.
 - Removed an unreachable target-deliverable-gap prompt path and its unused
   strategy-change classifier instead of carrying dead intervention policy into
   the new lifecycle state.
@@ -166,18 +172,22 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 - Runtime intervention governance now carries non-blocking guard advisories as
   `runtime_risks`, and document/verification/capability hints use advisory
   wording instead of route-blocking language.
-- Verifier retry prompts now include observed and missing verification
-  modalities plus available visual verification tools, giving the model
-  clearer evidence facts without forcing a fixed route.
-- Run finalization now uses a pure evidence gate so missing required
-  verification evidence keeps tools available instead of letting
-  post-deliverable convergence enter final-answer mode too early.
+- Completion self-review now receives observed and missing verification
+  modalities, visual/debug evidence, tool failures, and risks through the
+  shared evidence pack instead of a separate verifier-retry control path.
+- Removed the verification-gap counter and tool-disabled final-answer phase.
+- Consolidated repeated-execution handling into `ExecutionConvergence` evidence;
+  removed the overlapping ProgressObserver counter and obsolete
+  `no_progress_budget_exhausted` stop-state path.
+  Fresh task evidence enters model completion review once; a model tool call
+  continues execution and an ordinary answer ends the loop while unresolved
+  verification remains visible in RunResult.
 - Context Runtime task lineage candidates now carry runtime-observed target,
   changed, and verified paths and rank recent real target artifacts ahead of
   failed read-only verification attempts, reducing stale continuation context.
-- Verification-only runs now evaluate task-level evidence directly instead of
-  requiring a newly written deliverable first, so read-only validation tasks
-  can continue until required evidence modalities are satisfied.
+- Verification-only runs evaluate task-level evidence directly instead of
+  requiring a newly written deliverable first, then leave continuation or
+  honest evidence-bounded closure to model completion review.
 - Preview tools now return runtime diagnostics and DOM snapshots for browser
   console errors, page errors, failed requests, visible loading states, and
   local HTML remote dependencies so models can debug visual failures from
@@ -205,13 +215,12 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 - Added protocol-level correction and final-output cleanup for malformed or parameterless textual tool-call markers.
 - Split planning policy from execution confirmation policy. Planning now uses `off` / `auto` / `always`, while confirmation uses `conservative` / `auto` / `aggressive`.
 - Validate required tool inputs before requesting manual confirmation, so parameterless writes cannot enter the confirmation flow.
-- Replace partial-run model narration with a deterministic final answer based on `RunResult`, and discard pre-tool narration from the final assistant message.
 - Stabilized the streaming confirmation bar so long status text no longer changes action-button height.
 - Added a conversation-level execution-confirmation selector and live waiting status that distinguishes connection heartbeat, recent progress, and repeated tool failures.
-- Simplified the convergence contract: identical tool failures now stop and record the real failure directly instead of injecting another model strategy-change prompt.
 - Reduced soft runtime steering by making execution-stage prompts status-only and limiting malformed/dangling/progress correction prompts to one retry.
 - Shifted planning, progress, write-repair, duplicate-read, and post-write nudges toward reminder/audit events instead of additional model-facing strategy prompts.
-- Count verification evidence only after the latest successful write, and finalize once write and verification success conditions are both met.
+- Count verification evidence only after the latest successful write, while
+  leaving the continue/finalize decision to model completion self-review.
 - Bumped panel asset versions so the conversation-level execution selector loads its matching JavaScript and CSS instead of stale cached assets.
 - Added a text-artifact integrity guard that rejects clearly truncated full HTML overwrites and prevents incomplete HTML reads from satisfying verification.
 - Added a Context Hygiene layer that cleans polluted model history before execution while preserving visible conversation history and audit records.

@@ -1,4 +1,4 @@
-"""Pure helpers for deciding whether a run can enter final answer mode."""
+"""Pure helpers for deciding when fresh Run evidence needs model review."""
 
 from __future__ import annotations
 
@@ -7,159 +7,56 @@ from dataclasses import dataclass
 
 NO_TARGET_DELIVERABLE = "no_target_deliverable"
 NO_TASK_EVIDENCE = "no_task_evidence"
-NEEDS_VERIFICATION_EVIDENCE = "needs_verification_evidence"
 COMPLETION_REVIEW = "completion_review"
-FINAL_ANSWER_VERIFIED = "final_answer_verified"
-FINAL_ANSWER_CONVERGED = "final_answer_converged"
-CONTINUE_VERIFICATION_GAP = "continue_verification_gap"
-ESCALATE_STAGNANT_VERIFICATION_GAP = "escalate_stagnant_verification_gap"
-PAUSE_STAGNANT_VERIFICATION_GAP = ESCALATE_STAGNANT_VERIFICATION_GAP
+EVIDENCE_ALREADY_REVIEWED = "evidence_already_reviewed"
 
 
 @dataclass(frozen=True)
-class FinalizationGate:
-    """Observable finalization state for the current run facts.
+class CompletionReviewGate:
+    """Observable review state for the current Run facts.
 
-    This helper does not choose tools, stop a model strategy, or decide task
-    success by itself. It only keeps the runner from entering final-answer mode
-    while the task contract still needs verification evidence.
+    This helper does not inspect verification sufficiency, choose tools, stop a
+    model strategy, or decide task success. It only reports whether fresh task
+    evidence is available for the model's own completion review.
     """
 
     action: str
     reason: str = ""
 
 
-@dataclass(frozen=True)
-class VerificationGapDecision:
-    """Progress-aware decision for missing verification evidence.
-
-    The runner should keep the model in charge of the next strategy. This
-    helper only detects whether the same verification gap has remained
-    unchanged across repeated model rounds, so the runtime can escalate the
-    evidence without stopping after the first incomplete self-review. Global
-    round limits remain the resource boundary.
-    """
-
-    action: str
-    reason: str
-    prompt_count: int
-    stagnant_rounds: int
-    key: str
-
-
-def build_finalization_gate(
-    *,
-    has_target_deliverable: bool,
-    has_target_verification: bool,
-    needs_verification_evidence: bool,
-    completion_review_stale: bool,
-) -> FinalizationGate:
-    """Return the next finalization action from runtime facts.
-
-    The important invariant is that missing required verification evidence wins
-    over convergence. A run may look quiet after producing a target artifact,
-    but quietness is not completion when the task contract still asks for
-    verification.
-    """
-
-    if not has_target_deliverable:
-        return FinalizationGate(NO_TARGET_DELIVERABLE, "target deliverable not observed")
-    if needs_verification_evidence:
-        return FinalizationGate(
-            NEEDS_VERIFICATION_EVIDENCE,
-            "task contract still needs verification evidence",
-        )
-    if completion_review_stale:
-        return FinalizationGate(COMPLETION_REVIEW, "new evidence needs model self-review")
-    if has_target_verification:
-        return FinalizationGate(FINAL_ANSWER_VERIFIED, "target and verification observed")
-    return FinalizationGate(
-        FINAL_ANSWER_CONVERGED,
-        "model self-review completed without requesting another tool action",
-    )
-
-
-def build_task_evidence_finalization_gate(
+def build_completion_review_gate(
     *,
     requires_target_deliverable: bool,
     has_target_deliverable: bool,
     has_task_evidence: bool,
-    has_target_verification: bool,
-    needs_verification_evidence: bool,
-    completion_review_stale: bool,
-) -> FinalizationGate:
-    """Return finalization state from task-level evidence.
+    has_unreviewed_evidence: bool,
+) -> CompletionReviewGate:
+    """Return whether current task evidence should be reviewed by the model.
 
     Write and external-state tasks still use target-deliverable evidence as the
     entry point. Read-only analysis and answer-evidence tasks have no file or
-    external object to observe, so successful evidence-gathering tools can open
-    the same model self-review loop. The helper only reports the current gate;
-    the model remains responsible for choosing whether to continue, verify, or
-    finish.
+    external object to observe, so successful evidence-gathering tools use the
+    same review boundary. Verification gaps are intentionally not an input:
+    they are included in the evidence pack and the model decides whether to
+    verify, repair, ask the user, or finish with an explicit limitation.
     """
 
-    if requires_target_deliverable:
-        return build_finalization_gate(
-            has_target_deliverable=has_target_deliverable,
-            has_target_verification=has_target_verification,
-            needs_verification_evidence=needs_verification_evidence,
-            completion_review_stale=completion_review_stale,
+    if requires_target_deliverable and not has_target_deliverable:
+        return CompletionReviewGate(
+            NO_TARGET_DELIVERABLE,
+            "target deliverable not observed",
         )
-    if not has_task_evidence:
-        return FinalizationGate(NO_TASK_EVIDENCE, "task evidence not observed")
-    if needs_verification_evidence:
-        return FinalizationGate(
-            NEEDS_VERIFICATION_EVIDENCE,
-            "task contract still needs verification evidence",
+    if not requires_target_deliverable and not has_task_evidence:
+        return CompletionReviewGate(
+            NO_TASK_EVIDENCE,
+            "task evidence not observed",
         )
-    if completion_review_stale:
-        return FinalizationGate(COMPLETION_REVIEW, "new task evidence needs model self-review")
-    if has_target_verification:
-        return FinalizationGate(FINAL_ANSWER_VERIFIED, "task evidence and verification observed")
-    return FinalizationGate(
-        FINAL_ANSWER_CONVERGED,
-        "model self-review completed without requesting another tool action",
-    )
-
-
-def build_verification_gap_decision(
-    *,
-    previous_key: str,
-    current_key: str,
-    prompt_count: int,
-    stagnant_rounds: int,
-    max_stagnant_rounds: int = 4,
-    min_prompts_before_escalation: int = 6,
-) -> VerificationGapDecision:
-    """Decide whether a missing-verification loop still has room to continue.
-
-    ``current_key`` should summarize observable runtime facts such as missing
-    modalities, observed modalities, tool count, and deliverable count. If the
-    key changes, the model produced some new evidence or changed the run state,
-    so the stagnation counter resets.
-    """
-
-    next_prompt_count = max(0, prompt_count) + 1
-    if current_key and current_key == previous_key:
-        next_stagnant_rounds = max(0, stagnant_rounds) + 1
-    else:
-        next_stagnant_rounds = 0
-
-    if (
-        next_prompt_count >= max(1, min_prompts_before_escalation)
-        and next_stagnant_rounds >= max(1, max_stagnant_rounds)
-    ):
-        return VerificationGapDecision(
-            ESCALATE_STAGNANT_VERIFICATION_GAP,
-            "verification gap remained unchanged across repeated rounds",
-            next_prompt_count,
-            next_stagnant_rounds,
-            current_key,
+    if has_unreviewed_evidence:
+        return CompletionReviewGate(
+            COMPLETION_REVIEW,
+            "fresh task evidence needs model self-review",
         )
-    return VerificationGapDecision(
-        CONTINUE_VERIFICATION_GAP,
-        "verification gap still has room for model-selected correction",
-        next_prompt_count,
-        next_stagnant_rounds,
-        current_key,
+    return CompletionReviewGate(
+        EVIDENCE_ALREADY_REVIEWED,
+        "current task evidence has already been presented to the model",
     )

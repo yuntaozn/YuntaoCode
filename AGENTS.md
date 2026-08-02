@@ -25,7 +25,7 @@ foundation easier to understand, test, and extend.
   - Avoid adding new policy branches here when a pure helper can own the rule.
 - `runtime/run_execution_state.py`
   - Owns mutable cross-round lifecycle facts such as round budgets, model
-    transport counters, guidance resets, completion review, and stagnation.
+    transport counters, guidance resets, and completion review.
   - It must not classify task intent, select tools, or become a hidden planner.
 - `runtime/tool_call_loop.py`
   - Owns provider-facing model-round streaming facts: deltas, heartbeats,
@@ -37,6 +37,11 @@ foundation easier to understand, test, and extend.
     provider-facing harness facts.
   - It must not infer user intent, select tools, choose capability routes, or
     decide whether a Run is complete.
+- `runtime/model_calls.py`
+  - Owns the lifecycle of auxiliary non-streaming model requests: purpose,
+    timeout, heartbeat, cancellation, and audit events.
+  - It must not interpret model output or decide task, plan, tool, verification,
+    or completion semantics.
 - `runtime/tool_execution_batch.py`
   - Executes one model-proposed tool-call batch, preserves provider response
     ordering, and returns explicit execution bookkeeping state.
@@ -52,8 +57,10 @@ foundation easier to understand, test, and extend.
     tool, provider, or verification strategy.
 - `runtime/agent_strategy/`
   - Owns agent runtime strategy.
-  - `classifiers.py`: tool facts, progress observation, and protocol helpers;
+  - `classifiers.py`: tool facts and protocol helpers;
     it must not infer user intent or execution routes.
+  - `convergence.py`: repeated execution evidence from observed tool results;
+    it must not stop a Run, choose a replacement route, or decide completion.
   - `conversation_task_context.py`: recent-conversation detection and task
     candidate access. It must not infer intent, write mode, document scope, or
     output-length goals from historical keywords.

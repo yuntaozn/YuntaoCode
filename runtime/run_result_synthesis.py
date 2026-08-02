@@ -7,7 +7,7 @@ whether a Run is complete, choose tools, or reinterpret the task contract.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from runtime.agent_strategy.prompts import result_synthesis_prompt
 from runtime.model_providers import generate_chat_completion
@@ -176,10 +176,12 @@ async def generate_result_synthesis_answer(
     tool_events: list[dict[str, Any]] | None = None,
     completion_decisions: list[dict[str, Any]] | None = None,
     task_route_evidence: dict[str, Any] | None = None,
+    model_call: Callable[..., Awaitable[tuple[str, dict[str, Any]]]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Generate the final user-facing answer from observed RunResult facts."""
 
-    answer, metadata = await generate_chat_completion(
+    caller = model_call or generate_chat_completion
+    answer, metadata = await caller(
         settings=settings,
         model=model,
         messages=build_result_synthesis_messages(

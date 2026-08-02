@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+
 from runtime.run_result_synthesis import (
     RESULT_SYNTHESIS_USER_CONTENT_LIMIT,
     build_result_synthesis_request_context,
     build_result_synthesis_messages,
+    generate_result_synthesis_answer,
 )
 
 
@@ -98,3 +103,28 @@ def test_request_reference_context_keeps_explicit_markers_and_references() -> No
         "输出中文，格式用 Markdown。",
     ]
     assert "D:\\demo\\src\\app.js" in context["references"]
+
+
+@pytest.mark.asyncio
+async def test_result_synthesis_uses_injected_model_call() -> None:
+    captured: dict[str, Any] = {}
+
+    async def model_call(**kwargs: Any) -> tuple[str, dict[str, Any]]:
+        captured.update(kwargs)
+        return "  summarized answer  ", {"model_call": {"purpose": "result_synthesis"}}
+
+    answer, metadata = await generate_result_synthesis_answer(
+        settings=object(),
+        model="fake-model",
+        workspace_path="D:/workspace",
+        user_content="finish the task",
+        task_contract={"goal": "finish"},
+        run_result={"status": "success"},
+        previous_answer="done",
+        model_call=model_call,
+    )
+
+    assert answer == "summarized answer"
+    assert captured["model"] == "fake-model"
+    assert captured["reasoning_effort"] == "low"
+    assert metadata["model_call"]["purpose"] == "result_synthesis"

@@ -63,6 +63,10 @@ Model Harness
 Model Provider Client
   performs HTTP/SSE requests, request budgeting, response parsing, and provider
   error formatting.
+
+Model Call Lifecycle
+  records purpose, elapsed time, heartbeat, timeout, cancellation, and outcome
+  for auxiliary non-streaming requests.
 ```
 
 The Harness sits between `ToolCallLoop` and `runtime/model_providers/client.py`.
@@ -82,3 +86,15 @@ Future harness variants may adapt:
 
 Each variant should keep the same rule: transport adaptation only, no hidden
 task routing.
+
+## Auxiliary Non-Streaming Calls
+
+`runtime/model_calls.py` is adjacent to the Harness but has a different job.
+Task-contract interpretation, automatic plan judgment, and final result
+synthesis use non-streaming model requests. Their lifecycle is now observable
+through `model_call.v1` events and live heartbeats.
+
+The lifecycle layer may bound a request and report transport failure, but it
+does not interpret the answer. Each caller remains responsible for its existing
+optional fallback. A timeout is therefore a provider/lifecycle fact, not a
+runtime verdict that the user task failed.

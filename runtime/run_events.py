@@ -12,6 +12,7 @@ RUN_EVENT_SCHEMA_VERSION = "0.1"
 
 RECORDED_EVENT_TYPES = {
     "status",
+    "model_call",
     "tool",
     "context_hygiene",
     "context_pack",
@@ -137,6 +138,26 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
             "event_name": event_name,
             "status": payload.get("status"),
             "message": payload.get("message"),
+        }
+    if event_type == "model_call":
+        return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
+            "event": "model_call",
+            "event_name": event_name,
+            "model_call_schema_version": payload.get("schema_version"),
+            "call_id": payload.get("call_id"),
+            "purpose": payload.get("purpose"),
+            "status": payload.get("status"),
+            "model": payload.get("model"),
+            "provider": payload.get("provider"),
+            "api_model": payload.get("api_model"),
+            "blocking": payload.get("blocking"),
+            "optional": payload.get("optional"),
+            "timeout_seconds": payload.get("timeout_seconds"),
+            "elapsed_seconds": payload.get("elapsed_seconds"),
+            "timed_out": payload.get("timed_out"),
+            "error": payload.get("error"),
+            "usage": payload.get("usage"),
         }
     if event_type == "task_contract":
         return {
@@ -265,6 +286,9 @@ def canonical_run_event_name(payload: dict[str, Any]) -> str:
         return "tool.updated"
     if event_type == "status":
         return "run.status"
+    if event_type == "model_call":
+        status = str(payload.get("status") or "updated")
+        return f"model.call.{status}"
     if event_type == "task_contract":
         return "task.contract"
     if event_type == "context_hygiene":

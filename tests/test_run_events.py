@@ -17,6 +17,28 @@ def test_compact_tool_event_includes_schema_and_canonical_name() -> None:
     assert event["tool"] == "filesystem.scan_folder"
 
 
+def test_compact_model_call_event_preserves_lifecycle_facts() -> None:
+    event = compact_run_event({
+        "event": "model_call",
+        "schema_version": "model_call.v1",
+        "call_id": "call-1",
+        "purpose": "task_contract",
+        "status": "failed",
+        "model": "slow-model",
+        "blocking": True,
+        "optional": True,
+        "timeout_seconds": 90,
+        "elapsed_seconds": 90.01,
+        "timed_out": True,
+        "error": "timed out",
+    })
+
+    assert event["event_name"] == "model.call.failed"
+    assert event["model_call_schema_version"] == "model_call.v1"
+    assert event["purpose"] == "task_contract"
+    assert event["timed_out"] is True
+
+
 def test_compact_tool_event_preserves_runtime_risks() -> None:
     event = compact_run_event({
         "event": "tool",
@@ -203,6 +225,7 @@ def test_visual_context_event_is_recorded_as_context_fact() -> None:
 
 def test_canonical_run_event_name_maps_runtime_events() -> None:
     assert canonical_run_event_name({"event": "status", "status": "thinking"}) == "run.status"
+    assert canonical_run_event_name({"event": "model_call", "status": "started"}) == "model.call.started"
     assert canonical_run_event_name({"event": "context_hygiene"}) == "context.hygiene"
     assert canonical_run_event_name({"event": "context_pack"}) == "context.pack"
     assert canonical_run_event_name({"event": "visual_context"}) == "context.visual"

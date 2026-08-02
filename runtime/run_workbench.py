@@ -39,6 +39,7 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
     )
     verification = _verification_records(result, evidence)
     tool_steps = _dict_list(evidence.get("tool_steps"))
+    model_calls = _model_call_records(_dict_list(evidence.get("model_calls")))
     completion_decisions = _dict_list(evidence.get("completion_decisions"))
     context_evidence = _context_evidence_summary(evidence)
     context_audit = build_context_audit(evidence)
@@ -56,6 +57,7 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
         completion_decisions=completion_decisions,
         context_evidence=context_evidence,
         verification_closure=verification_closure,
+        model_calls=model_calls,
     )
     evidence_overview = _evidence_overview(
         artifacts=artifacts,
@@ -131,6 +133,7 @@ def build_run_workbench_from_evidence(evidence: dict[str, Any]) -> dict[str, Any
         },
         "timeline": timeline,
         "completion_decisions": completion_decisions[:12],
+        "model_calls": model_calls[:12],
         "context_evidence": context_evidence,
         "context_audit": context_audit,
         "visual_verification": visual_verification,
@@ -454,6 +457,7 @@ def _audit_summary(
     completion_decisions: list[dict[str, Any]],
     context_evidence: dict[str, Any],
     verification_closure: dict[str, Any],
+    model_calls: list[dict[str, Any]],
 ) -> dict[str, Any]:
     changed_paths = _changed_path_records(artifacts)
     visual_context = _dict_list(context_evidence.get("visual_context"))
@@ -473,6 +477,11 @@ def _audit_summary(
             "runtime_advisories": len(runtime_advisories),
             "visual_context": len(visual_context),
             "completion_decisions": len(completion_decisions),
+            "model_calls": len(model_calls),
+            "failed_model_calls": len([
+                item for item in model_calls
+                if str(item.get("status") or "") == "failed"
+            ]),
             "timeline": len(timeline),
             "verification_gap_facts": _safe_int(closure_counts.get("gap_facts"), 0),
             "fresh_verification_records": _safe_int(
@@ -506,6 +515,37 @@ def _audit_summary(
         "risks": risk_codes[:24],
         "failure_tools": failure_tools[:16],
     }
+
+
+def _model_call_records(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse lifecycle events into one presentation record per call."""
+
+    records: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for index, event in enumerate(events):
+        call_id = str(event.get("call_id") or f"legacy-{index}")
+        if call_id not in records:
+            records[call_id] = {"call_id": call_id}
+            order.append(call_id)
+        records[call_id].update({
+            key: event.get(key)
+            for key in (
+                "purpose",
+                "status",
+                "model",
+                "provider",
+                "api_model",
+                "blocking",
+                "optional",
+                "timeout_seconds",
+                "elapsed_seconds",
+                "timed_out",
+                "error",
+                "time",
+            )
+            if event.get(key) is not None
+        })
+    return [records[call_id] for call_id in order]
 
 
 def _changed_path_records(artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -46,6 +46,7 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
     workspace_snapshot = _latest_event_value(events, "workspace_snapshot", "snapshot")
     tool_events = [event for event in events if event.get("event") == "tool"]
     status_events = [event for event in events if event.get("event") == "status"]
+    model_calls = [event for event in events if event.get("event") == "model_call"]
     visual_context_events = [event for event in events if event.get("event") == "visual_context"]
     completion_decisions = [
         event.get("decision")
@@ -116,6 +117,7 @@ def build_run_evidence(run: Any) -> dict[str, Any]:
         "plan": _plan_summary(plan),
         "tool_steps": [_tool_step(event) for event in tool_events],
         "status_timeline": [_status_step(event) for event in status_events[-24:]],
+        "model_calls": model_calls[-24:],
         "completion_decisions": completion_decisions[-12:],
         "result": result,
         "artifacts": artifacts[:48],

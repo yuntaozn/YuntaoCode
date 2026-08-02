@@ -113,11 +113,30 @@ This contract is deliberately narrower than task planning. It judges whether
 execution is converging; it does not hard-code which strategy the model must
 choose.
 
-Successful execution also needs convergence. For write-required tasks,
-verification evidence only counts when it occurs after the latest successful
-write. Once the write and verification conditions are both satisfied, the
-runtime moves to finalization instead of continuing to expose an open-ended
-write loop.
+For write-required tasks, verification evidence only counts when it occurs
+after the latest successful write. These freshness facts enter completion
+self-review; they do not independently move the Run to finalization or force
+another verification round.
+
+## Model Call Lifecycle
+
+The main model/tool loop streams through `ToolCallLoop`. Auxiliary model calls
+used for task-contract interpretation, automatic plan judgment, and final
+result synthesis use `runtime/model_calls.py` instead of making invisible HTTP
+requests directly.
+
+This boundary records `model_call.v1` facts:
+
+- call id and purpose;
+- selected model and returned provider/model identity;
+- started, completed, failed, or cancelled state;
+- elapsed time, timeout budget, timeout fact, and bounded error text;
+- live heartbeats while the provider has not returned.
+
+It deliberately does not persist prompts or messages and does not decide what
+the model answer means. These auxiliary calls are optional: their existing
+callers may use factual fallback behavior when transport fails, while the user
+task remains governed by normal Run evidence and model execution.
 
 ## User Guidance And Runtime Advisory Governance
 
@@ -252,6 +271,10 @@ RunResult remain the runtime-owned truth.
 Current canonical event names include:
 
 - `run.status`
+- `model.call.started`
+- `model.call.completed`
+- `model.call.failed`
+- `model.call.cancelled`
 - `run.guidance`
 - `run.completion_decision`
 - `context.hygiene`
@@ -505,12 +528,15 @@ task contract as evidence, draft, temporary artifact, target deliverable, or
 verification. Run completion is based on task-role evidence, not on a fixed list
 of tool IDs.
 
-The finalization gate is also task-role aware. Write and external-state tasks
+The completion-review gate is also task-role aware. Write and external-state tasks
 enter completion self-review after the target deliverable appears. Read-only
 analysis and answer-evidence tasks have no file or external object to observe,
 so successful evidence-gathering tools can enter the same completion self-review
-loop. In both cases the gate is evidence feedback: the model decides whether to
-continue, verify, repair, or finish.
+loop. Verification sufficiency is not an input to this gate. It is evidence in
+the completion pack: the model decides whether to continue, verify, repair, ask
+the user, or finish with an explicit limitation. Once the model returns an
+ordinary answer without another tool call, Runtime does not create a separate
+verification-retry or tool-disabled final-answer round.
 
 `requires_write` specifically means that a local file artifact must be created
 or modified. `requires_state_change` covers the wider class of observable

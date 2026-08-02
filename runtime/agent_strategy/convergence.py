@@ -11,7 +11,6 @@ from runtime.tool_aliases import normalize_tool_id
 NO_ACTION = "none"
 REPORT_REPETITION = "report_repetition"
 ESCALATE_NO_PROGRESS = "escalate_no_progress"
-PAUSE_NO_PROGRESS = ESCALATE_NO_PROGRESS
 
 
 @dataclass(frozen=True)

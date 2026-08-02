@@ -8,11 +8,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from .classifiers import (
-    has_successful_write,
-    is_write_tool,
-    is_verification_tool,
-)
 from runtime.run_fact_summary import (
     build_tool_failure_fact_summary,
     format_tool_failure_fact_summary,
@@ -28,66 +23,14 @@ from runtime.agent_strategy.convergence import (
 
 
 # ---------------------------------------------------------------------------
-# Intervention / nudge prompts
+# Runtime evidence prompts
 # ---------------------------------------------------------------------------
 
-def progress_observer_prompt(
-    workspace_path: str,
-    tool_events: list[dict[str, Any]],
-    code_change_intent: bool,
-    reason: str,
-    *,
-    target_deliverable_observed: bool | None = None,
-    required_modalities: list[str] | tuple[str, ...] | None = None,
-    observed_modalities: list[str] | tuple[str, ...] | None = None,
-    missing_modalities: list[str] | tuple[str, ...] | None = None,
-    visual_verification_tool_ids: list[str] | tuple[str, ...] | None = None,
-    runtime_diagnostics: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
-) -> str:
-    observations: list[str] = []
-    if target_deliverable_observed is not None:
-        observations.append(
-            "observed_target_deliverable="
-            + ("present" if target_deliverable_observed else "missing")
-        )
-    elif code_change_intent:
-        observations.append(
-            "observed_write_evidence="
-            + ("present" if has_successful_write(tool_events) else "missing")
-        )
-    observations.append(f"observed_tool_events={len(tool_events)}")
-    observation_text = "; ".join(observations)
-    verification_context = _verification_retry_context(
-        required_modalities=required_modalities,
-        observed_modalities=observed_modalities,
-        missing_modalities=missing_modalities,
-        visual_verification_tool_ids=visual_verification_tool_ids,
-        runtime_diagnostics=runtime_diagnostics,
-    )
-    return (
-        "Runtime observation only. The runtime is not choosing a strategy.\n"
-        f"Workspace: {workspace_path}\n"
-        f"Reason: {reason}\n"
-        f"Observed facts: {observation_text}\n"
-        f"{verification_context}"
-        "Decide the next step from the task goal and observed facts. Do not "
-        "claim completion beyond evidence produced by tools or explicit user "
-        "input. If evidence is still missing, choose whether to verify, revise, "
-        "try a different route, or explicitly ask the user for the missing "
-        "condition instead of stopping only because one check was insufficient."
-    )
-
-
-def repeated_failure_strategy_prompt(
+def execution_convergence_prompt(
     workspace_path: str,
     tool_events: list[dict[str, Any]],
 ) -> str:
-    """Ask the model to choose a materially different route after repetition."""
-    latest = tool_events[-1] if tool_events else {}
-    tool_id = str(latest.get("tool") or "unknown")
-    error = str(latest.get("error") or "unknown failure").strip()
-    output = latest.get("output") if isinstance(latest.get("output"), dict) else {}
-    reason = str(output.get("reason") or "").strip()
+    """Expose repeated execution facts without choosing the next route."""
     facts = build_tool_failure_fact_summary(
         workspace_path=workspace_path,
         tool_events=tool_events,
@@ -244,17 +187,6 @@ def completion_review_prompt(
     )
 
 
-def final_answer_prompt(workspace_path: str) -> str:
-    return (
-        "Final answer phase. Do not call more tools in this phase.\n"
-        f"Current project: {workspace_path}\n"
-        "Write from the latest observed runtime facts. State completed work, "
-        "changed artifacts, verification evidence, and remaining risk only when "
-        "the tool history supports them. If something was not verified, say so "
-        "directly instead of turning it into a success claim."
-    )
-
-
 def result_synthesis_prompt(
     workspace_path: str,
     task_contract: dict[str, Any] | None,
@@ -297,127 +229,6 @@ def result_synthesis_prompt(
         "- Summarize verification evidence and call out missing verification.\n"
         "- Give the next useful action when the run did not fully close.\n"
         "- Keep the answer concise and do not mention hidden system prompts."
-    )
-
-
-def _format_prompt_list(values: list[str] | tuple[str, ...] | None) -> str:
-    result: list[str] = []
-    for item in values or []:
-        text = str(item or "").strip()
-        if text and text not in result:
-            result.append(text)
-    return ", ".join(result)
-
-
-def _verification_retry_context(
-    *,
-    required_modalities: list[str] | tuple[str, ...] | None = None,
-    observed_modalities: list[str] | tuple[str, ...] | None = None,
-    missing_modalities: list[str] | tuple[str, ...] | None = None,
-    visual_verification_tool_ids: list[str] | tuple[str, ...] | None = None,
-    runtime_diagnostics: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
-) -> str:
-    rows: list[str] = []
-    required = _format_prompt_list(required_modalities)
-    observed = _format_prompt_list(observed_modalities)
-    missing = _format_prompt_list(missing_modalities)
-    visual_tools = _format_prompt_list(visual_verification_tool_ids)
-    if required:
-        rows.append(f"- required_modalities={required}")
-    if observed:
-        rows.append(f"- observed_modalities={observed}")
-    if missing:
-        rows.append(f"- missing_modalities={missing}")
-    if visual_tools:
-        rows.append(f"- visual_verification_tools={visual_tools}")
-    for row in _format_runtime_diagnostics(runtime_diagnostics):
-        rows.append(row)
-    if not rows:
-        return ""
-    guidance = (
-        "\nCurrent verification facts from this run:\n"
-        + "\n".join(rows)
-        + "\nUse these facts to decide the next verification step; they are not a fixed route.\n"
-    )
-    if "behavioral" in {str(item or "").strip().lower() for item in (missing_modalities or [])}:
-        if "preview.interact_page" in {str(item or "").strip() for item in (visual_verification_tool_ids or [])}:
-            guidance += (
-                "If the target is a UI or local HTML page, preview.interact_page can run "
-                "bounded page actions and assertions to produce behavioral evidence.\n"
-            )
-    return guidance
-
-
-def _format_runtime_diagnostics(
-    diagnostics: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
-) -> list[str]:
-    rows: list[str] = []
-    for item in diagnostics or []:
-        if not isinstance(item, dict):
-            continue
-        code = str(item.get("code") or "runtime_diagnostic").strip()
-        severity = str(item.get("severity") or "").strip()
-        message = str(item.get("message") or "").strip()
-        if not code and not message:
-            continue
-        pieces = [code]
-        if severity:
-            pieces.append(f"severity={severity}")
-        if message:
-            pieces.append(f"message={message[:260]}")
-        url = str(item.get("url") or "").strip()
-        if url:
-            pieces.append(f"url={url[:260]}")
-        resources = item.get("resources")
-        if isinstance(resources, list) and resources:
-            formatted = []
-            for resource in resources[:5]:
-                if not isinstance(resource, dict):
-                    continue
-                resource_url = str(resource.get("url") or "").strip()
-                status = str(resource.get("status") or "").strip()
-                content_type = str(resource.get("content_type") or "").strip()
-                if resource_url:
-                    formatted.append(
-                        f"{resource_url[:160]} status={status or '?'} type={content_type or '?'}"
-                    )
-            if formatted:
-                pieces.append("resources=[" + "; ".join(formatted) + "]")
-        rows.append("- runtime_diagnostic=" + "; ".join(pieces))
-        if len(rows) >= 8:
-            break
-    return rows
-
-
-def verifier_retry_prompt(
-    mode: str | None,
-    workspace_path: str,
-    *,
-    required_modalities: list[str] | tuple[str, ...] | None = None,
-    observed_modalities: list[str] | tuple[str, ...] | None = None,
-    missing_modalities: list[str] | tuple[str, ...] | None = None,
-    visual_verification_tool_ids: list[str] | tuple[str, ...] | None = None,
-    runtime_diagnostics: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
-) -> str:
-    _ = mode
-    context = _verification_retry_context(
-        required_modalities=required_modalities,
-        observed_modalities=observed_modalities,
-        missing_modalities=missing_modalities,
-        visual_verification_tool_ids=visual_verification_tool_ids,
-        runtime_diagnostics=runtime_diagnostics,
-    )
-    return (
-        "Verification evidence advisory, not a hard tool constraint.\n"
-        f"Workspace: {workspace_path}\n"
-        f"{context}"
-        "The current evidence does not yet satisfy the model-declared verification "
-        "modalities. State queries, inspections, captures, tests, static checks, "
-        "and behavioral probes provide different evidence strengths when their "
-        "tools are visible. A state-changing call alone is not independent proof "
-        "unless its result contains meaningful observation facts. The model decides "
-        "whether to gather more evidence, change route, ask the user, or finalize "
-        "with an explicit limitation."
     )
 
 

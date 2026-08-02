@@ -464,6 +464,7 @@ function renderRunWorkbench(workbench) {
     const debugAudit = workbench?.debug_audit || {};
     const contextPack = workbench?.context_pack || {};
     const completionDecisions = Array.isArray(workbench?.completion_decisions) ? workbench.completion_decisions : [];
+    const modelCalls = Array.isArray(workbench?.model_calls) ? workbench.model_calls : [];
     const timeline = Array.isArray(workbench?.timeline) ? workbench.timeline : [];
     container.dataset.runId = run.id || "";
     state.taskHistory.activeWorkbenchRunId = run.id || "";
@@ -506,6 +507,7 @@ function renderRunWorkbench(workbench) {
             ${renderWorkbenchSection(t('tasks.risks'), renderWorkbenchRisks(risks))}
             ${renderWorkbenchSection(t('tasks.failures'), renderWorkbenchFailures(failures))}
             ${renderWorkbenchSection(t('tasks.completion_decisions'), renderWorkbenchCompletionDecisions(completionDecisions), "full")}
+            ${renderWorkbenchSection(t('tasks.model_calls'), renderWorkbenchModelCalls(modelCalls), "full")}
             ${renderWorkbenchSection(t('tasks.plan'), renderWorkbenchPlan(plan), "full")}
             ${renderWorkbenchSection(t('tasks.timeline'), renderWorkbenchTimeline(timeline), "full")}
         </div>
@@ -1405,6 +1407,28 @@ function renderWorkbenchCompletionDecisions(items) {
             ].filter(Boolean).join(" · "))}</span>
         </li>
     `).join("")}</ul>`;
+}
+
+function renderWorkbenchModelCalls(items) {
+    if (!items.length) return `<div class="task-workbench-empty">${escapeHtml(t('tasks.none'))}</div>`;
+    return `<ul class="task-workbench-list">${items.map((item) => {
+        const purposeKey = `tasks.model_call_${item.purpose || "auxiliary"}`;
+        const purposeLabel = t(purposeKey) === purposeKey ? (item.purpose || t('tasks.model_call_auxiliary')) : t(purposeKey);
+        const elapsed = Number(item.elapsed_seconds);
+        return `
+            <li>
+                <strong>${escapeHtml(purposeLabel)}</strong>
+                <span>${escapeHtml([
+                    item.status || "",
+                    Number.isFinite(elapsed) ? `${elapsed.toFixed(1)}s` : "",
+                    item.model || "",
+                    item.provider || "",
+                    item.timed_out ? t('tasks.timed_out') : "",
+                    item.error || "",
+                ].filter(Boolean).join(" · "))}</span>
+            </li>
+        `;
+    }).join("")}</ul>`;
 }
 
 function completionDecisionLabel(action) {

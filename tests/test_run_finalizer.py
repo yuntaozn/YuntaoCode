@@ -18,7 +18,6 @@ def _initial_content(**overrides: Any) -> str:
     values = {
         "model_content": "模型结论",
         "model_provider_error": "",
-        "no_progress_budget_exhausted": False,
         "has_successful_write": False,
         "max_rounds_exceeded": False,
         "max_rounds_after_write_message": "写入后的轮次提示",
@@ -35,18 +34,6 @@ def test_initial_content_preserves_model_text_before_provider_error_fact() -> No
 
     assert content.startswith("模型结论\n\n")
     assert "模型服务在工具执行后返回错误" in content
-
-
-def test_initial_content_distinguishes_convergence_after_a_write() -> None:
-    content = _initial_content(
-        no_progress_budget_exhausted=True,
-        has_successful_write=True,
-    )
-
-    assert "已有文件写入成功" in content
-    assert "同一路线反复无新进展" in content
-    assert "继续恢复" in content
-    assert "停止重复重试" not in content
 
 
 def test_initial_content_uses_write_specific_round_limit_message() -> None:
@@ -217,8 +204,6 @@ async def test_finalizer_publishes_result_persists_answer_and_finishes(
     execution_state = RunExecutionState.create(20)
     execution_state.record_guidance()
     execution_state.malformed_tool_call_retries = 1
-    execution_state.progress_observer_count = 1
-    execution_state.stagnant_rounds = 2
     execution_state.completion_review.begin(
         event_count=0,
         run_result={"status": "no_tool_activity"},
@@ -274,8 +259,6 @@ async def test_finalizer_publishes_result_persists_answer_and_finishes(
     assert metadata["guidance_count"] == 1
     assert metadata["runtime_intervention_count"] == 1
     assert metadata["malformed_tool_call_retries"] == 1
-    assert metadata["progress_observer_count"] == 1
-    assert metadata["stagnant_rounds"] == 2
     assert metadata["completion_review_count"] == 1
     assert [event["event"] for event in host.events] == [
         "context_pack",

@@ -20,6 +20,11 @@ Python Tornado sidecar
 
 ```
 
+模型调用边界进一步分为两类：主执行循环由 `ToolCallLoop` 处理流式响应、
+工具调用和心跳；任务契约、计划判断、结果整理等辅助非流式请求由
+`runtime/model_calls.py` 统一记录目的、耗时、超时、取消和审计事件。后者只
+管理调用生命周期，不解释任务语义，也不替模型决定执行路线。
+
 ## Python sidecar
 
 Tauri 是壳，核心边界是本地 Task Runtime。Python sidecar 可以独立运行，

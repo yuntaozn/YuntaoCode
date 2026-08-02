@@ -1,7 +1,7 @@
 """Behaviour-driven tests for the agent_strategy modules.
 
-Covers context evidence hints, tool classification, tool-call processing, progress
-observation, planning policy, profiles, and prompt construction.
+Covers context evidence hints, tool classification, tool-call processing,
+convergence evidence, planning policy, profiles, and prompt construction.
 """
 
 from __future__ import annotations
@@ -45,9 +45,7 @@ from runtime.agent_strategy.classifiers import (
     has_successful_verification,
     has_successful_write,
     is_recoverable_write_failure,
-    progress_key,
     repeated_failure_action,
-    round_has_only_non_progress,
     finish_reason_indicates_truncation,
     plan_has_pending_write_step,
 )
@@ -56,14 +54,11 @@ from runtime.agent_strategy.classifiers import (
 from runtime.agent_strategy.prompts import (
     completion_review_prompt,
     execute_plan_prompt,
-    final_answer_prompt,
     format_execution_plan_for_context,
     max_rounds_message,
-    progress_observer_prompt,
     oversized_tool_arguments_prompt,
-    repeated_failure_strategy_prompt,
+    execution_convergence_prompt,
     result_synthesis_prompt,
-    verifier_retry_prompt,
     write_repair_prompt,
 )
 
@@ -590,33 +585,8 @@ class TestStrictToolArguments:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Progress observation
+# Convergence evidence
 # ═══════════════════════════════════════════════════════════════════════════
-
-class TestProgressKey:
-    def test_same_events_same_key(self):
-        events = [{"tool": "filesystem.read_file", "status": "success", "input": {"path": "a.py"}}]
-        assert progress_key(events, None) == progress_key(events, None)
-
-    def test_different_events_different_key(self):
-        e1 = [{"tool": "filesystem.read_file", "status": "success", "input": {"path": "a.py"}}]
-        e2 = [{"tool": "filesystem.read_file", "status": "success", "input": {"path": "b.py"}}]
-        assert progress_key(e1, None) != progress_key(e2, None)
-
-    def test_failure_ignored(self):
-        events = [{"tool": "filesystem.read_file", "status": "failure", "input": {"path": "a.py"}}]
-        assert progress_key(events, None) == "[]"
-
-
-class TestRoundHasOnlyNonProgress:
-    def test_all_failures(self):
-        assert round_has_only_non_progress([{"status": "failure"}, {"status": "skipped"}])
-
-    def test_with_success(self):
-        assert not round_has_only_non_progress([{"status": "failure"}, {"status": "success"}])
-
-    def test_empty(self):
-        assert not round_has_only_non_progress([])
 
 
 class TestConsecutiveRepeatedFailureCount:
@@ -1059,49 +1029,7 @@ class TestPlanHasPendingWriteStep:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestPrompts:
-    def test_progress_observer_prompt(self):
-        events = [{"tool": "filesystem.read_file", "status": "success"}]
-        prompt = progress_observer_prompt("/tmp", events, True, "stagnation")
-        assert "stagnation" in prompt
-        assert "observed_write_evidence=missing" in prompt
-        assert "not choosing a strategy" in prompt
-
-    def test_progress_observer_prompt_can_report_target_deliverable_facts(self):
-        events = [{"tool": "document.extract_docx_outline", "status": "success"}]
-        prompt = progress_observer_prompt(
-            "/tmp",
-            events,
-            False,
-            "missing_target_evidence",
-            target_deliverable_observed=False,
-        )
-        assert "observed_target_deliverable=missing" in prompt
-        assert "observed_write_evidence" not in prompt
-
-    def test_progress_observer_prompt_exposes_verification_gap_facts(self):
-        events = [{"tool": "preview.capture_local_html", "status": "success"}]
-        prompt = progress_observer_prompt(
-            "/tmp",
-            events,
-            True,
-            "target_verification_still_missing",
-            required_modalities=["visual", "content", "behavioral"],
-            observed_modalities=["visual"],
-            missing_modalities=["content", "behavioral"],
-            visual_verification_tool_ids=["preview.interact_page"],
-            runtime_diagnostics=[{
-                "code": "verification_script_resource_facts",
-                "severity": "info",
-                "message": "Script resources observed",
-            }],
-        )
-
-        assert "missing_modalities=content, behavioral" in prompt
-        assert "preview.interact_page" in prompt
-        assert "runtime_diagnostic=verification_script_resource_facts" in prompt
-        assert "choose whether to verify, revise, try a different route" in prompt
-
-    def test_repeated_failure_strategy_prompt_requires_different_route(self):
+    def test_execution_convergence_prompt_exposes_repetition_facts(self):
         events = [
             {
                 "tool": "filesystem.write_file",
@@ -1117,7 +1045,7 @@ class TestPrompts:
             },
         ]
 
-        prompt = repeated_failure_strategy_prompt("/tmp", events)
+        prompt = execution_convergence_prompt("/tmp", events)
 
         assert "Repeated failure recovery advisory" in prompt
         assert "runtime is not choosing the next strategy" in prompt
@@ -1166,57 +1094,6 @@ class TestPrompts:
         assert "系统已停止" not in msg
         assert "后续可" in msg
 
-    def test_verifier_retry_prompt_coding(self):
-        prompt = verifier_retry_prompt("coding", "/tmp")
-        assert "model-declared verification modalities" in prompt
-        assert "model decides" in prompt
-
-    def test_verifier_retry_prompt_paper(self):
-        prompt = verifier_retry_prompt("paper", "/tmp")
-        assert "not a hard tool constraint" in prompt
-        assert "model decides" in prompt
-
-    def test_verifier_retry_prompt_exposes_missing_modalities(self):
-        prompt = verifier_retry_prompt(
-            "coding",
-            "/tmp",
-            required_modalities=["visual", "content", "behavioral"],
-            observed_modalities=["visual"],
-            missing_modalities=["content", "behavioral"],
-            visual_verification_tool_ids=[
-                "preview.capture_local_html",
-                "preview.interact_page",
-            ],
-            runtime_diagnostics=[
-                {
-                    "code": "browser_page_error",
-                    "severity": "error",
-                    "message": "Unexpected end of input",
-                },
-                {
-                    "code": "script_parse_error_resource_candidates",
-                    "severity": "info",
-                    "message": "Script candidates",
-                    "resources": [
-                        {
-                            "url": "https://cdn.example/app.js",
-                            "status": 200,
-                            "content_type": "application/javascript",
-                        }
-                    ],
-                },
-            ],
-        )
-
-        assert "required_modalities=visual, content, behavioral" in prompt
-        assert "observed_modalities=visual" in prompt
-        assert "missing_modalities=content, behavioral" in prompt
-        assert "preview.interact_page" in prompt
-        assert "runtime_diagnostic=browser_page_error" in prompt
-        assert "Unexpected end of input" in prompt
-        assert "https://cdn.example/app.js" in prompt
-        assert "bounded page actions and assertions" in prompt
-
     def test_completion_review_prompt_exposes_facts_without_forcing_strategy(self):
         prompt = completion_review_prompt(
             "/tmp",
@@ -1229,6 +1106,28 @@ class TestPrompts:
                 ],
                 "failures": [{"tool": "filesystem.create_text_draft", "error": "truncated"}],
                 "risks": ["test_not_observed", "recovered_tool_failure"],
+                "missing_verification_modalities": ["visual", "behavioral"],
+                "visual_verification": {
+                    "schema_version": "visual_verification.v1",
+                    "kind": "visual_verification",
+                    "boundary": "evidence_only",
+                    "counts": {"visual_evidence": 0},
+                    "flags": {"visual_required": True, "visual_missing": True},
+                },
+                "debug_audit": {
+                    "schema_version": "debug_audit.v1",
+                    "kind": "debug_audit",
+                    "boundary": "evidence_only",
+                    "counts": {"debug_sessions": 1, "failed_sessions": 1},
+                    "flags": {"has_failure": True, "has_runtime_errors": True},
+                },
+                "verification_closure": {
+                    "kind": "verification_closure",
+                    "result_status": "partial",
+                    "modalities": {"missing": ["visual", "behavioral"]},
+                    "flags": {"has_required_gap": True},
+                    "gap_facts": ["missing_modality:visual"],
+                },
                 "counts": {
                     "deliverable_successes": 1,
                     "verification_successes": 1,
@@ -1255,6 +1154,12 @@ class TestPrompts:
         assert "test_not_observed" in prompt
         assert "task route evidence" in prompt
         assert "route_proposals=code.text_write/filesystem.write_file" in prompt
+        assert "- missing verification modalities:" in prompt
+        assert "  - visual" in prompt
+        assert "  - behavioral" in prompt
+        assert "visual verification" in prompt
+        assert "debug audit" in prompt
+        assert "missing_modality:visual" in prompt
         assert "Decide whether the task is actually complete" in prompt
         assert "Do not claim completion beyond the observed deliverables" in prompt
         assert "completion_self_assessment.v1" in prompt
@@ -1283,8 +1188,8 @@ class TestPrompts:
         assert "test_not_observed" in prompt
         assert "Previous assistant draft" in prompt
 
-    def test_repeated_failure_strategy_prompt_stays_strategy_neutral_after_truncation(self):
-        prompt = repeated_failure_strategy_prompt(
+    def test_execution_convergence_prompt_stays_strategy_neutral_after_truncation(self):
+        prompt = execution_convergence_prompt(
             "/tmp/project",
             [
                 {
