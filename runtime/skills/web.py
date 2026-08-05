@@ -1,4 +1,4 @@
-"""Website access tools for YuntaoCode local task execution."""
+"""YuntaoCode 内置的受控网页读取工具。"""
 
 from __future__ import annotations
 

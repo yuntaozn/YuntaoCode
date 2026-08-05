@@ -30,7 +30,7 @@ SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$")
 
 
 class CapabilityPackStore:
-    """Repository for global user-data-level capability packs."""
+    """全局用户数据级 Capability Pack 的存储库。"""
 
     def __init__(
         self,

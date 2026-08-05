@@ -1,9 +1,7 @@
-"""Openable Run artifact path resolution.
+"""可打开 Run 产物的路径解析。
 
-This module is deliberately narrow: it only turns already-recorded Run
-evidence paths into local paths that the UI may open. It does not execute task
-tools, infer intent, or decide whether a Run succeeded.
-"""
+本模块有意保持狭窄：只将 Run 证据中已记录的路径解析为 UI 可打开的本地路径。
+它不执行任务工具、不推断意图，也不判断 Run 是否成功。"""
 
 from __future__ import annotations
 
@@ -38,7 +36,7 @@ _PATH_KEYS = (
 
 
 def collect_run_artifact_paths(evidence: dict[str, Any]) -> list[str]:
-    """Collect paths that are explicitly present in Run evidence."""
+    """收集 Run 证据中明确存在的路径。"""
 
     paths: list[str] = []
     for section in (
@@ -73,7 +71,7 @@ def resolve_run_artifact_path(
     path_guard: Any,
     data_dir: str | Path | None,
 ) -> Path:
-    """Resolve a UI-requested path if it belongs to the Run evidence boundary."""
+    """当 UI 请求的路径属于 Run 证据边界时解析该路径。"""
 
     return resolve_run_artifact_path_from_evidence(
         build_run_evidence(run),
@@ -112,7 +110,7 @@ def resolve_run_artifact_path_from_evidence(
 
 
 def run_artifact_image_preview_media_type(path: Path) -> str:
-    """Return a supported inline image media type for a resolved artifact path."""
+    """返回已解析产物路径所支持的内联图片媒体类型。"""
 
     return _IMAGE_MEDIA_TYPES.get(path.suffix.lower(), "")
 

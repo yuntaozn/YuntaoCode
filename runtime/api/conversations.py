@@ -178,7 +178,7 @@ class ConversationDetailHandler(ApiHandler):
 
         data = conversation.to_public_dict(include_messages=True)
 
-        # Calculate current context token usage so the frontend can display it
+        # 计算当前上下文 token 用量，供前端显示。
         model = self.runtime.settings.get_default_model()
         workspace = self.runtime.workspaces.get(conversation.workspace_id)
         if workspace:
@@ -337,7 +337,7 @@ class ConversationMessagesHandler(ApiHandler):
         record_memory_usage: bool = True,
     ) -> list[dict[str, Any]]:
         mode_config = get_terminal_config(self.get_lang())
-        # Extract the latest user message for memory relevance scoring
+        # 提取最新用户消息，供记忆相关性评分。
         latest_user_message = ""
         for msg in reversed(getattr(conversation, "messages", [])):
             if getattr(msg, "role", "") == "user":
@@ -2227,7 +2227,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             text = target_path.read_text(encoding="utf-8", errors="replace")
         except Exception:
             return ""
-        
+
         # 尝试定位失败的 old_text 周边内容
         old_text = ""
         edits = arguments.get("edits")
@@ -2237,10 +2237,10 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             old_text = arguments["old_text"]
         elif isinstance(arguments.get("old_string"), str):
             old_text = arguments["old_string"]
-        
+
         lines = text.splitlines()
         total_lines = len(lines)
-        
+
         if old_text:
             # 模糊定位：找 old_text 首行在文件中的大致位置
             first_line = old_text.strip().splitlines()[0].strip() if old_text.strip() else ""
@@ -2255,7 +2255,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             end = min(total_lines, center_line + 30)
             snippet = "\n".join(lines[start:end])
             return f"文件：{target_path.name}（第 {start+1}-{end} 行，共 {total_lines} 行，以下为不含行号的原始文本）\n{snippet}"
-        
+
         # 没有 old_text，返回文件前 60 行纯文本
         end = min(total_lines, 60)
         snippet = "\n".join(lines[:end])
@@ -2413,8 +2413,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
 
 
 class ConversationCompressHandler(ConversationMessagesHandler):
-    """POST /conversations/{id}/compress — manually trigger context compression."""
-
+    """处理 POST /conversations/{id}/compress，手动触发上下文压缩。"""
     async def post(self, conversation_id: str) -> None:
         conversation = self.runtime.conversations.get(conversation_id)
         if not conversation:
@@ -2465,7 +2464,7 @@ class ConversationConfirmHandler(ApiHandler):
 
     def post(self, conversation_id: str) -> None:
         payload = self.parse_json_body()
-        action = payload.get("action", "continue")  # "continue" or "cancel"
+        action = payload.get("action", "continue")  # 可选值："continue" 或 "cancel"
         _confirm_responses[conversation_id] = action
         event = _pending_confirms.get(conversation_id)
         if event:

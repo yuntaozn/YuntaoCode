@@ -193,7 +193,7 @@ def list_project_files_sync(
 
 
 # ---------------------------------------------------------------------------
-# replace_text -- bulk literal replacement across project files
+# replace_text：跨项目文件批量按字面量替换
 # ---------------------------------------------------------------------------
 
 async def replace_text(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -301,7 +301,7 @@ def replace_text_sync(
 
 
 # ---------------------------------------------------------------------------
-# edit_file -- precise search-and-replace editing
+# edit_file：精确搜索替换编辑
 # ---------------------------------------------------------------------------
 
 async def edit_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -330,7 +330,7 @@ async def edit_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
 
 
 def _normalize_edits(input_data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Flexibly parse edits from various model output formats."""
+    """灵活解析模型多种输出格式中的编辑项。"""
     import json as _json
     # 尝试多种常见别名获取 edits 数组
     edits = (
@@ -341,20 +341,20 @@ def _normalize_edits(input_data: dict[str, Any]) -> list[dict[str, Any]]:
         or input_data.get("modifications")
         or input_data.get("replacements")
     )
-    # Case 1: edits is a JSON string (model double-serialized)
+    # 情况 1：edits 是 JSON 字符串（模型重复序列化）
     if isinstance(edits, str):
         try:
             edits = _json.loads(edits)
         except (ValueError, TypeError):
             return []
-    # Case 2: edits is a single dict (model forgot to wrap in array)
+    # 情况 2：edits 是单个字典（模型忘记包装成数组）
     if isinstance(edits, dict):
         edits = [edits]
     if not isinstance(edits, list):
         line_edit = _normalize_line_range_edit(input_data)
         if line_edit is not None:
             return [line_edit]
-        # Case 3: no edits key, but old/new at top level (various naming styles)
+        # 情况 3：没有 edits 键，但顶层存在多种命名形式的 old/new
         old_text = (
             input_data.get("old_text")
             or input_data.get("oldText")
@@ -372,7 +372,7 @@ def _normalize_edits(input_data: dict[str, Any]) -> list[dict[str, Any]]:
         if old_text and new_text is not None:
             return [{"old_text": old_text, "new_text": new_text}]
         return []
-    # Normalize various key names within each edit item
+    # 规范化每个编辑项中的多种键名
     normalized: list[dict[str, Any]] = []
     for item in edits:
         if not isinstance(item, dict):
@@ -441,10 +441,9 @@ def _normalize_line_range_edit(item: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _normalize_text_for_match(text: str) -> str:
-    """Light normalization for fuzzy matching: unify newlines and strip trailing whitespace.
+    """用于模糊匹配的轻量规范化：统一换行并去除行尾空白。
 
-    Preserves indentation, which is critical for correctly matching code blocks.
-    """
+    保留缩进，因为缩进对于正确匹配代码块非常关键。"""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = [line.rstrip() for line in text.splitlines()]
     while lines and not lines[0]:
@@ -455,11 +454,9 @@ def _normalize_text_for_match(text: str) -> str:
 
 
 def _normalize_text_aggressive(text: str) -> str:
-    """Aggressive normalization: collapse all whitespace to single space and strip indentation.
+    """激进规范化：把全部空白折叠为单个空格并移除缩进。
 
-    Used as a fallback for fuzzy matching when indentation differs between
-    model output and actual file content.
-    """
+    当模型输出与实际文件缩进不同时，作为模糊匹配的回退方式。"""
     import re
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = [re.sub(r"\s+", " ", line.strip()) for line in text.splitlines()]
@@ -486,7 +483,7 @@ def _is_comment_or_blank_line(line: str) -> bool:
 
 
 def _find_unique_stable_match(text: str, old_text: str) -> str | None:
-    """Find one raw block by matching stable non-comment lines."""
+    """通过匹配稳定的非注释行查找一个原始文本块。"""
     file_lines = text.replace("\r\n", "\n").replace("\r", "\n").splitlines()
     old_lines = old_text.replace("\r\n", "\n").replace("\r", "\n").splitlines()
     file_stable = [
@@ -532,7 +529,7 @@ def _locate_in_original(
     norm_old: str,
     normalizer: Any,
 ) -> str | None:
-    """Locate norm_old in text using the given normalizer and return original raw text."""
+    """使用指定规范化器在文本中定位 norm_old，并返回原始文本。"""
     lines = text.replace("\r\n", "\n").replace("\r", "\n").splitlines()
     old_lines = norm_old.splitlines()
     if not old_lines or not lines:
@@ -545,22 +542,22 @@ def _locate_in_original(
 
 
 def _fuzzy_match(text: str, old_text: str) -> tuple[int, str | None]:
-    """Try fuzzy matching when exact match fails.
+    """精确匹配失败时尝试模糊匹配。
 
-    Strategy (in order):
-    1. Exact match
-    2. Light normalization: unify newlines + strip trailing whitespace (preserves indentation)
-    3. Aggressive normalization: collapse all whitespace (for different indentation)
-    4. Stable line matching: find unique non-comment lines (for subset matching)
+    按以下顺序执行：
+    1. 精确匹配。
+    2. 轻量规范化：统一换行并去除行尾空白，保留缩进。
+    3. 激进规范化：折叠全部空白，用于缩进不同的情况。
+    4. 稳定行匹配：查找唯一的非注释行，用于子集匹配。
 
-    Returns (count, matched_text) where count is 0 (no match), 1 (unique match), >=2 (multiple matches).
-    """
-    # Strategy 1: Exact match
+    返回 ``(count, matched_text)``：count 为 0 表示无匹配，1 表示唯一匹配，
+    大于等于 2 表示存在多个匹配。"""
+    # 策略 1：精确匹配
     exact_count = text.count(old_text)
     if exact_count >= 1:
         return exact_count, old_text
 
-    # Strategy 2: Light normalization (preserves indentation)
+    # 策略 2：轻量规范化（保留缩进）
     norm_text_light = _normalize_text_for_match(text)
     norm_old_light = _normalize_text_for_match(old_text)
     if norm_old_light:
@@ -570,13 +567,13 @@ def _fuzzy_match(text: str, old_text: str) -> tuple[int, str | None]:
             if result:
                 return 1, result
         if light_count > 1:
-            # Multiple light-norm matches; try stable match for uniqueness
+            # 轻量规范化得到多个匹配时，尝试稳定匹配以确定唯一项
             stable = _find_unique_stable_match(text, old_text)
             if stable:
                 return 1, stable
             return light_count, None
 
-    # Strategy 3: Aggressive normalization (collapses whitespace)
+    # 策略 3：激进规范化（折叠空白）
     norm_text_full = _normalize_text_aggressive(text)
     norm_old_full = _normalize_text_aggressive(old_text)
     if norm_old_full:
@@ -588,7 +585,7 @@ def _fuzzy_match(text: str, old_text: str) -> tuple[int, str | None]:
         if full_count > 1:
             return full_count, None
 
-    # Strategy 4: Stable line matching (non-comment lines)
+    # 策略 4：稳定行匹配（非注释行）
     stable_match = _find_unique_stable_match(text, old_text)
     if stable_match:
         return 1, stable_match
@@ -670,7 +667,7 @@ def edit_file_sync(path: Path, edits: list[dict[str, Any]], context: Any) -> dic
 
         # 先尝试精确匹配，失败后尝试模糊匹配
         count, matched_text = _fuzzy_match(text, old_text)
-        
+
         if count == 0:
             raise ValueError(f"old_text not found in file: {repr(old_text[:120])}")
         if count > 1:
@@ -688,7 +685,7 @@ def edit_file_sync(path: Path, edits: list[dict[str, Any]], context: Any) -> dic
         text = updated_text
         applied += 1
 
-        # Build a short diff preview
+        # 构建简短 diff 预览
         old_preview = old_text.strip().splitlines()[:3]
         new_preview = new_text.strip().splitlines()[:3]
         for line in old_preview:
@@ -712,7 +709,7 @@ def edit_file_sync(path: Path, edits: list[dict[str, Any]], context: Any) -> dic
 
 
 # ---------------------------------------------------------------------------
-# apply_patch -- small, transactional code changes
+# apply_patch：小型事务性代码变更
 # ---------------------------------------------------------------------------
 
 async def apply_patch(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -723,7 +720,7 @@ async def apply_patch(input_data: dict[str, Any], context: Any) -> dict[str, Any
 
 
 def apply_patch_sync(patch: str, context: Any) -> dict[str, Any]:
-    """Apply a small Codex-style patch after validating every operation."""
+    """校验每项操作后应用小型 Codex 风格补丁。"""
     operations = _parse_apply_patch(patch)
     planned: list[dict[str, Any]] = []
     seen_paths: set[Path] = set()

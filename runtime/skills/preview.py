@@ -1,4 +1,4 @@
-"""Preview and visual-debug tools backed by Playwright."""
+"""基于 Playwright 和本地渲染器的预览工具。"""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ PDF_EXTENSIONS = {".pdf"}
 
 
 async def capture_url(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
-    """Capture a visual preview of an HTTP(S) page."""
+    """捕获 HTTP(S) 页面的视觉预览。"""
 
     url = _validate_url(input_data.get("url"))
     output_path = _resolve_output_path(
@@ -57,7 +57,7 @@ async def capture_url(input_data: dict[str, Any], context: Any) -> dict[str, Any
 
 
 async def capture_local_html(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
-    """Capture a visual preview of a local HTML file inside the workspace."""
+    """捕获工作区内本地 HTML 文件的视觉预览。"""
 
     source_path = context.path_guard.resolve(input_data.get("path"))
     if not source_path.is_file():
@@ -98,13 +98,10 @@ async def capture_local_html(input_data: dict[str, Any], context: Any) -> dict[s
 
 
 async def capture_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
-    """Capture visual/debug evidence for a workspace file.
+    """捕获工作区文件的视觉或调试证据。
 
-    This is a generic observation entrypoint.  It delegates HTML to the browser
-    preview path, records images as visual evidence, and renders PDF pages when
-    PyMuPDF is available.  It returns structured diagnostics instead of
-    becoming a task router.
-    """
+    这是通用观察入口：将 HTML 委托给浏览器预览路径，把图片记录为视觉证据，
+    并在 PyMuPDF 可用时渲染 PDF 页面。它返回结构化诊断，不成为任务路由器。"""
 
     source_path = context.path_guard.resolve(input_data.get("path"))
     if not source_path.is_file():
@@ -142,7 +139,7 @@ async def capture_file(input_data: dict[str, Any], context: Any) -> dict[str, An
 
 
 async def interact_page(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
-    """Open a page, run bounded Playwright actions, and capture verification evidence."""
+    """打开页面、执行有界 Playwright 操作并捕获验证证据。"""
 
     path_value = str(input_data.get("path") or "").strip()
     url_value = str(input_data.get("url") or "").strip()
@@ -925,14 +922,11 @@ async def _run_interaction_action(
 
 
 async def _click_with_recovery(page: Any, selector: str, timeout_ms: int) -> dict[str, Any]:
-    """Click a selector, recovering when text selectors resolve to child nodes.
+    """点击选择器；当文本选择器解析到子节点时进行恢复。
 
-    Playwright text selectors often resolve to an inner span/icon label inside a
-    real button.  In browser verification that makes otherwise valid model
-    actions brittle: the model chose the right visible text, but the actionable
-    element is an ancestor.  Keep the primary Playwright click first, then fall
-    back to a bounded DOM-side click on the nearest visible clickable target.
-    """
+    Playwright 文本选择器经常定位到真实按钮内部的 span 或图标标签，使原本有效的
+    模型操作在浏览器验证中变得脆弱：模型选中了正确可见文本，但可操作元素是祖先节点。
+    先执行标准 Playwright 点击，失败后再在 DOM 侧有界点击最近的可见可点击目标。"""
 
     try:
         await page.locator(selector).click(timeout=timeout_ms)

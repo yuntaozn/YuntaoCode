@@ -1,9 +1,7 @@
-"""Runtime readiness facts for browser-backed capabilities.
+"""浏览器类能力的 Runtime 就绪事实。
 
-Importing the Playwright Python package does not prove that its managed browser
-binary is installed. This module reports that distinction without launching a
-browser or turning readiness into task-routing policy.
-"""
+能导入 Playwright Python 包并不代表其托管的浏览器二进制文件已经安装。
+本模块只报告这一差异，不启动浏览器，也不把就绪状态变成任务路由策略。"""
 
 from __future__ import annotations
 
@@ -29,7 +27,7 @@ _CHROMIUM_EXECUTABLE_NAMES = {
 
 
 def playwright_chromium_readiness() -> dict[str, Any]:
-    """Return whether Playwright's managed Chromium binary is present."""
+    """返回 Playwright 管理的 Chromium 二进制文件是否存在。"""
 
     global _cached_at, _cached_result
     now = time.monotonic()
@@ -83,7 +81,7 @@ def playwright_chromium_readiness() -> dict[str, Any]:
 
 
 def playwright_optional_html_readiness() -> dict[str, Any]:
-    """Report degraded readiness for tools whose non-HTML routes still work."""
+    """报告非 HTML 路径仍可工作的工具降级就绪状态。"""
 
     result = playwright_chromium_readiness()
     if result.get("available"):
@@ -101,7 +99,7 @@ def playwright_optional_html_readiness() -> dict[str, Any]:
 
 
 def clear_browser_readiness_cache() -> None:
-    """Clear the short cache after dependency installation or in tests."""
+    """在安装依赖后或测试中清除短期缓存。"""
 
     global _cached_at, _cached_result
     _cached_at = 0.0

@@ -12,7 +12,7 @@ def is_user_guidance_message(message: Any) -> bool:
 
 
 def has_recent_task_context(conversation: Any | None, current_content: str) -> bool:
-    """Return whether a short request belongs to an existing conversation task."""
+    """返回短请求是否属于现有对话任务。"""
     if conversation is None:
         return False
     current = current_content.strip()
@@ -62,12 +62,10 @@ def task_lineage_candidates(
 def task_lineage_availability(
     candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
 ) -> dict[str, Any]:
-    """Return neutral lineage availability without exposing historical goals.
+    """返回不暴露历史目标的中性任务血缘可用性信息。
 
-    The runtime may know that historical task candidates exist, but it should
-    not decide whether the current request is a continuation.  Candidate details
-    are exposed only after the model-side task contract asks for lineage facts.
-    """
+    Runtime 可以知道存在历史任务候选，但不应判断当前请求是否为续接。只有模型侧
+    任务契约要求血缘事实后，才暴露候选详情。"""
 
     candidate_count = len([item for item in candidates or [] if isinstance(item, dict)])
     return {

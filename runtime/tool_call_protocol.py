@@ -39,12 +39,10 @@ def build_tool_attempt_observation(
     missing_fields: list[str] | tuple[str, ...] | None = None,
     available_tool_ids: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    """Build a model-facing fact record for a tool call that did not run.
+    """为未能运行的工具调用构建面向模型的事实记录。
 
-    The record is deliberately observational.  It does not declare the task
-    failed and it does not choose the next route; it only explains why this
-    specific attempt could not be executed by the runtime.
-    """
+    该记录有意只作观察：不声明任务失败，也不选择下一条路线；它只说明本次具体尝试
+    为何无法由 Runtime 执行。"""
 
     normalized_reason = str(reason or "tool_call_not_executed").strip()
     normalized_tool_id = str(tool_id or "").strip()
@@ -78,7 +76,7 @@ def build_tool_attempt_observation(
 
 
 def tool_attempt_output(observation: dict[str, Any]) -> dict[str, Any]:
-    """Return a compact tool output that preserves old reason/message fields."""
+    """返回保留旧版 reason/message 字段的紧凑工具输出。"""
 
     reason = str(observation.get("reason") or "tool_call_not_executed")
     message = str(observation.get("message") or "")
@@ -93,7 +91,7 @@ def tool_attempt_output(observation: dict[str, Any]) -> dict[str, Any]:
 
 
 def format_tool_attempt_observation(observation: dict[str, Any]) -> str:
-    """Format the observation for prompts, diagnostics, or test assertions."""
+    """将观察记录格式化，供提示、诊断或测试断言使用。"""
 
     if not isinstance(observation, dict):
         return ""

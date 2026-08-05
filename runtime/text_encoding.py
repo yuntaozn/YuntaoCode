@@ -20,7 +20,7 @@ _UTF8_MOJIBAKE_RE = re.compile(
 
 
 def detect_text_encoding(raw: bytes) -> str:
-    """Detect a local text file encoding by validating the whole byte payload."""
+    """通过校验完整字节内容检测本地文本文件编码。"""
     if not raw:
         return "utf-8"
     if raw.startswith(b"\xef\xbb\xbf"):

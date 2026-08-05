@@ -1,10 +1,8 @@
-"""Provider-facing protocol loop for one model/tool round.
+"""单个模型工具轮次的 Provider 协议循环。
 
-This module owns transport facts produced while a model streams one round:
-content and reasoning deltas, tool-call argument chunks, request budgets,
-heartbeats, provider errors, idle timeouts, and runtime-guidance interruption.
-It does not decide task intent, tool routes, completion, or verification.
-"""
+本模块管理模型流式执行一个轮次时产生的传输事实：内容与推理增量、
+工具调用参数片段、请求预算、心跳、Provider 错误、空闲超时和运行时指引中断。
+它不判断任务意图、工具路线、完成状态或验证结论。"""
 
 from __future__ import annotations
 
@@ -27,7 +25,7 @@ GuidancePending = Callable[[], bool]
 
 @dataclass
 class ModelRoundResult:
-    """Facts observed from one provider stream."""
+    """从一次 Provider 流中观察到的事实。"""
 
     content_parts: list[str] = field(default_factory=list)
     reasoning_parts: list[str] = field(default_factory=list)
@@ -49,7 +47,7 @@ class ModelRoundResult:
 
 
 class ToolCallLoop:
-    """Stream one model round without making semantic execution decisions."""
+    """流式执行一个模型轮次，但不作语义执行决策。"""
 
     def __init__(
         self,

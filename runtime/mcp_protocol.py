@@ -47,7 +47,7 @@ class McpToolDefinition:
 
 
 class McpStdioSession:
-    """Minimal MCP client session over an already-started stdio process."""
+    """基于已启动 stdio 进程的最小 MCP 客户端会话。"""
 
     def __init__(
         self,
@@ -333,13 +333,11 @@ def _artifact_kind_for_path(path: str) -> tuple[str, str]:
 
 
 def _mcp_result_reports_error(text: str, structured_content: Any) -> bool:
-    """Return True when a transport-successful MCP result is still a tool error.
+    """当传输成功的 MCP 结果实质上仍是工具错误时返回 True。
 
-    Some MCP servers return a normal JSON-RPC response while embedding the real
-    execution failure in text or structured content.  Normalize that into the
-    same ``output.error`` contract used by built-in tools so task status,
-    retries, and audit facts stay honest.
-    """
+    某些 MCP 服务会返回正常 JSON-RPC 响应，却把真实执行失败嵌入文本或
+    结构化内容中。这里将其规范为内置工具使用的同一 ``output.error`` 契约，
+    使任务状态、重试和审计事实保持真实。"""
     if isinstance(structured_content, dict):
         if structured_content.get("error") or structured_content.get("is_error") is True:
             return True

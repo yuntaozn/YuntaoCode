@@ -1,9 +1,8 @@
-"""User-facing Context Runtime audit summaries.
+"""面向用户的 Context Runtime 审计摘要。
 
-This module turns Context Pack ledgers into a compact audit model for the UI
-and diagnostics. It is presentation-only: it does not choose a task, select a
-tool, block execution, or judge whether the model made a good decision.
-"""
+本模块将 Context Pack 账本转换为供 UI 和诊断使用的紧凑审计模型。
+它只负责展示，不选择任务、不选择工具、不阻止执行，
+也不判断模型的决策是否正确。"""
 
 from __future__ import annotations
 
@@ -26,7 +25,7 @@ HISTORICAL_FRESHNESS = frozenset({"recent", "stored", "historical", "stale"})
 
 
 def build_context_audit(evidence: dict[str, Any] | None) -> dict[str, Any]:
-    """Build a read-only audit view from RunEvidence context pack summaries."""
+    """根据 RunEvidence 的 Context Pack 摘要构建只读审计视图。"""
 
     if not isinstance(evidence, dict):
         return _empty_audit()

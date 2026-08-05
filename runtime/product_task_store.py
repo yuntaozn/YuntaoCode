@@ -1,4 +1,4 @@
-"""SQLite persistence for product-level Tasks and recovery artifacts."""
+"""产品级 Task 及恢复记录的 SQLite 存储。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ PRODUCT_TASK_STORE_SCHEMA_VERSION = "product_task_store.v1"
 
 
 class ProductTaskStore:
-    """Own product-level Task, Checkpoint, and ContextSnapshot records."""
+    """管理产品级 Task、Checkpoint 和 ContextSnapshot 记录。"""
 
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path

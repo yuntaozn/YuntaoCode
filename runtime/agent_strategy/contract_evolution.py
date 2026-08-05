@@ -1,10 +1,8 @@
-"""Task contract continuity helpers.
+"""任务契约续接辅助函数。
 
-The model owns semantic task judgment.  This module only applies explicit
-model-declared continuity and derives success-condition facts from the current
-contract.  It must not infer a follow-up route from short user wording, promote
-tool effects into task intent, or replace the model's current target.
-"""
+语义任务判断由模型负责。本模块只应用模型明确声明的续接关系，并根据当前契约
+派生成功条件事实；不得根据简短用户措辞推断追问路线，不得把工具效果提升为任务意图，
+也不得替换模型当前目标。"""
 
 from __future__ import annotations
 
@@ -30,13 +28,10 @@ def apply_task_continuity(
     previous_contract: dict[str, Any] | None,
     current_user_content: str,
 ) -> dict[str, Any]:
-    """Fill missing continuation fields without replacing current model semantics.
+    """补齐缺失的续接字段，但不替换当前模型语义。
 
-    The previous contract is historical evidence. Once the current model has
-    selected a goal, deliverable, capability, or state-change requirement, that
-    current value wins. The anchor may only fill fields omitted by the current
-    model proposal.
-    """
+    上一契约只是历史证据。当前模型一旦选定目标、交付物、能力或状态变更要求，
+    当前值优先；锚点只可补齐当前模型提案中遗漏的字段。"""
     result = dict(contract)
     if not isinstance(previous_contract, dict):
         result["scope_relation"] = normalize_scope_relation(result.get("scope_relation"))
@@ -85,11 +80,9 @@ def should_apply_task_continuity(
     *,
     current_user_content: str,
 ) -> bool:
-    """Return whether a prior task anchor may be applied after model judgment.
+    """返回模型判断后是否可应用上一任务锚点。
 
-    The previous task may affect the final contract only after the model has
-    explicitly represented the current turn as a continuation or revision.
-    """
+    只有模型明确将当前轮次表示为续接或修订时，上一任务才可影响最终契约。"""
     if not isinstance(contract, dict):
         return False
     relation = normalize_scope_relation(contract.get("scope_relation"))
@@ -100,7 +93,7 @@ def should_apply_task_continuity(
 
 
 def task_continuity_anchor(contract: dict[str, Any]) -> dict[str, Any]:
-    """Return the stable semantic target carried across continuation turns."""
+    """返回跨续接轮次传递的稳定语义目标。"""
     inherited = contract.get("continuity_anchor")
     source = inherited if isinstance(inherited, dict) else contract
     return {

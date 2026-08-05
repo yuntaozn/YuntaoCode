@@ -1,9 +1,7 @@
-"""Run the focused 0.1 readiness gate for YuntaoCode.
+"""执行 YuntaoCode 的集中发布准备检查。
 
-This script is a release hygiene aggregator, not a runtime feature.  It checks
-the facts that should be true before treating the current tree as a 0.1
-foundation candidate.
-"""
+此脚本是发布卫生检查聚合器，不是 Runtime 功能。它校验在把当前源码树视为
+基础版本候选之前应满足的事实。"""
 
 from __future__ import annotations
 

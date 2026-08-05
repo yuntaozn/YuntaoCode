@@ -205,8 +205,8 @@ def _normalize_tool_diagnostics(value: Any) -> dict[str, dict[str, Any]]:
 def _merge_seeded_service(default: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
     merged = deepcopy(default)
     for key, value in existing.items():
-        # Older normalized configs contain an empty list even when the field
-        # did not exist on disk. Preserve newly introduced seed prerequisites.
+        # 即使磁盘上原本不存在该字段，旧版规范化配置也会包含空列表。
+        # 因此需要保留新引入的种子前置条件。
         if key == "prerequisites" and not value and merged.get(key):
             continue
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
@@ -652,12 +652,10 @@ class McpServiceRuntime:
 
 
 class McpServiceManager:
-    """Own MCP service configuration and process/connection lifecycle.
+    """管理 MCP 服务配置以及进程、连接生命周期。
 
-    Protocol discovery and tool invocation are intentionally separate. A
-    running process is not reported as protocol-connected until an MCP adapter
-    calls ``mark_connected``.
-    """
+    协议发现与工具调用有意分离。仅进程正在运行并不代表协议已连接；
+    必须由 MCP 适配器调用 ``mark_connected`` 后才报告为协议已连接。"""
 
     def __init__(self, path: Path, *, registry: ToolRegistry | None = None) -> None:
         self.path = path
@@ -684,12 +682,10 @@ class McpServiceManager:
         ]
 
     def capability_issues(self) -> list[dict[str, Any]]:
-        """Return compact MCP capability readiness issues for task preflight.
+        """返回供任务预检使用的紧凑 MCP 能力就绪问题。
 
-        This deliberately avoids logs and secrets.  The Task Runtime only needs
-        to know whether a configured MCP capability is currently usable and
-        what action should recover it.
-        """
+        此处有意避开日志和密钥。Task Runtime 只需知道已配置 MCP 能力
+        当前是否可用，以及应通过什么操作恢复。"""
         issues: list[dict[str, Any]] = []
         for service_id, config in sorted(self._configs.items()):
             if not _has_external_state_policy(config):
@@ -756,12 +752,10 @@ class McpServiceManager:
         return issues
 
     def tool_runtime_metadata(self, tool_id: str, *, source_id: str = "") -> dict[str, Any]:
-        """Return live MCP binding health for a registered tool.
+        """返回已注册工具的实时 MCP 绑定健康信息。
 
-        This is advisory metadata for tools and capability snapshots.  It does
-        not decide whether the model may call a tool; availability remains tied
-        to service/protocol connection and explicit permission gates.
-        """
+        这些元数据只供工具和能力快照参考，不决定模型能否调用工具；
+        可用性仍取决于服务、协议连接和明确的权限门禁。"""
         normalized_tool_id = str(tool_id or "").strip()
         if not normalized_tool_id:
             return {}
@@ -839,11 +833,10 @@ class McpServiceManager:
         return self.get_public(service_id)
 
     async def start_auto_services(self) -> list[dict[str, Any]]:
-        """Start enabled services that explicitly opt in to auto-start.
+        """启动已启用且明确选择自动启动的服务。
 
-        Startup is best-effort: a broken optional MCP service should degrade
-        that capability, not prevent the local runtime from opening.
-        """
+        启动采用尽力而为方式：损坏的可选 MCP 服务应只让对应能力降级，
+        不能阻止本地 Runtime 打开。"""
         results: list[dict[str, Any]] = []
         for service_id, config in sorted(self._configs.items()):
             lifecycle = config.get("lifecycle") if isinstance(config.get("lifecycle"), dict) else {}
@@ -865,13 +858,10 @@ class McpServiceManager:
         *,
         require_auto_start: bool = True,
     ) -> list[dict[str, Any]]:
-        """Best-effort start for MCP services targeted by a task.
+        """尽力启动任务所指向的 MCP 服务。
 
-        This is the on-demand counterpart to ``start_auto_services``.  It does
-        not broaden model permissions or force a strategy; it only makes an
-        explicitly targeted, enabled MCP provider available before the model
-        receives the final tool snapshot.
-        """
+        这是 ``start_auto_services`` 的按需版本。它不扩大模型权限，也不强制策略；
+        只是在模型收到最终工具快照前，让被明确指向且已启用的 MCP Provider 可用。"""
         results: list[dict[str, Any]] = []
         seen: set[str] = set()
         for capability_id in capability_ids:
@@ -1037,14 +1027,11 @@ class McpServiceManager:
         self._append_log(runtime, "info" if runtime.state == "reachable" else "error", runtime.message)
 
     async def probe(self, service_id: str, *, limit: int = MAX_PROBE_TOOLS) -> list[dict[str, Any]]:
-        """Run a small, read-only tool probe for observable MCP capabilities.
+        """对可观察的 MCP 能力执行小型只读工具探测。
 
-        Probe is deliberately separate from check/start.  It may call MCP tools,
-        so it only targets read-only tools with no required input fields and an
-        evidence, verification, artifact, or previously degraded role.  Results
-        are advisory facts for capability snapshots; they never unregister or
-        block tools.
-        """
+        探测有意与检查和启动分离。由于它可能调用 MCP 工具，所以只选择无需
+        必填输入且角色属于证据、验证、产物或此前已降级的只读工具。探测结果
+        只是能力快照的参考事实，绝不注销或阻止工具。"""
         self.get_config(service_id)
         runtime = self._runtime_for(service_id)
         runtime.checked_at = _now_iso()

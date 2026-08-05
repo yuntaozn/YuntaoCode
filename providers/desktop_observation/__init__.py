@@ -1,8 +1,7 @@
-"""Local desktop observation provider.
+"""本地桌面观察 Provider。
 
-This package is intentionally runtime-agnostic.  YuntaoCode consumes it through
-a thin adapter in ``runtime.skills.desktop``.
-"""
+本包有意保持与 Runtime 无关；YuntaoCode 通过 ``runtime.skills.desktop`` 中的
+轻量适配器使用它。"""
 
 from .contracts import (
     DESKTOP_STATE_SCHEMA_VERSION,

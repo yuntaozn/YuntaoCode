@@ -1,9 +1,7 @@
-"""Task lineage helpers for bounded model context.
+"""有界模型上下文中的 Task Lineage 辅助函数。
 
-Task lineage is not a router.  It converts prior task contracts into explicit
-historical candidates so the model can decide whether the current request is a
-new task, a continuation, or a revision without rereading noisy old replies.
-"""
+Task Lineage 不是路由器。它把先前任务契约转换为明确的历史候选，
+让模型无需重读噪声较多的旧回复，就能判断当前请求是新任务、续接还是修订。"""
 
 from __future__ import annotations
 
@@ -29,7 +27,7 @@ def task_candidate_from_message(
     user_request: str = "",
     user_message_id: str = "",
 ) -> dict[str, Any] | None:
-    """Return a historical task candidate extracted from one assistant message."""
+    """返回从一条助手消息中提取的历史任务候选。"""
     if str(role or "") != "assistant" or not isinstance(metadata, dict):
         return None
     contract = metadata.get("task_contract")
@@ -100,8 +98,8 @@ def task_candidate_from_message(
         "observed_status": observed_status,
         "observed_actual_paths": actual_paths,
         "field_provenance": provenance,
-        # Compatibility fields remain available to internal consumers. Model-facing
-        # lineage formatting uses the explicitly sourced fields above.
+        # 兼容字段仍供内部使用方使用；面向模型的
+        # 血缘格式化使用上方明确标注来源的字段。
         "goal": declared_goal,
         "intent": intent,
         "requires_write": bool(contract.get("requires_write")),
@@ -128,7 +126,7 @@ def collect_task_lineage_candidates(
     *,
     limit: int = 4,
 ) -> list[dict[str, Any]]:
-    """Collect recent historical task candidates from a conversation."""
+    """从对话中收集近期历史任务候选。"""
     if conversation is None:
         return []
     current = str(current_content or "").strip()
@@ -182,7 +180,7 @@ def referenced_candidate_contract(
     candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
     candidate_id: Any,
 ) -> dict[str, Any] | None:
-    """Return the internal contract anchor for a model-referenced candidate."""
+    """返回模型引用候选所对应的内部契约锚点。"""
     target = str(candidate_id or "").strip()
     if not target:
         return None
@@ -201,7 +199,7 @@ def format_task_candidates_for_model(
     *,
     limit: int = 4,
 ) -> str:
-    """Format candidates as compact model-facing facts."""
+    """将候选格式化为面向模型的紧凑事实。"""
     compact: list[dict[str, Any]] = []
     for candidate in candidates or []:
         if not isinstance(candidate, dict):

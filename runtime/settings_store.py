@@ -157,7 +157,7 @@ class SettingsStore:
                 if key not in self._settings:
                     self._settings[key] = deepcopy(default_value)
         self._migrate_settings(loaded)
-        # Initialize MemoryStore (independent file, with migration from settings)
+        # 初始化 MemoryStore（独立文件，并迁移旧设置）
         self.memory_store = MemoryStore.migrate_from_settings(
             self.data_dir / "memories.json", self
         )
@@ -232,13 +232,13 @@ class SettingsStore:
             if isinstance(plugins, dict):
                 plugins.pop("blender", None)
         if version < 8:
-            # One-shot cleanup for the removed local opener customization UI/API.
+            # 一次性清理已移除的本地打开程序自定义 UI/API。
             self._settings.pop("local_integrations", None)
         if version < 9:
-            # One-shot cleanup for the removed public execution_mode alias.
+            # 一次性清理已移除的公开 execution_mode 别名。
             self._settings.pop("execution_mode", None)
         if version < 10:
-            # One-shot cleanup for the removed user-facing assistant mode setting.
+            # 一次性清理已移除的用户侧助手模式设置。
             self._settings.pop("assistant_mode", None)
         if version < 11:
             providers = self._settings.setdefault("providers", {})
@@ -512,7 +512,7 @@ class SettingsStore:
         workspace_id: str = "",
         record_usage: bool = True,
     ) -> str:
-        """Build memory prompt with optional relevance filtering."""
+        """构建可选相关性过滤的记忆提示。"""
         return str(
             self.get_memory_context(
                 user_message=user_message,
@@ -529,7 +529,7 @@ class SettingsStore:
         workspace_id: str = "",
         record_usage: bool = True,
     ) -> dict[str, Any]:
-        """Return the selected memory text together with its audit identity."""
+        """返回选中的记忆文本及其审计标识。"""
         mem_settings = self.get_memory_settings()
         prompt, used_ids = build_memory_prompt_from_store(
             self.memory_store,
@@ -550,14 +550,14 @@ class SettingsStore:
     def is_memory_auto_extract_enabled(self) -> bool:
         mem_settings = self.get_memory_settings()
         return bool(mem_settings.get("enabled", True) and mem_settings.get("auto_extract", True))
-    
+
     def get_plugin_settings(self) -> dict[str, Any]:
         """获取插件设置"""
         return merge_settings(
             DEFAULT_SETTINGS.get("plugins", {}),
             self._settings.get("plugins", {}),
         )
-    
+
     def is_plugin_enabled(self, plugin_id: str) -> bool:
         if plugin_id in RUNTIME_MANAGED_PLUGIN_IDS:
             return True

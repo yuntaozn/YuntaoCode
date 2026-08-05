@@ -1,10 +1,8 @@
-"""User guidance queue for in-flight conversation runs.
+"""运行中对话 Run 的用户指引队列。
 
-User guidance is a user-authored semantic update sent while a Run is active.
-It is not a runtime intervention strategy.  The runtime records it, interrupts
-model streaming at a safe point, and presents the new user text plus existing
-run facts back to the model.
-"""
+用户指引是 Run 活动期间由用户编写的语义更新，不是运行时干预策略。
+Runtime 记录它，在安全位置中断模型流，并把新用户文本与现有 Run 事实
+一同交还模型。"""
 
 from __future__ import annotations
 

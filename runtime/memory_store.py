@@ -1,4 +1,4 @@
-"""Persistent memory store with atomic writes and eviction policy."""
+"""本地持久记忆存储。"""
 
 from __future__ import annotations
 
@@ -21,8 +21,8 @@ class MemoryItem:
     text: str
     tags: list[str] = field(default_factory=list)
     enabled: bool = True
-    source: str = "manual"           # "manual" | "auto" | "conversation"
-    scope: str = "global"            # "global" | "workspace"
+    source: str = "manual"           # 来源可选值："manual" | "auto" | "conversation"
+    scope: str = "global"            # 作用域可选值："global" | "workspace"
     workspace_id: str = ""
     created_at: str = field(default_factory=_utc_now)
     updated_at: str = field(default_factory=_utc_now)
@@ -53,7 +53,7 @@ class MemoryItem:
         )
 
 
-# Limits
+# 数量限制
 MAX_STORED_MEMORIES = 500
 MAX_MEMORY_TEXT_CHARS = 500
 MAX_MEMORY_PROMPT_CHARS = 6000
@@ -62,7 +62,7 @@ MAX_ACTIVE_MEMORIES = 50
 
 
 class MemoryStore:
-    """Persistent memory store backed by a single JSON file with atomic writes."""
+    """以单个 JSON 文件和原子写入实现的持久记忆存储。"""
 
     def __init__(
         self,
@@ -93,7 +93,7 @@ class MemoryStore:
         }
         self._storage.save(payload)
 
-    # ----- CRUD -----
+    # ----- 增删改查 -----
 
     def list(self) -> list[MemoryItem]:
         return sorted(
@@ -103,7 +103,7 @@ class MemoryStore:
         )
 
     def list_applicable(self, workspace_id: str | None = None) -> list[MemoryItem]:
-        """Return global memories plus memories scoped to the current workspace."""
+        """返回全局记忆及当前工作区范围内的记忆。"""
         current_workspace_id = str(workspace_id or "").strip()
         items: list[MemoryItem] = []
         for item in self.list():
@@ -165,7 +165,7 @@ class MemoryStore:
         if item:
             item.usage_count += 1
             item.last_used_at = _utc_now()
-            # Don't save here; batch save happens at prompt build time
+            # 此处不保存；构建提示时统一批量保存。
 
     def batch_record_usage(self, memory_ids: list[str]) -> None:
         now = _utc_now()
@@ -179,24 +179,24 @@ class MemoryStore:
     def count(self) -> int:
         return len(self._memories)
 
-    # ----- Eviction -----
+    # ----- 淘汰策略 -----
 
     def _evict_if_needed(self) -> None:
-        """Evict low-value memories when count exceeds MAX_STORED_MEMORIES."""
+        """当数量超过 MAX_STORED_MEMORIES 时淘汰低价值记忆。"""
         if len(self._memories) <= MAX_STORED_MEMORIES:
             return
 
         now = datetime.now(timezone.utc)
 
         def _eviction_score(item: MemoryItem) -> float:
-            """Higher score = more likely to be evicted. Manual memories are never evicted."""
+            """分数越高越可能被淘汰；手动记忆永不自动淘汰。"""
             if item.source == "manual":
                 return -1000.0
             score = 0.0
-            # Unused memories
+            # 未使用记忆
             if item.usage_count == 0:
                 score += 5.0
-            # Not used in 30 days
+            # 30 天内未使用
             if item.last_used_at:
                 try:
                     last_used = datetime.fromisoformat(item.last_used_at)
@@ -206,8 +206,8 @@ class MemoryStore:
                 except (ValueError, TypeError):
                     score += 3.0
             else:
-                score += 3.0  # Never used
-            # Short text
+                score += 3.0  # 从未使用
+            # 短文本
             if len(item.text) < 20:
                 score += 1.0
             return score
@@ -222,20 +222,20 @@ class MemoryStore:
         removed = 0
         for mid, item in sorted_items:
             if _eviction_score(item) <= -1000.0:
-                continue  # Never evict manual memories
+                continue  # 永不淘汰手动记忆
             del self._memories[mid]
             removed += 1
             if removed >= to_remove:
                 break
 
-    # ----- Migration from settings.json -----
+    # ----- 从 settings.json 迁移 -----
 
     @classmethod
     def migrate_from_settings(cls, store_path: Path, settings_store: Any) -> "MemoryStore":
-        """Migrate old memory data from settings.json into memories.json."""
+        """将旧记忆数据从 settings.json 迁移到 memories.json。"""
         store = cls(store_path)
 
-        # Only migrate if memories.json is empty and settings has old data
+        # 仅当 memories.json 为空且设置中存在旧数据时迁移
         old_memories = settings_store._settings.get("memories", {})
         old_items = old_memories.get("items", []) if isinstance(old_memories, dict) else []
 
@@ -256,10 +256,10 @@ class MemoryStore:
                 )
                 store._memories[item.id] = item
 
-            # Save migrated data
+            # 保存迁移后的数据
             store._save()
 
-            # Clear old data from settings
+            # 清除设置中的旧数据
             if isinstance(old_memories, dict):
                 old_memories["items"] = []
                 settings_store._settings["memories"] = old_memories

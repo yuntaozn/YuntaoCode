@@ -1,8 +1,7 @@
-"""Model-backed final-answer synthesis from RunResult facts.
+"""根据 RunResult 事实进行模型支持的最终答案合成。
 
-This module owns the post-run synthesis request shape. It does not decide
-whether a Run is complete, choose tools, or reinterpret the task contract.
-"""
+本模块管理 Run 结束后的答案合成请求结构，不判断 Run 是否完成、
+不选择工具，也不重新解释任务契约。"""
 
 from __future__ import annotations
 
@@ -75,7 +74,7 @@ def build_result_synthesis_messages(
     completion_decisions: list[dict[str, Any]] | None = None,
     task_route_evidence: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Build the bounded messages used for final answer synthesis."""
+    """构建用于最终答案合成的有界消息。"""
 
     prompt = result_synthesis_prompt(
         workspace_path,
@@ -99,11 +98,10 @@ def build_result_synthesis_messages(
 
 
 def build_result_synthesis_request_context(user_content: str) -> dict[str, Any]:
-    """Build a bounded reference package from the current user message.
+    """根据当前用户消息构建有界参考包。
 
-    This package preserves request edges and explicit-looking markers for final
-    answer wording. It is not a task router and does not override RunResult.
-    """
+    此参考包保留请求边界和看似明确的标记，供最终答案措辞使用；它不是任务路由器，
+    也不覆盖 RunResult。"""
 
     text = str(user_content or "").strip()
     head, tail = _head_tail(text)
@@ -129,7 +127,7 @@ def build_result_synthesis_request_context(user_content: str) -> dict[str, Any]:
 
 
 def format_result_synthesis_request_context(context: dict[str, Any]) -> str:
-    """Render the request reference package for the synthesis model round."""
+    """为答案合成模型轮次渲染请求参考包。"""
 
     lines = [
         "User request reference for final answer synthesis:",
@@ -178,7 +176,7 @@ async def generate_result_synthesis_answer(
     task_route_evidence: dict[str, Any] | None = None,
     model_call: Callable[..., Awaitable[tuple[str, dict[str, Any]]]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Generate the final user-facing answer from observed RunResult facts."""
+    """根据已观察到的 RunResult 事实生成最终用户答案。"""
 
     caller = model_call or generate_chat_completion
     answer, metadata = await caller(

@@ -1,10 +1,8 @@
-"""Capability evidence summaries derived from tool events.
+"""根据工具事件生成能力证据摘要。
 
-Capability metadata is declared by ToolSpec and observed from tool outputs.
-This module keeps those facts available for RunResult, Runbook, diagnostics,
-replay fixtures, and future evaluation without turning them into execution
-policy.
-"""
+能力元数据由 ToolSpec 声明，并从工具输出中观察。本模块让这些事实可供
+RunResult、Runbook、诊断、Replay Fixture 和未来评测使用，
+但不将其转化为执行策略。"""
 
 from __future__ import annotations
 
@@ -22,7 +20,7 @@ def build_capability_evidence_summary(
     *,
     task_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a compact capability evidence view from tool events."""
+    """根据工具事件构建紧凑的能力证据视图。"""
     events = [event for event in tool_events if isinstance(event, dict)]
     requested = _requested_capability_ids(task_contract)
     observed = _unique(

@@ -1,10 +1,8 @@
-"""Model-facing request harness.
+"""面向模型的请求 Harness。
 
-This module owns transport-shape adaptation for model calls.  It may describe
-how a provider round should be sent and how provider transport errors should be
-normalized.  It must not decide task intent, select tools, validate completion,
-or choose an execution route.
-"""
+本模块负责模型调用的传输结构适配，可以描述如何发送一个 Provider 轮次，
+以及如何规范化 Provider 传输错误；不得判断任务意图、选择工具、
+校验完成状态或选择执行路线。"""
 
 from __future__ import annotations
 
@@ -61,7 +59,7 @@ class ModelRoundRequest:
 
 
 class ModelHarness:
-    """Prepare model transport requests without changing task strategy."""
+    """在不改变任务策略的前提下准备模型传输请求。"""
 
     def prepare_round_request(
         self,

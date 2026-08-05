@@ -1,8 +1,7 @@
-"""Routing and planning policy for the agent runtime.
+"""Agent Runtime 的路由与计划策略。
 
-Planning has one semantic authority: the task contract model.  This module
-only reconciles that declaration with the user's explicit planning setting;
-it does not run a second task-classification path.
+计划语义只有一个来源：任务契约模型。本模块只负责把模型声明与用户显式的
+计划设置合并，不再运行第二条任务分类路径。
 """
 
 from __future__ import annotations
@@ -48,12 +47,11 @@ def resolve_plan_execution(
     task_contract: dict[str, object] | None,
     planning_policy: str,
 ) -> PlanExecutionDecision:
-    """Resolve pre-execution plan generation without another model call.
+    """解析执行前是否生成计划，不额外调用一次模型。
 
-    Explicit user settings remain authoritative.  In auto mode a valid model
-    task contract owns ``requires_plan``.  If that auxiliary contract is
-    unavailable, execution starts without a separately generated plan and the
-    main execution model retains strategy ownership.
+    用户显式设置始终优先。自动模式下，由有效模型任务契约中的
+    ``requires_plan`` 决定；辅助契约不可用时，不单独生成计划，直接进入主执行，
+    继续由执行模型决定策略。
     """
     normalized_planning_policy = str(planning_policy or "auto").lower()
     if normalized_planning_policy == "off":

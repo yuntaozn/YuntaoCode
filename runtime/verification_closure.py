@@ -1,9 +1,7 @@
-"""Run-level verification closure evidence.
+"""Run 级验证闭环证据。
 
-The closure record gathers verification, artifact, visual, and debug facts into
-one model-facing evidence package. It does not choose a strategy, block a tool,
-or decide whether a task is complete.
-"""
+闭环记录将验证、产物、视觉和调试事实汇总成面向模型的证据包。
+它不选择策略、不阻止工具，也不判断任务是否完成。"""
 
 from __future__ import annotations
 
@@ -41,7 +39,7 @@ def build_verification_closure(
     artifact_summary: dict[str, Any] | None = None,
     risks: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    """Build an evidence-only verification closure summary."""
+    """构建仅包含证据的验证闭环摘要。"""
 
     required = _unique(required_modalities)
     observed = _unique(observed_modalities)
@@ -169,7 +167,7 @@ def build_verification_closure(
 
 
 def format_verification_closure_for_model(closure: dict[str, Any] | None) -> str:
-    """Format closure facts for model-facing context or prompts."""
+    """为模型侧上下文或提示格式化闭环事实。"""
 
     if not isinstance(closure, dict):
         return ""
@@ -299,7 +297,7 @@ def _verification_freshness(
     artifacts: list[dict[str, Any]],
     verification_records: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Describe whether verification evidence is newer than observed changes."""
+    """说明验证证据是否晚于已观察到的变更。"""
 
     latest_change_index = _latest_change_event_index(artifacts)
     items = _verification_freshness_items(

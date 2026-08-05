@@ -191,7 +191,7 @@ def tool_progress_message(
 
 
 def tool_output_preview(tool_id: str, output: Any) -> dict[str, Any] | None:
-    """Extract a small preview of tool output for frontend rich rendering."""
+    """提取工具输出的小型预览，供前端富文本渲染。"""
     if not output or not isinstance(output, dict):
         return None
     preview: dict[str, Any] = {}

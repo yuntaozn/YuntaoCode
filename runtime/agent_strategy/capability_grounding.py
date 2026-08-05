@@ -1,9 +1,7 @@
-"""Ground model task contracts against runtime capability facts.
+"""用运行时能力事实落地模型任务契约。
 
-The model owns the first semantic judgment.  The runtime owns the current
-capability snapshot.  This module reconciles the two without adding
-scenario-specific branches to the runner.
-"""
+首次语义判断由模型负责，当前能力快照由 Runtime 管理。本模块协调两者，
+不在 Runner 中增加特定场景分支。"""
 
 from __future__ import annotations
 
@@ -16,15 +14,13 @@ def ground_task_contract_with_capabilities(
     *,
     user_content: str = "",
 ) -> bool:
-    """Ground a model-selected external-state target in runtime capability facts.
+    """用运行时能力事实落地模型选定的外部状态目标。
 
-    The runtime only resolves capability ids already selected by the model and
-    copies that id into an external-state deliverable when omitted there. It
-    does not select a provider from user text or change the execution route.
-    """
+    Runtime 只解析模型已经选定的能力 ID，并在外部状态交付物遗漏该 ID 时补入。
+    它不根据用户文本选择 Provider，也不改变执行路线。"""
     if not isinstance(contract, dict) or not isinstance(snapshot, dict):
         return False
-    _ = user_content  # Compatibility input; semantic text matching is intentionally disabled.
+    _ = user_content  # 兼容输入；语义文本匹配有意禁用。
     if not bool(contract.get("requires_state_change")):
         return False
 

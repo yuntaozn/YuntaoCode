@@ -1,9 +1,7 @@
-"""Portable Experience Sample and Replay Fixture exports.
+"""可移植的 Experience Sample 与 Replay Fixture 导出。
 
-Sample exports are generated on demand from an existing Runbook view. They
-produce an Experience Sample plus a Replay Fixture. They do not persist
-complete Runbooks and they do not submit anything to a remote service.
-"""
+样本导出根据现有 Runbook 视图按需生成，产出 Experience Sample 与
+Replay Fixture；不持久化完整 Runbook，也不向远程服务提交任何内容。"""
 
 from __future__ import annotations
 

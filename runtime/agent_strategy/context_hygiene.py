@@ -1,9 +1,7 @@
-"""Conversation context hygiene before model execution.
+"""模型执行前的对话上下文卫生处理。
 
-The UI and run audit keep full history.  The model-facing context should not
-replay noisy historical failures, textual tool-call examples, or old task goals
-as if they were current instructions.
-"""
+UI 与 Run 审计保留完整历史；模型侧上下文不应把历史失败噪声、文本工具调用示例
+或旧任务目标当作当前指令重新播放。"""
 
 from __future__ import annotations
 
@@ -39,7 +37,7 @@ DEFAULT_MAX_PRIOR_USER_LOG_CHARS = 1200
 
 @dataclass
 class ContextHygieneReport:
-    """Summary of model-context cleanup performed for one request."""
+    """一次请求所执行模型上下文清理的摘要。"""
 
     sanitized_messages: int = 0
     dropped_messages: int = 0
@@ -92,7 +90,7 @@ def sanitize_model_context(
     max_assistant_chars: int = DEFAULT_MAX_ASSISTANT_CHARS,
     max_prior_user_log_chars: int = DEFAULT_MAX_PRIOR_USER_LOG_CHARS,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Return model-facing messages plus a hygiene report."""
+    """返回面向模型的消息及上下文卫生报告。"""
 
     report = ContextHygieneReport()
     latest_user_index = latest_user_index_in(messages)
@@ -150,7 +148,7 @@ def sanitize_model_context(
 
 
 def context_hygiene_notice() -> str:
-    """Backward-compatible public name for the model hygiene notice."""
+    """模型上下文卫生提示的向后兼容公开名称。"""
     return model_context_hygiene_notice()
 
 

@@ -1,4 +1,4 @@
-"""Shared debug-session evidence contracts for runtime tools."""
+"""Runtime 调试会话的观察证据。"""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def build_debug_session(
     heartbeat: dict[str, Any] | None = None,
     health_status: str = "",
 ) -> dict[str, Any]:
-    """Build a stable, advisory debug-session evidence record."""
+    """构建稳定且仅供参考的调试会话证据记录。"""
 
     status = str(health_status or "").strip() or _status(
         exit_code=exit_code,
@@ -79,7 +79,7 @@ def build_debug_session(
 
 
 def normalize_debug_session(output: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Return debug-session evidence from nested or legacy shell-like fields."""
+    """从嵌套字段或旧版 Shell 类字段中返回调试会话证据。"""
 
     if not isinstance(output, dict):
         return None
@@ -108,7 +108,7 @@ def normalize_debug_session(output: dict[str, Any] | None) -> dict[str, Any] | N
 
 
 def debug_session_summary(session: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Return a compact summary suitable for RunResult and model context."""
+    """返回适用于 RunResult 和模型上下文的紧凑摘要。"""
 
     if not isinstance(session, dict):
         return None

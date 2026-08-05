@@ -1,9 +1,7 @@
-"""Portable diagnostic exports for a selected Run.
+"""选定 Run 的可移植诊断导出。
 
-Diagnostic exports help compare behavior across machines. They are generated on
-demand, avoid secrets and file contents, and do not participate in capability
-promotion or replay execution.
-"""
+诊断导出用于比较不同电脑上的行为。它按需生成，避开密钥和文件内容，
+不参与能力提升，也不参与 Replay 执行。"""
 
 from __future__ import annotations
 

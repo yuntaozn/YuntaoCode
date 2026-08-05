@@ -116,7 +116,7 @@ class WorkspaceStore:
 
 def stable_workspace_id(path: Path) -> str:
     normalized = str(path.resolve()).lower()
-    # Keep the historical namespace stable so existing workspace IDs do not
-    # change across upgrades. This is a compatibility namespace, not the
-    # current product name.
+    # 保持历史命名空间稳定，避免现有工作区 ID
+    # 在升级时发生变化。这只是兼容命名空间，
+    # 不是当前产品名称。
     return str(uuid5(NAMESPACE_URL, f"{LEGACY_WORKSPACE_ID_NAMESPACE}:{normalized}"))

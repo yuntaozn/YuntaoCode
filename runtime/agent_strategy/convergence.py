@@ -15,13 +15,10 @@ ESCALATE_NO_PROGRESS = "escalate_no_progress"
 
 @dataclass(frozen=True)
 class ExecutionConvergenceDecision:
-    """Observed convergence state for the current no-progress window.
+    """当前无进展窗口中观察到的收敛状态。
 
-    This is evidence about execution shape, not a planner.  The runtime can use
-    the action to decide how strongly to surface facts, while the model sees
-    the rest as facts it can use to choose a different route. Global round
-    limits remain the resource boundary.
-    """
+    这是执行形态证据，不是 Planner。Runtime 可根据 action 决定事实提示强度；
+    其余内容作为事实交给模型选择其他路线。全局轮次上限仍是资源边界。"""
 
     action: str = NO_ACTION
     latest_tool: str = ""
@@ -61,16 +58,13 @@ def build_execution_convergence_decision(
     base_budget_limit_route_attempts: int = 9,
     max_budget_limit_route_attempts: int = 15,
 ) -> ExecutionConvergenceDecision:
-    """Return convergence evidence for repeated failures since last progress.
+    """返回自最近一次进展后重复失败的收敛证据。
 
-    The budget is progress-driven:
+    预算由进展驱动：
 
-    - any successful or partial tool result resets the no-progress window;
-    - changing route is treated as self-correction evidence and expands the
-      bounded budget;
-    - a saturated local budget escalates the evidence, but does not choose the
-      next strategy or make the task verdict.
-    """
+    - 任一成功或部分成功的工具结果都会重置无进展窗口；
+    - 改变路线视为自我纠偏证据，并扩大有界预算；
+    - 局部预算饱和时提高证据提示强度，但不选择下一策略，也不裁定任务结果。"""
 
     events = [item for item in tool_events or [] if isinstance(item, dict)]
     latest = events[-1] if events else {}

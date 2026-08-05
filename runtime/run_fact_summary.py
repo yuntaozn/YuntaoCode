@@ -1,10 +1,8 @@
-"""Compact runtime facts shared by recovery prompts and final summaries.
+"""恢复提示与最终摘要共享的紧凑运行时事实。
 
-The structures in this module are intentionally deterministic.  They do not
-decide whether a task is complete and they do not prescribe a strategy; they
-only package what the runtime observed so the model can make the next
-judgement from the same evidence the UI and tests can audit.
-"""
+本模块中的结构有意保持确定性：不判断任务是否完成，也不规定策略；
+只整理 Runtime 已观察到的事项，让模型依据与 UI 和测试可审计内容相同的证据
+作出下一步判断。"""
 
 from __future__ import annotations
 

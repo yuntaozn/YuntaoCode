@@ -2453,7 +2453,7 @@ async function newConversation() {
         showToast(t('workspace.select_first'));
         return;
     }
-    // Validate workspace still exists
+    // 校验工作区是否仍然存在。
     const workspace = state.workspaces.find((w) => w.id === state.currentWorkspaceId);
     if (!workspace) {
         state.currentWorkspaceId = "";
@@ -4566,7 +4566,7 @@ async function saveSettings() {
     showToast(t('toast.settings_saved'));
 }
 
-// Language select initialization for main page
+// 初始化主页语言选择器。
 (function initLanguageSelect() {
     const select = $("language-select");
     if (!select) return;

@@ -1,9 +1,7 @@
-"""Automation schemas.
+"""自动化 Schema。
 
-Automation is a trigger layer above the normal Task Runtime. It must not
-execute tools directly or bypass permissions, confirmations, trace, recovery,
-or RunResult verification.
-"""
+自动化是普通 Task Runtime 之上的触发层，不得直接执行工具，
+也不得绕过权限、确认、Trace、恢复或 RunResult 验证。"""
 
 from __future__ import annotations
 
@@ -38,11 +36,9 @@ WEEKDAY_INDEX: dict[str, int] = {
 
 @dataclass(frozen=True)
 class AutomationTrigger:
-    """A schedule or explicit trigger definition.
+    """计划触发或显式触发定义。
 
-    The runtime scheduler can interpret this later. The schema deliberately
-    avoids storing executable code or direct tool instructions.
-    """
+    Runtime 调度器可在之后解释它；Schema 有意不保存可执行代码或直接工具指令。"""
 
     kind: AutomationTriggerKind
     timezone: str = "local"
@@ -67,7 +63,7 @@ class AutomationTrigger:
 
 @dataclass(frozen=True)
 class AutomationTaskTemplate:
-    """A user goal that will become a normal Task/Run when triggered."""
+    """触发后会成为普通 Task/Run 的用户目标。"""
 
     goal: str
     workspace_id: str = ""
@@ -163,7 +159,7 @@ class AutomationRun:
 
 
 def can_trigger_automation(automation: Automation, *, active_runs: int = 0) -> bool:
-    """Return whether a scheduler may create a normal Run for this automation."""
+    """返回调度器是否可为该自动化创建普通 Run。"""
 
     if automation.state != "active":
         return False
@@ -173,7 +169,7 @@ def can_trigger_automation(automation: Automation, *, active_runs: int = 0) -> b
 
 
 def automation_task_seed(automation: Automation) -> dict[str, Any]:
-    """Build the Task/Run request seed without executing anything."""
+    """构建 Task/Run 请求种子，但不执行任何操作。"""
 
     seed = automation.task_template.to_run_request()
     seed["automation_id"] = automation.id
@@ -183,12 +179,10 @@ def automation_task_seed(automation: Automation) -> dict[str, Any]:
 
 
 def automation_is_due(automation: Automation, *, now: datetime | None = None) -> bool:
-    """Return whether an active scheduled automation is due.
+    """返回活动计划自动化是否已到期。
 
-    This is schedule evidence only.  It does not decide whether execution may
-    proceed; concurrency, permissions, confirmations, and actual work remain in
-    the normal Task/Run path.
-    """
+    这只是计划证据，不决定是否允许执行；并发、权限、确认和实际工作仍进入普通
+    Task/Run 路径。"""
 
     if automation.state != "active" or automation.trigger.kind == "manual":
         return False
@@ -203,7 +197,7 @@ def automation_next_run_at(
     *,
     now: datetime | None = None,
 ) -> str:
-    """Return the next UTC ISO timestamp for an automation, or empty string."""
+    """返回自动化下一次运行的 UTC ISO 时间戳；没有时返回空字符串。"""
 
     next_at = next_automation_run_datetime(automation, now=now)
     if next_at is None:
@@ -216,7 +210,7 @@ def next_automation_run_datetime(
     *,
     now: datetime | None = None,
 ) -> datetime | None:
-    """Compute the next scheduled time for supported 0.1 trigger kinds."""
+    """计算受支持触发类型的下一次计划时间。"""
 
     if automation.state not in {"active", "draft"}:
         return None

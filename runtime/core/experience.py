@@ -1,8 +1,7 @@
-"""Experience-layer schemas.
+"""Experience 层 Schema。
 
-Experience records capture reviewed Runbook evidence without implying that a
-reusable capability already exists or that runtime behavior should change.
-"""
+Experience Record 保存经过审核的 Runbook 证据，但不表示可复用能力已经存在，
+也不表示 Runtime 行为应随之改变。"""
 
 from __future__ import annotations
 
@@ -20,7 +19,7 @@ EXPERIENCE_OUTCOMES: frozenset[str] = frozenset(ExperienceOutcome.__args__)  # t
 
 @dataclass(frozen=True)
 class ExperienceSample:
-    """A compact, portable task experience extracted from one Runbook."""
+    """从一个 Runbook 中提取的紧凑可移植任务经验。"""
 
     id: str
     source_run_id: str
@@ -58,7 +57,7 @@ class ExperienceSample:
 
 @dataclass(frozen=True)
 class ExperienceDigest:
-    """A reviewed summary extracted from one or more ExperienceSamples."""
+    """从一个或多个 ExperienceSample 中提取的经审核摘要。"""
 
     id: str
     sample_ids: tuple[str, ...] = field(default_factory=tuple)

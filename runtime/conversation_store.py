@@ -157,7 +157,7 @@ class ConversationStore:
         return conversation
 
     def delete(self, conversation_id: str) -> bool:
-        """Delete a conversation. Returns True if it existed."""
+        """删除对话；如果对话原本存在则返回 True。"""
         if conversation_id in self._conversations:
             del self._conversations[conversation_id]
             self._save()

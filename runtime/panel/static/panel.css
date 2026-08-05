@@ -233,7 +233,7 @@ button {
     margin-top: 10px;
 }
 
-/* ---- Conversation item with delete ---- */
+/* ---- 带删除操作的对话项 ---- */
 .conv-item {
     display: flex;
     align-items: center;
@@ -1405,7 +1405,7 @@ button {
     color: #f48771;
 }
 
-/* Tool output: shell */
+/* 工具输出：Shell */
 .tool-output-shell {
     margin: 4px 0 8px;
     border-radius: 8px;
@@ -1443,7 +1443,7 @@ button {
     background: #2a1515;
 }
 
-/* Tool output: diff */
+/* 工具输出：diff */
 .diff-block {
     margin: 4px 0 8px;
     padding: 10px 12px;
@@ -1475,7 +1475,7 @@ button {
     color: #569cd6;
 }
 
-/* Tool output: git status / log */
+/* 工具输出：Git 状态与日志 */
 .git-status-block,
 .git-log-block {
     margin: 4px 0 8px;
@@ -1821,7 +1821,7 @@ button {
     }
 }
 
-/* Streaming status bar - fixed above composer */
+/* 流式状态栏：固定在输入区上方 */
 .streaming-status-bar {
     flex: 0 0 auto;
     width: min(880px, calc(100% - 56px));
@@ -2021,7 +2021,7 @@ button {
     border-top: 1px solid var(--line);
 }
 
-/* ---- Token battery (inline in composer-meta) ---- */
+/* ---- token 用量指示器（位于输入区元信息内）---- */
 .token-battery {
     display: inline-flex;
     align-items: center;
@@ -2646,7 +2646,7 @@ dialog::backdrop {
     line-height: 1.5;
 }
 
-/* Toast notification */
+/* 消息提示 */
 .toast {
     position: fixed;
     top: 20px;

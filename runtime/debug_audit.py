@@ -1,10 +1,8 @@
-"""Read-only runtime debug audit summaries.
+"""只读的 Runtime 调试审计摘要。
 
-DebugAudit summarizes command/process/service evidence such as shell commands,
-dependency installation attempts, preview services, timeouts, stderr, and
-diagnostics. It is evidence-only: it must not decide task intent, select tools,
-block execution, or mark a run complete.
-"""
+DebugAudit 汇总命令、进程和服务证据，例如 Shell 命令、依赖安装尝试、
+预览服务、超时、stderr 与诊断。它只提供证据，不判断任务意图、
+不选择工具、不阻止执行，也不把 Run 标记为完成。"""
 
 from __future__ import annotations
 
@@ -49,7 +47,7 @@ def build_debug_audit(
     result_status: str = "",
     risks: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    """Return a compact debug audit summary from debug-session records."""
+    """根据调试会话记录返回紧凑的调试审计摘要。"""
 
     records = [_compact_debug_record(item) for item in debug_sessions or [] if isinstance(item, dict)]
     records = [item for item in records if item.get("kind") == "debug_session"]

@@ -14,14 +14,14 @@ New-Item -ItemType Directory -Force -Path $binariesDir | Out-Null
 New-Item -ItemType Directory -Force -Path $iconsDir | Out-Null
 
 if (-not (Test-Path $binaryPath)) {
-    # Tauri's build script validates that externalBin exists during cargo check.
-    # The real sidecar is produced by build_sidecar_windows.ps1 for packaging.
+    # Tauri 构建脚本会在 cargo check 时校验 externalBin 是否存在。
+    # 用于打包的真实 sidecar 由 build_sidecar_windows.ps1 生成。
     [System.IO.File]::WriteAllBytes($binaryPath, [byte[]](0x4D, 0x5A))
 }
 
 if (-not (Test-Path $iconPath)) {
-    # Minimal 1x1 ICO fallback. Real releases should keep a branded icon.ico
-    # checked into desktop-shell/src-tauri/icons/.
+    # 最小 1x1 ICO 回退图标。正式发布应将品牌 icon.ico
+    # 保存在 desktop-shell/src-tauri/icons/ 中。
     [byte[]]$iconBytes = @(
         0x00,0x00,0x01,0x00,0x01,0x00,
         0x01,0x01,0x00,0x00,0x01,0x00,0x20,0x00,0x30,0x00,0x00,0x00,0x16,0x00,0x00,0x00,

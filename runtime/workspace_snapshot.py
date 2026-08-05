@@ -1,9 +1,7 @@
-"""Lightweight workspace facts for model-side task understanding.
+"""供模型侧任务理解使用的轻量工作区事实。
 
-The snapshot is evidence, not routing. It gives the task-contract model a
-small view of the current project so ambiguous follow-ups are less likely to
-inherit an unrelated previous task.
-"""
+快照是证据，不是路由。它向任务契约模型提供当前项目的小型视图，
+降低模糊追问继承无关旧任务的概率。"""
 
 from __future__ import annotations
 
@@ -57,7 +55,7 @@ def build_workspace_snapshot(
     max_scan_entries: int = 300,
     max_notable_paths: int = 40,
 ) -> dict[str, Any]:
-    """Return a small, bounded snapshot of a workspace directory."""
+    """返回工作区目录的小型有界快照。"""
     root = Path(str(workspace_path or "")).expanduser()
     snapshot: dict[str, Any] = {
         "schema_version": WORKSPACE_SNAPSHOT_SCHEMA_VERSION,
@@ -111,7 +109,7 @@ def build_workspace_snapshot(
 
 
 def format_workspace_snapshot_for_prompt(snapshot: dict[str, Any] | None) -> str:
-    """Format a compact model-facing workspace fact block."""
+    """格式化面向模型的紧凑工作区事实块。"""
     if not isinstance(snapshot, dict) or not snapshot:
         return ""
     compact = {
@@ -140,7 +138,7 @@ def format_workspace_snapshot_for_prompt(snapshot: dict[str, Any] | None) -> str
 
 
 def workspace_snapshot_summary(snapshot: dict[str, Any] | None) -> dict[str, Any]:
-    """Return a stable summary suitable for RunEvidence and diagnostics."""
+    """返回适用于 RunEvidence 和诊断的稳定摘要。"""
     if not isinstance(snapshot, dict):
         return {}
     return {

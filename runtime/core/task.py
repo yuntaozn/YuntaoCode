@@ -1,8 +1,7 @@
-"""Product-level task schemas.
+"""产品级 Task Schema。
 
-These records describe the user-goal task model, not one local tool invocation.
-Product Tasks use /tasks; individual tool invocations use /tool-tasks.
-"""
+这些记录描述用户目标级任务模型，而不是单次本地工具调用。
+Product Task 使用 /tasks；单次工具调用使用 /tool-tasks。"""
 
 from __future__ import annotations
 
@@ -54,11 +53,10 @@ TASK_TRANSITIONS: dict[str, frozenset[str]] = {
 
 @dataclass(frozen=True)
 class ProductTask:
-    """A user-goal task record.
+    """用户目标级任务记录。
 
-    This is intentionally separate from ToolTask so future task state, trace,
-    recovery, and replay do not overload one tool invocation record.
-    """
+    它有意与 ToolTask 分离，避免未来任务状态、Trace、恢复和 Replay 过载到
+    单次工具调用记录上。"""
 
     id: str
     goal: str

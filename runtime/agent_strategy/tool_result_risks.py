@@ -13,11 +13,9 @@ def assess_tool_result_risks(
     *,
     error: Any = "",
 ) -> list[dict[str, Any]]:
-    """Return advisory risks discovered in a completed tool result.
+    """返回已完成工具结果中发现的建议性风险。
 
-    Risks are model-facing evidence and audit facts. They do not choose the
-    model's next action and do not block later tool calls.
-    """
+    风险是面向模型的证据和审计事实，不选择模型下一动作，也不阻止后续工具调用。"""
     normalized_status = str(status or "").strip()
     if normalized_status == "failure":
         if str(tool_id or "").strip() == "shell.run_command":
@@ -125,7 +123,7 @@ def shell_success_has_stderr_warning(output: Any) -> bool:
 
 
 def attach_tool_result_risks(payload: dict[str, Any]) -> dict[str, Any]:
-    """Return a payload copy with model-facing runtime risk evidence."""
+    """返回附带模型侧运行时风险证据的载荷副本。"""
     risks = assess_tool_result_risks(
         str(payload.get("tool") or ""),
         str(payload.get("status") or ""),
@@ -135,8 +133,8 @@ def attach_tool_result_risks(payload: dict[str, Any]) -> dict[str, Any]:
     risks = _runtime_advisory_risks(payload.get("runtime_advisories")) + risks
     if not risks:
         return dict(payload)
-    # Keep risks before potentially large output so compact transport cannot
-    # truncate the advisory before the model sees it.
+    # 将风险放在可能很大的输出之前，避免紧凑传输
+    # 在模型看到建议前将其截断。
     return {"runtime_risks": risks, **payload}
 
 

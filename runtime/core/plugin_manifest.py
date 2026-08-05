@@ -1,13 +1,10 @@
-"""Portable plugin package contracts.
+"""可移植插件包契约。
 
-A plugin is a distributable container, not an execution engine. It may package
-model-facing skills, Capability Packs, provider descriptors, hooks, or static
-assets. Installation and review state are runtime-owned records and therefore
-stay outside the package manifest.
+插件是可分发容器，不是执行引擎。它可以打包面向模型的 Skill、Capability Pack、
+Provider 描述符、Hook 或静态资源。安装与审核状态由 Runtime 管理，
+因而保存在包清单之外。
 
-This module is intentionally pure. It does not discover, install, trust, load,
-or execute plugin content.
-"""
+本模块有意保持纯净，不发现、安装、信任、加载或执行插件内容。"""
 
 from __future__ import annotations
 
@@ -48,7 +45,7 @@ PLUGIN_REVIEW_STATES: frozenset[str] = frozenset(PluginReviewState.__args__)  # 
 
 @dataclass(frozen=True)
 class PluginComponent:
-    """One package member referenced by a portable relative path."""
+    """由可移植相对路径引用的一个包成员。"""
 
     kind: PluginComponentKind
     path: str
@@ -69,7 +66,7 @@ class PluginComponent:
 
 @dataclass(frozen=True)
 class PluginCompatibility:
-    """Declared package compatibility; declaration is not a health check."""
+    """声明的包兼容性；该声明不等同于健康检查。"""
 
     min_runtime_version: str = ""
     max_runtime_version: str = ""
@@ -87,12 +84,10 @@ class PluginCompatibility:
 
 @dataclass(frozen=True)
 class PluginManifest:
-    """Package-owned description of distributable plugin contents.
+    """由包自身提供的可分发插件内容说明。
 
-    Requested permissions are shown before enablement but never grant access by
-    themselves. Every executable provider still enters Capability Runtime and
-    its normal permission, confirmation, trace, and verification path.
-    """
+    请求权限会在启用前展示，但本身绝不授予访问权。每个可执行 Provider 仍进入
+    Capability Runtime，并遵循正常权限、确认、Trace 和验证路径。"""
 
     id: str
     name: str
@@ -122,12 +117,10 @@ class PluginManifest:
 
 @dataclass(frozen=True)
 class PluginInstallation:
-    """Runtime-owned local state for one installed plugin package.
+    """Runtime 管理的一个已安装插件包本地状态。
 
-    Keeping this outside ``PluginManifest`` prevents a package from declaring
-    itself reviewed, trusted, or enabled. ``reviewed`` also does not bypass
-    Capability Runtime checks for any component.
-    """
+    将它放在 ``PluginManifest`` 外，可防止插件包自行声明已审核、可信或已启用。
+    ``reviewed`` 也不会绕过任何组件的 Capability Runtime 检查。"""
 
     plugin_id: str
     plugin_version: str
@@ -164,7 +157,7 @@ class PluginInstallation:
 
 
 def plugin_manifest_issues(manifest: PluginManifest) -> tuple[str, ...]:
-    """Return portable package-shape issues without loading package content."""
+    """不加载包内容，仅返回可移植的包结构问题。"""
 
     issues: list[str] = []
     if not manifest.id.strip():

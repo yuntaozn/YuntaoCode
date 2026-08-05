@@ -1,9 +1,7 @@
-"""Agent profiles used to describe model-decided task contracts.
+"""描述模型所决定任务契约的 Agent Profile。
 
-Profiles are internal execution personalities.  The UI can stay unified while
-the task-contract model selects a small, explicit profile description. Profiles
-do not impose stage sequences, tool routes, or round budgets on execution.
-"""
+Profile 是内部执行人格。UI 可保持统一，同时由任务契约模型选择一段小型明确的
+Profile 描述。Profile 不向执行施加固定阶段、工具路线或轮次预算。"""
 
 from __future__ import annotations
 
@@ -74,12 +72,10 @@ def profile_for_task_intent(
     state_change_intent: bool = False,
     first_action: str | None = None,
 ) -> AgentProfile:
-    """Resolve the internal profile from the model-declared task contract.
+    """根据模型声明的任务契约解析内部 Profile。
 
-    ``mode`` is accepted for legacy call sites, but it must not route an
-    otherwise neutral task. The unified terminal keeps task semantics with the
-    model contract instead of resurrecting old user-facing assistant modes.
-    """
+    为兼容旧调用点仍接受 ``mode``，但它不得为原本中性的任务进行路由。统一终端
+    让任务语义留在模型契约中，不恢复旧版用户可见助手模式。"""
     _ = mode
     if task_intent == "document_export":
         return DOCUMENT_PROFILE

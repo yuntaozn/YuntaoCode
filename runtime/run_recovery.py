@@ -1,4 +1,4 @@
-"""Recovery artifact builders for completed or paused Runs."""
+"""恢复或回放 Run 所需的上下文事实。"""
 
 from __future__ import annotations
 
@@ -106,7 +106,7 @@ def format_recovery_context(
     checkpoint: dict[str, Any] | None,
     snapshot_record: dict[str, Any] | None,
 ) -> str:
-    """Format bounded runtime facts for a resumed/replayed Run."""
+    """为恢复或回放的 Run 格式化有界运行时事实。"""
     if not checkpoint:
         return ""
     snapshot = snapshot_record.get("snapshot") if isinstance(snapshot_record, dict) else {}

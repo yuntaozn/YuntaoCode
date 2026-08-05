@@ -5,12 +5,10 @@ from typing import Any
 
 
 def normalize_tool_input(tool_id: str, input_data: dict[str, Any]) -> dict[str, Any]:
-    """Return a canonical tool input without changing the user's intent.
+    """在不改变用户意图的前提下返回规范工具输入。
 
-    Model providers do not always follow a tool schema perfectly, even when the
-    semantic payload is clear.  Normalize common equivalent shapes before
-    confirmation and execution so schema guards do not reject recoverable calls.
-    """
+    即使语义载荷清晰，模型 Provider 也不总能完全遵循工具 Schema。确认和执行前
+    先规范化常见等价结构，避免 Schema Guard 拒绝可恢复的调用。"""
     if not isinstance(input_data, dict):
         return {}
     normalized = deepcopy(input_data)

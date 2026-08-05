@@ -35,7 +35,7 @@ except ImportError:
     HAS_PDFPLUMBER = False
 
 try:
-    import fitz  # PyMuPDF
+    import fitz  # PyMuPDF 实现
     HAS_PYMUPDF = True
 except ImportError:
     HAS_PYMUPDF = False
@@ -58,7 +58,7 @@ class ParseResult:
     text: str = ""
     total_pages: int = 0
     pages_parsed: int = 0
-    strategy: str = "pypdf"  # pypdf | pdfplumber | ocr
+    strategy: str = "pypdf"  # 可选实现：pypdf | pdfplumber | OCR
     garbled_ratio: float = 0.0
     cid_garbled: bool = False
     ocr_used: bool = False
@@ -302,7 +302,7 @@ class PDFParser:
     def _sync_render_pages(file_path: str) -> tuple[list[str], list[Any]]:
         """pdfplumber 渲染：提取文本 + 渲染图像（持锁调用）"""
         page_texts: list[str] = []
-        images: list[Any] = []  # numpy arrays or None
+        images: list[Any] = []  # numpy 数组或 None
         failed_indices: list[int] = []
 
         if HAS_PDFPLUMBER:

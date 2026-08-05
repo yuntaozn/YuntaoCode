@@ -1,4 +1,4 @@
-"""Tests for memory_extractor: extraction prompt, tag blacklist, and dedup."""
+"""记忆提取与去重行为测试。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from runtime.memory_extractor import (
 from runtime.memory_store import MemoryItem, MemoryStore
 
 
-# --- Prompt contract ---
+# --- 提示契约 ---
 
 class TestExtractionPrompt:
     def test_prompt_excludes_project_knowledge(self):
@@ -43,7 +43,7 @@ class TestExtractionPrompt:
         assert "特定项目" in EXTRACTION_SYSTEM_PROMPT
 
 
-# --- Tag blacklist ---
+# --- 标签黑名单 ---
 
 class TestTagBlacklist:
     @pytest.mark.parametrize("tags", [
@@ -162,7 +162,7 @@ class TestGlobalMemoryDedupScope:
         assert stored[0].workspace_id == ""
 
 
-# --- Normalize text ---
+# --- 文本规范化 ---
 
 class TestNormalizeText:
     def test_lowercase(self):
@@ -186,7 +186,7 @@ class TestNormalizeText:
         assert _normalize_text("") == ""
 
 
-# --- Similarity / dedup ---
+# --- 相似度与去重 ---
 
 class TestIsSimilarToExisting:
     def test_exact_match(self):
@@ -202,7 +202,7 @@ class TestIsSimilarToExisting:
         assert _is_similar_to_existing("用户偏好基于现有文件进行增量修改不要重写完整文件", existing) is True
 
     def test_bigram_overlap(self):
-        """Texts with high character bigram overlap should be detected as similar."""
+        """字符二元组重叠度高的文本应被识别为相似。"""
         existing = {_normalize_text("用户偏好增量修改代码")}
         assert _is_similar_to_existing("用户偏好增量修改代码不重写", existing) is True
 
@@ -214,13 +214,13 @@ class TestIsSimilarToExisting:
         assert _is_similar_to_existing("任何新记忆", set()) is False
 
     def test_short_text_not_substring_matched(self):
-        """Short texts (< 5 chars after normalize) skip substring check."""
+        """规范化后少于 5 个字符的短文本应跳过子串检查。"""
         existing = {_normalize_text("短文本")}
         # "短" is only 1 char, should not trigger substring match
         assert _is_similar_to_existing("完全不同的长文本内容描述", existing) is False
 
 
-# --- Parse extraction result ---
+# --- 解析提取结果 ---
 
 class TestParseExtractionResult:
     def test_valid_json(self):

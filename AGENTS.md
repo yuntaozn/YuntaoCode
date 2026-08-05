@@ -270,6 +270,11 @@ Documentation files should be UTF-8 without BOM. On Windows PowerShell, read
 Chinese documentation with `Get-Content <path> -Encoding UTF8`; do not assume a
 document is corrupted just because default terminal decoding shows mojibake.
 
+Source-code comments and docstrings should use Chinese by default so local
+contributors can read them directly. Keep protocol identifiers, schema fields,
+class/function names, third-party API terms, and user-visible localization keys
+in their canonical form instead of translating them mechanically.
+
 ## When In Doubt
 
 Prefer making the runtime easier to reason about. A contribution that extracts a

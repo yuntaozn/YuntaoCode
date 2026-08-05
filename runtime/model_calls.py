@@ -1,9 +1,7 @@
-"""Observable lifecycle for auxiliary, non-streaming model calls.
+"""辅助非流式模型调用的可观察生命周期。
 
-This module owns timing, heartbeat, cancellation, and audit facts for one
-non-streaming request. It does not infer task intent, select tools, or decide
-whether a Run is complete.
-"""
+本模块管理一次非流式请求的计时、心跳、取消和审计事实。
+它不推断任务意图、不选择工具，也不判断 Run 是否完成。"""
 
 from __future__ import annotations
 
@@ -27,7 +25,7 @@ EventFlusher = Callable[[], Any]
 
 @dataclass(frozen=True)
 class ModelCallPolicy:
-    """Operational policy shared by optional model-assisted runtime phases."""
+    """可选模型辅助运行阶段共享的操作策略。"""
 
     timeout_seconds: float = 90.0
     heartbeat_interval_seconds: float = 15.0
@@ -39,7 +37,7 @@ AUXILIARY_MODEL_CALL_POLICY = ModelCallPolicy()
 
 
 class ModelCallTimeoutError(TimeoutError):
-    """Raised when an auxiliary model call exceeds its lifecycle budget."""
+    """辅助模型调用超过生命周期预算时抛出。"""
 
 
 async def run_model_call(
@@ -57,7 +55,7 @@ async def run_model_call(
     emit: EventEmitter | None = None,
     flush: EventFlusher | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Run one non-streaming model request with observable lifecycle facts."""
+    """执行一次非流式模型请求，并提供可观察的生命周期事实。"""
 
     call_id = str(uuid4())
     normalized_purpose = str(purpose or "auxiliary").strip() or "auxiliary"
@@ -216,7 +214,7 @@ async def _publish(
     emit: EventEmitter | None,
     flush: EventFlusher | None,
 ) -> None:
-    """Keep observation failures from changing the model-call outcome."""
+    """避免观察过程失败改变模型调用结果。"""
 
     try:
         if emit is not None:

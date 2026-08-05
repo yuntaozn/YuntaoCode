@@ -29,7 +29,7 @@ _WIN_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") e
 
 
 class CliProviderManager:
-    """Registers declarative CLI providers as normal ToolRegistry tools."""
+    """将声明式 CLI Provider 注册为普通 ToolRegistry 工具。"""
 
     def __init__(self, path: Path, *, registry: ToolRegistry) -> None:
         self.path = path

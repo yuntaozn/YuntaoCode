@@ -1,10 +1,8 @@
-"""Declarative CLI provider schemas.
+"""声明式 CLI Provider Schema。
 
-CLI providers are capability providers backed by local subprocess execution.
-They are not free-form shell access: every exposed tool declares its command,
-arguments, inputs, outputs, permissions, timeout, effects, and verification
-evidence before entering ToolRegistry.
-"""
+CLI Provider 是由本地子进程执行支持的能力 Provider，不等同于自由形式 Shell 访问。
+每个暴露工具在进入 ToolRegistry 前，都必须声明命令、参数、输入、输出、权限、
+超时、影响范围和验证证据。"""
 
 from __future__ import annotations
 

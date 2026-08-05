@@ -1,4 +1,4 @@
-"""Model-context bridge for runtime visual evidence."""
+"""Runtime 视觉证据到模型上下文的桥接。"""
 
 from __future__ import annotations
 
@@ -28,12 +28,10 @@ class VisualContextBuild:
 
 
 def model_supports_visual_context(model_config: dict[str, Any] | None) -> bool:
-    """Return whether a model config allows image context.
+    """返回模型配置是否允许图片上下文。
 
-    Modern models increasingly support image input, so YuntaoCode treats vision
-    context as enabled by default for model configs and lets users explicitly
-    disable it when a provider/model rejects image parts.
-    """
+    越来越多现代模型支持图片输入，因此 YuntaoCode 默认启用模型视觉上下文；
+    当 Provider 或模型拒绝图片片段时，用户可明确关闭。"""
 
     if not isinstance(model_config, dict):
         return False
@@ -55,13 +53,11 @@ def build_visual_context_messages(
     max_items: int = MAX_VISUAL_CONTEXT_IMAGES,
     max_bytes: int = MAX_VISUAL_CONTEXT_IMAGE_BYTES,
 ) -> VisualContextBuild:
-    """Build multimodal context messages from recent visual evidence.
+    """根据近期视觉证据构建多模态上下文消息。
 
-    The bridge is evidence-only.  It does not classify the task, decide whether
-    the run is complete, or force the model to use an image.  It only attaches
-    already-produced visual artifacts when the model config explicitly supports
-    image input and the artifact path is inside an allowed runtime boundary.
-    """
+    此桥接层只提供证据，不分类任务、不判断 Run 是否完成，也不强制模型使用图片。
+    仅当模型配置明确支持图片输入且产物路径位于允许的 Runtime 边界内时，
+    才附加已经生成的视觉产物。"""
 
     if not model_supports_visual_context(model_config):
         return VisualContextBuild(messages=[], records=[])

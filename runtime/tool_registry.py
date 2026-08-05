@@ -92,7 +92,7 @@ class ToolSpec:
         *,
         dependencies: dict[str, bool] | None = None,
     ) -> dict[str, Any]:
-        """Return runtime-readiness facts without executing the tool."""
+        """不执行工具，仅返回运行时就绪事实。"""
 
         dependency_state = dependencies if dependencies is not None else self.check_dependencies()
         missing = sorted(name for name, ready in dependency_state.items() if not ready)

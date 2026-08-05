@@ -1,4 +1,4 @@
-"""Pure helpers for deciding when fresh Run evidence needs model review."""
+"""模型完成审查所需的 Run 事实入口。"""
 
 from __future__ import annotations
 
@@ -13,12 +13,10 @@ EVIDENCE_ALREADY_REVIEWED = "evidence_already_reviewed"
 
 @dataclass(frozen=True)
 class CompletionReviewGate:
-    """Observable review state for the current Run facts.
+    """当前 Run 事实的可观察审查状态。
 
-    This helper does not inspect verification sufficiency, choose tools, stop a
-    model strategy, or decide task success. It only reports whether fresh task
-    evidence is available for the model's own completion review.
-    """
+    此辅助对象不检查验证是否充分，不选择工具，不停止模型策略，也不决定任务成功；
+    只报告是否有新任务证据可供模型自行完成审查。"""
 
     action: str
     reason: str = ""
@@ -31,15 +29,12 @@ def build_completion_review_gate(
     has_task_evidence: bool,
     has_unreviewed_evidence: bool,
 ) -> CompletionReviewGate:
-    """Return whether current task evidence should be reviewed by the model.
+    """返回当前任务证据是否应交由模型审查。
 
-    Write and external-state tasks still use target-deliverable evidence as the
-    entry point. Read-only analysis and answer-evidence tasks have no file or
-    external object to observe, so successful evidence-gathering tools use the
-    same review boundary. Verification gaps are intentionally not an input:
-    they are included in the evidence pack and the model decides whether to
-    verify, repair, ask the user, or finish with an explicit limitation.
-    """
+    写入与外部状态任务仍以目标交付物证据作为入口。只读分析和答案证据任务没有
+    可观察的文件或外部对象，因此成功的证据收集工具使用同一审查边界。验证缺口
+    有意不作为入口条件：它们会进入证据包，由模型决定验证、修复、询问用户，
+    或带明确限制结束。"""
 
     if requires_target_deliverable and not has_target_deliverable:
         return CompletionReviewGate(

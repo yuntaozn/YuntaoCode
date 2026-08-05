@@ -1,4 +1,4 @@
-"""Capability contract schemas."""
+"""Capability Runtime 的核心能力结构。"""
 
 from __future__ import annotations
 
@@ -47,13 +47,10 @@ PROVIDER_KIND_ALIASES: dict[str, str] = {
 
 
 def normalize_provider_kind(value: str | None, *, fallback: str = "builtin") -> ProviderKind:
-    """Normalize provider implementation kind without exposing tool internals.
+    """在不暴露工具内部实现的前提下规范化 Provider 实现类型。
 
-    ``source_type`` remains a backwards-compatible origin label.  Provider kind
-    is the runtime-level implementation family used by Capability Runtime:
-    builtin, cli, mcp, capability_pack, external_plugin, ai_draft, mixed, or
-    unknown.
-    """
+    ``source_type`` 仍是向后兼容的来源标签。Provider Kind 是 Capability Runtime 使用的
+    实现族：builtin、cli、mcp、capability_pack、external_plugin、ai_draft、mixed 或 unknown。"""
     fallback_kind = PROVIDER_KIND_ALIASES.get(str(fallback or "").strip().lower(), "builtin")
     text = str(value or "").strip().lower()
     if not text:

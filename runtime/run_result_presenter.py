@@ -1,4 +1,4 @@
-"""User-facing presentation for runtime result facts."""
+"""Runtime 结果的用户侧展示辅助函数。"""
 
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ def answer_only_final_answer_error(
     tool_events: list[dict[str, Any]],
     task_contract: dict[str, Any] | None = None,
 ) -> str:
-    """Return a display-level answer-only finalization gap, if observed."""
+    """如有观察到，仅返回展示层的答案收尾缺口。"""
 
     if tool_events or not isinstance(task_contract, dict):
         return ""
@@ -101,7 +101,7 @@ def needs_synthesized_final_answer(
     tool_events: list[dict[str, Any]],
     task_contract: dict[str, Any] | None = None,
 ) -> bool:
-    """Return whether the final user-facing answer needs runtime synthesis."""
+    """返回最终面向用户的答案是否需要运行时合成。"""
 
     text = (content or "").strip()
     if not tool_events:
@@ -211,7 +211,7 @@ def build_max_rounds_after_write_message(
     *,
     is_write_tool: ToolIdPredicate,
 ) -> str:
-    """Build a neutral max-rounds notice when writes already happened."""
+    """已发生写入时构建中性的最大轮次提示。"""
 
     paths: list[str] = []
     for event in tool_events:
@@ -249,11 +249,10 @@ def build_execution_notice(
     is_invalid_verification_method_event: ToolEventPredicate,
     assistant_claims_code_changed: AssistantClaimPredicate,
 ) -> dict[str, Any] | None:
-    """Build a user-facing execution notice from observed runtime facts.
+    """根据已观察运行时事实构建面向用户的执行提示。
 
-    The notice is presentation evidence. It does not decide task intent,
-    continue/stop strategy, or whether the model may try another route.
-    """
+    该提示属于展示证据，不判断任务意图、继续或停止策略，也不决定模型能否
+    尝试其他路线。"""
 
     if mode not in {"coding", "terminal"}:
         return None
@@ -469,7 +468,7 @@ def append_changed_files_footer(
     *,
     limit: int = 20,
 ) -> str:
-    """Append a compact file list to a final answer when runtime facts have one."""
+    """当运行时事实包含文件列表时，将其紧凑附加到最终答案。"""
     text = str(content or "").rstrip()
     paths = _changed_file_footer_paths(run_result, change_summary)
     if not text or not paths or _has_file_footer(text):

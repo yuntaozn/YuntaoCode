@@ -79,12 +79,10 @@ class CapabilityContract:
 
 @dataclass(frozen=True)
 class TaskRouteProposal:
-    """Model-owned task understanding; runtime-owned capability validation.
+    """模型负责理解任务，Runtime 负责校验能力。
 
-    This object is intentionally separate from ``task_intent``.  Intent is a
-    legacy execution hint; a route proposal describes what capability the model
-    believes should be used and what artifact or verification the task needs.
-    """
+    此对象有意与 ``task_intent`` 分离。Intent 是旧版执行提示；路线提案描述模型认为
+    应使用的能力，以及任务所需产物或验证。"""
 
     goal: str
     capability_id: str
@@ -607,12 +605,10 @@ def build_task_route_evidence(
     capability_snapshot: dict[str, Any] | None,
     capability_preflight: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build an evidence-only route record from the model task contract.
+    """根据模型任务契约构建仅含证据的路线记录。
 
-    The model still owns semantic route selection.  The runtime only converts
-    the declared capability facts into a stable evidence shape and validates
-    them against the current capability snapshot.
-    """
+    语义路线仍由模型选择。Runtime 只把已声明的能力事实转换为稳定证据结构，
+    并对照当前能力快照进行校验。"""
 
     contract = task_contract if isinstance(task_contract, dict) else {}
     snapshot = capability_snapshot if isinstance(capability_snapshot, dict) else {}

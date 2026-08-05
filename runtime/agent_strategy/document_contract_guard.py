@@ -38,13 +38,10 @@ def document_contract_tool_guard_message(
     arguments: dict[str, Any],
     task_contract: dict[str, Any] | None,
 ) -> str:
-    """Return model-facing advisory evidence for document coverage risks.
+    """返回面向模型的文档覆盖风险建议证据。
 
-    This guard is intentionally narrow. It does not choose a document strategy;
-    it only explains that temporary scripts or shell workarounds may weaken
-    coverage, resumability, progress, and verification evidence for
-    full-document export contracts.
-    """
+    此 Guard 有意保持狭窄，不选择文档策略；只说明临时脚本或 Shell 绕行可能削弱
+    整文档导出契约的覆盖率、可恢复性、进度和验证证据。"""
     if not _requires_document_coverage(task_contract):
         return ""
 

@@ -1,4 +1,4 @@
-"""Local evaluation foundations for selected YuntaoCode task fixtures."""
+"""本地评测 Fixture 与报告工具。"""
 
 from .fixtures import (
     EVALUATION_FIXTURE_EXPORT_SCHEMA_VERSION,

@@ -1,4 +1,4 @@
-"""Shell command execution tools for YuntaoCode local task execution."""
+"""YuntaoCode 内置的受控 Shell 工具。"""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ PROGRESS_HEARTBEAT_SECONDS = 10.0
 TASK_TEMP_CWD_ALIASES = {"task_temp", "__task_temp__", "$TASK_TEMP", "{task_temp}"}
 _BACKGROUND_WAIT_TASKS: set[asyncio.Task[int]] = set()
 
-# Patterns that are clearly destructive on Windows or Unix
+# Windows 或 Unix 上明显具有破坏性的命令模式
 DANGEROUS_PATTERNS = [
     re.compile(r"\brm\s+-rf\s+/", re.IGNORECASE),
     re.compile(r"\bformat\s+[a-z]:", re.IGNORECASE),
@@ -94,7 +94,7 @@ def _compose_command(command: str, args: Any) -> str:
     return " ".join([command, *(shlex.quote(arg) for arg in argv)])
 
 
-# On Windows, suppress the console window for child processes
+# Windows 上隐藏子进程控制台窗口
 _WIN_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
 
 
@@ -107,7 +107,7 @@ def _shell_dialect(*, direct_exec: bool) -> str:
 
 
 def _track_background_process(process: asyncio.subprocess.Process) -> None:
-    """Reap a detached child without turning it into a foreground ToolTask."""
+    """回收已分离子进程，但不将其转为前台 ToolTask。"""
 
     task = asyncio.create_task(process.wait())
     _BACKGROUND_WAIT_TASKS.add(task)
@@ -256,7 +256,7 @@ class _LiveCommandObserver:
         try:
             self.context.log(level, message, data)
         except Exception:
-            # Progress reporting must never terminate the subprocess itself.
+            # 进度报告绝不能终止子进程本身。
             return
 
 
@@ -442,7 +442,7 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
                 **process_kwargs,
             )
         elif sys.platform.startswith("win"):
-            # PowerShell v5 doesn't support &&, replace with ;
+            # PowerShell v5 不支持 &&，替换为分号。
             safe_command = display_command.replace("&&", ";")
             ps_command = (
                 "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "

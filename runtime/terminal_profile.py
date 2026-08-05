@@ -1,4 +1,4 @@
-"""Unified terminal prompt configuration."""
+"""统一终端配置与展示文本。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ TERMINAL_CONFIG: dict[str, object] = {
 
 
 def get_terminal_config(lang: str = "") -> dict[str, object]:
-    """Return the unified terminal configuration with i18n-resolved strings."""
+    """返回包含 i18n 已解析文本的统一终端配置。"""
     config = TERMINAL_CONFIG
     resolved = dict(config)
     resolved["system_prompt"] = i18n.t(str(config["system_prompt_key"]), lang)

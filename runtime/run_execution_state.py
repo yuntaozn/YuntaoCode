@@ -1,8 +1,7 @@
-"""Mutable lifecycle state for one conversation Run.
+"""单次对话 Run 的可变生命周期状态。
 
-This module records execution facts shared across model rounds. It does not
-classify the task, choose tools, evaluate capability fit, or decide which
-strategy the model should use next.
+本模块记录模型轮次之间共享的执行事实，不负责分类任务、选择工具、判断能力
+适配性，也不决定模型下一步应采用什么策略。
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from typing import Any
 
 @dataclass
 class CompletionReviewState:
-    """Model self-review state after task evidence has been observed."""
+    """模型观察到任务证据后的完成自审状态。"""
 
     event_count: int = -1
     review_count: int = 0
@@ -45,7 +44,7 @@ class CompletionReviewState:
 
 @dataclass
 class TransientModelContext:
-    """One-response runtime notices that must not become task history."""
+    """仅供下一次响应使用、不得进入任务历史的 Runtime 提示。"""
 
     pending_messages: list[dict[str, Any]] = field(default_factory=list)
 
@@ -70,7 +69,7 @@ class TransientModelContext:
 
 @dataclass
 class RunExecutionState:
-    """Explicit mutable state for the model/tool lifecycle of one Run."""
+    """单个 Run 在模型与工具生命周期中的显式可变状态。"""
 
     round_limit: int
     hard_round_limit: int
@@ -131,7 +130,7 @@ class RunExecutionState:
 
     @property
     def runtime_intervention_count(self) -> int:
-        """Backward-compatible alias for older diagnostic readers."""
+        """供旧版诊断读取器使用的兼容别名。"""
 
         return self.guidance_count
 

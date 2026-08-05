@@ -1,10 +1,8 @@
-"""Run-level artifact records.
+"""Run 级产物记录。
 
-This module normalizes observable outputs from tool events, RunResult, visual
-evidence, debug sessions, and verification evidence into one passive evidence
-shape.  It does not decide task intent, choose tools, block execution, or judge
-whether the user goal is complete.
-"""
+本模块把工具事件、RunResult、视觉证据、调试会话和验证证据中的可观察输出，
+规范为统一的被动证据结构。它不判断任务意图、不选择工具、不阻止执行，
+也不判断用户目标是否完成。"""
 
 from __future__ import annotations
 
@@ -89,7 +87,7 @@ def build_run_artifacts(
     debug_sessions: list[dict[str, Any]] | None = None,
     verification_evidence: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Build passive run artifact records from observed runtime facts."""
+    """根据已观察到的运行时事实构建被动 Run 产物记录。"""
 
     records: list[dict[str, Any]] = []
     for index, event in enumerate(tool_events or []):
@@ -129,7 +127,7 @@ def build_run_artifacts(
 
 
 def summarize_run_artifacts(records: list[dict[str, Any]] | None) -> dict[str, Any]:
-    """Return compact counts and path buckets for UI, diagnostics, and evidence."""
+    """返回供 UI、诊断和证据使用的紧凑计数与路径分组。"""
 
     artifacts = [item for item in (records or []) if isinstance(item, dict)]
     by_role: dict[str, int] = {}
@@ -221,7 +219,7 @@ def summarize_run_artifacts(records: list[dict[str, Any]] | None) -> dict[str, A
 
 
 def _artifact_path_index(artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return compact path-level artifact facts without duplicating content."""
+    """返回不重复内容的紧凑路径级产物事实。"""
 
     by_path: dict[str, dict[str, Any]] = {}
     for item in artifacts:

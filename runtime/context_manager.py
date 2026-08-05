@@ -1,8 +1,7 @@
-"""Context window management with tiktoken-based token counting and mixed compression.
+"""使用 tiktoken 计算 token 并采用混合压缩的上下文窗口管理。
 
-The mixed strategy keeps recent messages intact and summarises older messages
-into a compact digest when the total context exceeds the model's limit.
-"""
+当上下文总量超过模型上限时，混合策略会完整保留近期消息，
+并将较早消息汇总为紧凑摘要。"""
 
 from __future__ import annotations
 
@@ -26,38 +25,38 @@ from .model_providers.client import stream_chat_completion
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Model context-window limits (in tokens)
+# 模型上下文窗口上限（以 token 计）
 # ---------------------------------------------------------------------------
 
 MODEL_CONTEXT_LIMITS: dict[str, int] = {
-    # Volcengine / Doubao
+    # 火山引擎 / 豆包（Volcengine / Doubao）
     "doubao-seed-2-0-pro-260215": 256_000,
     "doubao-seed-2-0-code-preview-260215": 256_000,
     "doubao-seed-1-6-251015": 128_000,
     "doubao-seed-1-8-251228": 128_000,
-    # Qwen / DashScope
+    # 通义千问 / 百炼（Qwen / DashScope）
     "qwen3.6-flash": 983_000,
     "qwen3.6-max-preview": 1_000_000,
     "qwen3.7-max": 1_000_000,
     "qwen3.7-max-preview": 1_000_000,
-    
-    # DeepSeek via DashScope
+
+    # 通过 DashScope 调用 DeepSeek
     "deepseek-v4-flash": 1_000_000,
 }
 
 DEFAULT_CONTEXT_LIMIT = 128_000
 
-# Reserve tokens for the model's response so we don't fill the window fully.
+# 为模型响应预留 token，避免完全占满上下文窗口。
 RESPONSE_RESERVE = 8_000
 
-# Number of most-recent messages that are *never* compressed.
+# 始终不参与压缩的近期消息数量。
 RECENT_MESSAGES_KEEP = 6
 
-# Maximum tokens allowed for the generated summary itself.
+# 生成摘要本身允许使用的最大 token 数。
 SUMMARY_MAX_TOKENS = 1_200
 
 # ---------------------------------------------------------------------------
-# Encoding – lazily initialised singleton
+# 编码器：延迟初始化的单例
 # ---------------------------------------------------------------------------
 
 _encoding: tiktoken.Encoding | None = None
@@ -92,12 +91,10 @@ def _safe_error_text(exc: Exception) -> str:
 
 
 async def warm_context_tokenizer() -> None:
-    """Warm the tokenizer off the request path.
+    """在请求路径之外预热分词器。
 
-    tiktoken loads its encoding lazily. Doing this from the first conversation
-    detail request makes opening the first chat after startup feel slow, even
-    though token usage is only a UI hint at that moment.
-    """
+    tiktoken 会延迟加载编码。如果在首次获取对话详情时才加载，
+    启动后第一次打开对话会显得很慢，尽管此时 token 用量只是 UI 提示。"""
     try:
         await asyncio.to_thread(_get_encoding)
     except Exception as exc:
@@ -105,12 +102,12 @@ async def warm_context_tokenizer() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Token counting helpers
+# token 计数辅助函数
 # ---------------------------------------------------------------------------
 
 
 def count_tokens(text: str) -> int:
-    """Return the number of tokens in *text* using cl100k_base."""
+    """使用 cl100k_base 返回 *text* 中的 token 数量。"""
     if not text:
         return 0
     try:
@@ -121,12 +118,11 @@ def count_tokens(text: str) -> int:
 
 
 def count_message_tokens(message: dict[str, Any]) -> int:
-    """Estimate tokens for a single chat-completion message.
+    """估算一条 Chat Completion 消息的 token 数量。
 
-    Every message has a small overhead (~4 tokens for role / separators).
-    Content may be a plain string or a multimodal parts list.
-    """
-    overhead = 4  # role, separators
+    每条消息都有少量固定开销（角色与分隔符约 4 个 token）。
+    内容可以是普通字符串，也可以是多模态内容片段列表。"""
+    overhead = 4  # 角色与分隔符开销
     content = message.get("content", "")
     if isinstance(content, str):
         return overhead + count_tokens(content)
@@ -137,18 +133,18 @@ def count_message_tokens(message: dict[str, Any]) -> int:
                 if part.get("type") == "text":
                     total += count_tokens(part.get("text", ""))
                 elif part.get("type") == "image_url":
-                    total += 85  # image token estimate (low-detail)
+                    total += 85  # 图片 token 估算（低细节）
         return total
     return overhead
 
 
 def count_messages_tokens(messages: list[dict[str, Any]]) -> int:
-    """Return the total token count for a list of messages."""
-    return sum(count_message_tokens(m) for m in messages) + 3  # reply priming
+    """返回消息列表的 token 总数。"""
+    return sum(count_message_tokens(m) for m in messages) + 3  # 回复起始开销
 
 
 def estimate_messages_tokens_fast(messages: list[dict[str, Any]]) -> int:
-    """Cheap token estimate for UI display while the tokenizer is cold."""
+    """在分词器尚未预热时，为 UI 显示提供低成本 token 估算。"""
     return sum(_estimate_message_tokens_fast(message) for message in messages) + 3
 
 
@@ -187,12 +183,12 @@ def _estimate_text_tokens_fast(text: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Context limit lookup
+# 上下文上限查询
 # ---------------------------------------------------------------------------
 
 
 def get_context_limit(model: str, settings: Any | None = None) -> int:
-    """Return the context-window size for *model* (in tokens)."""
+    """返回 *model* 的上下文窗口大小（以 token 计）。"""
     if settings is not None and hasattr(settings, "get_model_config"):
         try:
             model_config = settings.get_model_config(model)
@@ -205,12 +201,12 @@ def get_context_limit(model: str, settings: Any | None = None) -> int:
 
 
 def get_usable_limit(model: str, settings: Any | None = None) -> int:
-    """Context limit minus the response reserve."""
+    """返回扣除响应预留后的上下文可用上限。"""
     return max(get_context_limit(model, settings) - RESPONSE_RESERVE, 4_096)
 
 
 # ---------------------------------------------------------------------------
-# Compression
+# 上下文压缩
 # ---------------------------------------------------------------------------
 
 _SUMMARY_SYSTEM_PROMPT = (
@@ -240,23 +236,21 @@ async def compress_context(
     conversation: Any = None,
     force: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    """Compress *messages* if total tokens exceed the model limit.
+    """当 *messages* 的 token 总量超过模型上限时压缩上下文。
 
-    Returns ``(compressed_messages, summary_meta)`` where *summary_meta* is
-    a dict suitable for storing in ``conversation.metadata`` (or ``None`` if
-    no compression was needed).
+    返回 ``(compressed_messages, summary_meta)``。其中 *summary_meta*
+    是适合保存到 ``conversation.metadata`` 的字典；无需压缩时为 ``None``。
 
-    The mixed strategy:
-    1. Keep the system prompt (``messages[0]``).
-    2. Keep the last ``RECENT_MESSAGES_KEEP`` non-system messages intact.
-    3. Summarise all messages between system prompt and the recent window.
-    4. If a cached summary already covers some prefix, incorporate it.
-    """
+    混合策略如下：
+    1. 保留系统提示（``messages[0]``）。
+    2. 完整保留最后 ``RECENT_MESSAGES_KEEP`` 条非系统消息。
+    3. 汇总系统提示与近期窗口之间的全部消息。
+    4. 如果缓存摘要已经覆盖某段前缀，则将其合并进来。"""
     usable = get_usable_limit(model, settings)
     total = count_messages_tokens(messages)
 
     if not force and total <= usable:
-        return messages, None  # no compression needed
+        return messages, None  # 无需压缩
 
     if force:
         logger.info("Context compression forced: %d tokens (model=%s)", total, model)
@@ -266,7 +260,7 @@ async def compress_context(
             total, usable, model,
         )
 
-    # Split: system_prompt | older… | recent
+    # 拆分为：system_prompt | 较早消息 | 近期消息
     system_msg = messages[0] if messages and messages[0].get("role") == "system" else None
     non_system = messages[1:] if system_msg else messages
 
@@ -275,13 +269,13 @@ async def compress_context(
     recent = non_system[-keep_count:] if keep_count else non_system
 
     if not older:
-        # Nothing to compress – all messages are "recent".
+        # 没有可压缩内容：所有消息都属于近期窗口。
         return messages, None
 
-    # --- Build summary of older messages ---------------------------------
-    # Hygiene compacts historical task turns dynamically, so an index into the
-    # cleaned message list is not a stable summary cursor. Reuse a cached
-    # summary only when the durable source prefix still has the same digest.
+    # --- 构建较早消息摘要 ---------------------------------
+    # 上下文卫生层会动态压缩历史任务轮次，因此清理后消息列表中的索引
+    # 不是稳定的摘要游标。只有持久来源前缀仍具有相同摘要值时，
+    # 才复用缓存摘要。
     summary_source_messages, omitted_runtime_messages = _durable_summary_source_messages(older)
     cached_summary, cached_source_count, cached_source_digest = _cached_summary_state(conversation)
     cache_valid = bool(
@@ -345,13 +339,11 @@ async def compress_context(
 def _durable_summary_source_messages(
     messages: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], int]:
-    """Return messages safe to persist in a long-lived conversation summary.
+    """返回可安全写入长期对话摘要的消息。
 
-    Model-facing runtime scaffolding is useful for one call, but it should not
-    become durable summary material. Otherwise boundary notices, Context Pack
-    prompts, or historical task markers can re-enter later requests as stale
-    instructions.
-    """
+    面向模型的运行时脚手架只应服务于单次调用，不应成为持久摘要材料。
+    否则边界提示、Context Pack 提示或历史任务标记可能在后续请求中
+    作为陈旧指令重新进入上下文。"""
 
     result: list[dict[str, Any]] = []
     omitted = 0
@@ -387,7 +379,7 @@ def _cached_summary_state(conversation: Any | None) -> tuple[str, int, str]:
 
 
 def _summary_source_digest(messages: list[dict[str, Any]]) -> str:
-    """Return a stable digest for the durable summary source sequence."""
+    """返回持久摘要来源序列的稳定摘要值。"""
     digest = hashlib.sha256()
     for message in messages:
         payload = json.dumps(
@@ -410,8 +402,8 @@ async def _generate_summary(
     settings: Any,
     cached_summary: str = "",
 ) -> str:
-    """Call the model to produce a summary of *older_messages*."""
-    # Build a compact representation of the conversation to summarise.
+    """调用模型生成 *older_messages* 的摘要。"""
+    # 构建用于摘要的紧凑对话表示。
     lines: list[str] = []
     if cached_summary:
         lines.append(f"[已有摘要] {cached_summary}")
@@ -419,7 +411,7 @@ async def _generate_summary(
     for msg in older_messages:
         role = msg.get("role", "unknown")
         content = _summary_message_content(msg.get("content", ""))
-        # Truncate very long messages to avoid blowing up the summary request
+        # 截断过长消息，避免摘要请求体膨胀。
         if len(content) > 2000:
             content = content[:2000] + "…(截断)"
         lines.append(f"[{role}] {content}")
@@ -451,7 +443,7 @@ async def _generate_summary(
     if parts:
         return "".join(parts).strip()
 
-    # Fallback: mechanical truncation if model call failed.
+    # 回退：模型调用失败时进行机械截断。
     fallback = _fallback_summary(older_messages)
     if cached_summary and fallback:
         return f"{cached_summary}\n{fallback}"
@@ -459,7 +451,7 @@ async def _generate_summary(
 
 
 def _fallback_summary(messages: list[dict[str, Any]]) -> str:
-    """Produce a simple extractive summary when the model call fails."""
+    """模型调用失败时生成简单的抽取式摘要。"""
     lines: list[str] = []
     for msg in messages:
         role = msg.get("role", "unknown")

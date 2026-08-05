@@ -1,8 +1,7 @@
-"""Runbook and replay helpers built from RunEvidence.
+"""根据 RunEvidence 构建 Runbook 与 Replay 辅助数据。
 
-Runbooks are runtime-owned audit artifacts. They summarize what happened in a
-run without re-executing tools or trusting model prose as completion evidence.
-"""
+Runbook 是 Runtime 管理的审计产物，用于汇总一次 Run 中实际发生的事项，
+不重新执行工具，也不把模型文字当作完成证据。"""
 
 from __future__ import annotations
 
@@ -16,12 +15,12 @@ REPLAY_REQUEST_SCHEMA_VERSION = "replay_request.v1"
 
 
 def build_runbook(run: Any) -> dict[str, Any]:
-    """Build a compact runbook from a RunRecord-like object."""
+    """根据类似 RunRecord 的对象构建紧凑 Runbook。"""
     return build_runbook_from_evidence(build_run_evidence(run))
 
 
 def build_runbook_from_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
-    """Build the public Runbook shape from a RunEvidence view."""
+    """根据 RunEvidence 视图构建公开 Runbook 结构。"""
     return {
         "schema_version": RUNBOOK_SCHEMA_VERSION,
         "kind": "runbook",
@@ -49,7 +48,7 @@ def build_runbook_from_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_replay_request(run: Any, *, include_runbook: bool = True) -> dict[str, Any]:
-    """Build a replay request artifact without starting another run."""
+    """构建回放请求产物，但不启动新的 Run。"""
     evidence = build_run_evidence(run)
     return build_replay_request_from_evidence(evidence, include_runbook=include_runbook)
 
@@ -59,7 +58,7 @@ def build_replay_request_from_evidence(
     *,
     include_runbook: bool = True,
 ) -> dict[str, Any]:
-    """Build a replay request from an existing RunEvidence view."""
+    """根据现有 RunEvidence 视图构建回放请求。"""
     seed = evidence.get("replay_seed") if isinstance(evidence.get("replay_seed"), dict) else {}
     replay = {
         "schema_version": REPLAY_REQUEST_SCHEMA_VERSION,

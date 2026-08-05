@@ -7,7 +7,7 @@ ACTIVE_AUTOMATION_RUN_STATUSES = {"created", "running", "waiting_confirmation", 
 
 
 def active_runs_for_automation(runtime: Any, automation_id: str) -> int:
-    """Return active normal Runs linked to an automation."""
+    """返回与自动化关联的活动普通 Run。"""
 
     count = 0
     for run in runtime.runs.list():
@@ -27,12 +27,10 @@ def prepare_automation_run(
     triggered_by: str = "manual",
     now: Any = None,
 ) -> dict[str, Any]:
-    """Create a normal prepared Run from an automation task template.
+    """根据自动化任务模板创建一个普通的预备 Run。
 
-    The helper creates Task/Run records only. It does not call models, tools, or
-    providers; starting the prepared Run still uses the normal conversation
-    message stream path.
-    """
+    此辅助函数只创建 Task/Run 记录，不调用模型、工具或 Provider；
+    启动预备 Run 时仍使用普通的对话消息流路径。"""
 
     if not runtime.automations.can_trigger(
         automation.id,

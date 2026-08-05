@@ -1,4 +1,4 @@
-"""Shared visual evidence contracts for preview and verification tools."""
+"""稳定的视觉证据契约。"""
 
 from __future__ import annotations
 
@@ -43,12 +43,10 @@ def build_visual_evidence(
     captured_at: str = "",
     provider: str = "",
 ) -> dict[str, Any]:
-    """Build a stable visual evidence record.
+    """构建稳定的视觉证据记录。
 
-    The record is intentionally descriptive: it does not decide task strategy
-    and does not block execution.  Runtime consumers can use it for RunResult,
-    compact model context, UI previews, and future multimodal attachments.
-    """
+    该记录有意只作描述：不决定任务策略，也不阻止执行。Runtime 使用方可将其用于
+    RunResult、紧凑模型上下文、UI 预览和未来的多模态附件。"""
 
     fmt = _format_name(format)
     runtime_errors = bool(has_runtime_errors)
@@ -104,7 +102,7 @@ def build_visual_evidence(
 
 
 def normalize_visual_evidence(output: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Return visual evidence from either the new nested contract or legacy fields."""
+    """从新的嵌套契约或旧版字段中返回视觉证据。"""
 
     if not isinstance(output, dict):
         return None
@@ -157,7 +155,7 @@ def normalize_visual_evidence(output: dict[str, Any] | None) -> dict[str, Any] |
 
 
 def visual_evidence_summary(evidence: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Return a compact summary suitable for frontend previews and model context."""
+    """返回适用于前端预览和模型上下文的紧凑摘要。"""
 
     if not isinstance(evidence, dict):
         return None

@@ -1,10 +1,8 @@
-"""Run-level recovery evidence for tool attempts that did not execute.
+"""未执行工具尝试的 Run 级恢复证据。
 
-ToolAttemptRecovery gathers failed tool-call protocol, availability,
-confirmation, and safety-boundary facts into one evidence-only record. It does
-not choose a new tool, retry anything, mark the task impossible, or decide
-whether the run is complete.
-"""
+ToolAttemptRecovery 将失败的工具调用协议、可用性、确认和安全边界事实
+汇总为仅含证据的记录。它不选择新工具、不执行重试、不声明任务不可能完成，
+也不判断 Run 是否完成。"""
 
 from __future__ import annotations
 
@@ -20,7 +18,7 @@ def build_tool_attempt_recovery(
     *,
     limit: int = 12,
 ) -> dict[str, Any]:
-    """Build a bounded run-level summary from tool attempt observations."""
+    """根据工具尝试观察记录构建有界的 Run 级摘要。"""
 
     observations = _observation_records(tool_events or [], limit=max(1, int(limit or 1)))
     reason_counts = Counter(str(item.get("reason") or "unknown") for item in observations)
@@ -66,7 +64,7 @@ def build_tool_attempt_recovery(
 
 
 def format_tool_attempt_recovery_for_model(recovery: dict[str, Any] | None) -> str:
-    """Render recovery facts for model-facing evidence packs."""
+    """为模型侧证据包渲染恢复事实。"""
 
     item = recovery if isinstance(recovery, dict) else {}
     if item.get("kind") != "tool_attempt_recovery":
@@ -109,7 +107,7 @@ def format_tool_attempt_recovery_for_model(recovery: dict[str, Any] | None) -> s
 def summarize_tool_attempt_recovery_for_decision(
     recovery: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Return a compact summary suitable for completion decisions."""
+    """返回适用于完成决策的紧凑摘要。"""
 
     item = recovery if isinstance(recovery, dict) else {}
     if item.get("kind") != "tool_attempt_recovery":

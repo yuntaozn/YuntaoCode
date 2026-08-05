@@ -1,4 +1,4 @@
-"""Runtime-owned result schemas."""
+"""Task Runtime 的结构化结果契约。"""
 
 from __future__ import annotations
 

@@ -1,10 +1,8 @@
-"""User-facing Run Workbench view built from RunEvidence.
+"""根据 RunEvidence 构建面向用户的 Run Workbench 视图。
 
-The workbench is a presentation model for the product UI. It does not execute
-tools, judge model intent, or replace RunEvidence/RunResult. It turns runtime
-facts into a compact shape that users can inspect before continuing, replaying,
-or exporting a task.
-"""
+Workbench 是产品 UI 的展示模型，不执行工具、不判断模型意图，也不替代
+RunEvidence 或 RunResult。它把运行时事实整理为紧凑结构，供用户在继续、
+Replay 或导出任务前查看。"""
 
 from __future__ import annotations
 
@@ -19,7 +17,7 @@ RUN_WORKBENCH_SCHEMA_VERSION = "run_workbench.v1"
 
 
 def build_run_workbench(run: Any) -> dict[str, Any]:
-    """Build a user-facing task workbench from a RunRecord-like object."""
+    """根据类似 RunRecord 的对象构建面向用户的任务工作台。"""
 
     return build_run_workbench_from_evidence(build_run_evidence(run))
 
@@ -168,7 +166,7 @@ def _evidence_overview(
     visual_verification: dict[str, Any],
     debug_audit: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build a compact, presentation-only evidence overview for the workbench."""
+    """为工作台构建仅用于展示的紧凑证据概览。"""
 
     audit_counts = _dict(audit.get("counts"))
     closure_counts = _dict(verification_closure.get("counts"))
@@ -518,7 +516,7 @@ def _audit_summary(
 
 
 def _model_call_records(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Collapse lifecycle events into one presentation record per call."""
+    """将生命周期事件归并为每次调用一条展示记录。"""
 
     records: dict[str, dict[str, Any]] = {}
     order: list[str] = []

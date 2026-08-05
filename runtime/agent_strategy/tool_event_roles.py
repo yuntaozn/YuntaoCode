@@ -1,10 +1,7 @@
-"""Task-contract-aware roles for tool events.
+"""感知任务契约的工具事件角色。
 
-Tool IDs tell the runtime whether an action can change local state.  They do
-not, by themselves, tell whether the action satisfied the user's goal.  This
-module maps tool events to task roles using the model-declared task contract
-plus runtime facts such as paths and outputs.
-"""
+工具 ID 告诉 Runtime 某项操作是否可能改变本地状态，但不能单独说明它是否满足用户目标。
+本模块结合模型声明的任务契约，以及路径和输出等运行时事实，将工具事件映射为任务角色。"""
 
 from __future__ import annotations
 
@@ -99,7 +96,7 @@ def classify_tool_event_role(
     mode: str | None = None,
     deliverable_paths: set[str] | None = None,
 ) -> str:
-    """Return the role this event played in the current task."""
+    """返回该事件在当前任务中承担的角色。"""
     tool_id = canonical_tool_id(str(event.get("tool") or ""))
     paths = event_path_hints(event)
     contract_paths = deliverable_paths or contract_deliverable_paths(task_contract)
@@ -245,7 +242,7 @@ def _latest_deliverables_by_path(
     tool_events: list[dict[str, Any]],
     deliverable_ids: set[int],
 ) -> list[dict[str, Any]]:
-    """Keep the latest deliverable event for every observed artifact path."""
+    """为每个已观察产物路径保留最新交付事件。"""
 
     latest: dict[str, tuple[int, dict[str, Any]]] = {}
     for index, event in enumerate(tool_events):
@@ -308,13 +305,10 @@ def task_verification_events(
     workspace_path: str,
     mode: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return verification evidence for the task contract.
+    """返回任务契约的验证证据。
 
-    Write/state-change tasks verify the observed deliverable after it appears.
-    Verification-only tasks, such as "check whether the previous change works",
-    have no new deliverable before verification; in that case evidence tools
-    are evaluated directly against the current task contract.
-    """
+    写入或状态变更任务在交付物出现后验证已观察目标。仅验证任务（例如“检查上一改动
+    是否有效”）在验证前没有新交付物，此时直接对照当前任务契约评估证据工具。"""
 
     deliverable_events = deliverable_verification_events(
         tool_events,
@@ -342,11 +336,9 @@ def verification_attempt_events(
     *,
     mode: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return attempted verification actions, including unsuccessful evidence.
+    """返回已尝试的验证动作，包括未成功证据。
 
-    Attempt history is diagnostic evidence only. It must not be used as proof
-    that the task was verified.
-    """
+    尝试历史只属于诊断证据，不得用作任务已经验证的证明。"""
 
     result: list[dict[str, Any]] = []
     for event in tool_events:
@@ -411,14 +403,11 @@ def successful_task_evidence_events(
     workspace_path: str,
     mode: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return successful events that provide evidence for the current task.
+    """返回为当前任务提供证据的成功事件。
 
-    A task evidence event is broader than a target deliverable. For write or
-    external-state tasks it includes observed target deliverables and their
-    verification evidence. For read-only and answer-evidence tasks it includes
-    successful evidence-gathering tools, even when there is no artifact path to
-    mark as the deliverable.
-    """
+    任务证据事件比目标交付物范围更广。对写入或外部状态任务，它包括已观察目标交付物
+    及其验证证据；对只读和答案证据任务，即使没有产物路径可标为交付物，也包括成功的
+    证据收集工具。"""
 
     result: list[dict[str, Any]] = []
     seen: set[int] = set()
@@ -483,13 +472,10 @@ def verification_evidence_strength(
     mode: str | None = None,
     task_contract: dict[str, Any] | None = None,
 ) -> str:
-    """Return how strongly a successful event verifies the task target.
+    """返回成功事件验证任务目标的证据强度。
 
-    Providers may declare a strength explicitly. Without a declaration, real
-    test/build checks are strong and other meaningful verification is
-    standard. A provider-declared verification role alone is standard for
-    compatibility; providers should declare ``weak`` for coarse inspection.
-    """
+    Provider 可以明确声明强度。未声明时，真实测试或构建检查为强证据，其他有意义验证
+    为标准证据。仅声明 verification 角色时为兼容按标准强度处理；粗略检查应声明 ``weak``。"""
     if not _status_is_success_or_partial(event):
         return "none"
     if _event_has_degraded_shell_stderr(event):
@@ -978,7 +964,7 @@ def failed_tool_event_role(
     workspace_path: str,
     mode: str | None = None,
 ) -> str:
-    """Classify the intended task role of a failed tool event."""
+    """分类失败工具事件原本承担的任务角色。"""
     if str(event.get("status") or "") != "failure":
         return UNKNOWN
     intended_roles = event_intended_roles(event)
@@ -1067,7 +1053,7 @@ def deliverable_path_deviations(
     events: list[dict[str, Any]],
     task_contract: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    """Return successful deliverables that used a different hinted path."""
+    """返回使用了不同提示路径的成功交付物。"""
     hinted_specs = _contract_deliverable_path_specs(task_contract)
     if not hinted_specs:
         return []

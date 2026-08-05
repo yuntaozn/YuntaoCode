@@ -1,9 +1,7 @@
-"""Context Pack builders for model-facing runtime facts.
+"""为模型侧运行时事实构建 Context Pack。
 
-Context Pack is the small, explicit set of facts a model sees for one phase of
-a Run. Context Ledger is the audit view of those facts: where they came from,
-how fresh they are, and how trustworthy they are.
-"""
+Context Pack 是模型在 Run 的某个阶段看到的一小组明确事实。
+Context Ledger 是这些事实的审计视图，记录其来源、新鲜度和可信度。"""
 
 from __future__ import annotations
 
@@ -43,7 +41,7 @@ def build_context_pack(
     task_id: str = "",
     limit: int = 12,
 ) -> dict[str, Any]:
-    """Build a bounded context pack for one runtime phase."""
+    """为一个运行时阶段构建有界 Context Pack。"""
     records = _candidate_records(
         phase=phase,
         user_content=user_content,
@@ -78,7 +76,7 @@ def build_context_pack(
 
 
 def build_context_ledger(records: list[dict[str, Any]], *, phase: str) -> dict[str, Any]:
-    """Build an audit ledger for selected context records."""
+    """为选中的上下文记录构建审计账本。"""
     ledger_records: list[dict[str, Any]] = []
     for index, record in enumerate(records):
         content = str(record.get("content") or "")
@@ -109,7 +107,7 @@ def build_context_ledger(records: list[dict[str, Any]], *, phase: str) -> dict[s
 
 
 def format_context_pack_for_prompt(pack: dict[str, Any] | None) -> str:
-    """Format context facts for a model prompt."""
+    """将上下文事实格式化为模型提示。"""
     if not isinstance(pack, dict) or not pack.get("records"):
         return ""
     compact_records: list[dict[str, Any]] = []
@@ -141,13 +139,11 @@ def format_context_pack_for_prompt(pack: dict[str, Any] | None) -> str:
 
 
 def _model_facing_ledger(ledger: Any) -> dict[str, Any]:
-    """Return ledger metadata without repeating record content in the prompt.
+    """返回账本元数据，避免在提示中重复记录内容。
 
-    The full Context Ledger remains in run events, diagnostics, and workbench
-    views.  The model prompt only needs source/trust/freshness indexes; putting
-    ``content_preview`` next to ``records`` duplicates historical facts and can
-    accidentally overweight old context.
-    """
+    完整 Context Ledger 保留在 Run 事件、诊断和工作台视图中。
+    模型提示只需要来源、信任度和新鲜度索引；如果把 ``content_preview``
+    与 ``records`` 并列，会重复历史事实并可能意外放大旧上下文权重。"""
 
     if not isinstance(ledger, dict):
         return {}
@@ -176,7 +172,7 @@ def _model_facing_ledger(ledger: Any) -> dict[str, Any]:
 
 
 def is_context_pack_prompt_for_phase(value: Any, phase: str) -> bool:
-    """Return whether a model message is a Context Pack prompt for *phase*."""
+    """返回模型消息是否为 *phase* 阶段的 Context Pack 提示。"""
     text = str(value or "")
     if not text.startswith("Context Pack for this model call:\n"):
         return False
@@ -184,7 +180,7 @@ def is_context_pack_prompt_for_phase(value: Any, phase: str) -> bool:
 
 
 def context_pack_summary(pack: dict[str, Any] | None) -> dict[str, Any]:
-    """Return a stable summary for RunEvidence, Runbook, and diagnostics."""
+    """返回供 RunEvidence、Runbook 和诊断使用的稳定摘要。"""
     if not isinstance(pack, dict):
         return {}
     records = [item for item in pack.get("records") or [] if isinstance(item, dict)]
@@ -486,7 +482,7 @@ def _task_lineage_record(
                 or []
             ),
             "field_provenance": candidate.get("field_provenance") or {},
-            # Compatibility metadata for existing audit/UI consumers.
+            # 供现有审计和 UI 使用方兼容的元数据。
             "goal": candidate.get("goal"),
             "intent": candidate.get("intent"),
             "status": candidate.get("status"),

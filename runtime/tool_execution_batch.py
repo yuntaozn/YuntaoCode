@@ -1,10 +1,8 @@
-"""Execute one model-proposed batch of tool calls.
+"""执行模型提出的一批工具调用。
 
-The batch controller owns protocol ordering and execution bookkeeping. It does
-not choose tools or reinterpret the task. Tool responses are always returned
-to the model before runtime advisories so provider tool-call protocols remain
-valid even when a write needs repair guidance.
-"""
+批处理控制器管理协议顺序和执行账目，不选择工具，也不重新解释任务。
+运行时建议之前始终先把工具响应返回模型，使 Provider 工具调用协议保持有效，
+即使写入操作需要修复提示也不例外。"""
 
 from __future__ import annotations
 
@@ -110,7 +108,7 @@ class ToolExecutionBatchResult:
 
 
 class ToolExecutionBatch:
-    """Run visible model-selected tools while preserving protocol invariants."""
+    """在保持协议不变量的同时执行模型选中的可见工具。"""
 
     def __init__(self, host: ToolExecutionHost) -> None:
         self._host = host

@@ -1,10 +1,8 @@
-"""Portable local capability pack schemas.
+"""可移植的本地 Capability Pack Schema。
 
-Capability Packs are user-data-level assets. They may contain reusable
-model-facing methods, task templates, context digests, or future tool adapter
-drafts, but they are not trusted runtime modules and must not be imported into
-``runtime.skills`` by default.
-"""
+Capability Pack 是用户数据级资产，可以包含可复用的模型侧方法、任务模板、
+上下文摘要或未来工具适配器草稿，但不是可信 Runtime 模块，
+默认不得导入 ``runtime.skills``。"""
 
 from __future__ import annotations
 
@@ -29,12 +27,10 @@ CAPABILITY_PACK_ENTRY_KINDS: frozenset[str] = frozenset(CapabilityPackEntryKind.
 
 @dataclass(frozen=True)
 class CapabilityPackPermissions:
-    """Declared permissions for a pack.
+    """Capability Pack 声明的权限。
 
-    Method skills should normally keep every permission at its default. Tool
-    adapters may declare broader needs, but declaration alone never grants
-    execution permission.
-    """
+    方法型 Skill 通常应保持全部权限默认值。工具适配器可以声明更广需求，
+    但单纯声明永远不会授予执行权限。"""
 
     filesystem: str = "none"
     shell: str = "false"
@@ -56,11 +52,10 @@ class CapabilityPackPermissions:
 
 @dataclass(frozen=True)
 class CapabilityPackEntry:
-    """How a pack is consumed.
+    """Capability Pack 的使用方式。
 
-    ``instructions`` is the preferred default for model-facing Skill-like
-    methods. Executable entries are only draft descriptors at this layer.
-    """
+    ``instructions`` 是面向模型的 Skill 类方法首选默认入口；可执行入口在此层
+    仅作为草稿描述符。"""
 
     kind: CapabilityPackEntryKind = "instructions"
     main: str = "SKILL.md"

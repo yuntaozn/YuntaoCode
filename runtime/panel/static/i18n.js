@@ -1,12 +1,12 @@
 /**
- * YuntaoCode i18n - Internationalization module
- * Supports zh-CN and en locales with localStorage persistence.
+ * YuntaoCode i18n：国际化模块
+ * 支持 zh-CN 与 en 语言，并使用 localStorage 持久化选择。
  */
 
 const LOCALES = {
     "zh-CN": {
         "common.cancel": "取消",
-        // === Navigation (HTML) ===
+        // === 导航（HTML）===
         "nav.new_conversation": "新对话",
         "nav.search": "搜索",
         "nav.plugins": "能力",
@@ -17,7 +17,7 @@ const LOCALES = {
         "nav.back": "返回",
         "nav.main_nav": "主导航",
 
-        // === Sidebar (HTML) ===
+        // === 侧栏（HTML）===
         "sidebar.backend_account": "后台账号",
         "sidebar.not_logged_in": "未登录",
         "sidebar.login": "登录",
@@ -28,7 +28,7 @@ const LOCALES = {
         "sidebar.conversations": "对话",
         "sidebar.search_history": "搜索历史对话",
 
-        // === Topbar (HTML) ===
+        // === 顶部栏（HTML）===
         "topbar.select_project": "选择工作空间",
         "topbar.bind_conversation": "对话会绑定到当前项目",
         "topbar.tools_not_loaded": "工具未加载",
@@ -61,7 +61,7 @@ const LOCALES = {
         "updates.no_command": "当前没有可复制的更新命令",
         "updates.command_copied": "更新命令已复制",
 
-        // === Composer (HTML) ===
+        // === 输入区（HTML）===
         "composer.send": "发送",
         "composer.interrupt": "插话",
         "composer.stop": "停止",
@@ -71,7 +71,7 @@ const LOCALES = {
         "composer.select_project_first": "先选择工作空间，再开始对话",
         "composer.placeholder": "向 YuntaoCode 提问，输入 @ 可提及工具或文件",
 
-        // === Status bar ===
+        // === 状态栏 ===
         "status.executing": "正在执行",
         "status.continue_exec": "继续执行",
         "status.stop_btn": "停止",
@@ -111,7 +111,7 @@ const LOCALES = {
         "status.repeated_tool_failures": "正在纠偏：{tool} 同路线无进展尝试 {count} 次",
         "status.unknown_tool": "工具",
 
-        // === Settings dialog (HTML) ===
+        // === 设置对话框（HTML）===
         "settings.title": "设置",
         "settings.key_hint": "模型 Key 保存在本机用户配置目录，不写入项目目录。",
         "settings.close": "关闭",
@@ -145,7 +145,7 @@ const LOCALES = {
         "settings.cancel": "取消",
         "settings.save": "保存",
 
-        // === Plugins dialog (HTML) ===
+        // === 插件对话框（HTML）===
         "plugins.title": "能力与插件",
         "plugins.desc": "当前展示内置能力、MCP 能力和本机能力包。",
         "plugins.recent_tasks": "最近任务",
@@ -352,7 +352,7 @@ const LOCALES = {
         "tasks.runtime_issues_observed": "观察到运行问题",
         "tasks.no_runtime_issues": "未观察到运行问题",
 
-        // === Login dialog (HTML) ===
+        // === 登录对话框（HTML）===
         "login.title": "登录后台",
         "login.username": "用户名",
         "login.password": "密码",
@@ -360,7 +360,7 @@ const LOCALES = {
         "login.login_btn": "登录",
         "login.register_link": "没有账号？去注册",
 
-        // === Settings page (settings.html) ===
+        // === 设置页（settings.html）===
         "settings_page.title": "设置 - YuntaoCode",
         "settings_page.overview": "设置总览",
         "settings_page.loading": "读取中...",
@@ -406,7 +406,7 @@ const LOCALES = {
         "settings_page.save_settings": "保存设置",
         "settings_page.language": "语言",
 
-        // === Automation page (automation.html) ===
+        // === 自动化页（automation.html）===
         "automation_page.title": "自动化 - YuntaoCode",
         "automation_page.overview": "自动化总览",
         "automation_page.status_design": "设计骨架已建立",
@@ -510,7 +510,7 @@ const LOCALES = {
         "automation_page.last_run": "最近运行",
         "automation_page.none": "无",
 
-        // === Plugins page (plugins.html) ===
+        // === 插件页（plugins.html）===
         "plugins_page.title": "能力与插件 - YuntaoCode",
         "plugins_page.overview": "能力总览",
         "plugins_page.groups": "能力来源",
@@ -521,7 +521,7 @@ const LOCALES = {
         "plugins_page.ai_draft_desc": "AI 可以先把经验沉淀为方法型能力包，例如提示词、步骤、反例和验证清单。只有确实需要新执行能力时，才创建更严格的工具适配器草稿。",
         "plugins_page.ai_draft_example": "示例：请根据这次成功任务创建一个方法型能力包，只写入能力包草稿目录，包含 SKILL.md、适用场景、步骤、验证清单和反例；不要修改内置运行时代码。",
 
-        // === MCP services page ===
+        // === MCP 服务页 ===
         "mcp_page.title": "MCP 服务 - YuntaoCode",
         "mcp_page.overview": "服务总览",
         "mcp_page.services": "服务",
@@ -557,7 +557,7 @@ const LOCALES = {
         "mcp_page.permission_external_state": "外部状态修改",
         "mcp_page.permission_arbitrary_code": "任意代码执行",
 
-        // === Workspace (JS) ===
+        // === 工作区（JS）===
         "workspace.pinned": "置顶",
         "workspace.ops": "项目操作",
         "workspace.unpin": "取消置顶",
@@ -571,7 +571,7 @@ const LOCALES = {
         "workspace.confirm_remove": "从项目列表移除\"{name}\"？本地文件不会被删除。",
         "workspace.picked_but_failed": "项目已选择，但刷新列表失败：{error}",
 
-        // === Conversations (JS) ===
+        // === 对话（JS）===
         "conv.running": "运行中",
         "conv.messages_count": "{count} 条消息",
         "conv.delete_title": "删除对话",
@@ -581,7 +581,7 @@ const LOCALES = {
         "conv.deleted": "对话已删除",
         "conv.delete_failed": "删除失败：{error}",
 
-        // === Tools/Skills (JS) ===
+        // === 工具与 Skill（JS）===
         "tools.count": "{count} 个本地技能",
         "tools.calling": "正在调用 {name}",
         "tools.completed": "已完成 {name}",
@@ -618,13 +618,13 @@ const LOCALES = {
         "tools.progress_no_output": "{seconds}s 无新输出",
         "tools.can_cancel": "可停止",
 
-        // === Plugins (JS) ===
+        // === 插件（JS）===
         "plugins.enabled": "已启用",
         "plugins.disabled": "已停用",
         "plugins.enabled_short": "启用",
         "plugins.deps": "依赖：",
 
-        // === Empty chat (JS) ===
+        // === 空对话（JS）===
         "chat.empty_title": "我们该在 {name} 中做什么？",
         "chat.suggestion_scan": "扫描目录，概括这个项目的文件结构",
         "chat.suggestion_login": "帮我查找这个项目里和登录相关的代码",
@@ -632,7 +632,7 @@ const LOCALES = {
         "chat.guidance_chip": "运行中插话",
         "chat.guidance_sent": "已发送插话，系统会在安全点重新审视任务",
 
-        // === Plan execution (JS) ===
+        // === 计划执行（JS）===
         "plan.exec_title": "计划执行",
         "plan.source_auto": "自动判断",
         "plan.source_manual": "手动开启",
@@ -652,7 +652,7 @@ const LOCALES = {
         "plan.policy_auto": "计划: 自动",
         "plan.policy_always": "计划: 始终",
 
-        // === Backup (JS) ===
+        // === 备份（JS）===
         "backup.batches": "已有 {count} 批",
         "backup.none": "暂无备份",
         "backup.latest": "最近一次",
@@ -675,38 +675,38 @@ const LOCALES = {
         "backup.recent_n": "备份 {n}",
         "backup.n_files_etc": "{shown} 等 {count} 个文件",
 
-        // === Changes (JS) ===
+        // === 变更（JS）===
         "changes.touched": "本轮触达文件",
         "changes.changed": "本轮新增/变更文件",
         "changes.branch": "分支 {branch}",
         "changes.dirty": "工作区待处理 {count} 个",
         "changes.truncated": "仅显示前 80 个",
 
-        // === Bulk replace (JS) ===
+        // === 批量替换（JS）===
         "bulk.replace": "替换",
         "bulk.match": "匹配",
         "bulk.files_total": "{action} {files} 个文件，共 {total} 处",
         "bulk.occurrences": "{count} 处",
         "bulk.truncated": "结果过多，已截断显示",
 
-        // === Execution notice (JS) ===
+        // === 执行提示（JS）===
         "exec.validation": "执行校验",
         "exec.write_tool": "写入工具",
 
-        // === Mentions (JS) ===
+        // === 提及（JS）===
         "mention.project": "项目",
         "mention.tool": "工具",
         "mention.file": "文件",
         "mention.no_match": "暂无匹配项",
 
-        // === Context (JS) ===
+        // === 上下文（JS）===
         "context.compress_click": "点击压缩上下文",
         "context.no_conversation": "没有活动对话",
         "context.compressed": "上下文已压缩：{before} → {after} tokens",
         "context.no_need": "对话内容较少，无需压缩",
         "context.compress_failed": "压缩失败：{error}",
 
-        // === Image (JS) ===
+        // === 图片（JS）===
         "image.select_file": "请选择图片文件",
         "image.max_5mb": "图片大小不能超过 5MB",
         "image.preview": "预览",
@@ -718,23 +718,23 @@ const LOCALES = {
         "attachment.max_count": "每条消息最多添加 8 个附件",
         "attachment.too_large": "附件 {name} 过大；图片上限 10MB，其他文件上限 25MB",
 
-        // === Toast (JS) ===
+        // === 消息提示（JS）===
         "toast.task_new_tab": "任务执行中，已在新页面打开，当前执行页会继续保留",
         "toast.task_allow_popup": "任务执行中，为避免丢失状态，请先完成任务或允许浏览器打开新页面",
         "toast.logged_out": "已退出后台账号",
         "toast.settings_saved": "设置已保存",
         "toast.confirm_failed": "确认失败: {error}",
 
-        // === Error (JS) ===
+        // === 错误（JS）===
         "error.model_failed": "模型返回失败",
         "error.empty_error": "模型服务返回了空错误对象",
         "error.load_failed": "加载对话失败",
 
-        // === Auth (JS) ===
+        // === 认证（JS）===
         "auth.fill_fields": "请填写后台地址、用户名和密码",
         "auth.logged_in": "已登录：{user}",
 
-        // === Settings JS ===
+        // === 设置页 JS ===
         "settings_js.no_key": "未配置 Key",
         "settings_js.key_configured": "已配置：{hint}",
         "settings_js.provider_name": "接口名称",
@@ -825,7 +825,7 @@ const LOCALES = {
         "settings_js.new_file": "新文件",
         "settings_js.unknown_file": "未知文件",
 
-        // === Plugins JS ===
+        // === 插件页 JS ===
         "plugins_js.load_failed": "加载插件失败: {error}",
         "plugins_js.toggled": "{id} 已{state}",
         "plugins_js.enabled": "启用",
@@ -874,7 +874,7 @@ const LOCALES = {
         "plugins.capability_pack_kind.context_pack": "上下文包",
         "plugins.capability_pack_kind.tool_adapter": "工具适配器草稿",
 
-        // === MCP services JS ===
+        // === MCP 服务页 JS ===
         "mcp_js.summary": "{connected} 已连接 · {attention} 需处理 · 共 {total} 个",
         "mcp_js.all_services": "全部服务",
         "mcp_js.no_services": "暂无 MCP 服务配置",
@@ -911,7 +911,7 @@ const LOCALES = {
         "mcp_tool_health.unavailable": "工具不可用",
         "mcp_tool_health.unknown": "工具未验证",
 
-        // === Backend: Plugin descriptions ===
+        // === 后端：插件说明 ===
         "plugin.desc.filesystem": "本地文件与目录访问能力，用于扫描项目结构、读取和写入文件。",
         "plugin.desc.document": "本地文档处理能力，用于 Word、PDF、Markdown、PPT 等文档解析与生成。",
         "plugin.desc.code": "代码检索与编辑能力，用于列出代码文件、搜索文本和精确修改代码。",
@@ -938,7 +938,7 @@ const LOCALES = {
 
     "en": {
         "common.cancel": "Cancel",
-        // === Navigation ===
+        // === 导航 ===
         "nav.new_conversation": "New Chat",
         "nav.search": "Search",
         "nav.plugins": "Capabilities",
@@ -949,7 +949,7 @@ const LOCALES = {
         "nav.back": "Back",
         "nav.main_nav": "Main navigation",
 
-        // === Sidebar ===
+        // === 侧栏 ===
         "sidebar.backend_account": "Backend Account",
         "sidebar.not_logged_in": "Not logged in",
         "sidebar.login": "Login",
@@ -960,7 +960,7 @@ const LOCALES = {
         "sidebar.conversations": "Chats",
         "sidebar.search_history": "Search history",
 
-        // === Topbar ===
+        // === 顶部栏 ===
         "topbar.select_project": "Choose workspace",
         "topbar.bind_conversation": "Chats are bound to the current project",
         "topbar.tools_not_loaded": "Tools not loaded",
@@ -993,7 +993,7 @@ const LOCALES = {
         "updates.no_command": "No update command is available",
         "updates.command_copied": "Update command copied",
 
-        // === Composer ===
+        // === 输入区 ===
         "composer.send": "Send",
         "composer.interrupt": "Interrupt",
         "composer.stop": "Stop",
@@ -1003,7 +1003,7 @@ const LOCALES = {
         "composer.select_project_first": "Choose a workspace first",
         "composer.placeholder": "Ask YuntaoCode, type @ to mention tools or files",
 
-        // === Status bar ===
+        // === 状态栏 ===
         "status.executing": "Executing",
         "status.continue_exec": "Continue",
         "status.stop_btn": "Stop",
@@ -1043,7 +1043,7 @@ const LOCALES = {
         "status.repeated_tool_failures": "Correcting: {tool} repeated the same no-progress route {count} times",
         "status.unknown_tool": "tool",
 
-        // === Settings dialog ===
+        // === 设置对话框 ===
         "settings.title": "Settings",
         "settings.key_hint": "Model keys are stored in user config directory, not in project.",
         "settings.close": "Close",
@@ -1077,7 +1077,7 @@ const LOCALES = {
         "settings.cancel": "Cancel",
         "settings.save": "Save",
 
-        // === Plugins dialog ===
+        // === 插件对话框 ===
         "plugins.title": "Capabilities & Plugins",
         "plugins.desc": "This page shows built-in capabilities, MCP capabilities, and local capability packs.",
         "plugins.recent_tasks": "Recent Tasks",
@@ -1284,7 +1284,7 @@ const LOCALES = {
         "tasks.runtime_issues_observed": "Runtime issues observed",
         "tasks.no_runtime_issues": "No runtime issues observed",
 
-        // === Login dialog ===
+        // === 登录对话框 ===
         "login.title": "Backend Login",
         "login.username": "Username",
         "login.password": "Password",
@@ -1292,7 +1292,7 @@ const LOCALES = {
         "login.login_btn": "Login",
         "login.register_link": "No account? Register",
 
-        // === Settings page ===
+        // === 设置页 ===
         "settings_page.title": "Settings - YuntaoCode",
         "settings_page.overview": "Settings Overview",
         "settings_page.loading": "Loading...",
@@ -1338,7 +1338,7 @@ const LOCALES = {
         "settings_page.save_settings": "Save Settings",
         "settings_page.language": "Language",
 
-        // === Automation page ===
+        // === 自动化页 ===
         "automation_page.title": "Automation - YuntaoCode",
         "automation_page.overview": "Automation Overview",
         "automation_page.status_design": "Design skeleton ready",
@@ -1442,7 +1442,7 @@ const LOCALES = {
         "automation_page.last_run": "Last Run",
         "automation_page.none": "None",
 
-        // === Plugins page ===
+        // === 插件页 ===
         "plugins_page.title": "Capabilities & Plugins - YuntaoCode",
         "plugins_page.overview": "Capability Overview",
         "plugins_page.groups": "Capability Sources",
@@ -1453,7 +1453,7 @@ const LOCALES = {
         "plugins_page.ai_draft_desc": "AI should first distill reusable experience into method-skill packs: prompts, steps, counterexamples, and verification checklists. Create stricter tool adapter drafts only when new execution capability is truly required.",
         "plugins_page.ai_draft_example": "Example: Create a method-skill capability pack from this successful task. Write only to the capability-pack draft directory, include SKILL.md, scope, steps, verification checklist, and counterexamples; do not modify built-in runtime code.",
 
-        // === MCP services page ===
+        // === MCP 服务页 ===
         "mcp_page.title": "MCP Services - YuntaoCode",
         "mcp_page.overview": "Service Overview",
         "mcp_page.services": "Services",
@@ -1489,7 +1489,7 @@ const LOCALES = {
         "mcp_page.permission_external_state": "External State Changes",
         "mcp_page.permission_arbitrary_code": "Arbitrary Code Execution",
 
-        // === Workspace ===
+        // === 工作区 ===
         "workspace.pinned": "Pinned",
         "workspace.ops": "Project actions",
         "workspace.unpin": "Unpin",
@@ -1503,7 +1503,7 @@ const LOCALES = {
         "workspace.confirm_remove": "Remove \"{name}\" from project list? Local files will not be deleted.",
         "workspace.picked_but_failed": "Project selected, but failed to refresh list: {error}",
 
-        // === Conversations ===
+        // === 对话 ===
         "conv.running": "Running",
         "conv.messages_count": "{count} messages",
         "conv.delete_title": "Delete chat",
@@ -1513,7 +1513,7 @@ const LOCALES = {
         "conv.deleted": "Chat deleted",
         "conv.delete_failed": "Delete failed: {error}",
 
-        // === Tools/Skills ===
+        // === 工具与 Skill ===
         "tools.count": "{count} local skills",
         "tools.calling": "Calling {name}",
         "tools.completed": "Completed {name}",
@@ -1550,13 +1550,13 @@ const LOCALES = {
         "tools.progress_no_output": "{seconds}s without output",
         "tools.can_cancel": "Can stop",
 
-        // === Plugins ===
+        // === 插件 ===
         "plugins.enabled": "Enabled",
         "plugins.disabled": "Disabled",
         "plugins.enabled_short": "Enabled",
         "plugins.deps": "Dependencies: ",
 
-        // === Empty chat ===
+        // === 空对话 ===
         "chat.empty_title": "What should we do in {name}?",
         "chat.suggestion_scan": "Scan directory and summarize project structure",
         "chat.suggestion_login": "Find login-related code in this project",
@@ -1564,7 +1564,7 @@ const LOCALES = {
         "chat.guidance_chip": "Runtime guidance",
         "chat.guidance_sent": "Guidance sent, system will re-evaluate at a safe point",
 
-        // === Plan execution ===
+        // === 计划执行 ===
         "plan.exec_title": "Plan Execution",
         "plan.source_auto": "Auto-detected",
         "plan.source_manual": "Manually enabled",
@@ -1584,7 +1584,7 @@ const LOCALES = {
         "plan.policy_auto": "Plan: Auto",
         "plan.policy_always": "Plan: Always",
 
-        // === Backup ===
+        // === 备份 ===
         "backup.batches": "{count} batches",
         "backup.none": "No backups",
         "backup.latest": "Latest",
@@ -1607,38 +1607,38 @@ const LOCALES = {
         "backup.recent_n": "Backup {n}",
         "backup.n_files_etc": "{shown} and {count} files",
 
-        // === Changes ===
+        // === 变更 ===
         "changes.touched": "Files touched this turn",
         "changes.changed": "New/changed files this turn",
         "changes.branch": "Branch {branch}",
         "changes.dirty": "{count} pending in working tree",
         "changes.truncated": "Showing first 80 only",
 
-        // === Bulk replace ===
+        // === 批量替换 ===
         "bulk.replace": "Replace",
         "bulk.match": "Match",
         "bulk.files_total": "{action} {files} files, {total} occurrences",
         "bulk.occurrences": "{count} occurrences",
         "bulk.truncated": "Results truncated",
 
-        // === Execution notice ===
+        // === 执行提示 ===
         "exec.validation": "Execution Validation",
         "exec.write_tool": "Write tool",
 
-        // === Mentions ===
+        // === 提及 ===
         "mention.project": "Project",
         "mention.tool": "Tool",
         "mention.file": "File",
         "mention.no_match": "No matches",
 
-        // === Context ===
+        // === 上下文 ===
         "context.compress_click": "Click to compress context",
         "context.no_conversation": "No active conversation",
         "context.compressed": "Context compressed: {before} to {after} tokens",
         "context.no_need": "Conversation is short, no compression needed",
         "context.compress_failed": "Compression failed: {error}",
 
-        // === Image ===
+        // === 图片 ===
         "image.select_file": "Please select an image file",
         "image.max_5mb": "Image size must not exceed 5MB",
         "image.preview": "Preview",
@@ -1650,23 +1650,23 @@ const LOCALES = {
         "attachment.max_count": "Each message supports up to 8 attachments",
         "attachment.too_large": "Attachment {name} is too large; images are limited to 10MB and other files to 25MB",
 
-        // === Toast ===
+        // === 消息提示 ===
         "toast.task_new_tab": "Task running, opened in new tab, current page preserved",
         "toast.task_allow_popup": "Task running, please complete it or allow popups",
         "toast.logged_out": "Logged out",
         "toast.settings_saved": "Settings saved",
         "toast.confirm_failed": "Confirm failed: {error}",
 
-        // === Error ===
+        // === 错误 ===
         "error.model_failed": "Model returned failure",
         "error.empty_error": "Model service returned empty error object",
         "error.load_failed": "Failed to load conversation",
 
-        // === Auth ===
+        // === 认证 ===
         "auth.fill_fields": "Please enter backend URL, username and password",
         "auth.logged_in": "Logged in: {user}",
 
-        // === Settings JS ===
+        // === 设置页 JS ===
         "settings_js.no_key": "No key configured",
         "settings_js.key_configured": "Configured: {hint}",
         "settings_js.provider_name": "Provider Name",
@@ -1757,7 +1757,7 @@ const LOCALES = {
         "settings_js.new_file": "New file",
         "settings_js.unknown_file": "Unknown file",
 
-        // === Plugins JS ===
+        // === 插件页 JS ===
         "plugins_js.load_failed": "Failed to load plugins: {error}",
         "plugins_js.toggled": "{id} {state}",
         "plugins_js.enabled": "enabled",
@@ -1806,7 +1806,7 @@ const LOCALES = {
         "plugins.capability_pack_kind.context_pack": "Context Pack",
         "plugins.capability_pack_kind.tool_adapter": "Tool Adapter Draft",
 
-        // === MCP services JS ===
+        // === MCP 服务页 JS ===
         "mcp_js.summary": "{connected} connected · {attention} needs attention · {total} total",
         "mcp_js.all_services": "All Services",
         "mcp_js.no_services": "No MCP services configured",
@@ -1843,7 +1843,7 @@ const LOCALES = {
         "mcp_tool_health.unavailable": "Tools Unavailable",
         "mcp_tool_health.unknown": "Tools Unverified",
 
-        // === Backend: Plugin descriptions ===
+        // === 后端：插件说明 ===
         "plugin.desc.filesystem": "Local file and directory access for scanning project structure, reading and writing files.",
         "plugin.desc.document": "Local document processing for Word, PDF, Markdown, PPT parsing and generation.",
         "plugin.desc.code": "Code search and editing for listing files, searching text and precise code modifications.",
@@ -1879,7 +1879,7 @@ function setLocale(lang) {
     if (!LOCALES[lang]) return;
     localStorage.setItem(I18N_STORAGE_KEY, lang);
     applyI18n();
-    // Dispatch event for other scripts to react
+    // 分发事件，供其他脚本响应。
     window.dispatchEvent(new CustomEvent("locale-changed", { detail: { locale: lang } }));
 }
 
@@ -1913,7 +1913,7 @@ function applyI18n(root) {
         const key = el.getAttribute("data-i18n-aria-label");
         el.setAttribute("aria-label", t(key));
     });
-    // Update <title>
+    // 更新 <title>。
     const titleEl = container.querySelector("title[data-i18n]");
     if (titleEl) document.title = t(titleEl.getAttribute("data-i18n"));
 }
@@ -1922,7 +1922,7 @@ function applyI18nDynamic(container) {
     applyI18n(container);
 }
 
-// Auto-apply on DOMContentLoaded
+// DOMContentLoaded 后自动应用。
 if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => applyI18n());
 } else {

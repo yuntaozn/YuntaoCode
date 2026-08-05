@@ -1,4 +1,4 @@
-"""Check documentation files for UTF-8 encoding and common mojibake markers."""
+"""检查文档 UTF-8 编码与异常字符。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ DEFAULT_PATHS = (
 TEXT_SUFFIXES = {".md", ".txt"}
 
 MOJIBAKE_MARKERS = (
-    "\ufffd",  # replacement character
+    "\ufffd",  # Unicode 替换字符
     "銆",
     "锛",
     "鏋",

@@ -1,10 +1,8 @@
-"""Stable trace summaries derived from persisted Run events.
+"""根据持久化 Run 事件生成稳定 Trace 摘要。
 
-The persisted event stream still keeps the legacy ``event`` field for the
-current UI and streaming contract.  This module gives Runbook, diagnostic
-export, replay, and future evaluation code one normalized audit view without
-forcing a storage migration.
-"""
+持久化事件流为兼容当前 UI 和流式契约，仍保留旧版 ``event`` 字段。
+本模块为 Runbook、诊断导出、Replay 和未来 Evaluation 提供统一审计视图，
+无需强制迁移存储结构。"""
 
 from __future__ import annotations
 
@@ -23,7 +21,7 @@ def build_run_trace_summary(
     events: list[dict[str, Any]] | None = None,
     timeline_limit: int = 50,
 ) -> dict[str, Any]:
-    """Build a compact, sanitized trace summary for one Run."""
+    """为一个 Run 构建经过清理的紧凑 Trace 摘要。"""
     raw_events = _event_list(run, events)
     normalized = [
         _normalize_trace_event(index, event)

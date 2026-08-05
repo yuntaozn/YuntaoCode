@@ -1,4 +1,4 @@
-"""Memory tools for AI to save and recall long-term memories."""
+"""模型可调用的本地记忆工具。"""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def _memory_scope(args: dict[str, Any], tags: list[str]) -> str:
 
 
 async def _memory_save_handler(args: dict[str, Any], context: Any) -> dict[str, Any]:
-    """AI saves a memory item."""
+    """由 AI 保存记忆条目。"""
     text = str(args.get("text") or "").strip()
     if not text:
         return {"error": "text is required"}
@@ -85,7 +85,7 @@ async def _memory_save_handler(args: dict[str, Any], context: Any) -> dict[str, 
 
 
 async def _memory_recall_handler(args: dict[str, Any], context: Any) -> dict[str, Any]:
-    """AI recalls relevant memories."""
+    """由 AI 召回相关记忆。"""
     query = str(args.get("query") or "").strip()
     limit = min(int(args.get("limit") or 10), 50)
 

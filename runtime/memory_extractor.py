@@ -1,4 +1,4 @@
-"""Automatic memory extraction from conversation history."""
+"""从对话中提取候选记忆。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from .memory_store import MemoryItem, MemoryStore
 
 logger = logging.getLogger(__name__)
 
-# Tags that must be rejected at storage time — these indicate project-scoped facts.
+# 保存时必须拒绝的标签：这些标签表示项目范围事实。
 _BLOCKED_TAGS = frozenset({
     "project_knowledge", "project-knowledge", "project knowledge",
     "项目知识", "项目知识 - 技术栈",
@@ -22,9 +22,9 @@ _BLOCKED_TAGS = frozenset({
     "技术选型", "技术栈",
 })
 
-# Tags allowed for automatically promoted global memory. Auto extraction is
-# intentionally narrow: project facts must be saved explicitly with workspace
-# scope instead of leaking into global memory.
+# 允许自动提升为全局记忆的标签。自动提取有意保持狭窄：
+# 项目事实必须以工作区范围显式保存，
+# 避免泄漏到全局记忆。
 _ALLOWED_GLOBAL_TAGS = frozenset({
     "user_preference", "user-preference", "user preference",
     "preference", "preferences",
@@ -61,18 +61,18 @@ EXTRACTION_SYSTEM_PROMPT = """你是一个记忆提取助手。从对话中提�
 
 
 def _build_extraction_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Build a compact conversation representation for the extraction model."""
+    """为提取模型构建紧凑的对话表示。"""
     lines: list[str] = []
-    # Only include recent user/assistant messages
+    # 只包含近期用户和助手消息
     relevant = [m for m in messages if m.get("role") in ("user", "assistant")]
-    # Take last 20 messages max
+    # 最多取最后 20 条消息
     for msg in relevant[-20:]:
         role = msg.get("role", "unknown")
         content = msg.get("content", "")
         if isinstance(content, list):
             text_parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
             content = "\n".join(text_parts)
-        # Truncate very long messages
+        # 截断过长消息
         if len(content) > 1500:
             content = content[:1500] + "...(截断)"
         if content.strip():
@@ -89,12 +89,12 @@ def _build_extraction_messages(messages: list[dict[str, Any]]) -> list[dict[str,
 
 
 def _parse_extraction_result(raw: str) -> list[dict[str, Any]]:
-    """Parse the model's extraction output into memory items."""
+    """将模型的提取结果解析为记忆条目。"""
     text = raw.strip()
-    # Try to find JSON array in the response
+    # 尝试在响应中查找 JSON 数组
     if "[" in text:
         start = text.index("[")
-        # Find matching closing bracket
+        # 查找匹配的闭合方括号
         depth = 0
         end = -1
         for i in range(start, len(text)):
@@ -129,7 +129,7 @@ def _parse_extraction_result(raw: str) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 pass
 
-    # If the model returned [] or empty response
+    # 模型返回 [] 或空响应时
     if text in ("[]", ""):
         return []
 
@@ -142,10 +142,9 @@ async def extract_memories_from_conversation(
     model: str,
     settings: Any,
 ) -> list[dict[str, Any]]:
-    """Extract memory candidates from conversation history.
+    """从对话历史中提取记忆候选。
 
-    Returns a list of {"text": ..., "tags": [...]} dicts, or empty list.
-    """
+    返回 ``{"text": ..., "tags": [...]}`` 字典列表；没有候选时返回空列表。"""
     extraction_messages = _build_extraction_messages(messages)
     if not extraction_messages:
         return []
@@ -171,7 +170,7 @@ _PUNCT_RE = re.compile(r"[,.;:!?\"'()\[\]{}<>,.;:\s，。、；：\u201c\u201d\u
 
 
 def _normalize_text(text: str) -> str:
-    """Normalize text for dedup: lowercase, collapse whitespace, strip punctuation."""
+    """为去重规范化文本：转小写、合并空白并去除标点。"""
     text = text.lower().strip()
     text = _PUNCT_RE.sub(" ", text)
     text = " ".join(text.split())
@@ -179,25 +178,24 @@ def _normalize_text(text: str) -> str:
 
 
 def _is_similar_to_existing(new_text: str, existing_normalized: set[str], threshold: float = 0.7) -> bool:
-    """Check if new_text is similar to any existing memory text.
+    """检查 new_text 是否与任一现有记忆文本相似。
 
-    Uses normalized exact match + substring containment + token overlap.
-    """
+    使用规范化精确匹配、子串包含和词元重叠三种方法。"""
     norm = _normalize_text(new_text)
     if not norm:
         return True
 
-    # 1. Exact normalized match
+    # 1. 规范化后的精确匹配
     if norm in existing_normalized:
         return True
 
-    # 2. Substring containment: if new text is contained in or contains existing
+    # 2. 子串包含：新文本被现有文本包含或包含现有文本
     for existing in existing_normalized:
         if len(norm) > 3 and len(existing) > 3:
             if norm in existing or existing in norm:
                 return True
 
-    # 3. Character bigram overlap (works well for CJK text)
+    # 3. 字符二元组重叠（适合中日韩文本）
     new_bigrams = set(norm[i:i+2] for i in range(len(norm) - 1)) if len(norm) >= 2 else set()
     if new_bigrams:
         for existing in existing_normalized:
@@ -213,7 +211,7 @@ def _is_similar_to_existing(new_text: str, existing_normalized: set[str], thresh
 
 
 def _has_blocked_tags(tags: list[str]) -> bool:
-    """Check if any tag is in the project-scoped blacklist."""
+    """检查是否有标签位于项目范围黑名单中。"""
     for tag in tags:
         normalized_tag = tag.strip().lower().replace("_", " ").replace("-", " ")
         for blocked in _BLOCKED_TAGS:
@@ -224,7 +222,7 @@ def _has_blocked_tags(tags: list[str]) -> bool:
 
 
 def _has_allowed_global_tags(tags: list[str]) -> bool:
-    """Check if tags clearly describe user-level global memory."""
+    """检查标签是否明确描述用户级全局记忆。"""
     for tag in tags:
         normalized_tag = tag.strip().lower().replace("_", " ").replace("-", " ")
         for allowed in _ALLOWED_GLOBAL_TAGS:
@@ -235,7 +233,7 @@ def _has_allowed_global_tags(tags: list[str]) -> bool:
 
 
 def _global_memory_texts_for_dedup(store: MemoryStore) -> set[str]:
-    """Return normalized global memory texts for auto-extraction dedup."""
+    """返回供自动提取去重使用的规范化全局记忆文本。"""
     return {
         _normalize_text(item.text)
         for item in store.list()
@@ -252,14 +250,14 @@ async def extract_and_store_memories(
     conversation_id: str = "",
     workspace_id: str = "",
 ) -> list[MemoryItem]:
-    """Extract memories and store them. Returns list of newly stored items."""
+    """提取并保存记忆，返回新保存的条目列表。"""
     candidates = await extract_memories_from_conversation(messages, model, settings)
     if not candidates:
         return []
 
     stored: list[MemoryItem] = []
-    # Auto extraction writes global memories only, so workspace memories should
-    # not affect whether a user-level global preference can be stored.
+    # 自动提取只写入全局记忆，因此工作区记忆不应
+    # 影响用户级全局偏好能否保存。
     existing_normalized = _global_memory_texts_for_dedup(store)
 
     for candidate in candidates:
@@ -272,7 +270,7 @@ async def extract_and_store_memories(
             tags = []
         tags = [str(t).strip() for t in tags if str(t).strip()][:6]
 
-        # Reject project-scoped memories by tag
+        # 根据标签拒绝项目范围记忆
         if _has_blocked_tags(tags):
             logger.debug("Rejected project-scoped memory (blocked tag): %s", text[:80])
             continue
@@ -281,7 +279,7 @@ async def extract_and_store_memories(
             logger.debug("Rejected memory without allowed global tag: %s", text[:80])
             continue
 
-        # Fuzzy dedup against existing memories
+        # 与现有记忆进行模糊去重
         if _is_similar_to_existing(text, existing_normalized):
             logger.debug("Rejected duplicate memory: %s", text[:80])
             continue

@@ -1,8 +1,7 @@
-"""Memory prompt building with relevance scoring.
+"""使用相关性评分构建记忆提示。
 
-This module builds the memory prompt that gets injected into the system prompt.
-It uses relevance scoring to select the most relevant memories for each conversation.
-"""
+本模块构建注入系统提示的记忆内容，并通过相关性评分为每次对话
+选择最相关的记忆。"""
 
 from __future__ import annotations
 
@@ -20,7 +19,7 @@ from .memory_store import (
     MemoryStore,
 )
 
-# Re-export for backward compatibility
+# 为向后兼容重新导出
 __all__ = [
     "DEFAULT_MEMORY_SETTINGS",
     "DEFAULT_ACTIVE_MEMORIES",
@@ -42,10 +41,10 @@ DEFAULT_MEMORY_SETTINGS: dict[str, Any] = {
 }
 
 
-# ----- Legacy compat (kept for settings migration) -----
+# ----- 旧版兼容（供设置迁移保留）-----
 
 def normalize_memory_item(value: dict[str, Any]) -> dict[str, Any]:
-    """Normalize a legacy memory item dict (for settings migration)."""
+    """规范化旧版记忆条目字典，供设置迁移使用。"""
     text = " ".join(str(value.get("text") or value.get("content") or "").split())
     text = text[:MAX_MEMORY_TEXT_CHARS]
     raw_tags = value.get("tags")
@@ -100,10 +99,10 @@ def update_memory_settings(
     return merged
 
 
-# ----- Legacy prompt builder (kept for backward compat) -----
+# ----- 旧版提示构建器（为向后兼容保留）-----
 
 def build_memory_prompt(memory_settings: dict[str, Any] | None) -> str:
-    """Legacy prompt builder for when MemoryStore is not yet initialized."""
+    """在 MemoryStore 尚未初始化时使用的旧版提示构建器。"""
     memories = normalize_memory_settings(memory_settings)
     if not memories.get("enabled"):
         return "未启用用户记忆。"
@@ -113,9 +112,9 @@ def build_memory_prompt(memory_settings: dict[str, Any] | None) -> str:
     return "暂无已启用用户记忆。"
 
 
-# ----- Relevance-based prompt builder -----
+# ----- 基于相关性的提示构建器 -----
 
-# Simple Chinese/English tokenization.  Chinese text is also represented as
+# 简单的中英文分词；中文文本同时表示为
 # short n-grams so "用中文回答" can match memories containing "中文回复".
 _WORD_PATTERN = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", re.UNICODE)
 
@@ -149,7 +148,7 @@ MAX_BROAD_GLOBAL_MEMORIES = 2
 
 
 def _tokenize(text: str) -> set[str]:
-    """Extract word tokens from text (supports Chinese and English)."""
+    """从文本提取词元，支持中文和英文。"""
     tokens: set[str] = set()
     for match in _WORD_PATTERN.findall(text):
         value = match.lower().strip()
@@ -183,7 +182,7 @@ def _has_direct_relevance(
 
 
 def _is_stable_global_memory(item: MemoryItem) -> bool:
-    """Return True for user-level global memories safe to show broadly."""
+    """对可安全广泛展示的用户级全局记忆返回 True。"""
     if item.scope == "workspace":
         return False
     normalized_tags = {_normalized_tag(tag) for tag in item.tags}
@@ -200,23 +199,22 @@ def _score_memory(
     message_tags: set[str],
     now: datetime,
 ) -> float:
-    """Score a memory's relevance to the current user message.
+    """计算记忆与当前用户消息的相关性分数。
 
-    Higher score = more relevant.
-    """
+    分数越高表示越相关。"""
     score = 0.0
 
-    # 1. Tag matching (+3 per matched tag)
+    # 1. 标签匹配（每个匹配标签加 3 分）
     item_tags = set(t.lower() for t in item.tags)
     tag_overlap = item_tags & message_tags
     score += len(tag_overlap) * 3.0
 
-    # 2. Text keyword overlap (+1 per matched word)
+    # 2. 文本关键词重叠（每个匹配词加 1 分）
     item_tokens = _tokenize(item.text)
     text_overlap = item_tokens & message_tokens
     score += len(text_overlap) * 1.0
 
-    # 3. Recency bonus
+    # 3. 新鲜度加分
     if item.created_at:
         try:
             created = datetime.fromisoformat(item.created_at)
@@ -228,15 +226,15 @@ def _score_memory(
         except (ValueError, TypeError):
             pass
 
-    # 4. Usage frequency bonus
+    # 4. 使用频率加分
     if item.usage_count > 15:
         score += 2.0
     elif item.usage_count > 5:
         score += 1.0
 
-    # 5. Base score for eligible memories. Eligibility is decided separately;
-    # this base score only stabilizes ordering among memories already selected
-    # for the current request.
+    # 5. 候选记忆基础分。候选资格由其他逻辑决定；
+    # 该基础分只用于稳定当前请求已选记忆之间的排序，
+    # 不负责扩大选择范围。
     score += 0.5
 
     return score
@@ -252,10 +250,9 @@ def build_memory_prompt_from_store(
     max_prompt_chars: int = MAX_MEMORY_PROMPT_CHARS,
     record_usage: bool = True,
 ) -> tuple[str, list[str]]:
-    """Build memory prompt with relevance filtering.
+    """构建带相关性过滤的记忆提示。
 
-    Returns (prompt_text, list_of_used_memory_ids).
-    """
+    返回 ``(prompt_text, list_of_used_memory_ids)``。"""
     if not enabled:
         return "未启用用户记忆。", []
 
@@ -270,14 +267,14 @@ def build_memory_prompt_from_store(
 
     now = datetime.now(timezone.utc)
 
-    # Tokenize user message for relevance scoring
+    # 对用户消息分词，供相关性评分使用
     message_tokens = _tokenize(user_message) if user_message else set()
-    # Also extract potential tags from message (words that look like tags)
-    message_tags = message_tokens  # Simple: use all tokens as potential tags
+    # 同时从消息中提取可能的标签
+    message_tags = message_tokens  # 简化处理：全部词元都作为候选标签
 
-    # Score and sort.  When a current user message exists, avoid injecting
-    # unrelated workspace facts into every model call.  Stable global
-    # preference/identity memories may still be broadly useful.
+    # 评分并排序。有当前用户消息时，避免把无关工作区事实
+    # 注入每次模型调用；稳定的全局偏好或身份记忆
+    # 仍可能具有广泛用途。
     scored: list[tuple[MemoryItem, float]] = []
     broad_global_ids: set[str] = set()
     has_current_query = bool(message_tokens)
@@ -298,7 +295,7 @@ def build_memory_prompt_from_store(
     if has_current_query and not scored:
         return "暂无与当前请求相关的已启用用户记忆。", []
 
-    # Select top-N within char budget
+    # 在字符预算内选择前 N 项
     selected: list[MemoryItem] = []
     selected_ids: list[str] = []
     total_chars = 0
@@ -314,9 +311,9 @@ def build_memory_prompt_from_store(
         line = item.text
         if item.tags:
             line = f"[{', '.join(item.tags)}] {line}"
-        line_len = len(line) + 2  # "- " prefix + newline
+        line_len = len(line) + 2  # “- ”前缀与换行所占字符
         if total_chars + line_len > max_prompt_chars:
-            continue  # Skip this one, try shorter ones
+            continue  # 跳过当前项，继续尝试更短条目
         selected.append(item)
         selected_ids.append(item.id)
         total_chars += line_len
@@ -324,7 +321,7 @@ def build_memory_prompt_from_store(
     if not selected:
         return "暂无已启用用户记忆。", []
 
-    # Build prompt
+    # 构建提示
     lines = []
     for item in selected:
         tags = item.tags or []
@@ -337,7 +334,7 @@ def build_memory_prompt_from_store(
     if len(prompt) > max_prompt_chars:
         prompt = prompt[:max_prompt_chars] + "\n- ...记忆过长，已截断"
 
-    # Record usage for selected memories
+    # 记录已选记忆的使用情况
     if record_usage:
         store.batch_record_usage(selected_ids)
 

@@ -1,9 +1,7 @@
-"""Execution plan lifecycle management extracted from ConversationMessagesStreamHandler.
+"""从 ConversationMessagesStreamHandler 提取的执行计划生命周期管理。
 
-Functions in this module have no handler/runtime dependency and perform no I/O.
-Lifecycle helpers intentionally mutate the provided execution-plan dictionary
-in place so the conversation loop can keep a single shared plan object.
-"""
+本模块函数不依赖 Handler 或 Runtime，也不执行 I/O。生命周期辅助函数有意
+原地修改传入的执行计划字典，使对话循环可持续使用同一个共享计划对象。"""
 
 from __future__ import annotations
 
@@ -20,20 +18,20 @@ from .classifiers import (
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# 辅助函数
 # ---------------------------------------------------------------------------
 
 def normalize_tool_id(value: Any) -> str:
-    """Convert a raw tool identifier to canonical dot-separated form."""
+    """将原始工具标识转换为规范的点分形式。"""
     return canonical_tool_id(value)
 
 
 # ---------------------------------------------------------------------------
-# Plan normalization / extraction
+# 计划规范化与提取
 # ---------------------------------------------------------------------------
 
 def extract_plan_json(raw_plan: str) -> dict[str, Any] | None:
-    """Try to extract a JSON object from a raw plan string (possibly fenced)."""
+    """尝试从原始计划文本（可能带代码围栏）中提取 JSON 对象。"""
     text = raw_plan.strip()
     if text.startswith("```"):
         text = text.strip("`")
@@ -51,10 +49,9 @@ def extract_plan_json(raw_plan: str) -> dict[str, Any] | None:
 
 
 def normalize_execution_plan(raw_plan: str, mode: str | None) -> dict[str, Any]:
-    """Parse *raw_plan* into a normalized execution plan dict.
+    """将 *raw_plan* 解析为规范化执行计划字典。
 
-    Falls back to :func:`fallback_execution_plan` when parsing fails.
-    """
+    解析失败时回退到 :func:`fallback_execution_plan`。"""
     parsed = extract_plan_json(raw_plan)
     if not parsed:
         return fallback_execution_plan(mode)
@@ -85,12 +82,10 @@ def normalize_execution_plan(raw_plan: str, mode: str | None) -> dict[str, Any]:
 
 
 def fallback_execution_plan(mode: str | None) -> dict[str, Any]:
-    """Return a neutral audit plan when the model plan cannot be parsed.
+    """模型计划无法解析时返回中性的审计计划。
 
-    The fallback keeps the UI and trace readable, but it must not become a
-    mode-specific workflow or tool route.  The model still chooses the actual
-    next actions from the task contract and visible capabilities.
-    """
+    回退计划保持 UI 和 Trace 可读，但不得变成模式专属流程或工具路线。
+    实际下一步仍由模型根据任务契约和可见能力选择。"""
     _ = mode
     steps = [
         ("确认当前目标", "根据本轮用户请求和任务契约确认要达成的结果。", ""),
@@ -110,11 +105,11 @@ def fallback_execution_plan(mode: str | None) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Plan step matching & lifecycle
+# 计划步骤匹配与生命周期
 # ---------------------------------------------------------------------------
 
 def tool_matches_plan_step(tool_id: str, step: dict[str, Any]) -> bool:
-    """Determine whether *tool_id* satisfies a plan step's hint and intent."""
+    """判断 *tool_id* 是否满足计划步骤的提示和意图。"""
     hint = normalize_tool_id(step.get("tool_hint")).lower()
     title = str(step.get("title") or "").lower()
     description = str(step.get("description") or "").lower()
@@ -122,12 +117,12 @@ def tool_matches_plan_step(tool_id: str, step: dict[str, Any]) -> bool:
     tool_id = normalize_tool_id(tool_id).lower()
     if not tool_id:
         return False
-    # Exact match: tool_hint contains the real tool ID
+    # 精确匹配：tool_hint 包含真实工具 ID
     if tool_id in hint:
         return True
 
-    # When a plan step names a concrete tool, avoid completing it with a
-    # different tool just because the wording is similar.
+    # 当计划步骤指定具体工具时，不要仅因措辞相似
+    # 就使用另一工具完成该步骤。
     hint_has_tool_prefix = any(
         prefix in hint for prefix in ("filesystem.", "code.", "document.", "shell.", "git.")
     )
@@ -159,10 +154,9 @@ def mark_next_plan_step_running(
     execution_plan: dict[str, Any] | None,
     tool_call: dict[str, Any],
 ) -> int | None:
-    """Mark the next matching pending plan step as *running*.
+    """将下一个匹配的待处理计划步骤标记为 *running*。
 
-    Returns the matched step index, or ``None`` if no step matched.
-    """
+    返回匹配步骤索引；没有匹配项时返回 ``None``。"""
     if not execution_plan:
         return None
     steps = execution_plan.get("steps")
@@ -199,7 +193,7 @@ def finish_plan_step(
     step_index: int,
     tool_event: dict[str, Any],
 ) -> None:
-    """Mark a plan step as completed or failed based on the tool event."""
+    """根据工具事件将计划步骤标记为已完成或失败。"""
     steps = execution_plan.get("steps") or []
     if step_index < 0 or step_index >= len(steps) or not isinstance(steps[step_index], dict):
         return
@@ -217,7 +211,7 @@ def complete_remaining_plan_steps(
     failed: bool,
     had_tool_events: bool = True,
 ) -> None:
-    """Mark all remaining pending/running steps as skipped."""
+    """将所有剩余待处理或运行中步骤标记为已跳过。"""
     for step in execution_plan.get("steps") or []:
         if not isinstance(step, dict) or step.get("status") not in {None, "pending", "running"}:
             continue
@@ -231,7 +225,7 @@ def complete_remaining_plan_steps(
 
 
 def interrupt_execution_plan(execution_plan: dict[str, Any]) -> None:
-    """Reset the currently running plan step back to pending (for interruptions)."""
+    """发生中断时，将当前运行步骤重置为待处理。"""
     steps = execution_plan.get("steps")
     if not isinstance(steps, list):
         return

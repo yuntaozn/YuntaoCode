@@ -1,4 +1,4 @@
-"""Memory CRUD API handlers."""
+"""本地记忆的 HTTP API 处理器。"""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def _validate_memory_scope(handler: ApiHandler, scope: object, workspace_id: str
 
 
 class MemoriesHandler(ApiHandler):
-    """GET /memories - list memories; POST /memories - create a new memory."""
+    """处理 GET /memories 列出记忆，并处理 POST /memories 创建记忆。"""
 
     def get(self) -> None:
         store = self.runtime.settings.memory_store
@@ -83,7 +83,7 @@ class MemoriesHandler(ApiHandler):
 
 
 class MemoryDetailHandler(ApiHandler):
-    """PUT /memories/{id} - update; DELETE /memories/{id} - delete."""
+    """处理 PUT /memories/{id} 更新记忆，并处理 DELETE /memories/{id} 删除记忆。"""
 
     def put(self, memory_id: str) -> None:
         payload = self.parse_json_body()
@@ -107,7 +107,7 @@ class MemoryDetailHandler(ApiHandler):
 
 
 class MemoryPromptHandler(ApiHandler):
-    """GET /memories/prompt - preview the memory prompt that would be injected."""
+    """处理 GET /memories/prompt，预览将要注入的记忆提示。"""
 
     def get(self) -> None:
         from ..memory_service import build_memory_prompt_from_store

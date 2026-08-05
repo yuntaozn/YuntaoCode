@@ -1,10 +1,8 @@
-"""Strategy helpers extracted from ConversationMessagesStreamHandler.
+"""从 ConversationMessagesStreamHandler 提取的策略辅助函数。
 
-Functions in this module have no ``self`` dependency and perform no I/O.
-Most are pure value transforms; functions such as ``merge_tool_call_chunks``
-intentionally update caller-provided accumulators in place.
-They can be tested in isolation without a Tornado handler or runtime context.
-"""
+本模块函数不依赖 ``self``，也不执行 I/O。多数函数是纯值转换；
+``merge_tool_call_chunks`` 等函数会有意原地更新调用方提供的累积对象。
+它们无需 Tornado Handler 或运行时上下文即可独立测试。"""
 
 from __future__ import annotations
 
@@ -19,7 +17,7 @@ from .tool_result_risks import shell_success_has_stderr_warning
 
 
 # ---------------------------------------------------------------------------
-# Tool-ID constants
+# 工具 ID 常量
 # ---------------------------------------------------------------------------
 
 DOCUMENT_WRITE_TOOL_IDS: frozenset[str] = frozenset({
@@ -138,20 +136,18 @@ STATE_CHANGING_EXTRA_TOOL_IDS: frozenset[str] = frozenset({
 
 
 # ---------------------------------------------------------------------------
-# Tool classification helpers
+# 工具分类辅助函数
 # ---------------------------------------------------------------------------
 
 def canonical_tool_id(value: Any) -> str:
-    """Convert model-emitted tool IDs to registered runtime tool IDs."""
+    """将模型输出的工具 ID 转换为已注册的运行时工具 ID。"""
     return normalize_tool_id(value)
 
 
 def explorer_tool_ids(mode: str | None) -> set[str]:
-    """Return tool IDs that can provide local inspection evidence.
+    """返回可提供本地检查证据的工具 ID。
 
-    ``mode`` is accepted for legacy call sites. Evidence classification should
-    not change because an old assistant mode string is present.
-    """
+    为兼容旧调用点仍接受 ``mode``，但证据分类不应因旧助手模式字符串存在而改变。"""
     _ = mode
     return {
         "filesystem.scan_folder",
@@ -168,11 +164,10 @@ def explorer_tool_ids(mode: str | None) -> set[str]:
 
 
 def verification_tool_ids(mode: str | None) -> set[str]:
-    """Return tool IDs that may provide verification evidence.
+    """返回可能提供验证证据的工具 ID。
 
-    The final evidence decision still depends on the task contract, target path
-    relation, status, and tool output facts. It must not depend on legacy mode.
-    """
+    最终证据判断仍取决于任务契约、目标路径关系、状态和工具输出事实，
+    不得依赖旧版 mode。"""
     _ = mode
     return set(DELIVERABLE_VERIFICATION_TOOL_IDS) | {
         "filesystem.scan_folder",
@@ -234,17 +229,15 @@ def is_invalid_verification_method_event(event: dict[str, Any]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Context evidence classification
+# 上下文证据分类
 # ---------------------------------------------------------------------------
 
 
 def looks_like_diagnostic_feedback(content: str) -> bool:
-    """Return whether the user pasted runtime evidence from a recent task.
+    """返回用户是否粘贴了近期任务的运行时证据。
 
-    This does not decide that a repair is required. It only tells the context
-    layer that the message is likely evidence about something that just ran, so
-    the model-side task contract should see the previous task anchor.
-    """
+    这不决定必须修复，只告诉上下文层：该消息可能是在反馈刚执行的事项，因此
+    模型侧任务契约应能看到上一任务锚点。"""
     text = str(content or "").strip().lower()
     if len(text) < 8:
         return False
@@ -299,13 +292,10 @@ def looks_like_diagnostic_feedback(content: str) -> bool:
 
 
 def plan_has_pending_write_step(execution_plan: Any) -> bool:
-    """Check whether a plan explicitly contains a pending local write step.
+    """检查计划是否明确包含待执行的本地写入步骤。
 
-    Contract promotion should follow concrete execution evidence: either a
-    known write tool or an explicit file-writing phrase. Broad task words such
-    as "generate" are not enough because analysis tasks may also generate an
-    answer without changing local state.
-    """
+    契约提升应跟随具体执行证据：已知写入工具或明确的文件写入措辞。仅有“生成”等
+    宽泛任务词并不足够，因为分析任务也可能只生成答案而不改变本地状态。"""
     if not isinstance(execution_plan, dict):
         return False
     steps = execution_plan.get("steps")
@@ -362,14 +352,14 @@ def plan_has_pending_write_step(execution_plan: Any) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Tool-call processing (value transforms plus explicit accumulator updates)
+# 工具调用处理（值转换与显式累积状态更新）
 # ---------------------------------------------------------------------------
 
 def merge_tool_call_chunks(
     calls: list[dict[str, Any]],
     chunks: list[dict[str, Any]],
 ) -> None:
-    """Merge streaming tool-call chunks into the *calls* accumulator list."""
+    """将流式工具调用片段合并到 *calls* 累积列表中。"""
     for chunk in chunks:
         try:
             index = int(chunk.get("index", 0) or 0)
@@ -394,7 +384,7 @@ def merge_tool_call_chunks(
 
 
 def tool_call_arguments_size(calls: list[dict[str, Any]]) -> int:
-    """Return the total streamed argument size for accumulated tool calls."""
+    """返回已累积工具调用的流式参数总大小。"""
     total = 0
     for call in calls:
         function = call.get("function") if isinstance(call, dict) else {}
@@ -408,7 +398,7 @@ def complete_tool_calls(
     calls: list[dict[str, Any]],
     round_index: int,
 ) -> list[dict[str, Any]]:
-    """Finalize accumulated tool calls, dropping empty entries."""
+    """整理已累积的工具调用并丢弃空条目。"""
     completed: list[dict[str, Any]] = []
     for index, call in enumerate(calls):
         function = call.get("function") or {}
@@ -426,16 +416,14 @@ def complete_tool_calls(
 
 
 def extract_native_tool_calls(text: str, round_index: int = 0) -> list[dict[str, Any]]:
-    """Parse raw tool-call markers emitted as text by some local models.
+    """解析某些本地模型以文本输出的原始工具调用标记。
 
-    A few OpenAI-compatible local providers stream tool calls as special text
-    blocks instead of structured ``tool_calls`` deltas, for example:
+    少数 OpenAI 兼容本地 Provider 不输出结构化 ``tool_calls`` 增量，而会把工具调用
+    流式输出为特殊文本块，例如：
 
     ``<|FunctionCallBegin|>[{"name":"filesystem.read_file","parameters":{...}}]<|FunctionCallEnd|>``
 
-    The runner can convert these blocks back into normal tool calls and remove
-    the raw marker text from the user-visible stream.
-    """
+    Runner 可将这些文本块恢复为普通工具调用，并从用户可见内容流中移除原始标记。"""
     calls: list[dict[str, Any]] = []
     for raw_block in native_tool_call_blocks(text):
         parsed = _parse_native_tool_call_block(raw_block)
@@ -455,7 +443,7 @@ def extract_native_tool_calls(text: str, round_index: int = 0) -> list[dict[str,
 
 
 def has_unresolved_tool_call_markup(text: str) -> bool:
-    """Return whether model text contains tool-call markup that cannot execute."""
+    """返回模型文本是否包含无法执行的工具调用标记。"""
     lowered = str(text or "").lower()
     has_marker = (
         "<toolcall" in lowered
@@ -467,7 +455,7 @@ def has_unresolved_tool_call_markup(text: str) -> bool:
 
 
 def strip_native_tool_call_blocks(text: str) -> str:
-    """Remove raw local-model function-call blocks from display text."""
+    """从展示文本中移除本地模型原始函数调用块。"""
     text = strip_xml_style_tool_call_blocks(text)
     text = strip_tagged_tool_call_blocks(text)
     if NATIVE_TOOL_CALL_BEGIN not in text:
@@ -506,11 +494,10 @@ def native_tool_call_blocks(text: str) -> list[str]:
 
 
 def xml_style_tool_call_blocks(text: str) -> list[dict[str, Any]]:
-    """Parse XML-like function calls emitted as assistant text by some models.
+    """解析某些模型以助手文本输出的 XML 风格函数调用。
 
-    Example:
-    ``<filesystem.scan_folder><arg-key>path</arg-key><arg-value>.</arg-value></filesystem.scan_folder>``
-    """
+    示例：
+    ``<filesystem.scan_folder><arg-key>path</arg-key><arg-value>.</arg-value></filesystem.scan_folder>``"""
     calls: list[dict[str, Any]] = []
     for match in XML_TOOL_CALL_PATTERN.finditer(text):
         body = match.group("body")
@@ -530,7 +517,7 @@ def strip_xml_style_tool_call_blocks(text: str) -> str:
 
 
 def tagged_tool_call_blocks(text: str) -> list[dict[str, Any]]:
-    """Parse ``<toolcall>{...}</toolcall>`` blocks emitted as assistant text."""
+    """解析模型以助手文本输出的 ``<toolcall>{...}</toolcall>`` 块。"""
     calls: list[dict[str, Any]] = []
     for match in TAGGED_TOOL_CALL_PATTERN.finditer(text):
         block = _xml_tool_text(match.group("body"))
@@ -637,7 +624,7 @@ def _normalize_native_tool_arguments(value: Any) -> dict[str, Any]:
 
 
 def tool_signature(tool_id: str, arguments: dict[str, Any]) -> str:
-    """Produce a canonical JSON signature for deduplication."""
+    """生成用于去重的规范 JSON 签名。"""
     tool_id = canonical_tool_id(tool_id)
     normalized: dict[str, Any]
     if tool_id == "code.search_text":
@@ -671,7 +658,7 @@ def messages_for_model_round(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
-    """Sanitize conversation messages when tools are unavailable."""
+    """工具不可用时清理对话消息。"""
     if tools:
         return messages
     sanitized: list[dict[str, Any]] = []
@@ -710,7 +697,7 @@ def messages_for_model_round(
 
 
 def parse_tool_arguments_strict(text: str) -> tuple[dict[str, Any], str | None]:
-    """Parse tool arguments without guessing or repairing incomplete JSON."""
+    """解析工具参数，不猜测或修复不完整 JSON。"""
     raw = str(text or "").strip() or "{}"
     try:
         value = json.loads(raw)
@@ -722,7 +709,7 @@ def parse_tool_arguments_strict(text: str) -> tuple[dict[str, Any], str | None]:
 
 
 def finish_reason_indicates_truncation(reason: Any) -> bool:
-    """Return whether a provider says the model output stopped at a length limit."""
+    """返回 Provider 是否表明模型输出因长度限制而停止。"""
     return str(reason or "").strip().lower() in {
         "length",
         "max_tokens",
@@ -771,7 +758,7 @@ def successful_verification_events(
     tool_events: list[dict[str, Any]],
     mode: str | None,
 ) -> list[dict[str, Any]]:
-    """Return verification evidence, scoped after the latest successful write."""
+    """返回最近一次成功写入之后范围内的验证证据。"""
     verification_events, written_paths = _verification_scope_after_latest_write(tool_events)
     return [
         event
@@ -844,11 +831,9 @@ def is_meaningful_verification_event(
     *,
     written_paths: set[str] | None = None,
 ) -> bool:
-    """Return True when a successful tool call provides real verification.
+    """当成功工具调用提供了真实验证时返回 True。
 
-    Directory listings and file-existence probes are useful evidence, but they
-    should not satisfy a code-write verification contract by themselves.
-    """
+    目录列表和文件存在性探测是有用证据，但不能单独满足代码写入验证契约。"""
     tool_id = canonical_tool_id(str(event.get("tool") or ""))
     if str(event.get("status") or "") != "success":
         return False
@@ -878,13 +863,10 @@ def is_meaningful_verification_event(
 
 
 def is_test_verification_event(event: dict[str, Any]) -> bool:
-    """Return True for successful commands that exercise behavior.
+    """对实际运行行为的成功命令返回 True。
 
-    Syntax-only and static checks such as ``python -m py_compile`` or
-    ``node --check`` are meaningful verification evidence, but they are
-    structural checks. They should not satisfy task contracts that explicitly
-    require behavioral verification, such as generated web/API services.
-    """
+    ``python -m py_compile``、``node --check`` 等仅语法或静态检查属于有意义的验证证据，
+    但它们只是结构检查，不能满足明确要求行为验证的任务契约，例如生成的 Web/API 服务。"""
     if canonical_tool_id(str(event.get("tool") or "")) != "shell.run_command":
         return False
     if str(event.get("status") or "") != "success":
@@ -897,7 +879,7 @@ def is_test_verification_event(event: dict[str, Any]) -> bool:
 
 
 def is_structural_verification_event(event: dict[str, Any]) -> bool:
-    """Return True for successful syntax, type, lint, or build checks."""
+    """对成功的语法、类型、Lint 或构建检查返回 True。"""
     if canonical_tool_id(str(event.get("tool") or "")) != "shell.run_command":
         return False
     if str(event.get("status") or "") != "success":

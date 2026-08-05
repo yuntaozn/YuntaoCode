@@ -1,10 +1,8 @@
-"""Post-loop Run finalization controller.
+"""循环结束后的 Run 收尾控制器。
 
-The finalizer turns already-observed model and tool facts into a RunResult,
-recovery checkpoint, final user-facing answer, summary Context Pack, persisted
-assistant message, and done event. It does not decide whether the model should
-continue a tool loop or which execution strategy it should choose.
-"""
+Finalizer 将已观察到的模型与工具事实转换为 RunResult、恢复 Checkpoint、
+最终用户答案、摘要 Context Pack、持久化助手消息和 done 事件。
+它不决定模型是否应继续工具循环，也不选择执行策略。"""
 
 from __future__ import annotations
 
@@ -184,7 +182,7 @@ def _latest_completion_decision(metadata: dict[str, Any]) -> dict[str, Any] | No
 
 
 class RunFinalizer:
-    """Persist and present final Run facts after the execution loop ends."""
+    """执行循环结束后持久化并展示最终 Run 事实。"""
 
     def __init__(self, host: RunFinalizationHost) -> None:
         self._host = host
@@ -545,7 +543,7 @@ def initial_assistant_content(
     tool_contract_failed: bool,
     contract_failures: list[str],
 ) -> str:
-    """Select the pre-synthesis answer from observed finalization facts."""
+    """根据已观察到的收尾事实选择合成前答案。"""
     if model_provider_error:
         return (
             f"{model_content}\n\n" if model_content else ""

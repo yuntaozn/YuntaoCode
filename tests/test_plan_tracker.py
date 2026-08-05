@@ -150,7 +150,7 @@ class TestFinishPlanStep:
 
     def test_out_of_range(self):
         plan = {"steps": []}
-        finish_plan_step(plan, 5, {"status": "success"})  # should not raise
+        finish_plan_step(plan, 5, {"status": "success"})  # 不应抛出异常
 
 
 class TestCompleteRemainingPlanSteps:

@@ -1,9 +1,7 @@
-"""Evaluation reports comparing a fixture with one RunEvidence view.
+"""比较 Fixture 与单个 RunEvidence 视图的评测报告。
 
-Reports are local evidence comparisons. They do not replay tasks, call a
-model, execute tools, or promote capabilities. The goal is to make selected
-regression samples useful before an automatic evaluation runner exists.
-"""
+报告只是本地证据比较，不执行 Replay、不调用模型、不执行工具，也不提升能力。
+目标是在自动评测 Runner 出现前，使选定回归样本已经具有实际用途。"""
 
 from __future__ import annotations
 
@@ -31,7 +29,7 @@ def build_evaluation_report(
     *,
     report_id: str = "",
 ) -> dict[str, Any]:
-    """Compare one evaluation fixture with one observed RunEvidence view."""
+    """比较一个评测夹具与一个已观察 RunEvidence 视图。"""
     fixture_payload = _fixture_payload(fixture)
     evidence_payload = evidence if isinstance(evidence, dict) else {}
     observed_run = evidence_payload.get("run") if isinstance(evidence_payload.get("run"), dict) else {}
@@ -121,7 +119,7 @@ def build_evaluation_report_for_run(
     *,
     report_id: str = "",
 ) -> dict[str, Any]:
-    """Build a report by first deriving RunEvidence from a RunRecord-like value."""
+    """先从类似 RunRecord 的值派生 RunEvidence，再构建报告。"""
     return build_evaluation_report(fixture, build_run_evidence(run), report_id=report_id)
 
 

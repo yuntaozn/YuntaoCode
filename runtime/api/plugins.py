@@ -105,7 +105,7 @@ class PluginsHandler(ApiHandler):
 
 
 def plugin_id_to_name(plugin_id: str, lang: str = "") -> str:
-    """Translate plugin ID to display name. Falls back to ID itself."""
+    """将插件 ID 转换为显示名称；无匹配时回退为原 ID。"""
     return i18n.t(f"plugin.name.{plugin_id}", lang) or plugin_id
 
 

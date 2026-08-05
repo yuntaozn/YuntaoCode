@@ -141,8 +141,8 @@ class ConversationRunExecutor:
         conversation_attachments = self.runtime.attachments.list_for_conversation(conversation_id)
         self._active_attachment_ids = tuple(record.id for record in conversation_attachments)
         image_attachments = [record for record in attachments if record.is_image]
-        # Current-turn images become multimodal input. Other attachments remain
-        # in the message catalog and are read through controlled tools.
+        # 当前轮次的图片转为多模态输入，其他附件仍保留在消息目录中，
+        # 并通过受控工具读取。
         if (image_data or image_attachments) and messages:
             last_msg = messages[-1]
             if last_msg.get("role") == "user":
@@ -167,7 +167,7 @@ class ConversationRunExecutor:
             })
             await self.flush()
 
-        # --- Context compression ---
+        # --- 上下文压缩 ---
         self.write_event({"event": "status", "status": "compressing", "message": "正在检查上下文长度"})
         await self.flush()
         messages, summary_meta = await compress_context(
@@ -224,8 +224,8 @@ class ConversationRunExecutor:
         }
         execution_plan: dict[str, Any] | None = None
         change_baseline = await self._capture_git_status(workspace.path, mode_config)
-        # Keep the initial contract neutral. The model-side task contract owns
-        # semantic task classification, including document coverage and size.
+        # 保持初始契约中性。语义任务分类由模型侧任务契约负责，
+        # 包括文档覆盖范围和大小判断。
         task_intent = "answer_only"
         task_contract = self._build_task_contract(
             task_intent=task_intent,
@@ -1080,7 +1080,7 @@ class ConversationRunExecutor:
                 context_tokens=context_tokens,
             )
         )
-        # Async memory extraction (non-blocking)
+        # 异步提取记忆（不阻塞响应）
         if (
             self.runtime.settings.is_memory_auto_extract_enabled()
             and not finalization_outcome.max_rounds_exceeded
@@ -1099,7 +1099,7 @@ class ConversationRunExecutor:
         conversation_id: str,
         workspace_id: str = "",
     ) -> None:
-        """Async memory extraction - runs after the conversation response is sent."""
+        """异步提取记忆，在对话响应发送后运行。"""
         try:
             from runtime.memory_extractor import extract_and_store_memories
 

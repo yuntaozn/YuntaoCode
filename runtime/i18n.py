@@ -1,8 +1,7 @@
-"""Backend i18n module for YuntaoCode.
+"""YuntaoCode 后端国际化模块。
 
-Loads locale JSON files from runtime/locales/ and provides translation
-functions for API handlers and system prompts.
-"""
+从 runtime/locales/ 加载语言 JSON 文件，并为 API 处理器和系统提示
+提供翻译函数。"""
 
 from __future__ import annotations
 
@@ -17,7 +16,7 @@ _LOCALES_DIR = Path(__file__).parent / "locales"
 
 
 def load_locales() -> None:
-    """Load all JSON translation files from the locales directory."""
+    """从 locales 目录加载全部 JSON 翻译文件。"""
     global _LOCALES
     _LOCALES = {}
     if not _LOCALES_DIR.is_dir():
@@ -33,8 +32,8 @@ def load_locales() -> None:
 
 
 def get_lang(request: Any) -> str:
-    """Extract language from request: ?lang= param or Accept-Language header."""
-    # 1. Query param takes priority
+    """从请求的 ?lang 参数或 Accept-Language 请求头中提取语言。"""
+    # 1. 查询参数优先
     if hasattr(request, "get_argument"):
         try:
             lang = request.get_argument("lang", None)
@@ -43,17 +42,17 @@ def get_lang(request: Any) -> str:
         except Exception:
             pass
 
-    # 2. Accept-Language header
+    # 2. Accept-Language 请求头
     if hasattr(request, "headers"):
         accept = request.headers.get("Accept-Language", "")
         if accept:
-            # Parse first language tag
+            # 解析第一个语言标签
             match = re.match(r"([a-zA-Z]{2,3}(?:-[a-zA-Z]{2,4})?)", accept)
             if match:
                 tag = match.group(1)
                 if tag in _LOCALES:
                     return tag
-                # Try base language match (e.g. "en-US" -> "en")
+                # 尝试匹配基础语言，例如 "en-US" -> "en"
                 base = tag.split("-")[0]
                 for available in _LOCALES:
                     if available.startswith(base):
@@ -63,13 +62,13 @@ def get_lang(request: Any) -> str:
 
 
 def t(key: str, lang: str = "", **kwargs: Any) -> str:
-    """Translate a key. Supports {var} interpolation."""
+    """翻译键值，支持 {var} 插值。"""
     if not lang:
         lang = _DEFAULT_LANG
     locale = _LOCALES.get(lang, _LOCALES.get(_DEFAULT_LANG, {}))
     text = locale.get(key)
     if text is None:
-        # Fallback to default locale
+        # 回退到默认语言
         text = _LOCALES.get(_DEFAULT_LANG, {}).get(key, key)
     if kwargs:
         for k, v in kwargs.items():
@@ -77,5 +76,5 @@ def t(key: str, lang: str = "", **kwargs: Any) -> str:
     return text
 
 
-# Auto-load on import
+# 导入模块时自动加载
 load_locales()

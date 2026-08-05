@@ -1,4 +1,4 @@
-"""Runtime-owned storage for user-provided conversation attachments."""
+"""Runtime 附件内容与元数据存储。"""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ class AttachmentRecord:
 
 
 class AttachmentStore:
-    """Stores immutable attachment bytes on disk and metadata in SQLite."""
+    """在磁盘中保存不可变附件字节，并在 SQLite 中保存元数据。"""
 
     def __init__(self, database_path: Path, files_root: Path) -> None:
         self.database_path = database_path

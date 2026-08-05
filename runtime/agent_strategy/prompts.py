@@ -1,8 +1,7 @@
-"""Prompt construction functions extracted from ConversationMessagesStreamHandler.
+"""从 ConversationMessagesStreamHandler 提取的提示构建函数。
 
-All functions are pure — they depend only on their parameters and produce
-deterministic string output.  No ``self``, no I/O, no i18n side-effects.
-"""
+所有函数都是纯函数：只依赖参数并产生确定性字符串输出；
+不使用 ``self``，不执行 I/O，也不产生 i18n 副作用。"""
 
 from __future__ import annotations
 
@@ -23,14 +22,14 @@ from runtime.agent_strategy.convergence import (
 
 
 # ---------------------------------------------------------------------------
-# Runtime evidence prompts
+# Runtime 证据提示
 # ---------------------------------------------------------------------------
 
 def execution_convergence_prompt(
     workspace_path: str,
     tool_events: list[dict[str, Any]],
 ) -> str:
-    """Expose repeated execution facts without choosing the next route."""
+    """暴露重复执行事实，但不选择下一条路线。"""
     facts = build_tool_failure_fact_summary(
         workspace_path=workspace_path,
         tool_events=tool_events,
@@ -108,7 +107,7 @@ def oversized_tool_arguments_prompt(
 
 
 # ---------------------------------------------------------------------------
-# Task-level prompts
+# Task 级提示
 # ---------------------------------------------------------------------------
 
 def format_execution_plan_for_context(plan: dict[str, Any]) -> str:
@@ -144,12 +143,10 @@ def completion_review_prompt(
     task_route_evidence: dict[str, Any] | None = None,
     evidence_pack: dict[str, Any] | None = None,
 ) -> str:
-    """Prompt the model to self-audit completion from runtime facts.
+    """提示模型根据运行时事实自查完成情况。
 
-    This is intentionally evidence-oriented instead of file-type-specific. The
-    runtime does not decide the next strategy; it exposes facts and asks the
-    model to either continue with tools or finish honestly.
-    """
+    该提示有意面向证据而非特定文件类型。Runtime 不决定下一策略，只提供事实，
+    要求模型继续使用工具或如实结束。"""
     if not evidence_pack:
         evidence_pack = build_completion_evidence_pack(
             workspace_path=workspace_path,
@@ -198,7 +195,7 @@ def result_synthesis_prompt(
     task_route_evidence: dict[str, Any] | None = None,
     evidence_pack: dict[str, Any] | None = None,
 ) -> str:
-    """Ask the model to write the final user-facing result from runtime facts."""
+    """要求模型根据运行时事实编写最终用户结果。"""
     if not evidence_pack:
         evidence_pack = build_completion_evidence_pack(
             workspace_path=workspace_path,

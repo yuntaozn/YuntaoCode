@@ -31,7 +31,7 @@ async function api(path, options = {}) {
     return response.json();
 }
 
-// --- State ---
+// --- 状态 ---
 let plugins = [];
 let pluginMeta = {};
 let activeGroup = null;
@@ -51,7 +51,7 @@ const RUNTIME_CAPABILITY_IDS = new Set(["attachment", "memory"]);
 const FOUNDATION_CAPABILITY_IDS = new Set(["filesystem", "code", "shell", "git"]);
 const OPTIONAL_CAPABILITY_IDS = new Set(["document", "web"]);
 
-// --- API ---
+// --- API 请求 ---
 async function loadPlugins() {
     try {
         const result = await api("/plugins");
@@ -83,7 +83,7 @@ async function togglePlugin(pluginId, enabled) {
     }
 }
 
-// --- Render ---
+// --- 渲染 ---
 function renderSummary() {
     const loadablePlugins = plugins.filter((p) => !isReadOnlyPlugin(p));
     const total = loadablePlugins.length;
@@ -282,7 +282,7 @@ function dependencyRequirementEntries(requirements) {
     return entries;
 }
 
-// --- Events ---
+// --- 事件 ---
 $("back-btn").addEventListener("click", () => {
     window.location.href = "/";
 });
@@ -291,5 +291,5 @@ $("mcp-services-btn").addEventListener("click", () => {
 });
 $("refresh-plugins-btn").addEventListener("click", () => loadPlugins());
 
-// --- Init ---
+// --- 初始化 ---
 loadPlugins();

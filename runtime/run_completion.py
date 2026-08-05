@@ -1,11 +1,8 @@
-"""Completion-loop evidence helpers.
+"""完成循环的证据辅助函数。
 
-The completion loop lets the model decide whether to finish honestly or keep
-working from runtime facts. This module records the model's observable choice
-so RunEvidence, Workbench, Replay, and Evaluation can inspect what happened.
-Completion evidence pack construction lives in ``completion_evidence_pack`` so
-presentation budget and formatting remain separate from decision auditing.
-"""
+完成循环让模型根据运行时事实决定如实结束或继续工作。本模块记录模型可观察的选择，
+供 RunEvidence、Workbench、Replay 和 Evaluation 检查。完成证据包的构建放在
+``completion_evidence_pack`` 中，使展示预算与格式和决策审计保持分离。"""
 
 from __future__ import annotations
 
@@ -28,14 +25,11 @@ COMPLETION_SELF_ASSESSMENT_SCHEMA_VERSION = "completion_self_assessment.v1"
 def extract_completion_self_assessment(
     content: str,
 ) -> tuple[str, dict[str, Any] | None]:
-    """Extract an explicit model-owned completion assessment.
+    """提取由模型明确作出的完成自评。
 
-    Completion review uses a compact JSON header on the first line when the
-    model elects to finish.  The user-facing answer remains ordinary Markdown
-    below that header, avoiding a large JSON string around the whole answer.
-    Ordinary prose remains a supported fallback for models that do not follow
-    the header protocol.
-    """
+    当模型选择结束时，完成审查在首行使用紧凑 JSON 头；面向用户的答案仍以
+    普通 Markdown 放在头部下方，避免用大型 JSON 字符串包裹整段答案。
+    对于不遵循头部协议的模型，普通文本仍是受支持的回退形式。"""
 
     original = str(content or "").strip()
     if not original:
@@ -81,11 +75,10 @@ def build_completion_decision(
     evidence_pack: dict[str, Any] | None = None,
     self_assessment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Describe the model's next-step choice after a completion review.
+    """描述模型在完成审查后的下一步选择。
 
-    The returned value is audit evidence. It intentionally avoids an
-    imperative recommendation such as "must_stop" or "must_continue".
-    """
+    返回值是审计证据，有意避免 ``must_stop`` 或 ``must_continue`` 这类
+    命令式建议。"""
 
     calls = [item for item in (tool_calls or []) if isinstance(item, dict)]
     text = str(content or "").strip()

@@ -49,7 +49,7 @@ class DocxParseResult:
     paragraph_count: int = 0
     table_count: int = 0
     headings: list[dict[str, Any]] = field(default_factory=list)
-    strategy: str = "python-docx"  # python-docx | win32com | libreoffice
+    strategy: str = "python-docx"  # 可选实现：python-docx | win32com | libreoffice
     warnings: list[str] = field(default_factory=list)
 
 
@@ -293,7 +293,7 @@ class DocxParser:
 
             tmpdir = tempfile.mkdtemp(prefix="docx_convert_")
             docx_path = os.path.join(tmpdir, f"{file_path.stem}.docx")
-            # FileFormat=16 = wdFormatXMLDocument (.docx)
+            # FileFormat=16 表示 wdFormatXMLDocument（.docx）
             doc.SaveAs2(docx_path, FileFormat=16)
             doc.Close(False)
             word.Quit()

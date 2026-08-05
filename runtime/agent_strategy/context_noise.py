@@ -1,4 +1,4 @@
-"""Classification and summaries for historical model-context noise."""
+"""历史上下文噪声的纯事实分类。"""
 
 from __future__ import annotations
 
@@ -26,9 +26,9 @@ FAILED_RUN_TERMS: tuple[str, ...] = (
     "no successful verification tool call observed",
     "tool call failed",
     "tool execution failed",
-    "\u672a\u5b8c\u6210",  # not completed
-    "\u5931\u8d25\u8bb0\u5f55",  # failure records
-    "\u5931\u8d25\u539f\u56e0",  # failure reason
+    "\u672a\u5b8c\u6210",  # 未完成
+    "\u5931\u8d25\u8bb0\u5f55",  # 失败记录
+    "\u5931\u8d25\u539f\u56e0",  # 失败原因
     "\u5de5\u5177\u8c03\u7528\u7f3a\u5c11\u5fc5\u586b\u53c2\u6570",
     "\u65e0\u6548\u8c03\u7528",
     "\u672a\u89c2\u5bdf\u5230\u6210\u529f\u5199\u5165",
@@ -55,7 +55,7 @@ class ContextNoise:
 
 
 def classify_context_noise(text: str) -> ContextNoise:
-    """Classify historical message noise without deciding current intent."""
+    """分类历史消息噪声，但不判断当前意图。"""
 
     return ContextNoise(
         has_tool_markup=_contains_any(text, TOOL_MARKUP_TERMS),
@@ -65,7 +65,7 @@ def classify_context_noise(text: str) -> ContextNoise:
 
 
 def historical_failure_summary(content: str, noise: ContextNoise) -> str:
-    """Return a compact model-facing summary for historical failure noise."""
+    """返回面向模型的紧凑历史失败噪声摘要。"""
 
     facts: list[str] = [
         "[Historical run summary]",
@@ -88,7 +88,7 @@ def historical_failure_summary(content: str, noise: ContextNoise) -> str:
 
 
 def historical_process_summary() -> str:
-    """Return a compact model-facing summary for a historical process log."""
+    """返回面向模型的紧凑历史过程日志摘要。"""
 
     return (
         "[Historical process summary]\n"
@@ -98,7 +98,7 @@ def historical_process_summary() -> str:
 
 
 def historical_user_feedback_summary() -> str:
-    """Return a compact summary for user-quoted historical process output."""
+    """返回用户引用的历史过程输出的紧凑摘要。"""
 
     return (
         "[Historical user feedback summary]\n"
@@ -108,7 +108,7 @@ def historical_user_feedback_summary() -> str:
 
 
 def strip_tool_markup_like_text(text: str, max_chars: int) -> str:
-    """Replace historical textual tool-call fragments before truncating."""
+    """在截断前替换历史文本工具调用片段。"""
 
     cleaned = text
     for term in TOOL_MARKUP_TERMS:
@@ -118,7 +118,7 @@ def strip_tool_markup_like_text(text: str, max_chars: int) -> str:
 
 
 def truncate(text: str, max_chars: int) -> str:
-    """Truncate a historical message to a bounded model-facing length."""
+    """将历史消息截断为面向模型的有界长度。"""
 
     max_chars = max(200, int(max_chars or 0))
     if len(text) <= max_chars:

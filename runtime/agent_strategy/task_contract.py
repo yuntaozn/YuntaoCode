@@ -1,9 +1,7 @@
-"""Task contract normalization and validation.
+"""任务契约规范化与校验。
 
-The model may judge what the task is, but the runtime owns the contract shape,
-permission/safety facts, and observable closure facts.  This module keeps that
-boundary pure and testable.
-"""
+模型可以判断任务是什么，Runtime 管理契约结构、权限与安全事实以及可观察闭环事实。
+本模块让该边界保持纯净且可测试。"""
 
 from __future__ import annotations
 
@@ -63,7 +61,7 @@ VALID_VERIFICATION_MODALITIES: frozenset[str] = frozenset({
 
 
 def extract_task_contract_json(raw: str) -> dict[str, Any] | None:
-    """Extract a JSON object from a model response."""
+    """从模型响应中提取 JSON 对象。"""
     text = str(raw or "").strip()
     if text.startswith("```"):
         text = text.strip("`")
@@ -92,7 +90,7 @@ def default_task_contract(
     expected_min_output_chars: int = 0,
     source: str = "policy",
 ) -> dict[str, Any]:
-    """Build the fallback contract used when the model proposal is missing."""
+    """构建模型提案缺失时使用的回退契约。"""
     intent = _intent_or_default(task_intent)
     requires_write = intent in WRITE_INTENTS
     requires_state_change = requires_write
@@ -141,12 +139,10 @@ def merge_model_task_contract(
     raw_contract: dict[str, Any] | None,
     fallback_contract: dict[str, Any],
 ) -> dict[str, Any]:
-    """Normalize a model contract without replacing its semantic judgment.
+    """规范化模型契约，但不替换其语义判断。
 
-    The runtime owns field shape and safe defaults.  It does not turn one
-    intent, deliverable, target, or first action into another after the model
-    has selected them.
-    """
+    Runtime 管理字段结构和安全默认值；模型选定意图、交付物、目标或首个动作后，
+    Runtime 不把它们改成其他内容。"""
     if not isinstance(raw_contract, dict):
         contract = dict(fallback_contract)
         contract["source"] = fallback_contract.get("source") or "policy"
@@ -165,8 +161,8 @@ def merge_model_task_contract(
             raw_contract.get("requires_state_change"),
             requires_write,
         )
-        # A local write is observably a state change.  This is field ontology,
-        # not a task-routing decision; intent and first_action remain untouched.
+        # 本地写入可观察地改变状态。这属于字段本体定义，
+        # 不是任务路由决策；intent 与 first_action 保持不变。
         if requires_write:
             requires_state_change = True
         requires_verification = _bool_or_default(
@@ -325,7 +321,7 @@ def should_apply_task_continuity(
 
 
 def contract_requests_task_lineage(contract: dict[str, Any] | None) -> bool:
-    """Return whether the model contract asked to see task lineage candidates."""
+    """返回模型契约是否要求查看任务血缘候选。"""
 
     if not isinstance(contract, dict):
         return False
@@ -338,7 +334,7 @@ def contract_requests_task_lineage(contract: dict[str, Any] | None) -> bool:
 
 
 def task_continuity_anchor(contract: dict[str, Any]) -> dict[str, Any]:
-    """Return the stable semantic target carried across continuation turns."""
+    """返回跨续接轮次传递的稳定语义目标。"""
     return _contract_evolution.task_continuity_anchor(contract)
 
 
@@ -350,11 +346,10 @@ def task_contract_prompt(
     workspace_context: str = "",
     previous_contract: dict[str, Any] | None = None,
 ) -> str:
-    """Prompt used for the model-side task contract judgment.
+    """模型侧任务契约判断使用的提示。
 
-    Keep this prompt schema-oriented. Scenario playbooks belong to model
-    judgment or optional capability packs, not the runtime contract layer.
-    """
+    此提示只描述 Schema。场景操作手册属于模型判断或可选 Capability Pack，
+    不属于 Runtime 契约层。"""
     capability_block = ""
     if str(capability_context or "").strip():
         capability_block = (
@@ -432,13 +427,10 @@ def task_contract_context_messages(
     max_chars: int = 600,
     include_history: bool = False,
 ) -> list[dict[str, str]]:
-    """Return bounded user input for model-side contract judgment.
+    """返回供模型侧契约判断使用的有界用户输入。
 
-    The model should normally judge the current request from the current user
-    message plus structured Context Pack facts.  Raw recent chat history is kept
-    as an explicit compatibility option for tests and old call sites, not the
-    default contract-decision path.
-    """
+    模型通常应根据当前用户消息与结构化 Context Pack 事实判断当前请求。原始近期聊天
+    历史只作为测试和旧调用点的明确兼容选项，不是默认契约决策路径。"""
     current = str(current_user_content or "").strip()
     if not include_history:
         return [{"role": "user", "content": current[:max_chars]}] if current else []
@@ -473,13 +465,10 @@ def should_use_model_task_contract(
     *,
     has_recent_task_context: bool = False,
 ) -> bool:
-    """Return whether semantic task judgment should be delegated to the model.
+    """返回是否应把语义任务判断交给模型。
 
-    This gate should stay intentionally small.  The runtime may skip the model
-    only for empty input, hard safety locks, or obvious social chat.  It should
-    not use message length or scenario keywords to decide whether a request is
-    actionable; that semantic judgment belongs to the model-side contract.
-    """
+    此门禁应有意保持很小。Runtime 只能在输入为空、硬安全锁或明显社交闲聊时跳过模型，
+    不应使用消息长度或场景关键词判断请求是否可执行；该语义判断属于模型侧契约。"""
     text = str(content or "").strip()
     if not text:
         return False

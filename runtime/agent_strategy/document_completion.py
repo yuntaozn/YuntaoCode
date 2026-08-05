@@ -1,9 +1,7 @@
-"""Evidence helpers for long-form text/document completion.
+"""长文本与文档完成情况的证据辅助函数。
 
-The runtime should not judge prose quality, but it can verify hard facts:
-whether a text/document artifact exists and whether tool-reported character
-counts satisfy a task contract's declared output-length target.
-"""
+Runtime 不应判断文字质量，但可以验证硬事实：文本或文档产物是否存在，
+以及工具报告的字符数是否满足任务契约声明的输出长度目标。"""
 
 from __future__ import annotations
 
@@ -48,7 +46,7 @@ TEXT_FILE_EXTENSIONS: frozenset[str] = frozenset({
 
 
 def contract_expects_text_output(task_contract: dict[str, Any] | None) -> bool:
-    """Return True when a task contract expects a prose/document artifact."""
+    """当任务契约期望文章或文档产物时返回 True。"""
     if not isinstance(task_contract, dict):
         return False
     if str(task_contract.get("intent") or "").strip() in DOCUMENT_INTENTS:
@@ -88,7 +86,7 @@ def contract_expects_text_output(task_contract: dict[str, Any] | None) -> bool:
 
 
 def contract_expects_answer_output(task_contract: dict[str, Any] | None) -> bool:
-    """Return True when the declared deliverable includes the assistant answer."""
+    """当声明的交付物包含助手答案时返回 True。"""
     if not isinstance(task_contract, dict):
         return False
     return any(
@@ -105,7 +103,7 @@ def text_output_candidate_events(
     workspace_path: str,
     mode: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return successful deliverable events that can carry text length facts."""
+    """返回可携带文本长度事实的成功交付事件。"""
     if isinstance(task_contract, dict):
         candidates = successful_deliverable_events(
             tool_events,
@@ -123,7 +121,7 @@ def text_output_candidate_events(
 
 
 def text_output_char_count(event: dict[str, Any]) -> int:
-    """Extract character-count evidence without treating byte size as chars."""
+    """提取字符数证据，不将字节大小当作字符数。"""
     event_input = event.get("input") if isinstance(event.get("input"), dict) else {}
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
     draft_stats = output.get("draft_stats") if isinstance(output.get("draft_stats"), dict) else {}
@@ -149,7 +147,7 @@ def min_text_output_check(
     mode: str | None = None,
     answer_text: str | None = None,
 ) -> dict[str, Any]:
-    """Return a deterministic length-check result for long text outputs."""
+    """返回长文本输出的确定性长度检查结果。"""
     expected = _safe_int(expected_min_output_chars)
     if expected <= 0 or (
         isinstance(task_contract, dict)

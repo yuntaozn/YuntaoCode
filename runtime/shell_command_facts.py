@@ -1,8 +1,6 @@
-"""Pure operational facts for shell commands.
+"""Shell 命令的纯操作事实。
 
-These facts tune execution and presentation. They do not route user intent or
-decide whether a model should run a command.
-"""
+这些事实用于调整执行与展示，不路由用户意图，也不决定模型是否应执行命令。"""
 
 from __future__ import annotations
 

@@ -1,9 +1,7 @@
-"""Persistence adapters used by runtime stores.
+"""Runtime Store 使用的持久化适配器。
 
-Store classes remain the runtime-facing repository boundary. This module only
-owns the mechanics of the current document-file backend so stores do not each
-reimplement JSON parsing and file replacement.
-"""
+Store 类仍是 Runtime 面向存储库的边界。本模块只负责当前文档文件后端的
+共享机制，避免各 Store 重复实现 JSON 解析与文件替换。"""
 
 from __future__ import annotations
 
@@ -14,19 +12,19 @@ from uuid import uuid4
 
 
 class DocumentStorage(Protocol):
-    """Minimal backend contract for stores persisted as one document."""
+    """以单一文档持久化的存储所需最小后端契约。"""
 
     path: Path | None
 
     def load(self) -> dict[str, Any] | None:
-        """Return the stored document, or None when it cannot be loaded."""
+        """返回已存储文档；无法加载时返回 None。"""
 
     def save(self, payload: dict[str, Any]) -> None:
-        """Persist a complete document."""
+        """持久化完整文档。"""
 
 
 class AtomicJsonDocumentStorage:
-    """UTF-8 JSON document storage using same-directory atomic replacement."""
+    """使用同目录原子替换的 UTF-8 JSON 文档存储。"""
 
     def __init__(self, path: Path | None) -> None:
         self.path = path

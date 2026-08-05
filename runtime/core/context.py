@@ -1,8 +1,7 @@
-"""Context runtime schemas.
+"""Context Runtime Schema。
 
-Context records describe what the model may rely on, where it came from, and
-how trustworthy it is. They are not tied to one prompt format.
-"""
+Context Record 描述模型可以依赖什么、事实来自哪里以及可信度如何，
+不与某一种提示格式绑定。"""
 
 from __future__ import annotations
 

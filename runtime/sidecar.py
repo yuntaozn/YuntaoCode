@@ -5,7 +5,7 @@ import sys
 
 
 def _configure_stdio() -> None:
-    """Keep sidecar output decodable by the desktop shell on Windows."""
+    """确保 Windows 上桌面壳能够解码 sidecar 输出。"""
 
     os.environ.setdefault("PYTHONIOENCODING", "utf-8:replace")
     for stream in (sys.stdout, sys.stderr):

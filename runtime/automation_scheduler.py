@@ -9,11 +9,10 @@ from runtime.core.automation import automation_is_due
 
 
 class AutomationScheduler:
-    """Lightweight trigger loop for saved automations.
+    """已保存自动化任务的轻量触发循环。
 
-    The scheduler interprets trigger times and creates normal prepared Runs. It
-    does not execute tools, call models, or mark tasks complete.
-    """
+    调度器解释触发时间并创建普通的预备 Run；它不执行工具、
+    不调用模型，也不把任务标记为完成。"""
 
     def __init__(self, runtime: Any, *, interval_seconds: float = 30.0) -> None:
         self.runtime = runtime
@@ -29,8 +28,8 @@ class AutomationScheduler:
             try:
                 await self.tick()
             except Exception as exc:
-                # Keep the trigger loop alive. Individual failures remain
-                # observable through the automation record and API actions.
+                # 保持触发循环继续运行，单次失败仍会
+                # 通过自动化记录和 API 操作暴露出来。
                 self.last_error = str(exc)[:500]
             await asyncio.sleep(self.interval_seconds)
 

@@ -1,4 +1,4 @@
-"""Git version control tools for YuntaoCode local task execution."""
+"""YuntaoCode 内置的受控 Git 工具。"""
 
 from __future__ import annotations
 
@@ -12,12 +12,12 @@ from runtime.tool_registry import ToolRegistry, ToolSpec
 MAX_DIFF_OUTPUT = 30_000
 MAX_LOG_ENTRIES = 30
 
-# On Windows, suppress the console window for child processes
+# Windows 上隐藏子进程控制台窗口
 _WIN_NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
 
 
 async def _run_git(args: list[str], cwd: str, max_output: int = 50_000) -> dict[str, Any]:
-    """Run a git command and return structured output."""
+    """执行 Git 命令并返回结构化输出。"""
     cmd = ["git"] + args
     try:
         process_kwargs: dict[str, Any] = {
@@ -50,7 +50,7 @@ async def _run_git(args: list[str], cwd: str, max_output: int = 50_000) -> dict[
 
 
 # ---------------------------------------------------------------------------
-# git.status
+# git.status 工具
 # ---------------------------------------------------------------------------
 
 async def git_status(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -82,7 +82,7 @@ async def git_status(input_data: dict[str, Any], context: Any) -> dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# git.diff
+# git.diff 工具
 # ---------------------------------------------------------------------------
 
 async def git_diff(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -115,7 +115,7 @@ async def git_diff(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# git.log
+# git.log 工具
 # ---------------------------------------------------------------------------
 
 async def git_log(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -149,7 +149,7 @@ async def git_log(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# git.commit
+# git.commit 工具
 # ---------------------------------------------------------------------------
 
 async def git_commit(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -160,12 +160,12 @@ async def git_commit(input_data: dict[str, Any], context: Any) -> dict[str, Any]
     if not message:
         raise ValueError("commit message is required")
 
-    # Stage all changes
+    # 暂存全部变更
     add_result = await _run_git(["add", "-A"], cwd)
     if add_result["error"]:
         raise ValueError(f"git add failed: {add_result['stderr']}")
 
-    # Commit
+    # 提交变更
     commit_result = await _run_git(["commit", "-m", message], cwd)
     if commit_result["error"]:
         stderr = commit_result["stderr"] or commit_result["stdout"]
@@ -183,7 +183,7 @@ async def git_commit(input_data: dict[str, Any], context: Any) -> dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# Registration
+# 工具注册
 # ---------------------------------------------------------------------------
 
 def register_git_tools(registry: ToolRegistry) -> None:

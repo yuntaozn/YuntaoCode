@@ -1,11 +1,9 @@
-"""Read-only visual verification summaries.
+"""只读的视觉验证摘要。
 
-VisualVerification summarizes screenshot/render/browser preview evidence for
-RunResult, RunEvidence, and the UI. It does not decide task intent, select a
-preview tool, or mark a task complete. It only gathers observable facts so the
-model and user can see whether visual evidence existed, whether it had runtime
-errors, and whether it entered model context.
-"""
+VisualVerification 汇总截图、渲染和浏览器预览证据，供 RunResult、RunEvidence
+与 UI 使用。它不判断任务意图、不选择预览工具，也不把任务标记为完成；
+只收集可观察事实，让模型和用户了解视觉证据是否存在、是否包含运行时错误，
+以及是否进入模型上下文。"""
 
 from __future__ import annotations
 
@@ -29,7 +27,7 @@ def build_visual_verification_summary(
     result_status: str = "",
     risks: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
-    """Return an evidence-only visual verification summary."""
+    """返回仅包含证据的视觉验证摘要。"""
 
     visual_records = _visual_records(visual_evidence)
     model_context_records = _visual_context_records(visual_context)

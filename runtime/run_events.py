@@ -35,7 +35,7 @@ RECORDED_EVENT_TYPES = {
 
 
 class RunEventHub:
-    """Persist run events and broadcast compact status updates to live clients."""
+    """持久化 Run 事件，并向在线客户端广播紧凑状态更新。"""
 
     def __init__(
         self,

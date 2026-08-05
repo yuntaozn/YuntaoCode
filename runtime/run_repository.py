@@ -1,4 +1,4 @@
-"""Persistence repositories for runs and run events."""
+"""Run 与 RunEvent 的持久化存储库。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ LEGACY_RUNS_IMPORT_KEY = "legacy_runs_json_import_v1"
 
 
 class RunRepository(Protocol):
-    """Storage boundary used by RunStore."""
+    """RunStore 使用的存储边界。"""
 
     path: Path | None
 
@@ -42,7 +42,7 @@ class RunRepository(Protocol):
 
 
 class JsonRunRepository:
-    """Compatibility repository backed by the historical runs JSON document."""
+    """由旧版 runs JSON 文档支持的兼容存储库。"""
 
     def __init__(self, storage: DocumentStorage, *, keep_runs: int) -> None:
         self.storage = storage
@@ -109,7 +109,7 @@ class JsonRunRepository:
 
 
 class SqliteRunRepository:
-    """Transactional, indexed repository for operational run history."""
+    """用于运行历史的事务型索引存储库。"""
 
     def __init__(self, path: Path, *, keep_runs: int, keep_events: int) -> None:
         self.path = path
@@ -197,7 +197,7 @@ class SqliteRunRepository:
             self._prune_runs()
 
     def import_legacy_document(self, storage: DocumentStorage) -> int:
-        """Import a valid legacy runs document once without modifying it."""
+        """一次性导入有效的旧版 runs 文档且不修改原文件。"""
         with self._lock:
             imported = self._metadata_value(LEGACY_RUNS_IMPORT_KEY)
             if imported is not None:

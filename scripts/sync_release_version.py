@@ -1,4 +1,4 @@
-"""Synchronize generated release-version references from runtime/version.py."""
+"""同步 runtime/version.py 中的产品发布版本。"""
 
 from __future__ import annotations
 

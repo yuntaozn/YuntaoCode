@@ -1,9 +1,7 @@
-"""Core runtime schemas for YuntaoCode.
+"""YuntaoCode 核心 Runtime Schema。
 
-The modules in this package define product-level runtime concepts. They should
-stay pure and dependency-light so API handlers, agent strategy, tools, and UI
-adapters can depend on them without pulling in model providers or local I/O.
-"""
+本包模块定义产品级运行时概念，应保持纯净、轻依赖，使 API 处理器、Agent 策略、
+工具和 UI 适配器可以依赖它们，而无需引入模型 Provider 或本地 I/O。"""
 
 from .capability import CapabilityContract, PermissionSet
 from .capability_pack import (

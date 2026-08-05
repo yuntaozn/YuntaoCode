@@ -113,7 +113,7 @@ def read_text_preview_sync(path: Path, max_bytes: int, encoding: str | None) -> 
 
 
 # ---------------------------------------------------------------------------
-# read_file -- full file read with line numbers
+# read_file：带行号读取完整文件
 # ---------------------------------------------------------------------------
 
 async def read_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -148,7 +148,7 @@ def read_file_sync(
     numbered = "".join(
         f"{str(i).rjust(width)}| {line}" for i, line in enumerate(selected, start=s)
     )
-    # Raw content without line numbers; use this when constructing old_text for edit_file.
+    # 不带行号的原始内容；构建 edit_file 的 old_text 时使用。
     raw_content = "".join(selected)
     integrity = inspect_text_artifact_integrity(path, text)
 
@@ -188,7 +188,7 @@ def read_file_sync(
 
 
 # ---------------------------------------------------------------------------
-# write_file -- create or overwrite a file
+# write_file：创建或覆盖文件
 # ---------------------------------------------------------------------------
 
 async def write_file(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -766,7 +766,7 @@ def _write_text_preserving_encoding(path: Path, text: str, encoding: str) -> str
 
 
 def inspect_text_artifact_integrity(path: Path, content: str) -> dict[str, Any]:
-    """Detect clearly truncated full-document overwrites without judging semantics."""
+    """在不判断语义的前提下检测明显被截断的整文档覆盖写入。"""
     suffix = path.suffix.lower()
     text = str(content or "")
     lowered = text.lower()

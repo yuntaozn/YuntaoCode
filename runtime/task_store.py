@@ -20,12 +20,10 @@ def utc_now() -> str:
 
 @dataclass
 class TaskRecord:
-    """A persisted tool invocation record.
+    """持久化的工具调用记录。
 
-    This is intentionally narrower than the product-level Task Model described
-    in docs/task-model.md. The public API keeps the historical "task" wording
-    for compatibility, while records declare themselves as "tool_task".
-    """
+    该结构有意比 docs/task-model.md 中的产品级 Task Model 更窄。公开 API 为兼容
+    保留历史上的“task”措辞，而记录自身声明为 ``tool_task``。"""
 
     id: str
     tool: str

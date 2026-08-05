@@ -22,12 +22,10 @@ RUNTIME_OWNED_REQUEST_KEYS = frozenset({
 
 
 def sanitize_request_options(value: Any) -> dict[str, Any]:
-    """Return user/provider request extras without runtime-owned fields.
+    """返回不包含 Runtime 自有字段的用户或 Provider 请求扩展参数。
 
-    Request options are an escape hatch for provider-specific extras. They must
-    not redefine the structured model, tool, thinking, streaming, or output
-    budget fields owned by the runtime.
-    """
+    请求参数是 Provider 特有扩展的逃生口，但不得重新定义由 Runtime 管理的
+    结构化 model、tool、thinking、streaming 或输出预算字段。"""
 
     if not isinstance(value, dict):
         return {}

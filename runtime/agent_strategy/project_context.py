@@ -1,10 +1,8 @@
-"""Project-context and active-focus facts for model-facing context.
+"""面向模型的项目上下文与活动焦点事实。
 
-Task lineage answers what happened before.  Active focus answers which project,
-subproject, file, artifact, or external object the current task is about.  The
-two relations are intentionally independent: a new task may inherit the same
-focus without inheriting the previous goal or execution route.
-"""
+Task Lineage 回答之前发生了什么，Active Focus 回答当前任务涉及哪个项目、子项目、
+文件、产物或外部对象。两种关系有意保持独立：新任务可以继承相同焦点，
+而不继承上一目标或执行路线。"""
 
 from __future__ import annotations
 
@@ -37,7 +35,7 @@ def normalize_focus_relation(value: Any) -> str:
 
 
 def normalize_focus_reference(value: Any) -> dict[str, Any]:
-    """Return a bounded model-declared focus reference."""
+    """返回有界的模型声明焦点引用。"""
     if not isinstance(value, dict):
         return {}
     kind = str(value.get("kind") or "").strip().lower()
@@ -58,7 +56,7 @@ def build_active_focus_snapshot(
     *,
     workspace_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build an auditable focus snapshot without deciding the focus for the model."""
+    """构建可审计的焦点快照，但不替模型决定焦点。"""
     contract = task_contract if isinstance(task_contract, dict) else {}
     relation = normalize_focus_relation(contract.get("focus_relation"))
     focus = normalize_focus_reference(contract.get("focus"))
@@ -70,8 +68,8 @@ def build_active_focus_snapshot(
     candidate_focus = normalize_focus_reference(candidate.get("focus")) if candidate else {}
     evidence_paths = _candidate_paths(candidate)
 
-    # Inherited candidate facts supplement a model declaration, but never
-    # replace a declared current focus or copy the candidate's old task goal.
+    # 继承的候选事实只补充模型声明，绝不
+    # 替换已声明的当前焦点，也不复制候选的旧任务目标。
     effective_focus = dict(focus)
     if relation == "inherit" and candidate_focus:
         for key, value in candidate_focus.items():
@@ -94,7 +92,7 @@ def build_active_focus_snapshot(
 
 
 def compact_focus_for_candidate(contract: dict[str, Any] | None) -> dict[str, Any]:
-    """Keep stable focus facts in task-lineage candidates."""
+    """在任务血缘候选中保留稳定焦点事实。"""
     if not isinstance(contract, dict):
         return {}
     focus = normalize_focus_reference(contract.get("focus"))

@@ -1,9 +1,7 @@
-"""Model-facing completion evidence pack construction and presentation.
+"""面向模型的完成证据包构建与展示。
 
-The completion evidence pack is read-only runtime evidence.  It keeps
-completion self-review prompts bounded without deciding whether a Run is
-complete, choosing tools, or blocking model self-correction.
-"""
+完成证据包属于只读运行时证据。它使完成自检提示保持有界，
+但不判断 Run 是否完成、不选择工具，也不阻止模型自我纠偏。"""
 
 from __future__ import annotations
 
@@ -51,7 +49,7 @@ def build_completion_evidence_pack(
     completion_decisions: list[dict[str, Any]] | None = None,
     task_route_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a bounded model-facing evidence pack for completion self-review."""
+    """构建有界的模型侧完成自检证据包。"""
 
     result = run_result if isinstance(run_result, dict) else {}
     contract = task_contract if isinstance(task_contract, dict) else {}
@@ -125,7 +123,7 @@ def build_completion_evidence_pack(
 
 
 def format_completion_evidence_pack(pack: dict[str, Any]) -> str:
-    """Render a compact evidence pack for model self-review prompts."""
+    """为模型自检提示渲染紧凑证据包。"""
 
     lines = [
         "Completion evidence pack:",
@@ -167,7 +165,7 @@ def format_completion_evidence_pack(pack: dict[str, Any]) -> str:
 def summarize_completion_evidence_pack_for_decision(
     evidence_pack: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Return the compact evidence summary stored with a completion decision."""
+    """返回随完成决策保存的紧凑证据摘要。"""
 
     pack = evidence_pack if isinstance(evidence_pack, dict) else {}
     if not pack:

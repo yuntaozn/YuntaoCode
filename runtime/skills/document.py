@@ -25,8 +25,9 @@ from runtime.tool_registry import ToolRegistry, ToolSpec
 
 
 def _resolve_output_path(input_data: dict[str, Any], context: Any, default_title: str, ext: str) -> "Path":
-    """Flexibly resolve output path from various possible field names.
-    If no path is found, auto-generate from title in workspace root."""
+    """从多种可能字段名中灵活解析输出路径。
+
+    未找到路径时，根据标题在工作区根目录自动生成。"""
     raw_path = (
         input_data.get("path")
         or input_data.get("output_path")
@@ -508,14 +509,14 @@ async def export_markdown(input_data: dict[str, Any], context: Any) -> dict[str,
     title = input_data.get("title", "AI生成文档")
     path = _resolve_output_path(input_data, context, title, ".md")
     content = input_data.get("content", "")
-    
+
     content = content.strip()
     if not content.startswith("#"):
         content = f"# {title}\n\n{content}"
-    
+
     _backup_output(path, context)
     path.write_text(content + "\n", encoding="utf-8")
-    
+
     return {
         "path": str(path.resolve()),
         "size": len(content),
@@ -527,39 +528,39 @@ async def export_docx(input_data: dict[str, Any], context: Any) -> dict[str, Any
     title = input_data.get("title", "AI生成文档")
     path = _resolve_output_path(input_data, context, title, ".docx")
     content = input_data.get("content", "")
-    
+
     try:
         from docx import Document
         from docx.oxml.ns import qn
         from docx.shared import Pt, RGBColor
     except ImportError as exc:
         raise RuntimeError("python-docx is required for document.export_docx") from exc
-    
+
     doc = Document()
-    
+
     normal = doc.styles["Normal"]
     normal.font.name = "Microsoft YaHei"
     normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
     normal.font.size = Pt(10.5)
-    
+
     for style_name in ("Heading 1", "Heading 2", "Heading 3"):
         style = doc.styles[style_name]
         style.font.name = "Microsoft YaHei"
         style._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
-    
+
     markdown = content.strip()
     if not markdown.lstrip().startswith("#"):
         doc.add_heading(title, level=1)
-    
+
     lines = markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     index = 0
     in_code = False
     code_lines: List[str] = []
-    
+
     while index < len(lines):
         line = lines[index].rstrip()
         stripped = line.strip()
-        
+
         if stripped.startswith("```"):
             if in_code:
                 p = doc.add_paragraph()
@@ -573,40 +574,40 @@ async def export_docx(input_data: dict[str, Any], context: Any) -> dict[str, Any
                 in_code = True
             index += 1
             continue
-        
+
         if in_code:
             code_lines.append(line)
             index += 1
             continue
-        
+
         if not stripped:
             doc.add_paragraph()
             index += 1
             continue
-        
+
         heading_match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
         if heading_match:
             level = min(len(heading_match.group(1)), 3)
             doc.add_heading(heading_match.group(2), level=level)
             index += 1
             continue
-        
+
         doc.add_paragraph(stripped)
         index += 1
-    
+
     if in_code and code_lines:
         p = doc.add_paragraph()
         p.style = "No Spacing"
         run = p.add_run("\n".join(code_lines))
         font = run.font
         font.name = "Consolas"
-    
+
     paragraph_count = len(doc.paragraphs)
     nonempty_paragraph_count = sum(1 for paragraph in doc.paragraphs if paragraph.text.strip())
 
     _backup_output(path, context)
     doc.save(str(path))
-    
+
     return {
         "path": str(path.resolve()),
         "title": title,
@@ -941,7 +942,7 @@ async def _translate_text_batch_with_model(
 
 _TRANSLATE_DOCX_DEFAULT_PROFILE = "balanced"
 _TRANSLATE_DOCX_PROFILES: dict[str, dict[str, int]] = {
-    # Keep the default responsive. Large-context models can use "fast" explicitly.
+    # 默认保持响应及时；大上下文模型可显式使用 "fast"。
     "safe": {
         "max_chars_per_chunk": 3000,
         "max_chars_per_batch": 6000,
@@ -1730,37 +1731,37 @@ async def generate_docx_from_outline(input_data: dict[str, Any], context: Any) -
     title = input_data.get("title", "文档")
     path = _resolve_output_path(input_data, context, title, ".docx")
     outline = input_data.get("outline", [])
-    
+
     try:
         from docx import Document
         from docx.oxml.ns import qn
         from docx.shared import Pt
     except ImportError as exc:
         raise RuntimeError("python-docx is required for document.generate_docx_from_outline") from exc
-    
+
     doc = Document()
-    
+
     normal = doc.styles["Normal"]
     normal.font.name = "Microsoft YaHei"
     normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
     normal.font.size = Pt(10.5)
-    
+
     for style_name in ("Heading 1", "Heading 2", "Heading 3"):
         style = doc.styles[style_name]
         style.font.name = "Microsoft YaHei"
         style._element.rPr.rFonts.set(qn("w:eastAsia"), "Microsoft YaHei")
-    
+
     doc.add_heading(title, level=1)
-    
+
     for item in outline:
         level = min(int(item.get("level", 1)), 3)
         text = item.get("text", "")
         if text:
             doc.add_heading(text, level=level)
-    
+
     _backup_output(path, context)
     doc.save(str(path))
-    
+
     return {
         "path": str(path.resolve()),
         "title": title,
@@ -1776,14 +1777,14 @@ async def export_pdf(input_data: dict[str, Any], context: Any) -> dict[str, Any]
     title = input_data.get("title", "AI生成文档")
     path = _resolve_output_path(input_data, context, title, ".pdf")
     content = input_data.get("content", "")
-    
+
     try:
         from markdown import markdown
     except ImportError as exc:
         raise RuntimeError("markdown library is required for document.export_pdf") from exc
-    
+
     html_content = markdown(content)
-    
+
     try:
         from playwright.async_api import async_playwright
     except ImportError as exc:
@@ -1791,7 +1792,7 @@ async def export_pdf(input_data: dict[str, Any], context: Any) -> dict[str, Any]
             "playwright is required for document.export_pdf. "
             "Install: pip install playwright && playwright install chromium"
         ) from exc
-    
+
     full_html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -1818,7 +1819,7 @@ async def export_pdf(input_data: dict[str, Any], context: Any) -> dict[str, Any]
     {html_content}
 </body>
 </html>"""
-    
+
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=True)
         try:
@@ -1833,7 +1834,7 @@ async def export_pdf(input_data: dict[str, Any], context: Any) -> dict[str, Any]
             )
         finally:
             await browser.close()
-    
+
     return {
         "path": str(path.resolve()),
         "title": title,
@@ -1847,7 +1848,7 @@ async def generate_ppt(input_data: dict[str, Any], context: Any) -> dict[str, An
     slides = input_data.get("slides", [])
     outline = input_data.get("outline", [])
     content = input_data.get("content", "")
-    
+
     # 兼容多种输入格式：优先slides，其次outline，最后纯内容
     if not slides and outline:
         # 从大纲自动生成幻灯片
@@ -1908,19 +1909,19 @@ async def generate_ppt(input_data: dict[str, Any], context: Any) -> dict[str, An
                 "title": current_title,
                 "content": "\n".join(current_content)
             })
-    
+
     if not slides:
         raise ValueError("slides/outline/content is required: provide at least one content source")
-    
+
     try:
         from pptx import Presentation
         from pptx.util import Inches, Pt
         from pptx.dml.color import RGBColor
     except ImportError as exc:
         raise RuntimeError("python-pptx is required for document.generate_ppt") from exc
-    
+
     prs = Presentation()
-    
+
     # 设置默认字体为微软雅黑，支持中文
     for slide in prs.slides:
         for shape in slide.shapes:
@@ -1929,7 +1930,7 @@ async def generate_ppt(input_data: dict[str, Any], context: Any) -> dict[str, An
                     for run in paragraph.runs:
                         run.font.name = "Microsoft YaHei"
                         run.font.element.rPr.rFonts.set(prs.nsdecls['w'], "Microsoft YaHei")
-    
+
     for i, slide_data in enumerate(slides):
         if i == 0:
             # 封面页用布局0
@@ -1937,9 +1938,9 @@ async def generate_ppt(input_data: dict[str, Any], context: Any) -> dict[str, An
         else:
             # 内容页用布局1，带标题和内容
             slide_layout = prs.slide_layouts[1]
-        
+
         slide = prs.slides.add_slide(slide_layout)
-        
+
         title_text = slide_data.get("title", "")
         if title_text and slide.shapes.title:
             title_shape = slide.shapes.title
@@ -1952,7 +1953,7 @@ async def generate_ppt(input_data: dict[str, Any], context: Any) -> dict[str, An
                     run.font.size = Pt(24 if i == 0 else 20)
                     if i == 0:
                         run.font.bold = True
-        
+
         content_text = slide_data.get("content", "")
         if content_text and slide.shapes.placeholders:
             # 找到内容占位符（idx=1）
@@ -1961,7 +1962,7 @@ async def generate_ppt(input_data: dict[str, Any], context: Any) -> dict[str, An
                 if placeholder.placeholder_format.idx == 1:
                     content_placeholder = placeholder
                     break
-            
+
             if content_placeholder:
                 content_placeholder.text = content_text
                 # 内容字体设置
@@ -1970,10 +1971,10 @@ async def generate_ppt(input_data: dict[str, Any], context: Any) -> dict[str, An
                         run.font.name = "Microsoft YaHei"
                         run.font.element.rPr.rFonts.set(prs.nsdecls['w'], "Microsoft YaHei")
                         run.font.size = Pt(14)
-    
+
     _backup_output(path, context)
     prs.save(str(path))
-    
+
     return {
         "path": str(path.resolve()),
         "title": title,
@@ -1985,24 +1986,24 @@ async def generate_ppt(input_data: dict[str, Any], context: Any) -> dict[str, An
 async def merge_pdfs(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
     output_path = context.path_guard.resolve(input_data.get("output_path"))
     input_paths = input_data.get("input_paths", [])
-    
+
     try:
         from pypdf import PdfMerger
     except ImportError as exc:
         raise RuntimeError("pypdf is required for document.merge_pdfs") from exc
-    
+
     merger = PdfMerger()
-    
+
     for path_str in input_paths:
         path = context.path_guard.resolve(path_str)
         merger.append(str(path))
-    
+
     _backup_output(output_path, context)
     try:
         merger.write(str(output_path))
     finally:
         merger.close()
-    
+
     return {
         "output_path": str(output_path.resolve()),
         "merged_count": len(input_paths),
@@ -2012,28 +2013,28 @@ async def merge_pdfs(input_data: dict[str, Any], context: Any) -> dict[str, Any]
 async def split_pdf(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
     path = context.path_guard.resolve(input_data.get("path"))
     output_dir = context.path_guard.resolve(input_data.get("output_dir", path.parent))
-    
+
     try:
         from pypdf import PdfReader, PdfWriter
     except ImportError as exc:
         raise RuntimeError("pypdf is required for document.split_pdf") from exc
-    
+
     reader = PdfReader(str(path))
     output_dir.mkdir(exist_ok=True)
-    
+
     split_files = []
-    
+
     for i, page in enumerate(reader.pages):
         writer = PdfWriter()
         writer.add_page(page)
-        
+
         output_path = output_dir / f"{path.stem}_page_{i+1}.pdf"
         _backup_output(output_path, context)
         with open(output_path, "wb") as f:
             writer.write(f)
-        
+
         split_files.append(str(output_path))
-    
+
     return {
         "source_path": str(path),
         "output_dir": str(output_dir),
@@ -2044,18 +2045,18 @@ async def split_pdf(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
 async def create_bookmark_outline(input_data: dict[str, Any], context: Any) -> dict[str, Any]:
     path = context.path_guard.resolve(input_data.get("path"))
     bookmarks = input_data.get("bookmarks", [])
-    
+
     try:
         from pypdf import PdfReader, PdfWriter
     except ImportError as exc:
         raise RuntimeError("pypdf is required for document.create_bookmark_outline") from exc
-    
+
     reader = PdfReader(str(path))
     writer = PdfWriter()
-    
+
     for page in reader.pages:
         writer.add_page(page)
-    
+
     def add_bookmarks(bookmarks_list: list[dict[str, Any]], parent: Any = None) -> None:
         for item in bookmarks_list:
             title = item.get("title", "")
@@ -2065,14 +2066,14 @@ async def create_bookmark_outline(input_data: dict[str, Any], context: Any) -> d
                 children = item.get("children", [])
                 if children:
                     add_bookmarks(children, dest)
-    
+
     add_bookmarks(bookmarks)
-    
+
     output_path = path.parent / f"{path.stem}_with_bookmarks.pdf"
     _backup_output(output_path, context)
     with open(output_path, "wb") as f:
         writer.write(f)
-    
+
     return {
         "output_path": str(output_path.resolve()),
         "bookmark_count": len(bookmarks),

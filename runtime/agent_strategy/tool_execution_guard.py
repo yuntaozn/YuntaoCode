@@ -36,12 +36,10 @@ def evaluate_tool_execution_guard(
     workspace_path: str | None,
     checks: ToolExecutionGuardChecks,
 ) -> ToolExecutionGuardDecision | None:
-    """Return the first pre-execution guard decision for a resolved tool.
+    """返回已解析工具的第一个执行前 Guard 决策。
 
-    The order is part of the runtime contract. Availability and capability
-    boundaries are checked before schema details, and invalid calls never enter
-    user confirmation.
-    """
+    检查顺序属于运行时契约：先检查可用性与能力边界，再检查 Schema 细节；
+    无效调用绝不进入用户确认。"""
     if not checks.is_tool_enabled(tool_id):
         return ToolExecutionGuardDecision(
             reason="plugin_disabled",

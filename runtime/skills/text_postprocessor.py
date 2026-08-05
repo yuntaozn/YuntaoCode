@@ -152,7 +152,7 @@ class TextPostProcessor:
         text = re.sub(r'(GB)\s+(\d+)', r'\1\2', text, flags=re.IGNORECASE)
         # 数字 + mm/MPa/m 等单位
         text = re.sub(r'(\d+)\s+(mm|MPa|m|cm|km|kg|℃)', r'\1\2', text, flags=re.IGNORECASE)
-        # CJJ 3 - 90 -> CJJ3-90
+        # 示例：CJJ 3 - 90 -> CJJ3-90
         text = re.sub(r'(CJJ)\s*(\d+)\s*-\s*(\d+)', r'\1\2-\3', text, flags=re.IGNORECASE)
         return text
 

@@ -6,7 +6,7 @@ from .base import ApiHandler
 
 
 class TasksHandler(ApiHandler):
-    """Product-level Task collection API."""
+    """产品级 Task 集合 API。"""
 
     def get(self) -> None:
         workspace_id = self.get_argument("workspace_id", None)

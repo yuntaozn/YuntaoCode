@@ -1,9 +1,7 @@
-"""Read-only ToolTask progress summaries.
+"""只读的 ToolTask 进度摘要。
 
-This module turns persisted ToolTask logs into compact operational facts for
-APIs, stream events, and the task workbench. It must not decide task intent,
-select tools, or determine completion.
-"""
+本模块将持久化 ToolTask 日志转换为紧凑操作事实，供 API、流事件和任务工作台使用。
+它不得判断任务意图、选择工具或确定完成状态。"""
 
 from __future__ import annotations
 
@@ -17,7 +15,7 @@ STALE_AFTER_SECONDS = 60
 
 
 def build_tool_task_progress(task: Any, *, now: datetime | None = None) -> dict[str, Any]:
-    """Return an evidence-only progress summary for a ToolTask-like object."""
+    """为类似 ToolTask 的对象返回仅包含证据的进度摘要。"""
 
     now = now or datetime.now(timezone.utc)
     logs = _logs(task)

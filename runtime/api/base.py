@@ -13,11 +13,11 @@ class ApiHandler(tornado.web.RequestHandler):
         self.runtime = runtime
 
     def get_lang(self) -> str:
-        """Return the preferred language for this request."""
+        """返回当前请求的首选语言。"""
         return i18n.get_lang(self.request)
 
     def t(self, key: str, **kwargs: Any) -> str:
-        """Translate *key* using the request language."""
+        """使用请求语言翻译 *key*。"""
         return i18n.t(key, self.get_lang(), **kwargs)
 
     def set_default_headers(self) -> None:

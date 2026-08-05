@@ -3,7 +3,7 @@ const $ = (id) => document.getElementById(id);
 let settings = null;
 let backups = [];
 let backupMeta = {};
-let memories = [];  // Loaded from /memories API
+let memories = [];  // 从 /memories API 加载
 let activeSettingsPage = localStorage.getItem("lit_settings_page") || "models";
 const deletedProviderIds = new Set();
 const deletedModelIds = new Set();
@@ -458,8 +458,8 @@ function collectModels() {
 }
 
 function collectMemories() {
-    // Memories are now managed via the /memories API, not collected from form
-    // This function is kept for backward compat but returns empty
+    // 记忆现由 /memories API 管理，不再从表单收集。
+    // 此函数仅为向后兼容保留，固定返回空结果。
     return [];
 }
 
@@ -706,7 +706,7 @@ async function saveMemory(memoryId) {
             method: "PUT",
             body: JSON.stringify({ text, tags, enabled }),
         });
-        // Update local memories array
+        // 更新本地记忆数组。
         const idx = memories.findIndex((m) => m.id === memoryId);
         if (idx >= 0) memories[idx] = result;
         showToast(t('settings_js.memory_saved'));
@@ -798,7 +798,7 @@ loadAll().catch((error) => showToast(error.message));
 if ($("plugins-btn")) $("plugins-btn").addEventListener("click", () => window.location.href = "/plugins-page");
 if ($("mcp-services-btn")) $("mcp-services-btn").addEventListener("click", () => window.location.href = "/mcp-services-page");
 
-// Language select initialization
+// 初始化语言选择器。
 (function initLanguageSelect() {
     const select = $("language-select");
     if (!select) return;

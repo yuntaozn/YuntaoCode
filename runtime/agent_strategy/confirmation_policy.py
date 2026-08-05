@@ -1,4 +1,4 @@
-"""Pure confirmation-policy decisions for state-changing tool calls."""
+"""工具确认级别与执行权限策略。"""
 
 from __future__ import annotations
 

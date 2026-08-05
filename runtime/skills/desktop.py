@@ -1,4 +1,4 @@
-"""Thin YuntaoCode adapter for the incubating Desktop Observation Provider."""
+"""Desktop Observation Provider 的 YuntaoCode 适配层。"""
 
 from __future__ import annotations
 

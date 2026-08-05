@@ -142,13 +142,11 @@ def normalize_tool_id(value: Any) -> str:
 
 
 def _strip_markup_suffix(value: str) -> str:
-    """Recover a tool id when model-side XML fragments leak into the name.
+    """当模型侧 XML 片段泄漏到名称中时恢复工具 ID。
 
-    Some local/OpenAI-compatible providers can stream malformed tool calls where
-    XML-ish parameter text is appended to the function name, for example
-    ``filesystem.read_file</parameter><parameter ...``.  Keep only a syntactic
-    tool-id prefix and let ToolRegistry decide whether it is actually known.
-    """
+    某些本地或 OpenAI 兼容 Provider 可能流式输出格式错误的工具调用，把 XML 风格
+    参数文本附加到函数名后，例如 ``filesystem.read_file</parameter><parameter ...``。
+    此处只保留符合语法的工具 ID 前缀，是否确已注册仍由 ToolRegistry 判断。"""
     if "<" not in value:
         return value
     match = _TOOL_ID_PREFIX_PATTERN.match(value)

@@ -5,7 +5,7 @@ from typing import Iterable
 
 
 class PathGuard:
-    """Restricts local tools to configured workspace roots."""
+    """将本地工具限制在已配置的工作区根目录内。"""
 
     def __init__(self, workspace_roots: Iterable[Path], *, allow_all: bool = False):
         self.workspace_roots = tuple(root.resolve() for root in workspace_roots)

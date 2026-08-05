@@ -1,8 +1,6 @@
-"""YuntaoCode product release version.
+"""YuntaoCode 产品发布版本。
 
-This is the single source of truth for the product release version. Schema,
-settings migration, plugin, and static asset versions are intentionally
-independent.
-"""
+这里是产品发布版本的单一事实来源。Schema、设置迁移、插件和静态资源版本
+有意保持独立。"""
 
 __version__ = "0.2.0-dev"

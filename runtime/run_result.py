@@ -57,11 +57,10 @@ def build_run_result(
     answer_text: str | None = None,
     completion_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build deterministic run facts from tool events.
+    """根据工具事件构建确定性的 Run 事实。
 
-    The model may still write the final prose answer, but this structure is the
-    runtime-owned source of truth for what actually happened.
-    """
+    最终文字答案仍可由模型编写，但此结构是 Runtime 对实际发生事项的
+    事实来源。"""
     capability_advisories: list[dict[str, str]] = []
     state_write_successes: list[dict[str, Any]] = []
     state_write_failures: list[dict[str, Any]] = []
@@ -668,12 +667,10 @@ def _reconcile_completion_assessment(
     evidence_status: str,
     assessment: dict[str, Any],
 ) -> tuple[str, list[str]]:
-    """Keep Runtime evidence and the model's semantic conclusion consistent.
+    """保持 Runtime 证据与模型语义结论一致。
 
-    The model can lower a successful evidence status by declaring that its goal
-    remains open.  It cannot upgrade a partial/failure Runtime result.  Runtime
-    does not infer completion from prose or choose a repair strategy here.
-    """
+    模型可以声明目标仍未关闭，从而下调成功证据状态；但不能把部分完成或失败的
+    Runtime 结果升级。此处 Runtime 不从文字推断完成状态，也不选择修复策略。"""
 
     if not assessment:
         return evidence_status, []
@@ -710,12 +707,10 @@ def _unrecovered_failed_deliverable_events(
     successful_deliverables: list[dict[str, Any]],
     sufficient_verifications: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Return failed deliverable attempts that were not superseded later.
+    """返回后续未被替代的失败交付尝试。
 
-    A failed write or external-state attempt is an audit fact.  It should only
-    lower the final result when no later deliverable or sufficient verification
-    closed the same task loop.
-    """
+    写入或外部状态尝试失败属于审计事实。只有在没有后续交付或充分验证关闭同一
+    任务循环时，它才应降低最终结果。"""
     if not failed_deliverables:
         return []
     failed_ids = {id(event) for event in failed_deliverables}

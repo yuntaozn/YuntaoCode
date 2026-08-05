@@ -1,10 +1,8 @@
-"""Persistence boundary for conversation-message metadata.
+"""对话消息元数据的持久化边界。
 
-Conversation messages restore the visible chat and the small amount of state
-needed for follow-up task lineage.  Full runtime evidence belongs to RunEvent
-history.  Keeping that distinction here prevents every assistant message from
-duplicating Context Packs and capability catalogs already stored with the Run.
-"""
+对话消息用于恢复可见聊天，以及后续任务血缘所需的少量状态；
+完整运行时证据属于 RunEvent 历史。保持这一边界，可避免每条助手消息
+重复保存已经随 Run 存储的 Context Pack 和能力目录。"""
 
 from __future__ import annotations
 
@@ -17,13 +15,11 @@ def compact_conversation_message_metadata(
     role: str,
     metadata: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Return metadata suitable for conversation persistence.
+    """返回适合持久化对话的元数据。
 
-    User-authored metadata is preserved as-is.  Assistant metadata keeps UI
-    restoration fields and task-lineage facts, while large audit records are
-    replaced by bounded summaries.  The complete records remain available in
-    the run-event repository and Run Workbench.
-    """
+    用户编写的元数据原样保留。助手元数据保留 UI 恢复字段和任务血缘事实，
+    大型审计记录则替换为有界摘要。完整记录仍保存在 Run 事件存储库和
+    Run Workbench 中。"""
 
     result = dict(metadata) if isinstance(metadata, dict) else {}
     if str(role or "") != "assistant":

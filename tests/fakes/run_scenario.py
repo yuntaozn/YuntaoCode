@@ -145,7 +145,7 @@ class RunScenarioResult:
 
 
 class RunScenario:
-    """Scripted model/tool inputs around the real conversation Run pipeline."""
+    """围绕真实对话 Run 管线提供脚本化模型与工具输入。"""
 
     def __init__(
         self,

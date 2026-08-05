@@ -1,9 +1,7 @@
-"""Capability snapshot and preflight helpers.
+"""能力快照与预检辅助函数。
 
-The model may decide which capability a task needs.  The runtime owns the
-available capability snapshot and readiness facts.  Preflight stays advisory
-unless a separate safety policy explicitly asks for an enforced boundary.
-"""
+模型可以判断任务需要何种能力，Runtime 管理可用能力快照和就绪事实。
+预检保持建议性，除非独立安全策略明确要求执行边界。"""
 
 from __future__ import annotations
 
@@ -66,11 +64,9 @@ def build_capability_snapshot(
     state_changing_tool_ids: set[str] | None = None,
     capability_issues: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Build a runtime-owned capability snapshot from tool specs.
+    """根据工具规格构建 Runtime 自有能力快照。
 
-    Each spec may include ``available``.  Missing ``available`` means true so
-    older callers remain compatible.
-    """
+    每个规格都可包含 ``available``。缺少该字段时视为 true，以兼容旧调用方。"""
     normalized_specs: list[dict[str, Any]] = []
     for spec in tool_specs:
         if not isinstance(spec, dict):
@@ -280,7 +276,7 @@ def build_capability_snapshot(
 
 
 def task_contract_capability_ids(contract: dict[str, Any]) -> list[str]:
-    """Return model-declared capability IDs from a task contract."""
+    """返回任务契约中由模型声明的能力 ID。"""
     result: list[str] = []
     for key in ("capability_ids", "target_capability_ids"):
         value = contract.get(key)
@@ -301,7 +297,7 @@ def task_contract_capability_ids(contract: dict[str, Any]) -> list[str]:
 
 
 def contract_requires_external_state_capability(contract: dict[str, Any]) -> bool:
-    """Return whether a task explicitly targets external state."""
+    """返回任务是否明确以外部状态为目标。"""
     if not bool(contract.get("requires_state_change")):
         return False
     deliverables = contract.get("deliverables")
@@ -319,13 +315,10 @@ def preflight_task_capabilities(
     contract: dict[str, Any],
     snapshot: dict[str, Any],
 ) -> dict[str, Any]:
-    """Describe task capability needs against a runtime snapshot.
+    """对照运行时快照描述任务能力需求。
 
-    Preflight is an advisory layer.  It should tell the model and UI what is
-    available or degraded, but it must not force a task to stop or silently
-    constrain the model's strategy.  Concrete safety decisions stay attached to
-    tool execution and confirmation.
-    """
+    预检属于建议层，应告诉模型和 UI 哪些能力可用或已降级，但不得强制任务停止，
+    也不得暗中限制模型策略。具体安全决策仍附着在工具执行与确认环节。"""
     capabilities = snapshot.get("capabilities") if isinstance(snapshot.get("capabilities"), list) else []
     capability_issues = (
         snapshot.get("capability_issues")
@@ -491,8 +484,8 @@ def preflight_task_capabilities(
         "readiness_issues": advisories,
         "target_capability_ids": target_capability_ids,
         "requires_external_state_capability": requires_external_state,
-        # Compatibility field for older diagnostics. New preflight records do
-        # not rank tools or select a route for the model.
+        # 供旧版诊断兼容的字段；新的预检记录
+        # 不为工具排序，也不替模型选择路线。
         "preferred_tool_ids": None,
         "visual_verification_tool_ids": visual_verification_tool_ids,
         "evidence_affordances": snapshot.get("evidence_affordances") or [],
@@ -505,7 +498,7 @@ def preflight_task_capabilities(
 
 
 def tool_allowed_by_preflight(preflight: dict[str, Any] | None, tool_id: str) -> bool:
-    """Preflight is advisory; it never hides or rejects a visible tool."""
+    """预检仅提供建议，绝不隐藏或拒绝可见工具。"""
     return True
 
 

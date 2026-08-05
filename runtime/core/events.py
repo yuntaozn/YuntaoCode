@@ -1,4 +1,4 @@
-"""Trace event schema for task execution."""
+"""Task Runtime 事件契约。"""
 
 from __future__ import annotations
 

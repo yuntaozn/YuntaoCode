@@ -1,10 +1,8 @@
-"""Unified evidence view for completed, paused, or interrupted Runs.
+"""已完成、暂停或中断 Run 的统一证据视图。
 
-RunEvidence is the runtime-owned fact view after a run has produced events. It
-does not execute tools, judge model intent, or choose a recovery strategy. It
-only gathers stable evidence that Runbook, diagnostics, Experience export,
-Replay, and future Evaluation can consume consistently.
-"""
+RunEvidence 是 Run 产生事件后由 Runtime 管理的事实视图。它不执行工具、
+不判断模型意图，也不选择恢复策略；只收集稳定证据，供 Runbook、诊断、
+Experience 导出、Replay 和未来 Evaluation 一致使用。"""
 
 from __future__ import annotations
 
@@ -26,7 +24,7 @@ RUN_EVIDENCE_SCHEMA_VERSION = "run_evidence.v1"
 
 
 def build_run_evidence(run: Any) -> dict[str, Any]:
-    """Build a stable evidence view from a RunRecord-like object."""
+    """根据类似 RunRecord 的对象构建稳定证据视图。"""
     events = [
         event for event in (getattr(run, "events", []) or [])
         if isinstance(event, dict)

@@ -1,6 +1,3 @@
-"""Incubating local capability providers.
+"""正在孵化的本地能力 Provider。
 
-Packages under this namespace are kept independent from ``runtime`` where
-possible so they can later become standalone services or packages.
-"""
-
+此命名空间下的包尽可能与 ``runtime`` 保持独立，便于未来成为独立服务或包。"""

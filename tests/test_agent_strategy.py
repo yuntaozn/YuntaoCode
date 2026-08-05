@@ -1,8 +1,7 @@
-"""Behaviour-driven tests for the agent_strategy modules.
+"""Agent 策略模块的行为驱动测试。
 
-Covers context evidence hints, tool classification, tool-call processing,
-convergence evidence, planning policy, profiles, and prompt construction.
-"""
+覆盖上下文证据提示、工具分类、工具调用处理、收敛证据、计划策略、
+Profile 和提示构建。"""
 
 from __future__ import annotations
 
@@ -10,11 +9,11 @@ import json
 
 import pytest
 
-# ── classifiers ───────────────────────────────────────────────────────────
+# ── 分类器 ───────────────────────────────────────────────────────────────
 from runtime.agent_strategy.classifiers import (
-    # Context classifiers
+    # 上下文分类器
     looks_like_diagnostic_feedback,
-    # Tool classification
+    # 工具分类
     WRITE_TOOL_IDS,
     RECON_TOOL_IDS,
     canonical_tool_id,
@@ -30,7 +29,7 @@ from runtime.agent_strategy.classifiers import (
     is_verification_tool,
     is_write_tool,
     verification_tool_ids,
-    # Tool-call processing
+    # 工具调用处理
     complete_tool_calls,
     extract_native_tool_calls,
     merge_tool_call_chunks,
@@ -39,7 +38,7 @@ from runtime.agent_strategy.classifiers import (
     strip_native_tool_call_blocks,
     tool_call_arguments_size,
     tool_signature,
-    # Progress observation
+    # 进度观察
     consecutive_repeated_failure_count,
     failure_route_attempt_count_since_progress,
     has_successful_verification,
@@ -50,7 +49,7 @@ from runtime.agent_strategy.classifiers import (
     plan_has_pending_write_step,
 )
 
-# ── prompts ───────────────────────────────────────────────────────────────
+# ── 提示构建 ─────────────────────────────────────────────────────────────
 from runtime.agent_strategy.prompts import (
     completion_review_prompt,
     execute_plan_prompt,
@@ -62,7 +61,7 @@ from runtime.agent_strategy.prompts import (
     write_repair_prompt,
 )
 
-# ── profiles / policy ─────────────────────────────────────────────────────
+# ── Profile 与策略 ────────────────────────────────────────────────────────
 from runtime.agent_strategy.policy import (
     resolve_plan_execution,
     resolve_profile,
@@ -73,7 +72,7 @@ from runtime.agent_strategy.profiles import (
 )
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 5a: Context evidence classifiers
+# 5a：上下文证据分类器
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestLooksLikeDiagnosticFeedback:
@@ -100,7 +99,7 @@ class TestLooksLikeDiagnosticFeedback:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 5a.5: Profiles and planning policy
+# 5a.5：Profile 与计划策略
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestAgentProfiles:
@@ -181,7 +180,7 @@ class TestPlanningPolicy:
         assert resolve_profile("document_export", "terminal").id == "document"
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 5b: Tool classification
+# 5b：工具分类
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestIsWriteTool:
@@ -303,7 +302,7 @@ class TestVerificationToolIds:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 5c: Tool-call processing
+# 5c：工具调用处理
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestMergeToolCallChunks:
@@ -548,7 +547,7 @@ class TestMessagesForModelRound:
         ]
         result = messages_for_model_round(msgs, None)
         assert all(item["role"] in {"system", "user", "assistant"} for item in result)
-        # Tool role should be converted to assistant
+        # 工具角色应转换为助手角色
         assert result[-1]["role"] == "assistant"
 
 
@@ -582,7 +581,7 @@ class TestStrictToolArguments:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Convergence evidence
+# 收敛证据
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -1022,7 +1021,7 @@ class TestPlanHasPendingWriteStep:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Prompt construction (spot checks)
+# 提示构建（抽样检查）
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestPrompts:

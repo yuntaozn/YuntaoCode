@@ -11,12 +11,10 @@ from .contracts import build_desktop_state, build_visual_evidence, diagnostic, u
 
 
 class DesktopObservationService:
-    """Read-only local desktop observation.
+    """只读本地桌面观察服务。
 
-    The service does not click, type, focus, move, resize, close windows, or
-    terminate processes.  Platform-specific operations degrade to structured
-    diagnostics when unavailable.
-    """
+    该服务不点击、输入、聚焦、移动、调整大小或关闭窗口，也不终止进程。
+    平台专属操作不可用时降级为结构化诊断。"""
 
     def __init__(self, *, platform_name: str | None = None) -> None:
         self.platform_name = platform_name or platform.system() or "unknown"

@@ -1,9 +1,7 @@
-"""Evaluation fixtures built from selected RunEvidence.
+"""根据选定 RunEvidence 构建评测 Fixture。
 
-Fixtures are local, manual artifacts for future regression/evaluation work.
-They are not benchmark submissions and they do not execute replay by
-themselves.
-"""
+Fixture 是为未来回归和评测工作准备的本地手动产物，不是 Benchmark 提交，
+也不会自行执行 Replay。"""
 
 from __future__ import annotations
 
@@ -19,7 +17,7 @@ EVALUATION_FIXTURE_EXPORT_SCHEMA_VERSION = "evaluation_fixture_export.v1"
 
 
 def build_evaluation_fixture_export(run: Any) -> dict[str, Any]:
-    """Build a portable evaluation fixture export from one selected Run."""
+    """根据一个选中的 Run 构建可移植评测夹具导出。"""
     evidence = build_run_evidence(run)
     run_info = evidence.get("run") if isinstance(evidence.get("run"), dict) else {}
     run_id = str(run_info.get("id") or getattr(run, "id", "") or "")
@@ -60,7 +58,7 @@ def build_evaluation_fixture_from_evidence(
     fixture_id: str,
     evidence: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build the stable evaluation fixture shape from a RunEvidence view."""
+    """根据 RunEvidence 视图构建稳定评测夹具结构。"""
     run = evidence.get("run") if isinstance(evidence.get("run"), dict) else {}
     contract = evidence.get("task_contract") if isinstance(evidence.get("task_contract"), dict) else {}
     result = evidence.get("result") if isinstance(evidence.get("result"), dict) else {}

@@ -1,11 +1,8 @@
-"""Replay fixture schemas for selected Experience evidence.
+"""从选定 Experience 证据生成的 Replay Fixture Schema。
 
-Replay fixtures are passive records derived from reviewed Runbook evidence.
-They do not generate capabilities, register plugins, promote trusted runtime
-behavior, or execute tools. They exist so selected runs can be compared,
-exported, and evaluated without turning every successful task into a new
-runtime behavior.
-"""
+Replay Fixture 是根据已审核 Runbook 证据派生的被动记录。它不生成能力、
+不注册插件、不提升可信 Runtime 行为，也不执行工具。它让选定 Run 可以被比较、
+导出和评测，而不会把每个成功任务自动变成新 Runtime 行为。"""
 
 from __future__ import annotations
 
@@ -18,7 +15,7 @@ REPLAY_FIXTURE_SCHEMA_VERSION = "replay_fixture.v1"
 
 @dataclass(frozen=True)
 class ReplayFixture:
-    """A stable task sample extracted from reviewed task evidence."""
+    """从经审核任务证据中提取的稳定任务样本。"""
 
     id: str
     source_run_id: str
