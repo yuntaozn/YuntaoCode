@@ -1,11 +1,47 @@
 import pytest
 
 from runtime.app import RuntimeState
+from runtime.skills import register_builtin_tools
 from runtime.tool_registry import ToolRegistry, ToolSpec
 
 
 async def _noop_handler(input_data, context):
     return {"ok": True}
+
+
+def test_tool_spec_exposes_stable_event_contract() -> None:
+    spec = ToolSpec(
+        id="demo.inspect",
+        name="Inspect",
+        description="Inspect demo state",
+        input_schema={"type": "object"},
+        capability="demo.inspect",
+        artifacts=["demo_state"],
+        effects=["external_read"],
+        roles=["evidence", "verification"],
+        verification_strength="weak",
+    )
+
+    assert spec.to_event_contract() == {
+        "declared_capability": "demo.inspect",
+        "declared_artifacts": ["demo_state"],
+        "declared_effects": ["external_read"],
+        "declared_roles": ["evidence", "verification"],
+        "declared_verification_strength": "weak",
+    }
+
+
+def test_builtin_tools_declare_capability_and_task_roles() -> None:
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+
+    incomplete = [
+        spec["id"]
+        for spec in registry.list_specs()
+        if not spec.get("capability") or not spec.get("roles")
+    ]
+
+    assert incomplete == []
 
 
 def test_runtime_state_combines_tool_readiness_with_provider_lifecycle() -> None:

@@ -187,6 +187,39 @@ class RunFinalizer:
     def __init__(self, host: RunFinalizationHost) -> None:
         self._host = host
 
+    def _build_result(
+        self,
+        *,
+        request: RunFinalizationRequest,
+        change_summary: dict[str, Any] | None,
+        contract_failed: bool,
+        final_answer_error: str,
+        answer_text: str,
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        task_contract = request.task_contract
+        return build_run_result(
+            workspace_path=request.workspace.path,
+            tool_events=request.tool_events,
+            change_summary=change_summary,
+            mode=request.effective_mode,
+            requires_code_write=request.requires_code_write,
+            expected_document_coverage=bool(
+                task_contract.get("expected_document_coverage")
+            ),
+            expected_min_output_chars=int(
+                task_contract.get("expected_min_output_chars") or 0
+            ),
+            task_contract=task_contract,
+            contract_failed=contract_failed,
+            max_rounds_exceeded=request.execution_state.max_rounds_exceeded,
+            preflight_advisories=_preflight_advisories(request.capability_preflight),
+            model_error=request.execution_state.model_provider_error,
+            final_answer_error=final_answer_error,
+            answer_text=answer_text,
+            completion_decision=_latest_completion_decision(metadata),
+        )
+
     async def finalize(self, request: RunFinalizationRequest) -> RunFinalizationOutcome:
         metadata = request.metadata
         tool_events = request.tool_events
@@ -278,26 +311,51 @@ class RunFinalizer:
         )
         if final_answer_error:
             metadata["final_answer_error"] = final_answer_error
-        run_result = build_run_result(
-            workspace_path=request.workspace.path,
-            tool_events=tool_events,
+        run_result = self._build_result(
+            request=request,
             change_summary=change_summary,
-            mode=request.effective_mode,
-            requires_code_write=request.requires_code_write,
-            expected_document_coverage=bool(
-                task_contract.get("expected_document_coverage")
-            ),
-            expected_min_output_chars=int(
-                task_contract.get("expected_min_output_chars") or 0
-            ),
-            task_contract=task_contract,
             contract_failed=tool_contract_failed,
-            max_rounds_exceeded=state.max_rounds_exceeded,
-            preflight_advisories=_preflight_advisories(request.capability_preflight),
-            model_error=state.model_provider_error,
             final_answer_error=final_answer_error,
             answer_text=model_content,
-            completion_decision=_latest_completion_decision(metadata),
+            metadata=metadata,
+        )
+        metadata["run_result"] = run_result
+
+        assistant_content = await self._synthesize_answer(
+            request=request,
+            assistant_content=assistant_content,
+            run_result=run_result,
+            change_summary=change_summary,
+            tool_contract_failed=tool_contract_failed,
+            metadata=metadata,
+        )
+        final_contract_failures = self._host._task_contract_failures(
+            task_contract,
+            tool_events,
+            request.effective_mode,
+            answer_text=assistant_content,
+        )
+        tool_contract_failed = bool(final_contract_failures)
+        if final_contract_failures:
+            metadata["contract_failures"] = final_contract_failures
+        else:
+            metadata.pop("contract_failures", None)
+        final_answer_error = self._host._answer_only_final_answer_error(
+            assistant_content,
+            tool_events,
+            task_contract,
+        )
+        if final_answer_error:
+            metadata["final_answer_error"] = final_answer_error
+        else:
+            metadata.pop("final_answer_error", None)
+        run_result = self._build_result(
+            request=request,
+            change_summary=change_summary,
+            contract_failed=tool_contract_failed,
+            final_answer_error=final_answer_error,
+            answer_text=assistant_content,
+            metadata=metadata,
         )
         metadata["run_result"] = run_result
 
@@ -325,14 +383,6 @@ class RunFinalizer:
             metadata=metadata,
         )
 
-        assistant_content = await self._synthesize_answer(
-            request=request,
-            assistant_content=assistant_content,
-            run_result=run_result,
-            change_summary=change_summary,
-            tool_contract_failed=tool_contract_failed,
-            metadata=metadata,
-        )
         assistant_content_with_files = append_changed_files_footer(
             assistant_content,
             run_result,

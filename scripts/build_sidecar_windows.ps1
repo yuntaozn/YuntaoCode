@@ -3,7 +3,7 @@ param(
     [string]$TargetTriple = "x86_64-pc-windows-msvc",
     [ValidateSet("full", "lite")]
     [string]$Profile = "full",
-    [switch]$Windowed,
+    [switch]$Console,
     [switch]$KeepWork
 )
 
@@ -95,7 +95,7 @@ $pyinstallerArgs = @(
     "--specpath", $specPath,
     "--distpath", $distPath
 )
-if ($Windowed) {
+if (-not $Console) {
     $pyinstallerArgs += @("--noconsole")
 }
 foreach ($module in $hiddenImports) {

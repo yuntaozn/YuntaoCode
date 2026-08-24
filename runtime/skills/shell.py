@@ -749,6 +749,7 @@ def register_shell_tools(registry: ToolRegistry) -> None:
                 "required": ["command"],
             },
             requires_confirmation=True,
+            capability="shell.local_execution",
             artifacts=["command_output", "debug_session"],
             effects=["shell_command"],
             roles=["execution", "evidence", "verification"],

@@ -6,6 +6,8 @@
 const LOCALES = {
     "zh-CN": {
         "common.cancel": "取消",
+        "common.confirm": "确认",
+        "common.confirm_title": "请确认",
         // === 导航（HTML）===
         "nav.new_conversation": "新对话",
         "nav.search": "搜索",
@@ -938,6 +940,8 @@ const LOCALES = {
 
     "en": {
         "common.cancel": "Cancel",
+        "common.confirm": "Confirm",
+        "common.confirm_title": "Confirm action",
         // === 导航 ===
         "nav.new_conversation": "New Chat",
         "nav.search": "Search",

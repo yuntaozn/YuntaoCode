@@ -1346,6 +1346,10 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "output": output,
             "tool_attempt_observation": observation,
         }
+        try:
+            event.update(self.runtime.registry.get(tool_id).spec.to_event_contract())
+        except KeyError:
+            pass
         tool_payload = {
             "tool": tool_id,
             "input": arguments,
@@ -1822,10 +1826,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "task_id": task.id,
             "progress": self._tool_progress_snapshot(tool_id, task),
             "confirmation_decision": confirmation_decision.to_dict(),
-            "declared_capability": tool_spec.capability,
-            "declared_effects": list(tool_spec.effects or []),
-            "declared_roles": list(tool_spec.roles or []),
-            "declared_verification_strength": tool_spec.verification_strength,
+            **tool_spec.to_event_contract(),
         }
         self.write_event({"event": "tool", **event})
         await self.flush()
@@ -1904,10 +1905,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "error": task_error,
             "output": output_preview,
             "progress": self._tool_progress_snapshot(tool_id, task),
-            "declared_capability": tool_spec.capability,
-            "declared_effects": list(tool_spec.effects or []),
-            "declared_roles": list(tool_spec.roles or []),
-            "declared_verification_strength": tool_spec.verification_strength,
+            **tool_spec.to_event_contract(),
         }
         if runtime_advisories:
             event["runtime_advisories"] = runtime_advisories

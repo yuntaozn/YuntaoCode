@@ -94,13 +94,15 @@ cd YuntaoCode\desktop-shell
 npm run build:windows
 ```
 
-默认 Windows 安装包会构建无控制台 sidecar，避免安装后出现独立黑框。
+Windows sidecar 和安装包构建命令默认都生成无控制台程序，避免安装后出现独立黑框。
 NSIS 安装器当前固定为简体中文，以避免 Windows/NSIS 记住上次语言选择后
 导致默认语言漂移。英文安装器可以后续用单独构建配置补充。
-如果需要诊断 sidecar 启动日志，可以直接运行：
+如果需要诊断 sidecar 启动日志，可以构建明确标记的控制台版本：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File ..\scripts\build_desktop_windows.ps1 -ConsoleSidecar
+# 或只构建控制台 sidecar
+npm run sidecar:windows:console
 ```
 
 如需构建轻量安装包：

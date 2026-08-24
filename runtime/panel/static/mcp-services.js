@@ -334,7 +334,7 @@ async function sendPendingConfirmAction(action) {
 }
 
 async function deleteService(serviceId) {
-    if (!window.confirm(t("mcp_js.confirm_delete", {id: serviceId}))) return;
+    if (!await showConfirmDialog(t("mcp_js.confirm_delete", {id: serviceId}), {danger: true})) return;
     try {
         await api(`/mcp-services/${encodeURIComponent(serviceId)}`, {method: "DELETE"});
         if (activeServiceId === serviceId) activeServiceId = "";

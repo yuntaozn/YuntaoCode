@@ -7,8 +7,7 @@ from dataclasses import dataclass
 
 NO_TARGET_DELIVERABLE = "no_target_deliverable"
 NO_TASK_EVIDENCE = "no_task_evidence"
-COMPLETION_REVIEW = "completion_review"
-EVIDENCE_ALREADY_REVIEWED = "evidence_already_reviewed"
+COMPLETION_OWNED_BY_MODEL = "completion_owned_by_model"
 
 
 @dataclass(frozen=True)
@@ -27,31 +26,30 @@ def build_completion_review_gate(
     requires_target_deliverable: bool,
     has_target_deliverable: bool,
     has_task_evidence: bool,
-    has_unreviewed_evidence: bool,
 ) -> CompletionReviewGate:
     """返回当前任务证据是否应交由模型审查。
 
-    写入与外部状态任务仍以目标交付物证据作为入口。只读分析和答案证据任务没有
-    可观察的文件或外部对象，因此成功的证据收集工具使用同一审查边界。验证缺口
-    有意不作为入口条件：它们会进入证据包，由模型决定验证、修复、询问用户，
-    或带明确限制结束。"""
+    Runtime 只报告缺少目标或任务证据的事实，不再插入完成审查轮次。模型在主
+    执行循环中自行决定是否继续使用工具以及何时回答；验证缺口进入最终证据包，
+    不作为隐藏循环控制。"""
+
+    if not requires_target_deliverable:
+        if not has_task_evidence:
+            return CompletionReviewGate(
+                NO_TASK_EVIDENCE,
+                "task evidence not observed",
+            )
+        return CompletionReviewGate(
+            COMPLETION_OWNED_BY_MODEL,
+            "completion remains with the main execution model",
+        )
 
     if requires_target_deliverable and not has_target_deliverable:
         return CompletionReviewGate(
             NO_TARGET_DELIVERABLE,
             "target deliverable not observed",
         )
-    if not requires_target_deliverable and not has_task_evidence:
-        return CompletionReviewGate(
-            NO_TASK_EVIDENCE,
-            "task evidence not observed",
-        )
-    if has_unreviewed_evidence:
-        return CompletionReviewGate(
-            COMPLETION_REVIEW,
-            "fresh task evidence needs model self-review",
-        )
     return CompletionReviewGate(
-        EVIDENCE_ALREADY_REVIEWED,
-        "current task evidence has already been presented to the model",
+        COMPLETION_OWNED_BY_MODEL,
+        "completion remains with the main execution model",
     )

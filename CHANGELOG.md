@@ -97,6 +97,21 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ### Changed
 
+- The main execution loop no longer inserts automatic completion self-review
+  rounds. Completion remains with the execution model, while missing evidence
+  stays visible in RunResult and recovery records. Write-task round budgets now
+  extend only for material progress, repeated read-range notices are one-shot,
+  and a synthesized final answer is included before final status is frozen.
+- Built-in ToolSpec registrations now provide complete capability and task-role
+  metadata. Tool events persist declared artifacts separately from observed
+  artifacts, and role classification uses provider contracts while isolating
+  tool-ID rules to historical-event compatibility.
+
+- Windows sidecar builds are consoleless by default from every supported build
+  entry point; console builds now require an explicitly named diagnostic
+  command. Browser-native confirmation windows were also replaced by one
+  shared in-app dialog across the panel.
+
 - A valid final answer from the execution model remains the canonical
   user-facing answer even when `RunResult` is partial, failed, or stopped.
   Result synthesis is now reserved for missing or protocol-invalid final
@@ -190,22 +205,22 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 - Runtime intervention governance now carries non-blocking guard advisories as
   `runtime_risks`, and document/verification/capability hints use advisory
   wording instead of route-blocking language.
-- Completion self-review now receives observed and missing verification
-  modalities, visual/debug evidence, tool failures, and risks through the
-  shared evidence pack instead of a separate verifier-retry control path.
+- Completion evidence packs preserve observed and missing verification
+  modalities, visual/debug evidence, tool failures, and risks for audit and
+  finalization without driving a verifier-retry control path.
 - Removed the verification-gap counter and tool-disabled final-answer phase.
 - Consolidated repeated-execution handling into `ExecutionConvergence` evidence;
   removed the overlapping ProgressObserver counter and obsolete
   `no_progress_budget_exhausted` stop-state path.
-  Fresh task evidence enters model completion review once; a model tool call
-  continues execution and an ordinary answer ends the loop while unresolved
-  verification remains visible in RunResult.
+  Fresh task evidence remains available to the main execution model without an
+  inserted completion-review round; an ordinary answer ends the loop while
+  unresolved verification remains visible in RunResult.
 - Context Runtime task lineage candidates now carry runtime-observed target,
   changed, and verified paths and rank recent real target artifacts ahead of
   failed read-only verification attempts, reducing stale continuation context.
 - Verification-only runs evaluate task-level evidence directly instead of
   requiring a newly written deliverable first, then leave continuation or
-  honest evidence-bounded closure to model completion review.
+  honest evidence-bounded closure to the main execution model.
 - Preview tools now return runtime diagnostics and DOM snapshots for browser
   console errors, page errors, failed requests, visible loading states, and
   local HTML remote dependencies so models can debug visual failures from

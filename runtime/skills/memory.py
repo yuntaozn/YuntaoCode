@@ -170,6 +170,10 @@ def register_memory_tools(registry: ToolRegistry) -> None:
                 "required": ["text"],
             },
             requires_confirmation=False,
+            capability="memory.long_term",
+            artifacts=["memory"],
+            effects=["memory_write"],
+            roles=["state_change"],
         ),
         _memory_save_handler,
     )
@@ -196,6 +200,10 @@ def register_memory_tools(registry: ToolRegistry) -> None:
                 },
             },
             requires_confirmation=False,
+            capability="memory.long_term",
+            artifacts=["memory_records"],
+            roles=["evidence"],
+            verification_strength="weak",
         ),
         _memory_recall_handler,
     )

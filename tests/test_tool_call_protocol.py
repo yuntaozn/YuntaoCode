@@ -10,7 +10,16 @@ from runtime.api.conversations import ConversationMessagesStreamHandler
 
 class _Registry:
     def get(self, tool_id: str) -> Any:
-        return SimpleNamespace(spec=SimpleNamespace(name=tool_id))
+        return SimpleNamespace(spec=SimpleNamespace(
+            name=tool_id,
+            to_event_contract=lambda: {
+                "declared_capability": "code.text_write",
+                "declared_artifacts": ["file"],
+                "declared_effects": ["file_write", "local_state_change"],
+                "declared_roles": ["deliverable"],
+                "declared_verification_strength": None,
+            },
+        ))
 
 
 @pytest.mark.asyncio
@@ -83,5 +92,8 @@ def test_compact_write_failure_payload_keeps_tool_attempt_observation() -> None:
 
     assert event["output"]["reason"] == "invalid_tool_input"
     assert event["output"]["observation"]["missing_fields"] == []
+    assert event["declared_capability"] == "code.text_write"
+    assert event["declared_artifacts"] == ["file"]
+    assert event["declared_roles"] == ["deliverable"]
     assert "tool_attempt_observation" in _message["content"]
     assert "invalid_tool_input" in _message["content"]

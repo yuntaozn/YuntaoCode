@@ -21,7 +21,6 @@ from runtime.agent_strategy.capability_router import (
     format_task_route_evidence_for_prompt,
 )
 from runtime.agent_strategy import task_contract as _tc
-from runtime.agent_strategy import tool_event_roles as _event_roles
 from runtime.agent_strategy.project_context import build_active_focus_snapshot
 from runtime.agent_strategy.policy import resolve_plan_execution, resolve_profile
 from runtime.agent_strategy.profiles import profile_to_public_dict
@@ -29,10 +28,7 @@ from runtime.agent_strategy.convergence import (
     ESCALATE_NO_PROGRESS,
     REPORT_REPETITION,
     build_execution_convergence_decision,
-)
-from runtime.agent_strategy.run_finalization import (
-    COMPLETION_REVIEW,
-    build_completion_review_gate,
+    round_budget_progress_observed,
 )
 from runtime.context_pack import (
     build_context_pack,
@@ -43,10 +39,8 @@ from runtime.run_finalizer import RunFinalizationRequest, RunFinalizer
 from runtime.run_execution_state import RunExecutionState
 from runtime.run_completion import (
     build_completion_decision,
-    build_completion_evidence_pack,
     extract_completion_self_assessment,
 )
-from runtime.run_result import build_run_result
 from runtime.run_recovery import format_recovery_context
 from runtime.visual_context import build_visual_context_messages
 from runtime.workspace_snapshot import build_workspace_snapshot
@@ -65,15 +59,6 @@ class ConversationRunExecutor:
         if callable(class_attr):
             return class_attr.__get__(self, self.__class__)
         return getattr(self._helper, name)
-
-    def _task_requires_target_deliverable(self, task_contract: dict[str, Any] | None) -> bool:
-        return bool(
-            isinstance(task_contract, dict)
-            and (
-                task_contract.get("requires_write")
-                or task_contract.get("requires_state_change")
-            )
-        )
 
     def write_event(self, payload: dict[str, Any]) -> None:
         self.runtime.run_events.emit(self._active_run_id, payload)
@@ -704,7 +689,7 @@ class ConversationRunExecutor:
                         await self.flush()
                 round_text = "".join(round_content_parts).strip()
                 completion_self_assessment = None
-                if run_state.completion_review.pending and not tool_calls and round_text:
+                if not tool_calls and round_text:
                     cleaned_text, completion_self_assessment = (
                         extract_completion_self_assessment(round_text)
                     )
@@ -806,9 +791,9 @@ class ConversationRunExecutor:
                 if (
                     run_state.round_number >= run_state.round_limit
                     and run_state.round_limit < run_state.hard_round_limit
-                    and any(
-                        str(event.get("status") or "") in {"success", "partial"}
-                        for event in round_events
+                    and round_budget_progress_observed(
+                        round_events,
+                        task_contract=task_contract,
                     )
                 ):
                     previous_limit, new_limit = run_state.extend_round_budget()
@@ -929,86 +914,6 @@ class ConversationRunExecutor:
                     })
                     await self.flush()
                     continue
-                has_target_deliverable = self._has_successful_target_deliverable(
-                    task_contract,
-                    tool_events,
-                    workspace.path,
-                    effective_mode,
-                )
-                requires_target_deliverable = self._task_requires_target_deliverable(task_contract)
-                has_task_evidence = bool(_event_roles.successful_task_evidence_events(
-                    tool_events,
-                    task_contract=task_contract,
-                    workspace_path=workspace.path,
-                    mode=effective_mode,
-                ))
-                completion_review_gate = build_completion_review_gate(
-                    requires_target_deliverable=requires_target_deliverable,
-                    has_target_deliverable=has_target_deliverable,
-                    has_task_evidence=has_task_evidence,
-                    has_unreviewed_evidence=(
-                        len(tool_events)
-                        > run_state.completion_review.event_count
-                    ),
-                )
-                if completion_review_gate.action == COMPLETION_REVIEW:
-                    task_contract_facts = task_contract if isinstance(task_contract, dict) else {}
-                    provisional_result = build_run_result(
-                        workspace_path=workspace.path,
-                        tool_events=tool_events,
-                        change_summary=None,
-                        mode=effective_mode,
-                        requires_code_write=code_change_intent,
-                        expected_document_coverage=bool(
-                            task_contract_facts.get("expected_document_coverage")
-                        ),
-                        expected_min_output_chars=int(
-                            task_contract_facts.get("expected_min_output_chars") or 0
-                        ),
-                        task_contract=task_contract,
-                        contract_failed=False,
-                        max_rounds_exceeded=run_state.max_rounds_exceeded,
-                    )
-                    completion_evidence_pack = build_completion_evidence_pack(
-                        workspace_path=workspace.path,
-                        task_contract=task_contract,
-                        run_result=provisional_result,
-                        tool_events=tool_events,
-                        completion_decisions=metadata.get("completion_decisions"),
-                        task_route_evidence=metadata.get("task_route_evidence"),
-                    )
-                    run_state.completion_review.begin(
-                        event_count=len(tool_events),
-                        run_result=provisional_result,
-                        evidence_pack=completion_evidence_pack,
-                    )
-                    completion_review_message = {
-                        "role": "system",
-                        "content": self._completion_review_prompt(
-                            workspace.path,
-                            task_contract,
-                            provisional_result,
-                            tool_events=tool_events,
-                            completion_decisions=metadata.get("completion_decisions"),
-                            task_route_evidence=metadata.get("task_route_evidence"),
-                            evidence_pack=completion_evidence_pack,
-                        ),
-                    }
-                    messages.append(completion_review_message)
-                    run_state.transient_model_context.add(completion_review_message)
-                    self.write_event({
-                        "event": "status",
-                        "status": "completion_review",
-                        "message": "任务已有可观察证据，正在要求模型基于运行事实自审是否真正完成。",
-                        "review": {
-                            "count": run_state.completion_review.review_count,
-                            "run_result_status": provisional_result.get("status"),
-                            "risks": provisional_result.get("risks") or [],
-                            "evidence_pack_schema": completion_evidence_pack.get("schema_version"),
-                        },
-                    })
-                    await self.flush()
-                    continue
                 if tool_execution_state.read_file_ranges and code_change_intent:
                     read_summary_key = json.dumps(
                         tool_execution_state.read_file_ranges[-8:],
@@ -1016,8 +921,8 @@ class ConversationRunExecutor:
                         sort_keys=True,
                     )
                     if (
-                        len(tool_execution_state.read_file_ranges) >= 2
-                        and read_summary_key != run_state.last_read_summary_key
+                        len(tool_execution_state.read_file_ranges) >= 4
+                        and not run_state.last_read_summary_key
                     ):
                         run_state.last_read_summary_key = read_summary_key
                         read_summary_message = {

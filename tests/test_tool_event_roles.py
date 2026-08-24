@@ -1,5 +1,6 @@
 from runtime.agent_strategy.tool_event_roles import (
     DELIVERABLE,
+    DRAFT,
     EVIDENCE,
     VERIFICATION,
     classify_tool_event_role,
@@ -31,6 +32,62 @@ def _contract() -> dict:
             }
         ],
     }
+
+
+def test_provider_declared_roles_classify_tools_without_id_rules() -> None:
+    draft_event = {
+        "tool": "provider.create_workspace_draft",
+        "status": "success",
+        "declared_roles": ["draft"],
+        "output": {"draft_id": "draft-1"},
+    }
+    evidence_event = {
+        "tool": "provider.inspect_workspace",
+        "status": "success",
+        "declared_roles": ["evidence"],
+        "output": {"summary": "ready"},
+    }
+
+    assert classify_tool_event_role(
+        draft_event,
+        task_contract=None,
+        workspace_path="D:/workspace",
+    ) == DRAFT
+    assert classify_tool_event_role(
+        evidence_event,
+        task_contract=None,
+        workspace_path="D:/workspace",
+    ) == EVIDENCE
+
+
+def test_declared_verification_affordance_is_not_observed_verification() -> None:
+    event = {
+        "tool": "provider.execute",
+        "status": "success",
+        "declared_roles": ["execution", "verification"],
+        "declared_verification_strength": "standard",
+        "output": {"ok": True},
+    }
+
+    assert task_verification_events(
+        [event],
+        task_contract={"requires_verification": True},
+        workspace_path="D:/workspace",
+    ) == []
+
+
+def test_legacy_event_without_contract_snapshot_keeps_historical_role() -> None:
+    event = {
+        "tool": "filesystem.create_text_draft",
+        "status": "success",
+        "output": {"draft_id": "draft-1"},
+    }
+
+    assert classify_tool_event_role(
+        event,
+        task_contract=None,
+        workspace_path="D:/workspace",
+    ) == DRAFT
 
 
 def test_web_asset_collection_is_evidence_when_contract_targets_index_html() -> None:
@@ -881,6 +938,27 @@ def test_failed_tool_uses_declared_task_role_without_claiming_successful_effect(
         task_contract=contract,
         workspace_path="D:/workspace",
     ) == DELIVERABLE
+
+
+def test_declared_external_effect_alone_does_not_claim_observed_state_change() -> None:
+    contract = {
+        "requires_write": False,
+        "requires_state_change": True,
+        "deliverables": [{"kind": "external_state", "description": "Scene"}],
+    }
+    event = {
+        "tool": "mcp_demo.execute",
+        "status": "success",
+        "declared_effects": ["external_state_change"],
+        "declared_roles": ["deliverable"],
+        "output": {"ok": True},
+    }
+
+    assert classify_tool_event_role(
+        event,
+        task_contract=contract,
+        workspace_path="D:/workspace",
+    ) != DELIVERABLE
 
 
 def test_error_output_does_not_satisfy_external_state_deliverable() -> None:

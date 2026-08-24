@@ -19,7 +19,7 @@ A good test usually protects one of these foundations:
 - RunEvidence, RunResult, verification strength, result synthesis, and user
   facing completion truth.
 - Scripted end-to-end Run scenarios that pass through the real conversation
-  executor, model-round protocol loop, tool batch, completion review, and final
+  executor, model-round protocol loop, tool batch, and final
   persistence boundary. These scenarios script provider/tool facts instead of
   reimplementing runtime decisions in a test-only orchestrator.
 - Persistence boundaries, migration, startup recovery, and cross-platform
@@ -72,13 +72,13 @@ explicit call-shape baseline through the real executor:
   result-synthesis call; auxiliary task-contract calls are measured separately;
 - task-contract transport failure: one failed contract attempt returns directly
   to one main execution round, with no legacy plan-judge call in between;
-- write plus independent verification: write, verification, completion review,
-  then a final answer, with no duplicate completion-review prompt;
+- write plus independent verification: write, verification, then a final
+  answer, with no inserted completion-review call;
 - failed write followed by a model-selected route change: failures remain
   auditable, the new route executes, and the execution model's answer remains
   canonical;
 - repeated failure followed by route change: convergence evidence appears for
-  the next decision only and does not leak into later completion review.
+  the next decision only and does not leak into the later final answer.
 
 These counts are regression budgets, not universal task limits. A new scenario
 may need more rounds, but a refactor that increases calls or repeats prompts in

@@ -51,7 +51,7 @@ def build_capability_evidence_summary(
         "observed_effects": _unique(
             value
             for event in events
-            for value in _output_string_list(event, "effects")
+            for value in _observed_string_list(event, "effects")
         ),
         "declared_roles": _unique(
             value
@@ -61,7 +61,12 @@ def build_capability_evidence_summary(
         "observed_roles": _unique(
             value
             for event in events
-            for value in _output_string_list(event, "roles")
+            for value in _observed_string_list(event, "roles")
+        ),
+        "declared_artifacts": _unique(
+            value
+            for event in events
+            for value in _string_list(event.get("declared_artifacts"))
         ),
         "artifacts": _unique(
             value
@@ -86,9 +91,10 @@ def _capability_event(index: int, event: dict[str, Any]) -> dict[str, Any]:
         "status": str(event.get("status") or ""),
         "capability_ids": _event_capability_ids(event),
         "declared_effects": _string_list(event.get("declared_effects")),
-        "observed_effects": _string_list(output.get("effects")),
+        "observed_effects": _observed_string_list(event, "effects"),
         "declared_roles": _string_list(event.get("declared_roles")),
-        "observed_roles": _string_list(output.get("roles")),
+        "observed_roles": _observed_string_list(event, "roles"),
+        "declared_artifacts": _string_list(event.get("declared_artifacts")),
         "artifacts": artifacts,
         "verification_strength": _first_text(_event_verification_strengths(event)),
         "paths": sorted(event_path_hints(event)),
@@ -149,9 +155,12 @@ def _event_verification_strengths(event: dict[str, Any]) -> list[str]:
     return _unique(str(item) for item in values if str(item or "").strip())
 
 
-def _output_string_list(event: dict[str, Any], key: str) -> list[str]:
+def _observed_string_list(event: dict[str, Any], key: str) -> list[str]:
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
-    return _string_list(output.get(key))
+    return _unique([
+        *_string_list(event.get(key)),
+        *_string_list(output.get(key)),
+    ])
 
 
 def _string_list(value: Any) -> list[str]:

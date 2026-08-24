@@ -87,6 +87,17 @@ class ToolSpec:
             data["tool_last_error"] = message
         return data
 
+    def to_event_contract(self) -> dict[str, Any]:
+        """返回写入 ToolEvent 的稳定能力声明快照。"""
+
+        return {
+            "declared_capability": self.capability,
+            "declared_artifacts": list(self.artifacts or []),
+            "declared_effects": list(self.effects or []),
+            "declared_roles": list(self.roles or []),
+            "declared_verification_strength": self.verification_strength,
+        }
+
     def check_readiness(
         self,
         *,

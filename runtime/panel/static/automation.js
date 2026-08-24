@@ -260,7 +260,7 @@ async function saveAutomation(event) {
 async function deleteAutomation() {
     const item = selectedAutomation();
     if (!item) return;
-    if (!confirm(t("automation_page.confirm_delete"))) return;
+    if (!await showConfirmDialog(t("automation_page.confirm_delete"), {danger: true})) return;
     await api(`/automations/${encodeURIComponent(item.id)}`, {method: "DELETE"});
     state.selectedId = "";
     showToast(t("automation_page.deleted"));

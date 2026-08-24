@@ -136,7 +136,7 @@ async def test_real_run_pipeline_reaches_verified_success(
     assert len(result.execution_model_calls) == 3
     assert result.synthesis_calls == []
     assert result.assistant.content.startswith("Created output.txt and verified the result.")
-    assert any(event.get("event") == "completion_decision" for event in result.events)
+    assert not any(event.get("event") == "completion_decision" for event in result.events)
     assert all(
         sum(
             "Review fresh runtime evidence" in str(message.get("content") or "")

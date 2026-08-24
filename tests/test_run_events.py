@@ -60,6 +60,7 @@ def test_compact_tool_event_preserves_capability_evidence_metadata() -> None:
         "status": "success",
         "tool": "mcp_blender.execute_blender_code",
         "declared_capability": "mcp.blender",
+        "declared_artifacts": ["external_state"],
         "declared_effects": ["external_state_change"],
         "declared_roles": ["deliverable"],
         "declared_verification_strength": "standard",
@@ -67,6 +68,7 @@ def test_compact_tool_event_preserves_capability_evidence_metadata() -> None:
 
     assert event["event_name"] == "tool.completed"
     assert event["declared_capability"] == "mcp.blender"
+    assert event["declared_artifacts"] == ["external_state"]
     assert event["declared_effects"] == ["external_state_change"]
     assert event["declared_roles"] == ["deliverable"]
     assert event["declared_verification_strength"] == "standard"

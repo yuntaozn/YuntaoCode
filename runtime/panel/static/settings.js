@@ -513,7 +513,7 @@ async function refreshBackups() {
 
 async function restoreBackup(backupId) {
     if (!backupId) return;
-    if (!window.confirm(t('backup.confirm_restore'))) return;
+    if (!await showConfirmDialog(t('backup.confirm_restore'))) return;
     const result = await api(`/backups/${encodeURIComponent(backupId)}/restore`, {
         method: "POST",
         body: JSON.stringify({}),
@@ -532,7 +532,7 @@ async function restoreLatestBackup() {
 }
 
 async function clearBackups() {
-    if (!window.confirm(t('backup.confirm_clear'))) return;
+    if (!await showConfirmDialog(t('backup.confirm_clear'), {danger: true})) return;
     const data = await api("/backups", { method: "DELETE" });
     backups = data.items || [];
     backupMeta = data || {};
@@ -716,7 +716,7 @@ async function saveMemory(memoryId) {
 }
 
 async function deleteMemoryFn(memoryId) {
-    if (!window.confirm(t('settings_js.confirm_delete_memory'))) return;
+    if (!await showConfirmDialog(t('settings_js.confirm_delete_memory'), {danger: true})) return;
     try {
         await api(`/memories/${encodeURIComponent(memoryId)}`, { method: "DELETE" });
         memories = memories.filter((m) => m.id !== memoryId);
@@ -753,7 +753,7 @@ function bindEvents() {
             showSettingsPage(button.dataset.settingsPageButton);
         });
     });
-    document.addEventListener("click", (event) => {
+    document.addEventListener("click", async (event) => {
         const restoreButton = event.target.closest("[data-restore-backup]");
         if (restoreButton) {
             restoreBackup(restoreButton.dataset.restoreBackup).catch((error) => showToast(error.message));
@@ -767,7 +767,7 @@ function bindEvents() {
         const deleteProvider = event.target.closest("[data-delete-provider]");
         if (deleteProvider) {
             const id = deleteProvider.dataset.deleteProvider;
-            if (!window.confirm(t('settings_js.confirm_delete_provider', {id}))) return;
+            if (!await showConfirmDialog(t('settings_js.confirm_delete_provider', {id}), {danger: true})) return;
             deletedProviderIds.add(id);
             delete settings.providers[id];
             modelEntries()

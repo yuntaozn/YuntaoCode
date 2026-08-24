@@ -105,18 +105,21 @@ The current convergence rule is progress-driven:
 5. When the local repeated-route budget is saturated, the runtime escalates the
    evidence as `repeated_route_budget_observed` and feeds it back to the model.
    It does not make a task verdict from that local budget alone.
-6. The global model-round budget remains the hard resource boundary. If the
-   model keeps producing no observable progress until that budget is exhausted,
-   finalization records the budget fact and preserved evidence.
+6. The global model-round budget remains the hard resource boundary. Answer
+   tasks may extend it after successful evidence collection; write or state
+   tasks extend it only after material draft, write, state-change, or
+   verification progress. Repeated successful reads do not expand a write
+   task's budget indefinitely.
 
 This contract is deliberately narrower than task planning. It judges whether
 execution is converging; it does not hard-code which strategy the model must
 choose.
 
 For write-required tasks, verification evidence only counts when it occurs
-after the latest successful write. These freshness facts enter completion
-self-review; they do not independently move the Run to finalization or force
-another verification round.
+after the latest successful write. These freshness facts enter RunResult and
+recovery evidence; they do not trigger an automatic completion-review round or
+independently force another verification round. The main execution model owns
+the decision to continue using tools or return its answer.
 
 ## Model Call Lifecycle
 

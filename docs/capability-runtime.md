@@ -427,13 +427,18 @@ Additional runtime guards now exist in `runtime/agent_strategy/capability_prefli
   diagnostic records, but new runtime behavior must not reintroduce those
   fields as hidden policy controls.
 
-`runtime/capability_evidence.py` builds `capability_evidence_summary.v1` from
-persisted tool events. It preserves declared ToolSpec metadata
-(`declared_capability`, effects, roles, and verification strength) alongside
-observed tool-output facts such as artifacts, effects, roles, paths, and
-verification strength. RunResult, Runbook, diagnostics, and evaluation code can
-use this summary as audit evidence. It is not an execution
-policy and must not block or force a strategy by itself.
+`runtime/capability_evidence.py` 根据持久化 ToolEvent 构建
+`capability_evidence_summary.v1`。每次工具尝试都会保存当时的 ToolSpec
+契约快照，包括 `declared_capability`、`declared_artifacts`、effects、roles
+和 verification strength；工具输出中的 artifacts、effects、roles、paths
+和 verification strength 则作为实际观察事实单独保存。声明的产物只表示该能力
+可能生成什么，不能替代已经观察到的产物。RunResult、Runbook、诊断和评测可以
+使用这份摘要作为审计证据，但它不是执行策略，不能自行阻止或强制模型路线。
+
+当前内置工具必须至少声明 capability 和 task roles。新记录以 ToolSpec 快照为准；
+缺少 `declared_roles` 的历史记录只通过集中维护的旧角色映射读取，旧工具 ID 不再参与
+新事件的主路径分类。Provider 声明 `verification` 只表示能力适用范围，只有工具输出、
+结构化状态、测试、截图或其他实际证据才能把一次成功调用认定为验证完成。
 
 Current built-in local file capability split:
 

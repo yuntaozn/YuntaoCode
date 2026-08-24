@@ -13,6 +13,7 @@ def test_capability_evidence_distinguishes_declared_and_observed_facts() -> None
             "tool": "mcp_blender.execute_blender_code",
             "status": "success",
             "declared_capability": "mcp.blender",
+            "declared_artifacts": ["external_state"],
             "declared_effects": ["external_state_change"],
             "declared_roles": ["deliverable"],
             "output": {
@@ -25,6 +26,7 @@ def test_capability_evidence_distinguishes_declared_and_observed_facts() -> None
             "tool": "mcp_blender.get_viewport_screenshot",
             "status": "success",
             "declared_capability": "mcp.blender",
+            "declared_artifacts": ["screenshot"],
             "declared_roles": ["verification"],
             "declared_verification_strength": "standard",
             "output": {
@@ -47,6 +49,7 @@ def test_capability_evidence_distinguishes_declared_and_observed_facts() -> None
     assert summary["observed_effects"] == ["external_state_change"]
     assert summary["declared_roles"] == ["deliverable", "verification"]
     assert summary["observed_roles"] == ["deliverable", "verification"]
+    assert summary["declared_artifacts"] == ["external_state", "screenshot"]
     assert summary["artifacts"] == ["external_state", "screenshot"]
     assert summary["verification_strengths"] == ["standard"]
     assert summary["events"][1]["paths"] == ["d:/workspace/scene.png"]

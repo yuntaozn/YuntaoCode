@@ -85,6 +85,8 @@ def register_attachment_tools(registry: ToolRegistry) -> None:
             requires_confirmation=False,
             capability="attachment.user_input",
             artifacts=["attachment_text"],
+            roles=["evidence"],
+            verification_strength="weak",
             retry_safe=True,
             idempotent=True,
         ),

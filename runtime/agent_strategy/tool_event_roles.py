@@ -58,34 +58,28 @@ ARTIFACT_EFFECTS: frozenset[str] = frozenset({
 })
 
 
-DRAFT_TOOL_IDS: frozenset[str] = frozenset({
-    "filesystem.create_text_draft",
-    "filesystem.append_text_chunk",
-    "filesystem.inspect_text_draft",
-    "document.create_draft",
-    "document.append_draft_section",
-    "document.add_draft_citation",
-    "document.inspect_draft",
-})
-
-TEMPORARY_TOOL_IDS: frozenset[str] = frozenset({
-    "filesystem.write_temp_file",
-})
-
-EVIDENCE_TOOL_IDS: frozenset[str] = frozenset({
-    "attachment.extract_text",
-    "code.list_project_files",
-    "code.search_text",
-    "filesystem.scan_folder",
-    "filesystem.read_file",
-    "filesystem.read_text_preview",
-    "document.extract_docx_outline",
-    "document.extract_pdf_text_preview",
-    "spreadsheet.inspect_workbook",
-    "web.extract_text",
-    "web.render_page",
-    "web.collect_site_assets",
-})
+LEGACY_TOOL_ROLE_HINTS: dict[str, frozenset[str]] = {
+    "filesystem.create_text_draft": frozenset({DRAFT}),
+    "filesystem.append_text_chunk": frozenset({DRAFT}),
+    "filesystem.inspect_text_draft": frozenset({DRAFT, EVIDENCE}),
+    "document.create_draft": frozenset({DRAFT}),
+    "document.append_draft_section": frozenset({DRAFT}),
+    "document.add_draft_citation": frozenset({DRAFT}),
+    "document.inspect_draft": frozenset({DRAFT, EVIDENCE}),
+    "filesystem.write_temp_file": frozenset({TEMPORARY}),
+    "attachment.extract_text": frozenset({EVIDENCE}),
+    "code.list_project_files": frozenset({EVIDENCE}),
+    "code.search_text": frozenset({EVIDENCE}),
+    "filesystem.scan_folder": frozenset({EVIDENCE}),
+    "filesystem.read_file": frozenset({EVIDENCE}),
+    "filesystem.read_text_preview": frozenset({EVIDENCE}),
+    "document.extract_docx_outline": frozenset({EVIDENCE}),
+    "document.extract_pdf_text_preview": frozenset({EVIDENCE}),
+    "spreadsheet.inspect_workbook": frozenset({EVIDENCE}),
+    "web.extract_text": frozenset({EVIDENCE}),
+    "web.render_page": frozenset({EVIDENCE}),
+    "web.collect_site_assets": frozenset({EVIDENCE}),
+}
 
 
 def classify_tool_event_role(
@@ -101,8 +95,13 @@ def classify_tool_event_role(
     paths = event_path_hints(event)
     contract_paths = deliverable_paths or contract_deliverable_paths(task_contract)
     effects = event_effects(event)
-    declared_roles = event_declared_roles(event)
+    intended_roles = event_intended_roles(event)
     deliverable_kinds = contract_deliverable_kinds(task_contract)
+
+    if DRAFT in intended_roles:
+        return DRAFT
+    if TEMPORARY in intended_roles:
+        return TEMPORARY
 
     if paths and contract_paths and any(_path_matches_any(path, contract_paths) for path in paths):
         if (
@@ -127,12 +126,6 @@ def classify_tool_event_role(
     ):
         return DELIVERABLE
 
-    if tool_id in DRAFT_TOOL_IDS:
-        return DRAFT
-    if tool_id in TEMPORARY_TOOL_IDS:
-        return TEMPORARY
-    if tool_id in EVIDENCE_TOOL_IDS:
-        return EVIDENCE
     if (
         _status_is_success_or_partial(event)
         and _contract_expects_artifact(task_contract)
@@ -140,8 +133,10 @@ def classify_tool_event_role(
         and (not contract_paths or _contract_allows_alternative_path(event, task_contract))
     ):
         return DELIVERABLE
-    if VERIFICATION in declared_roles and _status_is_success_or_partial(event):
+    if VERIFICATION in event_observed_roles(event) and _status_is_success_or_partial(event):
         return VERIFICATION
+    if EVIDENCE in intended_roles:
+        return EVIDENCE
 
     if _status_is_success_or_partial(event) and _can_be_deliverable_for_contract(event, task_contract):
         if not contract_paths or _contract_allows_alternative_path(event, task_contract):
@@ -344,7 +339,7 @@ def verification_attempt_events(
     for event in tool_events:
         output = event.get("output") if isinstance(event.get("output"), dict) else {}
         if (
-            VERIFICATION in event_declared_roles(event)
+            VERIFICATION in event_intended_roles(event)
             or _event_has_visual_artifact(event)
             or bool(output.get("runtime_diagnostics"))
             or is_test_verification_event(event)
@@ -507,7 +502,7 @@ def verification_evidence_strength(
         return "standard"
     if _is_answer_evidence_event(event, mode, task_contract=task_contract):
         return "standard"
-    if VERIFICATION in event_declared_roles(event):
+    if VERIFICATION in event_observed_roles(event):
         return "standard"
     if is_meaningful_verification_event(event, mode, written_paths=event_path_hints(event)):
         return "standard"
@@ -570,7 +565,7 @@ def _is_structured_external_state_verification(
 ) -> bool:
     if "external_state" not in contract_deliverable_kinds(task_contract):
         return False
-    if VERIFICATION not in event_declared_roles(event):
+    if VERIFICATION not in event_intended_roles(event):
         return False
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
     if not output:
@@ -972,8 +967,7 @@ def failed_tool_event_role(
         return DELIVERABLE
     if VERIFICATION in intended_roles:
         return VERIFICATION
-    tool_id = canonical_tool_id(str(event.get("tool") or ""))
-    if EVIDENCE in intended_roles or tool_id in EVIDENCE_TOOL_IDS:
+    if EVIDENCE in intended_roles:
         return EVIDENCE
     return UNKNOWN
 
@@ -1043,8 +1037,7 @@ def _is_answer_evidence_event(
         return False
     if _event_has_degraded_shell_stderr(event):
         return False
-    tool_id = canonical_tool_id(str(event.get("tool") or ""))
-    if tool_id in EVIDENCE_TOOL_IDS:
+    if EVIDENCE in event_intended_roles(event):
         return True
     return _is_verification_event(event, mode, written_paths=event_path_hints(event))
 
@@ -1070,40 +1063,53 @@ def deliverable_path_deviations(
     return deviations
 
 
-def event_effects(event: dict[str, Any]) -> set[str]:
-    output = event.get("output") if isinstance(event.get("output"), dict) else {}
-    values = event.get("effects") or output.get("effects") or []
-    if not isinstance(values, list):
+def _normalized_string_list(value: Any) -> set[str]:
+    if not isinstance(value, list):
         return set()
-    return {str(item).strip() for item in values if str(item).strip()}
+    return {str(item).strip() for item in value if str(item).strip()}
+
+
+def event_observed_effects(event: dict[str, Any]) -> set[str]:
+    output = event.get("output") if isinstance(event.get("output"), dict) else {}
+    return {
+        *_normalized_string_list(event.get("effects")),
+        *_normalized_string_list(output.get("effects")),
+    }
 
 
 def event_declared_roles(event: dict[str, Any]) -> set[str]:
+    if "declared_roles" in event:
+        return _normalized_string_list(event.get("declared_roles"))
+    tool_id = canonical_tool_id(str(event.get("tool") or ""))
+    return set(LEGACY_TOOL_ROLE_HINTS.get(tool_id, ()))
+
+
+def event_observed_roles(event: dict[str, Any]) -> set[str]:
     output = event.get("output") if isinstance(event.get("output"), dict) else {}
-    values = event.get("roles") or output.get("roles") or []
-    if not isinstance(values, list):
-        return set()
-    return {str(item).strip() for item in values if str(item).strip()}
+    return {
+        *_normalized_string_list(event.get("roles")),
+        *_normalized_string_list(output.get("roles")),
+    }
+
+
+def event_roles(event: dict[str, Any]) -> set[str]:
+    return {*event_declared_roles(event), *event_observed_roles(event)}
 
 
 def event_intended_roles(event: dict[str, Any]) -> set[str]:
-    values = event.get("declared_roles") or []
-    if not isinstance(values, list):
-        values = []
-    return {
-        *event_declared_roles(event),
-        *(str(item).strip() for item in values if str(item).strip()),
-    }
+    return event_roles(event)
+
+
+def event_declared_effects(event: dict[str, Any]) -> set[str]:
+    return _normalized_string_list(event.get("declared_effects"))
+
+
+def event_effects(event: dict[str, Any]) -> set[str]:
+    return event_observed_effects(event)
 
 
 def event_intended_effects(event: dict[str, Any]) -> set[str]:
-    values = event.get("declared_effects") or []
-    if not isinstance(values, list):
-        values = []
-    return {
-        *event_effects(event),
-        *(str(item).strip() for item in values if str(item).strip()),
-    }
+    return {*event_declared_effects(event), *event_observed_effects(event)}
 
 
 def event_path_hints(event: dict[str, Any]) -> set[str]:
@@ -1131,12 +1137,13 @@ def event_path_hints(event: dict[str, Any]) -> set[str]:
 
 def _can_be_deliverable_event(event: dict[str, Any]) -> bool:
     tool_id = canonical_tool_id(str(event.get("tool") or ""))
-    if tool_id in DRAFT_TOOL_IDS or tool_id in TEMPORARY_TOOL_IDS:
+    roles = event_intended_roles(event)
+    if DRAFT in roles or TEMPORARY in roles:
         return False
     return (
         is_write_tool(tool_id)
         or EXTERNAL_STATE_CHANGE in event_effects(event)
-        or DELIVERABLE in event_declared_roles(event)
+        or DELIVERABLE in roles
     )
 
 
@@ -1157,7 +1164,7 @@ def _can_be_deliverable_for_contract(
         return bool(deliverable_kinds & {"file", "code", "document", *ARTIFACT_DELIVERABLE_KINDS})
     if EXTERNAL_STATE_CHANGE in event_effects(event):
         return "external_state" in deliverable_kinds
-    if DELIVERABLE in event_declared_roles(event):
+    if DELIVERABLE in event_intended_roles(event):
         return bool(
             event_path_hints(event)
             and deliverable_kinds & {"file", "code", "document", *ARTIFACT_DELIVERABLE_KINDS}
@@ -1199,7 +1206,7 @@ def _contract_allows_alternative_path(
         return True
     tool_id = canonical_tool_id(str(event.get("tool") or ""))
     if not is_write_tool(tool_id) and not (
-        DELIVERABLE in event_declared_roles(event)
+        DELIVERABLE in event_intended_roles(event)
         and event_path_hints(event)
     ) and not (
         _contract_expects_artifact(task_contract)
@@ -1228,7 +1235,7 @@ def _is_verification_event(
     if _event_has_degraded_shell_stderr(event):
         return False
     if (
-        VERIFICATION in event_declared_roles(event)
+        VERIFICATION in event_observed_roles(event)
         and _status_is_success_or_partial(event)
     ):
         return True

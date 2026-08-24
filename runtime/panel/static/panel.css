@@ -2318,6 +2318,35 @@ dialog::backdrop {
     background: rgba(16, 24, 40, 0.24);
 }
 
+.app-confirm-dialog {
+    width: min(440px, calc(100vw - 32px));
+    padding: 0;
+    color: var(--text);
+    background: var(--panel);
+}
+
+.app-confirm-panel {
+    display: grid;
+    gap: 14px;
+    padding: 20px;
+}
+
+.app-confirm-panel h2,
+.app-confirm-panel p {
+    margin: 0;
+}
+
+.app-confirm-panel h2 {
+    font-size: 16px;
+}
+
+.app-confirm-panel p {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+}
+
 .settings-panel,
 .login-panel {
     display: grid;

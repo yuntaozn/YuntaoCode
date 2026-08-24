@@ -2069,7 +2069,7 @@ async function loadBackups() {
 
 async function restoreBackup(backupId) {
     if (!backupId) return;
-    const confirmed = window.confirm(t('backup.confirm_restore'));
+    const confirmed = await showConfirmDialog(t('backup.confirm_restore'));
     if (!confirmed) return;
     const result = await api(`/backups/${encodeURIComponent(backupId)}/restore`, {
         method: "POST",
@@ -2089,7 +2089,7 @@ async function restoreLatestBackup() {
 }
 
 async function clearBackups() {
-    const confirmed = window.confirm(t('backup.confirm_clear'));
+    const confirmed = await showConfirmDialog(t('backup.confirm_clear'), {danger: true});
     if (!confirmed) return;
     const result = await api("/backups", {
         method: "DELETE",
@@ -2434,7 +2434,7 @@ async function pickWorkspace() {
 async function removeWorkspace(workspaceId) {
     const workspace = state.workspaces.find((item) => item.id === workspaceId);
     if (!workspace) return;
-    const confirmed = window.confirm(t('workspace.confirm_remove', {name: workspace.name}));
+    const confirmed = await showConfirmDialog(t('workspace.confirm_remove', {name: workspace.name}), {danger: true});
     if (!confirmed) return;
     await api(`/workspaces/${encodeURIComponent(workspaceId)}`, {
         method: "DELETE",
@@ -4197,7 +4197,7 @@ document.addEventListener("click", async (event) => {
     if (deleteConvButton) {
         event.stopPropagation();
         const convId = deleteConvButton.dataset.deleteConversation;
-        if (confirm(t('conv.confirm_delete'))) {
+        if (await showConfirmDialog(t('conv.confirm_delete'), {danger: true})) {
             await deleteConversation(convId);
         }
         return;

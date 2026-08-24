@@ -34,8 +34,8 @@ $sidecarArgs = @{
     TargetTriple = $TargetTriple
     Profile = $Profile
 }
-if (-not $ConsoleSidecar) {
-    $sidecarArgs["Windowed"] = $true
+if ($ConsoleSidecar) {
+    $sidecarArgs["Console"] = $true
 }
 & (Join-Path $PSScriptRoot "build_sidecar_windows.ps1") @sidecarArgs
 Assert-NativeCommandSucceeded "Building the Python sidecar"

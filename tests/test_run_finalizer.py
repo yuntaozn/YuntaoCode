@@ -189,6 +189,17 @@ class _SynthesizingHost(_FinalizationHost):
         return "基于运行事实生成的最终总结。", {"model": "test-model"}
 
 
+class _AnswerRepairHost(_SynthesizingHost):
+    def _task_contract_failures(self, *args: Any, **kwargs: Any) -> list[str]:
+        answer = str(kwargs.get("answer_text") or "").strip()
+        self.contract_answer_text = answer
+        return [] if len(answer) >= 100 else ["answer_output_length_unknown"]
+
+    async def _generate_result_synthesis_answer(self, **kwargs: Any) -> tuple[str, dict[str, Any]]:
+        self.synthesis_kwargs = kwargs
+        return "这是基于运行证据生成的完整分析结论。" * 10, {"model": "test-model"}
+
+
 @pytest.mark.asyncio
 async def test_finalizer_publishes_result_persists_answer_and_finishes(
     monkeypatch: pytest.MonkeyPatch,
@@ -358,6 +369,64 @@ async def test_finalizer_passes_observed_evidence_to_result_synthesis(
         "run the browser verification"
     ]
     assert metadata["synthesized_final_answer_source"] == "model_from_runtime_facts"
+
+
+@pytest.mark.asyncio
+async def test_synthesized_answer_participates_in_final_run_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(finalizer_module, "count_messages_tokens", lambda messages: 9)
+    conversation = _Conversation()
+    host = _AnswerRepairHost(conversation)
+    metadata: dict[str, Any] = {}
+    workspace = SimpleNamespace(
+        path="D:/workspace",
+        to_public_dict=lambda: {"id": "workspace-1", "path": "D:/workspace"},
+    )
+
+    outcome = await RunFinalizer(host).finalize(
+        RunFinalizationRequest(
+            conversation_id="conversation-1",
+            conversation=conversation,
+            workspace=workspace,
+            model="test-model",
+            mode_config={},
+            effective_mode="analysis",
+            user_content="分析项目并给出结论",
+            metadata=metadata,
+            content_parts=[],
+            reasoning_parts=[],
+            tool_events=[],
+            task_contract={
+                "intent": "read_only_analysis",
+                "requires_write": False,
+                "requires_state_change": False,
+                "requires_verification": False,
+                "expected_min_output_chars": 100,
+                "deliverables": [{"kind": "answer"}],
+            },
+            workspace_snapshot={},
+            active_focus={},
+            capability_snapshot={},
+            capability_preflight={},
+            context_hygiene_report={},
+            run=SimpleNamespace(id="run-1", task_id=""),
+            execution_plan=None,
+            change_baseline=None,
+            execution_state=RunExecutionState.create(20),
+            requires_code_write=False,
+            recon_tool_count=0,
+            write_repair_mode=False,
+            context_tokens=4,
+        )
+    )
+
+    assert outcome.run_result["status"] == "success"
+    assert outcome.run_result["counts"]["answer_deliverable_successes"] == 1
+    assert outcome.run_result["flags"]["observed_text_output_chars"] >= 100
+    assert metadata.get("contract_failures") is None
+    assert host.events[1]["event"] == "result"
+    assert host.events[1]["result"]["status"] == "success"
 
 
 @pytest.mark.asyncio
