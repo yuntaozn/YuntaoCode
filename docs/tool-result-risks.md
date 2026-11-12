@@ -6,9 +6,8 @@ model's next strategy.
 
 The protocol has four boundaries:
 
-1. A tool reports factual output such as an integrity check, or the runtime
-   records a non-blocking pre-execution advisory such as weak verification or
-   document coverage risk.
+1. A tool reports factual output such as an integrity check, stderr, image
+   metadata, or an external-call failure.
 2. `runtime/agent_strategy/tool_result_risks.py` converts relevant facts into
    non-blocking `runtime_risks`.
 3. The conversation runtime sends those risks back to the model and records
@@ -23,7 +22,7 @@ Example:
     {
       "code": "artifact_integrity_invalid",
       "severity": "warning",
-      "action": "assess_before_state_change",
+      "source": "filesystem.read_file",
       "blocking": false,
       "issues": ["html appears escaped as text"]
     }
@@ -36,27 +35,31 @@ contains exception-like output. The command result is still recorded exactly as
 the tool returned it, but the runtime adds `shell_stderr_warning` so the model
 does not treat that command as clean verification evidence.
 
-Non-blocking execution advisories, such as `document_contract_advisory`,
-`verification_runtime_advisory`, and `capability_fallback_advisory`, also flow
-through `runtime_risks`. They are evidence for the model and audit trail, not
-tool-call route locks.
+Pre-execution capability-route, document-coverage, and verification-strategy
+advisories are removed. The execution guard checks enabled/available tools,
+required inputs, and capability-draft write boundaries; PathGuard and operation
+confirmation remain enforced by their original execution layers. Task contracts
+and preflight records stay auditable without generating per-call route advice.
+
+Risk records carry observations, source, diagnostic codes, and non-blocking
+status. They do not carry `action`, `suggested_tools`, or duplicated
+`suggested_calls`. Original tool diagnostics remain in the output. Legacy
+`runtime_advisories` are not projected back into a new model-facing payload;
+stored historical Run events remain available for audit.
 
 Risks are advisory by default. The model may repair the artifact, continue with
 an explicit assumption, or stop and report the issue. Safety and permission
 guards remain separate hard boundaries.
 
-For large artifacts, recovery should prefer a bounded local transformation
-whose tool call describes the operation rather than retransmitting the complete
-artifact through model output.
-
-When that transformation needs a temporary script or intermediate file, tools
-within the same Run can exchange it through the shared Run artifact directory
-described in [run-artifacts.md](run-artifacts.md).
+External-call failures retain `side_effects=unknown` and
+`rollback_observed=false`: failure alone does not establish rollback. The model
+can inspect the same capability or choose another action from observed state.
 
 When adding a new risk:
 
 - Derive it from observable tool output, not inferred user intent.
 - Keep the classifier pure and provider-independent.
 - Use a stable risk code suitable for audit assertions.
+- State observed facts without prescribing a tool, route, or next action.
 - Do not add a runner branch solely to force one recovery strategy.
 - Add tests for model transport and final audit visibility.

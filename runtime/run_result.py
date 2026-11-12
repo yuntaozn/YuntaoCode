@@ -35,7 +35,8 @@ from runtime.core.result import RUN_RESULT_SCHEMA_VERSION
 from runtime.debug_audit import build_debug_audit
 from runtime.debug_session import debug_session_summary, normalize_debug_session
 from runtime.verification_closure import build_verification_closure
-from runtime.visual_evidence import normalize_visual_evidence, visual_evidence_summary
+from runtime.run_completion import build_outcome_facts
+from runtime.visual_evidence import normalize_visual_evidence, visual_evidence_summary, inline_visual_evidence
 from runtime.visual_verification import build_visual_verification_summary
 
 
@@ -49,18 +50,25 @@ def build_run_result(
     expected_document_coverage: bool = False,
     expected_min_output_chars: int = 0,
     task_contract: dict[str, Any] | None = None,
-    contract_failed: bool = False,
     max_rounds_exceeded: bool = False,
     preflight_advisories: list[dict[str, Any]] | None = None,
     model_error: str = "",
     final_answer_error: str = "",
     answer_text: str | None = None,
     completion_decision: dict[str, Any] | None = None,
+    visual_context: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """根据工具事件构建确定性的 Run 事实。
 
     最终文字答案仍可由模型编写，但此结构是 Runtime 对实际发生事项的
     事实来源。"""
+    if isinstance(task_contract, dict):
+        expected_document_coverage = bool(task_contract.get(
+            "expected_document_coverage", expected_document_coverage,
+        ))
+        expected_min_output_chars = task_contract.get(
+            "expected_min_output_chars", expected_min_output_chars,
+        )
     capability_advisories: list[dict[str, str]] = []
     state_write_successes: list[dict[str, Any]] = []
     state_write_failures: list[dict[str, Any]] = []
@@ -360,18 +368,6 @@ def build_run_result(
     if min_output_failure:
         failures.append(min_output_failure)
         risks.append(str(min_output_check.get("reason") or "document_output_too_short"))
-    unresolved_contract_failed = bool(
-        contract_failed
-        and (
-            missing_target_deliverable
-            or missing_required_verification
-            or bool(coverage_failure)
-            or bool(min_output_failure)
-        )
-    )
-    if unresolved_contract_failed:
-        risks.append("execution_contract_failed")
-
     external_state_change_count = sum(
         1
         for event in tool_events
@@ -467,7 +463,6 @@ def build_run_result(
         has_model_error=bool(model_error_text),
         has_invalid_final_answer=bool(final_answer_error_text),
         has_observed_state_change=observed_state_change,
-        contract_failed=unresolved_contract_failed,
         max_rounds_exceeded=max_rounds_exceeded,
     )
     completion_assessment = _completion_assessment(completion_decision)
@@ -476,8 +471,23 @@ def build_run_result(
         completion_assessment,
     )
     risks.extend(assessment_risks)
+    outcome = build_outcome_facts(
+        task_contract=task_contract, assessment=completion_assessment,
+        model_error=bool(model_error_text), stopped=max_rounds_exceeded,
+        verification_required=bool(task_contract and task_contract.get("requires_verification")),
+        verification_missing=not sufficient_verification_successes or bool(missing_verification_modalities),
+    )
+    # 可选的完成声明不影响工具执行评价；目标未知作为独立事实保留。
+    if (
+        isinstance(task_contract, dict)
+        and task_contract.get("source") in {"main_execution_pending", "model_execution"}
+        and outcome["goal_status"] == "unknown"
+        and status == "success"
+    ):
+        risks.append("goal_completion_unconfirmed")
     visual_verification = build_visual_verification_summary(
         visual_evidence=visual_evidence,
+        visual_context=visual_context,
         debug_sessions=debug_sessions,
         verification_evidence=verification_evidence,
         required_modalities=list(required_modalities),
@@ -508,6 +518,7 @@ def build_run_result(
         "schema_version": RUN_RESULT_SCHEMA_VERSION,
         "kind": "run_result",
         "status": status,
+        **outcome,
         "evidence_status": evidence_status,
         "completion_assessment": completion_assessment,
         "counts": {
@@ -560,8 +571,6 @@ def build_run_result(
         "risks": _unique(risks),
         "flags": {
             "requires_code_write": bool(requires_code_write),
-            "contract_failed": bool(contract_failed),
-            "unresolved_contract_failed": bool(unresolved_contract_failed),
             "max_rounds_exceeded": bool(max_rounds_exceeded),
             "expected_document_coverage": bool(expected_document_coverage),
             "expected_min_output_chars": max(0, int(expected_min_output_chars or 0)),
@@ -595,13 +604,8 @@ def _result_status(
     has_model_error: bool,
     has_invalid_final_answer: bool,
     has_observed_state_change: bool,
-    contract_failed: bool,
     max_rounds_exceeded: bool,
 ) -> str:
-    if contract_failed:
-        if (has_write_success or has_answer_deliverable) and not has_missing_target_deliverable:
-            return "partial"
-        return "failure"
     if max_rounds_exceeded:
         if has_observed_state_change or has_write_success or has_answer_deliverable:
             return "partial"
@@ -624,14 +628,15 @@ def _result_status(
         return "partial"
     if has_missing_code_test:
         return "partial"
-    if has_missing_target_deliverable:
+    # 证据缺口不能证明执行失败；明确失败仍按实际错误保留。
+    if has_failure:
         return "failure"
+    if has_missing_target_deliverable:
+        return "partial"
     if has_missing_required_verification:
         return "partial"
     if has_unverified_optional_write:
         return "partial"
-    if has_failure:
-        return "failure"
     if has_write_success or has_answer_deliverable or has_tool_events:
         return "success"
     return "no_tool_activity"
@@ -942,9 +947,11 @@ def _visual_evidence_records(events: list[dict[str, Any]]) -> list[dict[str, Any
         if status not in {"success", "partial"}:
             continue
         output = event.get("output") if isinstance(event.get("output"), dict) else {}
+        inline_records = inline_visual_evidence(output, str(event.get("task_id") or ""))
+        records.extend({"tool": tool_id, "status": status, **image} for image in inline_records)
         evidence = normalize_visual_evidence(output)
         summary = visual_evidence_summary(evidence)
-        if not summary:
+        if not summary or (inline_records and not summary.get("path")):
             continue
         path = str(summary.get("path") or "")
         key = (tool_id, path)

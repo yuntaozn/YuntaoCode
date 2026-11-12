@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from runtime.api.conversations import ConversationMessagesStreamHandler
+from runtime.run_result_presenter import synthesize_partial_answer
 
 
-def test_raw_toolcall_text_triggers_synthesized_final_answer() -> None:
+def test_literal_toolcall_text_does_not_trigger_runtime_rewrite() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
 
-    assert handler._needs_synthesized_final_answer(
-        'done <toolcall>filesystem__write_file({"path":"demo.html","content":"x"})</toolcall>',
-        [{"tool": "filesystem.write_file", "status": "success"}],
-    )
+    assert not hasattr(handler, "_needs_synthesized_final_answer")
+    assert not hasattr(handler, "_generate_result_synthesis_answer")
+
 
 
 def test_answer_only_text_is_not_rejected_by_runtime_style_classifier() -> None:
@@ -22,7 +22,6 @@ def test_answer_only_text_is_not_rejected_by_runtime_style_classifier() -> None:
     content = "I will first check the current project directory."
 
     assert handler._answer_only_final_answer_error(content, [], contract) == ""
-    assert not handler._needs_synthesized_final_answer(content, [], task_contract=contract)
 
 
 def test_tool_failure_message_prefers_shell_timeout() -> None:
@@ -42,7 +41,7 @@ def test_tool_failure_message_prefers_shell_timeout() -> None:
 def test_partial_run_uses_truthful_synthesized_answer() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
 
-    answer = handler._synthesize_partial_answer(
+    answer = synthesize_partial_answer(
         r"D:\ifctool",
         [],
         {

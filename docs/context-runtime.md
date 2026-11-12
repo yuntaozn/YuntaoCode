@@ -124,7 +124,7 @@ UI 历史和审计记录应完整保留，但模型侧上下文需要卫生处�
 - 历史文本工具调用标记，如 `<toolcall>`。
 - 上一轮失败摘要和缺参数报错。
 - 很长的过程记录或思考过程。
-- 已转入 `task_lineage` 的历史任务 turn。
+- 预算内的近期用户原话与助手承诺保留原角色；不因 Task Contract 元数据而替换成系统标记。
 
 `runtime/agent_strategy/context_noise.py` 负责纯分类和摘要：
 
@@ -137,23 +137,11 @@ UI 历史和审计记录应完整保留，但模型侧上下文需要卫生处�
 
 ## Task Lineage
 
-连续任务、追问、恢复和“再试一次”需要历史联系，但不能把完整旧对话原样塞给模型。
+连续任务、追问、恢复和“确认”需要保留用户请求与助手待执行承诺。
 
-当前方向是：
+近期普通对话按时序直接提供给主执行模型；最近八条消息不做通用字符截断，较早内容继续受上下文预算与噪声压缩约束。运行中插话也保留到后续对话，不根据 `guidance` 元数据删除。
 
-1. 从历史消息中抽取可能相关的 task candidate。
-2. 初始 Task Contract 上下文只写入 `task_lineage_availability`，说明候选可用和数量，
-   不包含旧任务 goal、路径、能力或路线。
-3. 由模型在 task contract 阶段决定是否需要历史候选。模型可以设置
-   `needs_task_lineage=true`、选择 `continue/revise/replace`，或引用
-   `referenced_task_candidate_id`。
-   在输出完整契约前，模型应先检查当前请求能否独立确定目标和工作对象；当请求依赖
-   先前动作、状态、产物或省略指代时，应先请求 lineage，而不是把目标弱化为“检查或
-   提供指导”或自行猜测缺失语义。
-4. 只有模型请求后，Runtime 才在第二次 Task Contract 上下文中展开 `task_lineage`
-   候选事实。
-5. Runtime 只审计“模型请求并引用了哪个候选任务”，不直接判断本轮是普通新任务、
-   追问、续接或修订。
+Task Lineage 是有界历史审计摘要，与保留的对话共同提供。候选不再排除 `answer_only`，也不要求辅助模型先请求历史才展开内容。模型自行判断哪些历史仍相关，Runtime 不自动复制旧目标或根据“确认”等词判断意图。旧的 `needs_task_lineage` 等字段只用于兼容历史契约。
 
 `task_lineage_candidate.v2` 不再把一个候选压成含混的历史 `goal`。它同时保留：
 
@@ -171,36 +159,13 @@ UI 历史和审计记录应完整保留，但模型侧上下文需要卫生处�
 组装，就把其中旧模型写出的目标和总结统一标成 `runtime_fact`。模型侧收到的是紧凑的
 字段来源映射，审计元数据保留完整 provenance。
 
-续接关系也不等于目标冻结。只有模型在当前 Task Contract 中显式选择 `continue` 或
-`revise` 时，Runtime 才允许历史锚点补充当前模型遗漏的字段。当前轮明确给出的 goal、
-deliverable、capability、状态变化和验证要求始终优先；“继续”“再试一次”等关键词本身
-不能触发 Runtime 继承旧目标。每轮完成归一化后都应生成新的 continuity anchor，避免
-旧目标在后续轮次中永久覆盖当前请求。
+续接关系不等于目标冻结。主执行模型可以根据完整近期对话记录新的目标或继续未完成任务。历史模型解释始终标成 `model_inferred`，不能升级成用户指令或已验证事实；当前任务声明也使用该可信度。
 
-这样可以避免两种极端：
+Task Lineage 的模型表示按候选独立限长，避免单个旧任务占满预算。执行和结果阶段的 Context Pack 保留作审计记录，不在每轮重复注入一份高优先级任务解释；主模型已经看到原始工具响应与自己的声明回执。
 
-- 完全丢掉历史，导致追问无法理解。
-- 把旧任务目标当成当前目标，导致跨项目或跨任务污染。
-
-Task Lineage 的审计记录可以保留完整候选元数据，但模型侧表示必须按候选独立限长，
-确保有限预算内仍能看到所有入选候选的 ID、目标、焦点和真实路径。不能先拼成一段很长
-的 JSON，再统一截断到只剩第一个候选。
-
-普通新任务不应因为同一对话中存在未完成旧 Run 就默认看到旧候选目标。Runtime 不
-再通过关键词判断“普通新任务”或“显式追问”；它只告诉模型历史候选是否可用。是否需要
-展开候选、是否引用候选、是否继承历史锚点，都由模型的 Task Contract 字段表达。
-
-候选按时间顺序展示，不根据当前文字与历史路径的关键词重合度重新排序，也不生成
-`active_target`。历史 Run 的真实写入路径保留在 `actual_paths` 证据中，不会被提升为
-当前合同的 deliverable。模型显式给出的空 goal、空 capability 或空 deliverable 也是
-当前判断，不能被旧锚点重新填回。
-
-相关代码：
-
-- `runtime/agent_strategy/task_lineage.py`
-- `runtime/agent_strategy/conversation_task_context.py`
-- `runtime/agent_strategy/task_contract.py`
-- `runtime/context_pack.py`
+重复失败、重复读取、写入修复和读取范围汇总不再追加系统提示。工具失败原文
+按协议返回给主模型，重复情况留在审计事件中。系统级临时消息限于有界的协议
+修复等传输需要，不承担替模型选择工具、修复路线或完成策略的职责。
 
 ## Project Context And Active Focus
 
@@ -271,9 +236,24 @@ Context Pack 以 `context.pack` 事件进入 RunEvidence、Runbook、诊断包�
 查看阶段、来源、信任度、新旧程度、记忆、历史任务候选和任务归属。它是可审计事实
 包，不是任务路由器。
 
-模型侧记录按语义分配预算，而不是对所有记录使用相同字符上限。记录顺序优先保持：
-当前请求、相关历史候选、Active Focus、当前 Task Contract、Workspace 摘要和能力/
-证据事实，避免多子项目 Workspace 先于明确焦点形成宽泛锚定。
+模型侧投影与审计包分开：不重复注入用户原话、Workspace Snapshot、完整能力目录、
+Context Hygiene 报告与 Ledger。工作区路径仍在基础提示中，内容由模型通过工具按需
+读取。记忆、历史候选、焦点、恢复及证据事实保留各自来源、可信度和字符预算。
+没有额外事实时不追加 Context Pack system 消息；完整快照、能力清单与账本仍进入
+Run 审计。基础提示也不再附带网页、预览、文本写入等路线说明。
+
+工具定义采用 `runtime/tool_discovery.py` 的显式发现协议，详见
+[tool-protocol.md](tool-protocol.md)。空项目请求不携带全部已注册工具的 schema，
+也不通过“你好”等关键词切换工具列表。回归测试 `tests/test_model_request_footprint.py`
+使用完整 Runtime 构造生产请求，仅替换模型传输，覆盖首轮体积和后续真实文件操作。
+
+执行阶段同样不重复附加路线提示：工具 Guard 不再生成能力偏离、文档覆盖或
+验证方式建议，`runtime_risks` 只投射观测事实。它保留错误、完整性、编码、像素及
+外部副作用不确定性，不再添加 `action` 或替代工具清单。用户和主模型决定后续动作。
+
+协议错误反馈同样只提供错误码和本轮未执行调用数量，不带参数拆分、换工具、
+重试或收尾指令。主执行循环不从普通答案解析完成声明，不另行调用模型补写答案，
+也不自动追加变更清单。恢复快照只标注历史事实及当前状态尚未重观察的边界。
 
 ## Visual Evidence Context
 
@@ -329,9 +309,13 @@ Context Ledger 保留被选中的 memory ID、范围和来源。基础 system pr
 建议边界：
 
 - 当前用户消息携带的附件可以作为当前请求附件目录进入模型上下文。
-- 历史用户消息携带的附件只能作为 historical attachment candidates 暴露。
-- 模型只有在当前请求明确提到“刚才那个文件/继续处理该附件/重新检查上次上传的
-  PDF”等上下文时，才应调用 `attachment.extract_text` 读取历史附件。
+- 历史用户消息保留附件 ID、名称、媒体类型和大小，图片本体不在新 Run 中自动回传。
+- 模型通过显式工具发现查询加载 `attachment.read_image` 或 `attachment.extract_text`，
+  自行决定是否读取之前轮次的附件。目录只陈述附件事实，不推荐工具、不判断追问意图。
+- `attachment.read_image` 按附件 ID 返回当前对话可访问的 PNG、JPEG、WebP 或 GIF 原图，
+  上限沿用上传边界 10 MiB；已绑定历史消息的图片也可按需读取。结果通过现有 ToolTask
+  内联图片桥接进入下一轮视觉输入，实际 Provider 传输状态仍由 model-round 审计记录。
+  读取图片成功或 Provider 接受图片都不表示任务质量达标。
 - 历史附件目录不应作为普通用户意图写入持久压缩摘要；摘要只需保留“曾上传附件”
   这类事实，不应长期保存 attachment_id 和工具调用提示。
 - 附件存储路径不是项目路径，不能被当作 workspace 文件产物。
@@ -454,9 +438,9 @@ summary
   - 持久化运行事件，为 Context Ledger 提供事实来源。
 - `runtime/run_result.py`
   - 从工具事件生成确定性结果，可作为 summary 阶段核心上下文。
-- `runtime/agent_strategy/run_finalization.py`
-  - 将目标产物缺口、验证缺口和最终收束判断显式化。
-  - 目标产物缺口只产生继续或换策略建议，不在该层直接停止任务。
+- `runtime/run_finalizer.py`
+  - 在主循环结束后统一生成 RunResult、恢复证据和最终展示。
+  - 证据缺口影响审计结果，但不会再触发额外模型审查轮次。
 
 ## Current Scope
 
@@ -484,15 +468,41 @@ Context Runtime 当前已具备以下基础：
 - Active Focus 以 `project_context` 记录进入规划、执行、验证和总结阶段；对象不明确时保持 unresolved，不自动扩大到整个工作区。
 - 压缩摘要缓存只有在 durable source 前缀摘要指纹一致时才能复用；Context Hygiene 改变历史 marker 数量后不会继续沿用失配的消息索引。
 - 执行式追问的 Task Contract 判断由模型完成；“执行”“按计划执行”等短语不再触发 Runner 直接继承旧契约的旁路。
-- 运行中插话会重新触发模型 Task Contract 判断；Runtime 不再用字数、文件类型或关键词正则单独修改当前契约。
+- 运行中插话以原始用户消息交给同一主执行模型，不另行触发 Task Contract 裁决；Runtime 不用字数、文件类型或关键词正则修改当前契约。
 - Memory 已区分 global 与 workspace 范围；相关性选择结果通过可审计的 `memory`
   Context Record 进入任务契约和规划阶段，不再作为无来源文本隐式混入基础提示词。
 - 无直接相关性的 global memory 仅允许少量语言/沟通偏好进入当前请求，领域、工具和项目偏好不会作为普遍背景注入。
 - 视觉证据可以在模型支持时进入 image input，同时保留 `context.visual` / RunEvidence 审计记录。
 - RunResult、RunEvidence 和任务工作台都会展示 `visual_verification.v1` 摘要，用于审计是否有截图/渲染、是否存在 console/page/network 错误，以及是否已进入模型上下文。
 - Context Snapshot 可由 RunResult / recovery flow 生成，为暂停、恢复和显式 Replay Run 提供恢复依据。
+- 恢复快照中的模型任务理解标为 `model_inferred`，保留声明来源；恢复文本呈现历史目标及验证要求，并明确其可修订。它不把模型目标升级为 Runtime 事实，也不自动执行旧计划。
 - 需要写入、导出或外部状态变化的任务，如果暂未观察到目标产物，会按工具事实是否变化进行进展判断；事实仍在变化时继续给模型空间，事实停滞时提示模型换路线，而不是按固定次数直接失败。
 - 搜索/读取预算只作为进展提醒：当模型长时间侦察但没有目标产物时，Runtime 将事实反馈给模型选择下一步，不再把“达到侦察预算”本身作为失败原因。
 
 Evidence Index、向量检索、复杂知识库、样本库和跨设备上下文同步不属于当前
 Context Runtime 基础实现。
+
+### 工具内联图片与传输记录
+
+`visual_context.py` 继续负责视觉证据桥接。除允许工作区和 Runtime 目录内的
+图片文件外，它可通过 ToolTask Store 查找当前工具事件引用的原始 MCP `image`
+块，并核对 Task ID、工具和执行状态。`source_ref` 指向 ToolTask 与内容索引，
+不伪装成本地文件路径，也不据工具返回的 URL 下载图片。
+
+`tool_media.py` 有界解码图片并可选记录尺寸、像素范围和单色事实。Pillow 缺少时
+记录 `inspector_unavailable`，图片仍可传输，但不能宣称已检查像素。像素是否
+符合用户要求仍由主模型判断；单色不直接构成任务失败。
+
+工具消息和 Run 审计只保存媒体元数据，原始图片保留在 ToolTask；下一轮图片
+以独立 `image_url` 内容块传给模型，不作为 base64 文本塞进工具消息。
+`delivery_status` 区分 `attached`、`accepted`、`omitted`、
+`omitted_transport_fallback` 和 `unconfirmed`。模型轮次的传输记录通过内容
+指纹关联；只有观察到携带图片的请求得到 Provider 响应，才计入收到图片的数量。
+文本降级不计为收到图片，Provider 接受也不代表视觉审查通过。
+
+### 执行入口的减法边界
+
+Run 直接进入主模型/工具循环；独立规划、计划提示注入和按计划匹配工具已移除。
+模型可选的计划只用于进度记录，步骤状态由模型明确更新，空计划可以清除记录。
+Context Pack 中兼容保留的 `planning` 阶段名表示执行前的上下文快照，不触发模型
+规划调用；后续执行快照只进入审计，不把计划重写成系统执行指令。

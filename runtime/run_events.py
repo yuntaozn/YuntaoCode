@@ -13,7 +13,9 @@ RUN_EVENT_SCHEMA_VERSION = "0.1"
 RECORDED_EVENT_TYPES = {
     "status",
     "model_call",
+    "model_round",
     "tool",
+    "tool_discovery",
     "context_hygiene",
     "context_pack",
     "visual_context",
@@ -60,8 +62,16 @@ class RunEventHub:
             record = self.store.record_event(run_id, compact)
             if record and record.events:
                 event_time = record.events[-1].get("time") or event_time
+                if record.events[-1].get("event") == "late_event":
+                    live_event = dict(record.events[-1])
+                    self._broadcast(run_id, live_event)
+                    return live_event
             if record and self.product_tasks:
+                if event_type == "task_contract" and record.task_id:
+                    self.product_tasks.record_understanding(record.task_id, run_id, dict(payload.get("contract") or {}))
                 self.product_tasks.sync_from_run(record)
+            if record and event_type == "done":
+                payload = {**payload, "run_status": record.status}
 
         live_event = {"time": event_time, **payload}
         self._broadcast(run_id, live_event)
@@ -98,6 +108,30 @@ class RunEventHub:
 def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
     event_type = payload.get("event")
     event_name = canonical_run_event_name(payload)
+    if event_type == "tool_discovery":
+        return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION,
+            "event": event_type, "event_name": event_name,
+            **{key: payload[key] for key in (
+                "tool_call_id", "status", "query", "tools", "namespaces",
+                "total", "next_offset", "error", "definitions_available_next_round",
+            ) if key in payload},
+        }
+    if event_type == "model_round":
+        keys = (
+            "round", "model", "provider", "finish_reason", "usage", "elapsed_seconds",
+            "content_chars", "reasoning_chars", "tool_call_chunk_count", "named_tool_call_count",
+            "tool_call_fragment_count", "wire_tool_call_items",
+            "tool_call_source", "protocol_error", "model_error", "idle_timeout",
+            "interrupted_by_guidance", "requested_tool_count", "request_budget",
+            "visual_context_delivery",
+            "visual_context_error",
+        )
+        return {
+            "schema_version": RUN_EVENT_SCHEMA_VERSION, "event": "model_round",
+            "event_name": event_name, "model_round_schema_version": payload.get("schema_version"),
+            **{key: payload.get(key) for key in keys},
+        }
     if event_type == "done":
         result: dict[str, Any] = {
             "schema_version": RUN_EVENT_SCHEMA_VERSION,
@@ -124,6 +158,8 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
             "task_id": payload.get("task_id"),
             "input": payload.get("input"),
             "output": payload.get("output"),
+            "output_preview": payload.get("output_preview"),
+            "output_source": payload.get("output_source"),
             "error": payload.get("error"),
             "declared_capability": payload.get("declared_capability"),
             "declared_artifacts": payload.get("declared_artifacts"),
@@ -139,6 +175,7 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
             "event_name": event_name,
             "status": payload.get("status"),
             "message": payload.get("message"),
+            **({"error": payload["error"]} if payload.get("error") else {}),
         }
     if event_type == "model_call":
         return {
@@ -271,6 +308,8 @@ def compact_run_event(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def canonical_run_event_name(payload: dict[str, Any]) -> str:
+    if payload.get("event") == "model_round":
+        return "model.round.completed"
     event_type = str(payload.get("event") or "")
     if event_type == "tool":
         status = str(payload.get("status") or "")
@@ -292,6 +331,8 @@ def canonical_run_event_name(payload: dict[str, Any]) -> str:
         return f"model.call.{status}"
     if event_type == "task_contract":
         return "task.contract"
+    if event_type == "tool_discovery":
+        return "tool.definitions"
     if event_type == "context_hygiene":
         return "context.hygiene"
     if event_type == "context_pack":

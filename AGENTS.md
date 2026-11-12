@@ -24,9 +24,9 @@ foundation easier to understand, test, and extend.
   - Orchestrates one model/tool run.
   - Avoid adding new policy branches here when a pure helper can own the rule.
 - `runtime/run_execution_state.py`
-  - Owns mutable cross-round lifecycle facts such as round budgets, model
-    transport counters, guidance resets, completion review, and one-response
-    runtime notices that must not become durable model history.
+  - Owns mutable cross-round lifecycle facts such as a fixed round budget,
+    model transport counters, user-guidance counts, and one-response protocol
+    notices that must not become durable model history.
   - It must not classify task intent, select tools, or become a hidden planner.
 - `runtime/tool_call_loop.py`
   - Owns provider-facing model-round streaming facts: deltas, heartbeats,
@@ -47,6 +47,12 @@ foundation easier to understand, test, and extend.
   - Executes one model-proposed tool-call batch, preserves provider response
     ordering, and returns explicit execution bookkeeping state.
   - It must not select tools or reinterpret the task contract.
+- `runtime/tool_discovery.py`
+  - Owns model-requested tool-definition discovery and per-Run loaded schemas.
+  - Refresh the enabled/available catalog only on explicit discovery. Do not
+    inspect user messages, infer intent, or preload routes by task keywords.
+  - Discovery is not an execution or permission boundary; original handlers,
+    validation, confirmation, and audit still own actual capability calls.
 - `runtime/user_guidance.py`
   - Owns user-authored guidance queued while a Run is active.
   - It must not become a hidden planner, task router, or runtime intervention
@@ -76,13 +82,19 @@ foundation easier to understand, test, and extend.
     working-object relation independent. It must not infer a focus from
     keywords or copy a historical task goal into a new task.
   - `tool_result_risks.py`: converts tool-result facts into non-blocking,
-    model-facing risk evidence and audit records.
+    model-facing risk evidence and audit records. Do not add recommended
+    actions, replacement tools, or recovery routes to those records.
+  - `tool_execution_guard.py`: pre-execution availability, schema, and draft
+    write boundaries only; no task-route, document-coverage, or verification
+    strategy advisories.
   - `profiles.py`: internal assistant profiles such as chat, analysis, coding,
     document, and paper workflows.
-  - `policy.py`: request routing and deterministic planning gates.
+  - `policy.py`: internal profile mapping from model-declared task semantics;
+    it must not introduce planning gates or pre-execution model calls.
   - `prompts.py`: factual advisory, recovery, verification, and finalization
     prompt construction.
-  - `plan_tracker.py`: execution plan lifecycle helpers.
+  - `plan_tracker.py`: optional model-declared progress records and evidence
+    references; no generated plans, tool matching, or inferred step transitions.
 - `runtime/core/`
   - Owns product-level runtime schemas.
   - `task.py`: Task, Plan, Step, and state transition contracts.
@@ -159,9 +171,20 @@ foundation easier to understand, test, and extend.
 - The UI exposes one unified terminal. Do not reintroduce user-facing assistant
   modes unless there is a product decision to do so.
 - Internal profiles belong in `runtime/agent_strategy/profiles.py`.
-- Plan and routing decisions belong in `runtime/agent_strategy/policy.py`.
+- Task and plan decisions belong to the main execution model. Runtime must not
+  add pre-execution planning, plan-following prompts, or tool-to-step routing.
+- Model-facing error feedback states observed failures without recommending
+  tools, argument strategies, recovery routes, or stopping decisions. Invalid
+  batches remain unexecuted and return protocol facts within the Run resource
+  budget; do not add a separate semantic retry gate.
+- Preserve the main model's final text. Do not parse ordinary answer JSON as
+  task declarations, append runtime-authored footers, or call a second model
+  to repair the answer. Missing text and transport errors remain explicit facts.
 - Profiles describe model task contracts. Do not turn them into fixed stage
   sequences, tool routes, or profile-specific round budgets.
+- Use one configured round limit per Run. Do not grant or withhold rounds based
+  on task declarations, tool outcomes, or inferred progress. Transport failures
+  must still reach finalization with their original error and observed evidence.
 - Model-context cleanup belongs in `runtime/agent_strategy/context_hygiene.py`.
   Do not remove visible chat history to fix model pollution; sanitize only the
   model-facing context and keep audit records intact.

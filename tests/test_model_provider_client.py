@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import json
+from types import SimpleNamespace
+
 import pytest
+from tornado.httpclient import HTTPClientError
+from tornado.simple_httpclient import HTTPTimeoutError
 
 from runtime.model_providers import client as provider_client
+
 from runtime.model_providers.client import (
     build_request_body,
     context_limit_from_models,
@@ -16,6 +23,26 @@ from runtime.model_providers.client import (
     provider_root_url,
     stream_chat_completion,
 )
+
+
+def test_responses_preserves_inline_visual_observation_as_image_input():
+    data_url = "data:image/png;base64,pixels"
+    items, _ = provider_client.convert_messages_to_responses_input([
+        {"role": "tool", "tool_call_id": "capture-1", "content": '{"capture_status":"ok"}'},
+        {"role": "user", "content": [
+            {"type": "text", "text": "Runtime visual evidence; source_ref=task:1"},
+            {"type": "image_url", "image_url": {"url": data_url}},
+        ]},
+    ])
+    assert items[0]["type"] == "function_call_output"
+    assert items[1]["content"][1] == {"type": "input_image", "image_url": data_url}
+
+def test_wire_call_counts_survive_empty_or_malformed_normalized_calls():
+    empty = extract_stream_event({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]})
+    malformed = extract_stream_event({"choices": [{"delta": {"tool_calls": ["invalid item"]}, "finish_reason": "tool_calls"}]})
+    assert empty["wire_tool_call_items"] == 0
+    assert malformed["wire_tool_call_items"] == 1
+    assert malformed["tool_calls"] == [{"index": 0, "function": "invalid item"}]
 
 
 def test_extract_stream_event_accepts_legacy_function_call() -> None:
@@ -35,7 +62,7 @@ def test_extract_stream_event_accepts_legacy_function_call() -> None:
     assert event["tool_calls"] == [
         {
             "index": 0,
-            "id": None,
+            "id": "",
             "type": "function",
             "function": {
                 "name": "filesystem__scan_folder",
@@ -509,3 +536,151 @@ async def test_stream_chat_completion_uses_non_stream_when_model_disables_stream
         {"message": "hello"},
         {"usage": {"total_tokens": 3}, "finish_reason": "stop"},
     ]
+
+
+@pytest.fixture
+def streaming_transport(monkeypatch):
+    settings = SimpleNamespace(resolve_model=lambda model: (
+        {"api_model": model, "context_limit": 128000},
+        {"base_url": "https://provider.invalid", "api_key_required": False},
+        "probe",
+    ))
+
+    async def context_limit(**kwargs):
+        return 128000
+
+    monkeypatch.setattr(provider_client, "resolve_provider_context_limit", context_limit)
+
+    def install(fetch):
+        monkeypatch.setattr(provider_client.tornado.httpclient, "AsyncHTTPClient", lambda: SimpleNamespace(fetch=fetch))
+
+    return settings, install
+
+
+def _sse_event(delta=None, finish_reason=None):
+    choice = {"delta": delta or {}}
+    if finish_reason is not None:
+        choice["finish_reason"] = finish_reason
+    return ("data: " + json.dumps({"choices": [choice]}) + "\n\n").encode()
+
+
+async def _collect_stream(settings, **kwargs):
+    async def collect():
+        return [event async for event in stream_chat_completion(
+            settings=settings, model="probe", messages=[{"role": "user", "content": "probe"}], **kwargs,
+        )]
+
+    return await asyncio.wait_for(collect(), 3)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [
+    HTTPTimeoutError("Timeout during request"),
+    HTTPClientError(599, "connection closed"),
+    OSError("connection reset"),
+    RuntimeError("stream callback failed"),
+])
+async def test_stream_transport_exceptions_reach_consumer_after_existing_deltas(streaming_transport, error):
+    settings, install = streaming_transport
+
+    async def fetch(request, **kwargs):
+        request.streaming_callback(_sse_event({"reasoning_content": "observed reasoning"}))
+        await asyncio.sleep(0)
+        raise error
+
+    install(fetch)
+    events = await _collect_stream(settings)
+    assert any(event.get("reasoning") == "observed reasoning" for event in events)
+    failures = [event for event in events if event.get("error")]
+    assert len(failures) == 1
+    assert failures[0]["error"] == str(error)
+    if isinstance(error, HTTPClientError):
+        assert failures[0]["status"] == error.code
+
+
+@pytest.mark.asyncio
+async def test_active_stream_can_complete_after_previous_total_deadline(streaming_transport):
+    settings, install = streaming_transport
+    requests = []
+
+    async def fetch(request, **kwargs):
+        requests.append(request)
+        # 模拟 HTTP 客户端推进时间，避免测试实际等待五分钟。
+        for elapsed in range(0, 361, 60):
+            if request.request_timeout and elapsed >= request.request_timeout:
+                raise HTTPTimeoutError("Timeout during request")
+            request.streaming_callback(_sse_event({"reasoning_content": str(elapsed)}))
+            await asyncio.sleep(0)
+        request.streaming_callback(_sse_event({"content": "completed after 360 seconds"}, "stop"))
+        return SimpleNamespace(code=200, body=b"")
+
+    install(fetch)
+    events = await _collect_stream(settings)
+    assert any(event.get("message") == "completed after 360 seconds" for event in events)
+    assert events[-1]["finish_reason"] == "stop"
+    assert not any(event.get("error") for event in events)
+    assert requests[0].request_timeout == 0
+    assert requests[0].connect_timeout > 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("activity", ["keepalive", "partial_frame"])
+async def test_received_sse_bytes_keep_stream_alive_before_a_parsed_delta(streaming_transport, activity):
+    settings, install = streaming_transport
+
+    async def fetch(request, **kwargs):
+        payload = _sse_event({"content": "completed after wire activity"})
+        chunks = [b": keepalive\n\n"] * 20 if activity == "keepalive" else [payload[i:i + 4] for i in range(0, len(payload), 4)]
+        for chunk in chunks:
+            request.streaming_callback(chunk)
+            await asyncio.sleep(0.01)
+        if activity == "keepalive":
+            request.streaming_callback(payload)
+        request.streaming_callback(_sse_event(finish_reason="stop"))
+        return SimpleNamespace(code=200, body=b"")
+
+    install(fetch)
+    events = await _collect_stream(settings, idle_timeout=0.08, max_idle_timeout=0.1, heartbeat_interval=0.01)
+    assert any(event.get("message") == "completed after wire activity" for event in events)
+    assert not any(event.get("error") for event in events)
+
+
+@pytest.mark.asyncio
+async def test_idle_stream_reports_effective_limit_and_cancels_fetch(streaming_transport):
+    settings, install = streaming_transport
+    cancelled = asyncio.Event()
+
+    async def fetch(request, **kwargs):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    install(fetch)
+    events = await _collect_stream(settings, idle_timeout=0.01, max_idle_timeout=0.08, heartbeat_interval=0.01)
+    failures = [event for event in events if event.get("error")]
+    assert len(failures) == 1 and failures[0]["idle_timeout"] is True
+    assert "空闲上限 0.08 秒" in failures[0]["error"]
+    assert "请重试" not in failures[0]["error"]
+    assert cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_consumer_cancellation_still_cancels_background_fetch(streaming_transport):
+    settings, install = streaming_transport
+    started, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def fetch(request, **kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    install(fetch)
+    consumer = asyncio.create_task(_collect_stream(settings))
+    await asyncio.wait_for(started.wait(), 1)
+    consumer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await consumer
+    assert cancelled.is_set()

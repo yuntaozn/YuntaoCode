@@ -7,7 +7,6 @@ from runtime.agent_strategy.convergence import (
     failure_route_signature,
     format_convergence_decision,
     repeated_failure_action,
-    round_budget_progress_observed,
 )
 
 
@@ -55,52 +54,6 @@ def test_success_resets_no_progress_window() -> None:
     assert decision.distinct_failed_routes == 1
 
 
-def test_read_only_success_does_not_extend_write_task_budget() -> None:
-    events = [{
-        "tool": "code.search_text",
-        "status": "success",
-        "declared_roles": ["evidence"],
-        "declared_effects": [],
-    }]
-
-    assert round_budget_progress_observed(
-        events,
-        task_contract={"requires_write": True, "requires_state_change": True},
-    ) is False
-
-
-def test_write_or_draft_success_extends_write_task_budget() -> None:
-    write_event = {
-        "tool": "code.edit_file",
-        "status": "success",
-        "declared_roles": ["deliverable"],
-        "declared_effects": ["file_write", "local_state_change"],
-    }
-    draft_event = {
-        "tool": "document.append_draft_section",
-        "status": "success",
-        "declared_roles": ["draft"],
-        "declared_effects": [],
-    }
-    contract = {"requires_write": True, "requires_state_change": True}
-
-    assert round_budget_progress_observed([write_event], task_contract=contract) is True
-    assert round_budget_progress_observed([draft_event], task_contract=contract) is True
-
-
-def test_read_success_still_extends_answer_task_budget() -> None:
-    events = [{
-        "tool": "filesystem.read_file",
-        "status": "success",
-        "declared_roles": ["evidence"],
-    }]
-
-    assert round_budget_progress_observed(
-        events,
-        task_contract={"requires_write": False, "requires_state_change": False},
-    ) is True
-
-
 def test_changed_failed_routes_expand_self_correction_budget() -> None:
     first = _failure(path="viewer/index.html", error="missing content")
     second = _failure(
@@ -118,7 +71,8 @@ def test_changed_failed_routes_expand_self_correction_budget() -> None:
     assert decision.budget_limit_route_attempts == 11
     assert decision.route_attempt_count == 11
     assert decision.action == ESCALATE_NO_PROGRESS
-    assert any("budget is saturated" in item for item in decision.model_decision)
+    assert "model_decision" not in decision.to_dict()
+    assert "model decision" not in format_convergence_decision(decision)
 
 
 def test_changed_route_does_not_pause_at_base_budget() -> None:

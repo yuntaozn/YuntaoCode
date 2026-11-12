@@ -91,9 +91,18 @@ class ProductTaskStore:
 
     def attach_run(self, task_id: str, run_id: str, *, state: str = "running") -> ProductTask:
         task = self._require(task_id)
+        if task.current_run_id == run_id:
+            return task
+        if task.current_run_id and task.state in {"running", "planning", "waiting_confirmation", "verifying", "resuming"}:
+            raise ValueError("task already has an active run")
+        target = _normalized_state(state)
+        if task.state in {"paused", "failed"}:
+            task = task.transition("resuming")
+            target = "resuming" if target == "created" else target
+        if task.state != target:
+            task = task.transition(target)
         updated = replace(
             task,
-            state=_normalized_state(state),
             current_run_id=run_id,
             run_count=max(0, int(task.run_count)) + 1,
             updated_at=utc_now(),
@@ -103,9 +112,13 @@ class ProductTaskStore:
 
     def update_state(self, task_id: str, state: str, *, current_run_id: str | None = None) -> ProductTask:
         task = self._require(task_id)
+        target = _normalized_state(state)
+        if current_run_id is not None and task.current_run_id not in {"", current_run_id}:
+            raise ValueError("state update belongs to another run")
+        if task.state != target:
+            task = task.transition(target)
         updated = replace(
             task,
-            state=_normalized_state(state),
             current_run_id=task.current_run_id if current_run_id is None else current_run_id,
             updated_at=utc_now(),
         )
@@ -114,8 +127,18 @@ class ProductTaskStore:
 
     def sync_from_run(self, run: Any) -> ProductTask | None:
         task_id = str(getattr(run, "task_id", "") or "")
-        if not task_id or not self.get(task_id):
+        task = self.get(task_id) if task_id else None
+        if not task:
             return None
+        run_id = str(getattr(run, "id", "") or "")
+        if task.current_run_id and task.current_run_id != run_id:
+            return task
+        stage = str(getattr(run, "stage", "") or "")
+        # 中途错误可以被主执行模型恢复；只有结果或 done 才投影最终任务状态。
+        if stage not in {"result", "done", "interrupted"} and str(getattr(run, "status", "")) in {"success", "failure", "partial"}:
+            return task
+        if str(getattr(run, "status", "")) == "created":
+            return task
         state = {
             "running": "running",
             "waiting_confirmation": "waiting_confirmation",
@@ -127,7 +150,41 @@ class ProductTaskStore:
             "cancelled": "cancelled",
             "created": "created",
         }.get(str(getattr(run, "status", "") or ""), "running")
-        return self.update_state(task_id, state, current_run_id=str(getattr(run, "id", "") or ""))
+        result = next((event.get("result") for event in reversed(getattr(run, "events", []))
+                       if event.get("event") == "result" and isinstance(event.get("result"), dict)), {})
+        # 保留当前尝试的显式目标声明，避免日志裁剪改变已投影的任务状态。
+        outcome = task.metadata.get("run_outcome") or {}
+        if not isinstance(outcome, dict):
+            outcome = {}
+        if result:
+            current_outcome = {
+                "run_id": run_id, "source": "run_result",
+                "goal_status": str(result.get("goal_status") or "unknown"),
+            }
+            if outcome != current_outcome:
+                task = replace(task, metadata={**task.metadata, "run_outcome": current_outcome})
+                self._upsert(task)
+            outcome = current_outcome
+        goal_status = outcome.get("goal_status") if outcome.get("run_id") == run_id else "unknown"
+        # 缺少可选完成声明不构成暂停；明确报告未完成时仍保留开放任务。
+        if state == "completed" and goal_status == "incomplete":
+            state = "paused"
+        if state == "running" and task.state == "paused" and stage == "resumed":
+            self.update_state(task_id, "resuming", current_run_id=run_id)
+        if state != task.state or not task.current_run_id:
+            return self.update_state(task_id, state, current_run_id=run_id)
+        return task
+
+    def record_understanding(self, task_id: str, run_id: str, contract: dict[str, Any]) -> None:
+        """保留用户原始目标，将模型理解与来源作为独立事实记录。"""
+        task = self._require(task_id)
+        if task.current_run_id not in {"", run_id}:
+            return
+        updated = replace(task, metadata={**task.metadata, "model_understanding": {
+            "source": str(contract.get("source") or "unknown"), "run_id": run_id,
+            "contract": contract,
+        }}, updated_at=utc_now())
+        self._upsert(updated)
 
     def create_checkpoint(
         self,
@@ -420,7 +477,9 @@ class ProductTaskStore:
 
 def _normalized_state(value: Any) -> str:
     state = str(value or "created")
-    return state if state in TASK_STATES else "created"
+    if state not in TASK_STATES:
+        raise ValueError(f"unknown task state: {state}")
+    return state
 
 
 def _json(value: Any) -> str:

@@ -12,29 +12,13 @@ NO_ACTION = "none"
 REPORT_REPETITION = "report_repetition"
 ESCALATE_NO_PROGRESS = "escalate_no_progress"
 
-MATERIAL_PROGRESS_ROLES: frozenset[str] = frozenset({
-    "deliverable",
-    "draft",
-    "state_change",
-    "verification",
-})
-MATERIAL_PROGRESS_EFFECTS: frozenset[str] = frozenset({
-    "artifact_create",
-    "artifact_update",
-    "artifact_write",
-    "external_state_change",
-    "file_write",
-    "git_commit",
-    "local_state_change",
-})
-
 
 @dataclass(frozen=True)
 class ExecutionConvergenceDecision:
     """当前无进展窗口中观察到的收敛状态。
 
-    这是执行形态证据，不是 Planner。Runtime 可根据 action 决定事实提示强度；
-    其余内容作为事实交给模型选择其他路线。全局轮次上限仍是资源边界。"""
+    这是执行形态证据，不是 Planner。Runtime 只记录 action 对应的重复程度；
+    它不生成下一步动作建议。全局轮次上限仍是资源边界。"""
 
     action: str = NO_ACTION
     latest_tool: str = ""
@@ -48,7 +32,6 @@ class ExecutionConvergenceDecision:
     route_changed_without_progress: bool = False
     latest_missing_fields: tuple[str, ...] = field(default_factory=tuple)
     latest_signature: str = ""
-    model_decision: tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -64,7 +47,6 @@ class ExecutionConvergenceDecision:
             "route_changed_without_progress": self.route_changed_without_progress,
             "latest_missing_fields": list(self.latest_missing_fields),
             "latest_signature": self.latest_signature,
-            "model_decision": list(self.model_decision),
         }
 
 
@@ -132,51 +114,11 @@ def build_execution_convergence_decision(
         route_changed_without_progress=route_changed,
         latest_missing_fields=missing_fields,
         latest_signature=latest_signature,
-        model_decision=tuple(_model_decision(
-            latest_tool=latest_tool,
-            latest_reason=latest_reason,
-            route_attempt_count=route_attempt_count,
-            budget_limit_route_attempts=budget_limit,
-            route_changed=route_changed,
-            missing_fields=missing_fields,
-        )),
     )
 
 
 def repeated_failure_action(tool_events: list[dict[str, Any]]) -> str:
     return build_execution_convergence_decision(tool_events).action
-
-
-def round_budget_progress_observed(
-    round_events: list[dict[str, Any]],
-    *,
-    task_contract: dict[str, Any] | None,
-) -> bool:
-    """判断当前轮证据是否足以扩展有限模型轮次预算。
-
-    答案和只读分析任务把成功读取视为正常进展。显式要求写入或外部状态变化的
-    任务只在观察到交付、草稿、状态变化或验证事实时扩展预算；普通搜索和读取
-    仍会返回给模型，但不会因为“调用成功”而自动获得更多回合。
-
-    该函数只消费任务契约和 ToolEvent 声明/观察事实，不推断用户意图，也不选择
-    下一条执行路线。
-    """
-
-    successful = [
-        event
-        for event in round_events or []
-        if isinstance(event, dict)
-        and str(event.get("status") or "") in {"success", "partial"}
-    ]
-    if not successful:
-        return False
-    contract = task_contract if isinstance(task_contract, dict) else {}
-    requires_state_change = bool(
-        contract.get("requires_write") or contract.get("requires_state_change")
-    )
-    if not requires_state_change:
-        return True
-    return any(_event_has_material_progress(event) for event in successful)
 
 
 def consecutive_repeated_failure_count(tool_events: list[dict[str, Any]]) -> int:
@@ -232,9 +174,6 @@ def format_convergence_decision(decision: ExecutionConvergenceDecision) -> str:
         lines.append("- latest missing fields: " + ", ".join(decision.latest_missing_fields))
     if decision.route_changed_without_progress:
         lines.append("- route changes were observed, but no successful or partial tool progress followed yet")
-    if decision.model_decision:
-        lines.append("- model decision:")
-        lines.extend(f"  - {item}" for item in decision.model_decision)
     return "\n".join(lines)
 
 
@@ -249,26 +188,6 @@ def _events_since_last_progress(events: list[dict[str, Any]]) -> list[dict[str, 
 
 def _is_progress_event(event: dict[str, Any]) -> bool:
     return str(event.get("status") or "") in {"success", "partial"}
-
-
-def _event_has_material_progress(event: dict[str, Any]) -> bool:
-    output = event.get("output") if isinstance(event.get("output"), dict) else {}
-    roles = {
-        *_string_values(event.get("declared_roles")),
-        *_string_values(event.get("roles")),
-        *_string_values(output.get("roles")),
-    }
-    effects = {
-        *_string_values(event.get("declared_effects")),
-        *_string_values(event.get("effects")),
-        *_string_values(output.get("effects")),
-    }
-    if roles & MATERIAL_PROGRESS_ROLES or effects & MATERIAL_PROGRESS_EFFECTS:
-        return True
-    return any(
-        output.get(key) is True
-        for key in ("changed", "created", "deleted", "written")
-    )
 
 
 def _distinct_failure_route_count(events: list[dict[str, Any]]) -> int:
@@ -321,48 +240,6 @@ def _normalized_error(value: Any) -> str:
     return _short(text, 400)
 
 
-def _model_decision(
-    *,
-    latest_tool: str,
-    latest_reason: str,
-    route_attempt_count: int,
-    budget_limit_route_attempts: int,
-    route_changed: bool,
-    missing_fields: tuple[str, ...],
-) -> list[str]:
-    decisions = [
-        "Use this as convergence evidence, not as a task route chosen by the runtime.",
-    ]
-    if missing_fields:
-        decisions.append(
-            "If retrying the same tool, supply the missing fields first: "
-            + ", ".join(missing_fields)
-            + "."
-        )
-    elif latest_reason in {"truncated_tool_call", "model_output_truncated"}:
-        decisions.append(
-            "If retrying a write-like route, use smaller complete chunks or an incremental edit path."
-        )
-    else:
-        decisions.append(
-            "Choose whether to change tool, change arguments, gather context, verify existing output, ask the user, or stop honestly."
-        )
-    if route_changed:
-        decisions.append(
-            "Different failed routes were observed; keep the next action materially tied to new evidence instead of cycling."
-        )
-    remaining = max(0, budget_limit_route_attempts - route_attempt_count)
-    if remaining:
-        decisions.append(f"Repeated latest-route budget remaining in this no-progress window: {remaining}.")
-    else:
-        decisions.append(
-            "The latest-route repetition budget is saturated; this is evidence for a materially different repair, verification, or boundary decision."
-        )
-    if latest_tool:
-        decisions.append(f"Latest route under observation: {latest_tool}.")
-    return decisions
-
-
 def _string_items(value: Any, *, limit: int) -> list[str]:
     if not isinstance(value, (list, tuple)):
         return []
@@ -374,16 +251,6 @@ def _string_items(value: Any, *, limit: int) -> list[str]:
         if len(result) >= limit:
             break
     return result
-
-
-def _string_values(value: Any) -> set[str]:
-    if not isinstance(value, (list, tuple, set, frozenset)):
-        return set()
-    return {
-        str(item).strip()
-        for item in value
-        if str(item or "").strip()
-    }
 
 
 def _short(value: Any, limit: int) -> str:

@@ -173,14 +173,25 @@ async def stream_chat_completion(
         yield {"request_budget": budget_info}
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     parser = StreamingParser(queue)
+    loop = asyncio.get_running_loop()
+    last_data_at = loop.time()
+
+    def receive_chunk(chunk: bytes) -> None:
+        nonlocal last_data_at
+        if chunk:
+            last_data_at = loop.time()
+        parser.feed(chunk)
+
     request_url = chat_completion_url(provider)
     request = tornado.httpclient.HTTPRequest(
         url=request_url,
         method="POST",
         headers=request_headers(api_key),
         body=json.dumps(body, ensure_ascii=False),
-        request_timeout=300,
-        streaming_callback=parser.feed,
+        # 活跃流不按总时长截断；连接和无数据等待分别保留时间边界。
+        request_timeout=0,
+        connect_timeout=20,
+        streaming_callback=receive_chunk,
     )
 
     async def run_fetch() -> None:
@@ -191,21 +202,23 @@ async def stream_chat_completion(
                 data = decode_json_response(response.body)
                 message = format_provider_error(data, response.code, request_url, api_model=api_model)
                 queue.put_nowait({"error": message, "status": response.code})
-        except OSError as exc:
-            queue.put_nowait({"error": f"无法连接模型服务：{base_url}", "detail": str(exc)})
+        except Exception as exc:
+            # 后台异常必须在结束信号前交给消费者，不能在任务清理时静默丢失。
+            error: dict[str, Any] = {"error": str(exc) or type(exc).__name__}
+            if isinstance(exc, tornado.httpclient.HTTPClientError):
+                error["status"] = exc.code
+            queue.put_nowait(error)
         finally:
             queue.put_nowait(None)
 
     task = asyncio.create_task(run_fetch())
-    loop = asyncio.get_running_loop()
-    last_item_at = loop.time()
     hard_idle_timeout = max(idle_timeout, max_idle_timeout)
     try:
         while True:
             try:
                 item = await asyncio.wait_for(queue.get(), timeout=heartbeat_interval)
             except asyncio.TimeoutError:
-                idle_seconds = loop.time() - last_item_at
+                idle_seconds = loop.time() - last_data_at
                 if idle_seconds < hard_idle_timeout:
                     yield {
                         "heartbeat": True,
@@ -218,20 +231,22 @@ async def stream_chat_completion(
                 # 空闲超时：连续 N 秒没有新数据，主动中断
                 task.cancel()
                 yield {
-                    "error": f"模型服务响应超时：连续 {int(idle_timeout)} 秒未收到新数据，请重试",
+                    "error": (
+                        f"模型服务响应超时：连续 {idle_seconds:.1f} 秒未收到新数据"
+                        f"（空闲上限 {hard_idle_timeout:g} 秒）"
+                    ),
                     "idle_timeout": True,
                 }
                 break
             if item is None:
                 break
-            last_item_at = loop.time()
             yield item
     finally:
         if not task.done():
             task.cancel()
         try:
             await task
-        except (asyncio.CancelledError, Exception):
+        except asyncio.CancelledError:
             pass
 
 
@@ -883,6 +898,8 @@ def extract_stream_event(payload: dict[str, Any]) -> dict[str, Any]:
     if tool_calls:
         event["tool_calls"] = tool_calls
     finish_reason = choice.get("finish_reason")
+    if delta.get("tool_calls") or delta.get("function_call") or finish_reason in {"tool_calls", "function_call"}:
+        event["wire_tool_call_items"] = _wire_tool_call_count(delta)
     if finish_reason is not None:
         event["finish_reason"] = finish_reason
     if usage:
@@ -969,40 +986,52 @@ def extract_direct_stream_event(payload: dict[str, Any]) -> dict[str, Any]:
     if tool_calls:
         event["tool_calls"] = tool_calls
     finish_reason = payload.get("finish_reason")
+    if payload.get("tool_calls") or payload.get("function_call") or finish_reason in {"tool_calls", "function_call"}:
+        event["wire_tool_call_items"] = _wire_tool_call_count(payload)
     if finish_reason is not None:
         event["finish_reason"] = finish_reason
     return event
 
 
+def _wire_tool_call_count(payload: dict[str, Any]) -> int:
+    """只计数原始工具载荷条目，不记录参数、正文或推理内容。"""
+    value = payload.get("tool_calls") or payload.get("function_call")
+    return len(value) if isinstance(value, list) else int(isinstance(value, dict))
+
+
 def normalize_tool_call_chunks(raw_tool_calls: Any) -> list[dict[str, Any]]:
-    if not raw_tool_calls:
+    if raw_tool_calls is None:
         return []
     if isinstance(raw_tool_calls, dict):
         raw_items = [raw_tool_calls]
     elif isinstance(raw_tool_calls, list):
         raw_items = raw_tool_calls
     else:
-        return []
+        return [{"index": 0, "function": raw_tool_calls}]
 
     chunks: list[dict[str, Any]] = []
     for fallback_index, item in enumerate(raw_items):
         if not isinstance(item, dict):
+            chunks.append({"index": fallback_index, "function": item})
             continue
-        function = item.get("function") or {}
-        if not isinstance(function, dict):
+        function = item.get("function")
+        if function is None:
             function = {}
+        if not isinstance(function, dict):
+            chunks.append({"index": item.get("index", fallback_index), "function": function})
+            continue
         if not function and ("name" in item or "arguments" in item):
             function = {
-                "name": item.get("name") or "",
-                "arguments": item.get("arguments") or "",
+                "name": item.get("name", ""),
+                "arguments": item.get("arguments", ""),
             }
         chunks.append({
             "index": item.get("index", fallback_index),
-            "id": item.get("id"),
-            "type": item.get("type") or "function",
+            "id": item.get("id") if item.get("id") is not None else "",
+            "type": item.get("type") if item.get("type") is not None else "function",
             "function": {
-                "name": function.get("name") or "",
-                "arguments": function.get("arguments") or "",
+                "name": function.get("name") if function.get("name") is not None else "",
+                "arguments": function.get("arguments") if function.get("arguments") is not None else "",
             },
         })
     return chunks

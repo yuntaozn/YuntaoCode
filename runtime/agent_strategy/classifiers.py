@@ -291,80 +291,43 @@ def looks_like_diagnostic_feedback(content: str) -> bool:
     return False
 
 
-def plan_has_pending_write_step(execution_plan: Any) -> bool:
-    """检查计划是否明确包含待执行的本地写入步骤。
-
-    契约提升应跟随具体执行证据：已知写入工具或明确的文件写入措辞。仅有“生成”等
-    宽泛任务词并不足够，因为分析任务也可能只生成答案而不改变本地状态。"""
-    if not isinstance(execution_plan, dict):
-        return False
-    steps = execution_plan.get("steps")
-    if not isinstance(steps, list):
-        return False
-    for step in steps:
-        if not isinstance(step, dict):
-            continue
-        status = step.get("status")
-        if status not in {None, "pending", "running", "skipped"}:
-            continue
-        tool_hint = str(step.get("tool_hint") or "").lower().replace("__", ".")
-        for candidate in BARE_TOOL_NAME_PATTERN.findall(tool_hint):
-            if is_write_tool(candidate):
-                return True
-        text = " ".join(
-            str(step.get(key) or "").lower()
-            for key in ("title", "description", "tool_hint")
-        )
-        if any(
-            term in text
-            for term in (
-                "write file",
-                "write to",
-                "edit file",
-                "replace text",
-                "create file",
-                "generate file",
-                "export file",
-                "save file",
-                "overwrite",
-                "modify file",
-            )
-        ):
-            return True
-        if any(
-            term in text
-            for term in (
-                "\u5199\u5165",
-                "\u5199\u51fa",
-                "\u8986\u76d6",
-                "\u66ff\u6362",
-                "\u7f16\u8f91\u6587\u4ef6",
-                "\u4fee\u6539\u6587\u4ef6",
-                "\u65b0\u5efa\u6587\u4ef6",
-                "\u521b\u5efa\u6587\u4ef6",
-                "\u751f\u6210\u6587\u4ef6",
-                "\u5bfc\u51fa\u6587\u4ef6",
-                "\u4fdd\u5b58\u4e3a",
-            )
-        ):
-            return True
-    return False
 
 
 # ---------------------------------------------------------------------------
 # 工具调用处理（值转换与显式累积状态更新）
 # ---------------------------------------------------------------------------
 
+MAX_TOOL_CALLS_PER_ROUND = 128
+
+
+class ToolCallProtocolError(ValueError):
+    """结构化调用不符合协议；错误码不包含模型参数内容。"""
+
+
 def merge_tool_call_chunks(
     calls: list[dict[str, Any]],
     chunks: list[dict[str, Any]],
 ) -> None:
-    """将流式工具调用片段合并到 *calls* 累积列表中。"""
+    """先校验整个片段批次，再原地合并；索引只接受有界整数。"""
+    if not isinstance(chunks, list):
+        raise ToolCallProtocolError("invalid_tool_call_chunk")
     for chunk in chunks:
-        try:
-            index = int(chunk.get("index", 0) or 0)
-        except (TypeError, ValueError):
-            index = 0
+        if not isinstance(chunk, dict):
+            raise ToolCallProtocolError("invalid_tool_call_chunk")
+        index = chunk.get("index", 0)
+        if type(index) is not int or not 0 <= index < MAX_TOOL_CALLS_PER_ROUND:
+            raise ToolCallProtocolError("invalid_tool_call_index")
+        function = chunk.get("function", {})
+        if not isinstance(function, dict):
+            raise ToolCallProtocolError("invalid_tool_call_chunk")
+        if any(key in chunk and not isinstance(chunk[key], str) for key in ("id", "type")):
+            raise ToolCallProtocolError("invalid_tool_call_chunk")
+        if chunk.get("type", "function") != "function":
+            raise ToolCallProtocolError("invalid_tool_call_chunk")
+        if any(key in function and not isinstance(function[key], str) for key in ("name", "arguments")):
+            raise ToolCallProtocolError("invalid_tool_call_chunk")
+    for chunk in chunks:
+        index = chunk.get("index", 0)
         while len(calls) <= index:
             calls.append({
                 "id": "",
@@ -438,6 +401,53 @@ def extract_native_tool_calls(text: str, round_index: int = 0) -> list[dict[str,
     for item in tagged_tool_call_blocks(text):
         call = _native_item_to_tool_call(item, round_index, len(calls))
         if call:
+            calls.append(call)
+    return calls
+
+
+def extract_declared_text_tool_calls(
+    text: str, protocol: str, round_index: int = 0,
+) -> list[dict[str, Any]]:
+    """只接受显式配置协议的完整正文，不解析解释文字、代码围栏或 reasoning。"""
+    content = str(text or "").strip()
+    if protocol == "function_call":
+        pattern = re.compile(re.escape(NATIVE_TOOL_CALL_BEGIN) + r".*?" + re.escape(NATIVE_TOOL_CALL_END), re.DOTALL)
+    elif protocol == "tagged":
+        pattern = TAGGED_TOOL_CALL_PATTERN
+    elif protocol == "xml":
+        pattern = XML_TOOL_CALL_PATTERN
+    else:
+        return []
+    matches = list(pattern.finditer(content))
+    if not matches or pattern.sub("", content).strip():
+        return []
+    # 每个块都必须产生有效调用，不能悄悄忽略混杂的无效块。
+    calls: list[dict[str, Any]] = []
+    for match in matches:
+        if protocol == "function_call":
+            raw = match.group(0)[len(NATIVE_TOOL_CALL_BEGIN):-len(NATIVE_TOOL_CALL_END)]
+        elif protocol == "tagged":
+            raw = _xml_tool_text(match.group("body"))
+        else:
+            items = xml_style_tool_call_blocks(match.group(0))
+        if protocol in {"function_call", "tagged"}:
+            try:
+                items = json.loads(raw)
+            except (ValueError, TypeError):
+                return []
+            if isinstance(items, dict) and isinstance(items.get("tool_calls"), list):
+                items = items["tool_calls"]
+            if isinstance(items, dict):
+                items = [items]
+            if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+                return []
+        if not items:
+            return []
+        for item in items:
+            call = _native_item_to_tool_call(item, round_index, len(calls))
+            if not call:
+                return []
+            call["id"] = f"text_call_{round_index}_{len(calls)}"
             calls.append(call)
     return calls
 

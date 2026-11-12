@@ -19,17 +19,11 @@ class UserGuidanceBatch:
 
     @property
     def text(self) -> str:
-        return "\n".join(f"- {item}" for item in self.items)
+        return "\n\n".join(self.items)
 
     @property
     def prompt(self) -> str:
-        if not self.items:
-            return ""
-        return (
-            "【运行中插话】用户追加了新的信息或纠偏要求。"
-            "请暂停沿用旧思路，重新审视当前任务后再继续：\n"
-            f"{self.text}"
-        )
+        return self.text
 
 
 def add_user_guidance(

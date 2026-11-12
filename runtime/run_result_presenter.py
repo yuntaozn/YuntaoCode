@@ -6,7 +6,6 @@ from collections.abc import Callable
 from typing import Any
 
 from runtime.agent_strategy import tool_event_roles as _event_roles
-from runtime.agent_strategy.classifiers import strip_native_tool_call_blocks
 from runtime.run_fact_summary import build_run_fact_summary
 
 
@@ -20,6 +19,7 @@ AssistantClaimPredicate = Callable[[str], bool]
 
 
 RISK_MESSAGES_ZH: dict[str, str] = {
+    "goal_completion_unconfirmed": "执行已结束，但目标完成情况尚未确认。",
     "expected_write_not_observed": "本轮没有观察到预期的写入结果。",
     "target_deliverable_not_observed": "没有观察到目标产物或目标外部状态变更。",
     "write_not_verified": "写入后没有观察到有效验证。",
@@ -91,8 +91,6 @@ def answer_only_final_answer_error(
     text = (content or "").strip()
     if not text or text == "模型没有返回内容。":
         return "model did not return a final answer"
-    if strip_native_tool_call_blocks(text) != text:
-        return "model returned unresolved tool call markup instead of a final answer"
     return ""
 
 
@@ -107,8 +105,6 @@ def needs_synthesized_final_answer(
     if not tool_events:
         return bool(answer_only_final_answer_error(content, tool_events, task_contract))
     if not text or text == "模型没有返回内容。":
-        return True
-    if strip_native_tool_call_blocks(text) != text:
         return True
     return False
 

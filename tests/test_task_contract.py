@@ -1,19 +1,11 @@
-from runtime.agent_strategy.capability_router import (
-    build_capability_catalog,
-    format_capability_catalog_for_prompt,
-)
 from runtime.agent_strategy.task_contract import (
     apply_task_continuity,
     contract_expects_text_output,
     contract_requests_task_lineage,
     default_task_contract,
-    extract_task_contract_json,
     merge_model_task_contract,
     should_apply_task_continuity,
-    should_use_model_task_contract,
     task_continuity_anchor,
-    task_contract_context_messages,
-    task_contract_prompt,
 )
 from runtime.run_events import canonical_run_event_name, compact_run_event
 
@@ -27,15 +19,6 @@ def _fallback(intent: str = "answer_only") -> dict:
         workspace_path="D:\\code\\demo",
         access_scope="workspace",
     )
-
-
-def test_extract_task_contract_json_from_fenced_response() -> None:
-    raw = '```json\n{"intent":"write_required","requires_write":true}\n```'
-
-    assert extract_task_contract_json(raw) == {
-        "intent": "write_required",
-        "requires_write": True,
-    }
 
 
 def test_model_contract_write_fact_does_not_rewrite_model_intent() -> None:
@@ -127,27 +110,6 @@ def test_task_contract_keeps_planning_and_confirmation_policies_independent() ->
     assert contract["requires_plan"] is False
 
 
-def test_task_contract_prompt_contains_only_contract_request() -> None:
-    prompt = task_contract_prompt("D:\\code\\demo", _fallback())
-
-    assert "只输出 JSON" in prompt
-    assert "requires_write" in prompt
-    assert "requires_state_change" in prompt
-    assert "referenced_task_candidate_id" in prompt
-    assert "needs_task_lineage" in prompt
-    assert "task_lineage_request_reason" in prompt
-    assert "先判断当前请求能否脱离历史内容独立成立" in prompt
-    assert "不要把不完整目标弱化成“检查或提供指导”" in prompt
-    assert "系统不会根据关键词替你改写这些字段" in prompt
-    assert "当前用户请求是任务语义的第一依据" in prompt
-    assert "user_request 是历史用户原话" in prompt
-    assert "declared_goal" in prompt
-    assert "observed_actual_paths" in prompt
-    assert "系统回退契约" not in prompt
-    assert "focus_relation" in prompt
-    assert '"blockers"' not in prompt
-
-
 def test_model_contract_separates_new_task_from_inherited_focus() -> None:
     contract = merge_model_task_contract(
         {
@@ -171,26 +133,6 @@ def test_model_contract_separates_new_task_from_inherited_focus() -> None:
     assert contract["focus"]["kind"] == "subproject"
     assert contract["referenced_task_candidate_id"] == ""
     assert contract["referenced_focus_candidate_id"] == "run-previous"
-
-
-def test_task_contract_prompt_explains_independent_focus_relation() -> None:
-    prompt = task_contract_prompt("D:\\code\\demo", _fallback())
-
-    assert "scope_relation 描述当前目标与历史任务的关系" in prompt
-    assert "focus_relation 独立描述当前工作对象的来源" in prompt
-    assert '"referenced_focus_candidate_id"' in prompt
-
-
-def test_task_contract_prompt_includes_workspace_context_as_facts() -> None:
-    prompt = task_contract_prompt(
-        "D:\\code\\demo",
-        _fallback(),
-        workspace_context='Workspace fact snapshot: {"name":"lesson","extension_counts":{".html":1}}',
-    )
-
-    assert "Runtime workspace context" in prompt
-    assert "Workspace fact snapshot" in prompt
-    assert '"lesson"' in prompt
 
 
 def test_model_contract_can_require_external_state_without_local_file_write() -> None:
@@ -246,67 +188,6 @@ def test_model_contract_can_require_visual_verification() -> None:
     assert "target_visual_verification" in contract["success_conditions"]
 
 
-def test_task_contract_prompt_includes_runtime_capabilities_when_provided() -> None:
-    prompt = task_contract_prompt(
-        "D:\\code\\demo",
-        _fallback(),
-        capability_context="- web.network_fetch: Fetch network content; tools=web.extract_text, web.render_page",
-    )
-
-    assert "Runtime capability context" in prompt
-    assert "web.extract_text" in prompt
-    assert "current capability facts" in prompt
-    assert "not a required execution route" in prompt
-    assert "required_verification_modalities" in prompt
-
-
-def test_task_contract_prompt_receives_conditional_capability_affordances() -> None:
-    capability_context = format_capability_catalog_for_prompt(
-        build_capability_catalog([
-            {
-                "id": "shell.run_command",
-                "capability": "shell.local_command",
-                "effects": ["shell_command"],
-                "affordances": [
-                    {
-                        "id": "process.start_background",
-                        "description": "Start a GUI process and return its PID.",
-                        "input_hints": ["set background=true"],
-                        "effects": ["external_state_change"],
-                        "artifacts": ["process"],
-                        "roles": ["execution", "deliverable", "evidence"],
-                        "evidence_limits": [
-                            "process creation is not behavioral verification"
-                        ],
-                    }
-                ],
-            }
-        ]),
-        compact=True,
-    )
-
-    prompt = task_contract_prompt(
-        "D:\\code\\demo",
-        _fallback(),
-        capability_context=capability_context,
-    )
-
-    assert "affordance=process.start_background via shell.run_command" in prompt
-    assert "when=set background=true" in prompt
-    assert "effects=external_state_change" in prompt
-    assert "process creation is not behavioral verification" in prompt
-    assert "current capability facts" in prompt
-    assert "not a required execution route" in prompt
-
-
-def test_task_contract_prompt_does_not_embed_scenario_repair_policy() -> None:
-    prompt = task_contract_prompt("D:\\code\\demo", _fallback())
-
-    assert "analysis-first repairable task" not in prompt
-    assert "execution_advisories" in prompt
-    assert "evidence_may_require_repair" not in prompt
-
-
 def test_model_contract_preserves_execution_advisories_as_non_binding_context() -> None:
     contract = merge_model_task_contract(
         {
@@ -353,80 +234,6 @@ def test_legacy_model_blockers_become_non_binding_execution_advisories() -> None
             "suggested_first_action": "",
         }
     ]
-
-
-def test_task_contract_context_keeps_recent_task_and_current_follow_up() -> None:
-    context = task_contract_context_messages(
-        [
-            {"role": "system", "content": "large tool catalog"},
-            {"role": "user", "content": "重写一个 3D 模型查看器"},
-            {"role": "assistant", "content": "已创建 viewer.html"},
-            {"role": "user", "content": "现在想加能选构件的能力"},
-        ],
-        "现在想加能选构件的能力",
-        include_history=True,
-    )
-
-    assert context == [
-        {"role": "user", "content": "重写一个 3D 模型查看器"},
-        {"role": "assistant", "content": "已创建 viewer.html"},
-        {"role": "user", "content": "现在想加能选构件的能力"},
-    ]
-
-
-def test_task_contract_context_can_use_current_request_only() -> None:
-    context = task_contract_context_messages(
-        [
-            {"role": "user", "content": "Create a Blender house"},
-            {"role": "assistant", "content": "I changed the scene"},
-            {"role": "user", "content": "Now update the teaching page code"},
-        ],
-        "Now update the teaching page code",
-        include_history=False,
-    )
-
-    assert context == [{"role": "user", "content": "Now update the teaching page code"}]
-
-
-def test_short_action_request_still_uses_model_contract() -> None:
-    assert should_use_model_task_contract(
-        "在 Blender 中建个二层小楼",
-        "answer_only",
-    )
-
-
-def test_obvious_chat_can_skip_model_contract_without_recent_task() -> None:
-    assert not should_use_model_task_contract("你好", "answer_only")
-
-
-def test_no_write_hint_still_uses_model_contract_for_semantic_judgment() -> None:
-    assert should_use_model_task_contract(
-        "Only analyze the current issue; do not modify files yet.",
-        "answer_only",
-    )
-
-
-def test_non_chat_recommendation_uses_model_contract_for_semantic_judgment() -> None:
-    assert should_use_model_task_contract(
-        "Compare several options for a low-cost programmable consumer device and recommend a concrete model.",
-        "answer_only",
-    )
-
-
-def test_obvious_chat_uses_model_contract_when_it_may_be_task_follow_up() -> None:
-    assert should_use_model_task_contract(
-        "好",
-        "answer_only",
-        has_recent_task_context=True,
-    )
-
-
-def test_diagnostic_feedback_uses_model_contract_even_if_fallback_is_chat() -> None:
-    assert should_use_model_task_contract(
-        "home.js:1 Uncaught TypeError: Cannot set properties of null "
-        "(setting 'onclick')",
-        "answer_only",
-    )
 
 
 def test_retry_wording_does_not_override_current_model_target() -> None:

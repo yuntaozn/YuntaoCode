@@ -7,6 +7,10 @@ from runtime.visual_context import (
     model_supports_visual_context,
 )
 from runtime.visual_evidence import build_visual_evidence
+from types import SimpleNamespace
+from runtime.tool_result_evidence import tool_output_evidence
+from runtime.visual_context import apply_visual_context_delivery
+from tests.fakes.image_output import image_output
 
 
 def test_model_supports_visual_context_defaults_to_enabled_for_model_configs() -> None:
@@ -15,6 +19,44 @@ def test_model_supports_visual_context_defaults_to_enabled_for_model_configs() -
     assert model_supports_visual_context({"supports_vision": False}) is False
     assert model_supports_visual_context({"supports_multimodal": True}) is True
     assert model_supports_visual_context({"image_input": True}) is True
+
+
+def test_mcp_inline_image_uses_matching_tool_task_without_new_file_access(tmp_path):
+    raw = image_output()
+    task = SimpleNamespace(id="image-1", tool="mcp_demo.capture", status="success", output=raw)
+    event = {
+        "task_id": task.id, "tool": task.tool, "status": "success", "output": tool_output_evidence(raw),
+        "output_source": {"kind": "tool_task_output", "task_id": task.id},
+    }
+    build = build_visual_context_messages(
+        [event], model_config={"supports_vision": True}, workspace_path=str(tmp_path), data_dir=None,
+        tool_task_lookup=lambda task_id: task if task_id == task.id else None,
+    )
+    assert len(build.messages) == 1
+    assert build.messages[0]["content"][1]["type"] == "image_url"
+    assert build.records[0]["source_ref"] == "tool_task:image-1:mcp_content:0"
+    assert build.records[0]["path"] == ""
+    assert build.records[0]["inspection_status"] in {"observed", "inspector_unavailable"}
+    assert build.records[0]["injected_into_model_context"] is False
+    accepted = apply_visual_context_delivery(build.records, {build.records[0]["image_ref"]: "accepted"})
+    assert accepted[0]["injected_into_model_context"] is True
+    task.tool = "mcp_other.capture"
+    assert not build_visual_context_messages(
+        [event], model_config={}, workspace_path=str(tmp_path), data_dir=None, tool_task_lookup=lambda _id: task,
+    ).messages
+
+
+def test_vision_disabled_reports_omission_without_attaching_pixels(tmp_path):
+    task = SimpleNamespace(id="image-1", tool="mcp_demo.capture", status="success", output=image_output())
+    event = {"tool": task.tool, "status": "success", "task_id": task.id,
+             "output_source": {"kind": "tool_task_output", "task_id": task.id}}
+    result = build_visual_context_messages(
+        [event], model_config={"supports_vision": False}, workspace_path=str(tmp_path), data_dir=None,
+        tool_task_lookup=lambda _id: task,
+    )
+    assert len(result.messages[0]["content"]) == 1
+    assert result.records[0]["omission_reason"] == "model_vision_disabled"
+    assert result.records[0]["injected_into_model_context"] is False
 
 
 def test_visual_context_builds_multimodal_message_for_allowed_visual_evidence(tmp_path: Path) -> None:

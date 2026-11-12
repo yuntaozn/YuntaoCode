@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import base64
 
 import pytest
 
 from runtime.attachment_store import AttachmentStore
-from runtime.skills.attachments import extract_attachment_text
+from runtime.skills.attachments import extract_attachment_text, read_attachment_image
+from runtime.tool_media import MAX_ATTACHMENT_IMAGE_BYTES
 
 
 def test_attachment_store_persists_and_binds_immutable_input(tmp_path: Path) -> None:
@@ -91,3 +93,52 @@ async def test_read_attachment_text_requires_current_run_access(tmp_path: Path) 
     with pytest.raises(PermissionError, match="not available"):
         await extract_attachment_text({"attachment_id": "other"}, context)
     store.close()
+
+
+@pytest.mark.asyncio
+async def test_read_image_uses_conversation_attachment_bytes_without_exposing_storage_path(tmp_path):
+    store = AttachmentStore(tmp_path / "attachments.db", tmp_path / "attachments")
+    try:
+        data = b"\x89PNG\r\n\x1a\noriginal"
+        record = store.create(workspace_id="w", conversation_id="c", original_name="ref.png", media_type="image/png", content=data)
+        store.bind_message([record.id], "previous-user-message")
+        context = SimpleNamespace(attachment_store=store, attachment_ids=(record.id,))
+        output = await read_attachment_image({"attachment_id": record.id}, context)
+        assert output["type"] == "attachment_image"
+        assert output["attachment"]["id"] == record.id
+        assert base64.b64decode(output["mcp_content"][0]["data"]) == data
+        assert output["mcp_content"][0]["mimeType"] == "image/png"
+        assert "relative_path" not in output["attachment"]
+        assert "path" not in output
+        with pytest.raises(PermissionError, match="not available"):
+            await read_attachment_image({"attachment_id": record.id}, SimpleNamespace(attachment_store=store, attachment_ids=()))
+        with pytest.raises(ValueError, match="text extraction does not support"):
+            await extract_attachment_text({"attachment_id": record.id}, context)
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("media_type", ["text/plain", "image/svg+xml", "image/bmp"])
+async def test_read_image_rejects_unsupported_media(tmp_path, media_type):
+    store = AttachmentStore(tmp_path / "attachments.db", tmp_path / "attachments")
+    try:
+        record = store.create(workspace_id="w", conversation_id="c", original_name="input.bin", media_type=media_type, content=b"data")
+        with pytest.raises(ValueError, match="image input does not support media type"):
+            await read_attachment_image({"attachment_id": record.id}, SimpleNamespace(attachment_store=store, attachment_ids=(record.id,)))
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_read_image_checks_access_before_store_lookup_and_byte_limit_before_read():
+    def forbidden(*_args):
+        raise AssertionError("unexpected attachment data access")
+
+    context = SimpleNamespace(attachment_ids=(), attachment_store=SimpleNamespace(get=forbidden))
+    with pytest.raises(PermissionError):
+        await read_attachment_image({"attachment_id": "other-conversation"}, context)
+    record = SimpleNamespace(media_type="image/png", size=MAX_ATTACHMENT_IMAGE_BYTES + 1)
+    context = SimpleNamespace(attachment_ids=("large",), attachment_store=SimpleNamespace(get=lambda _id: record, read_bytes=forbidden))
+    with pytest.raises(ValueError, match="bytes"):
+        await read_attachment_image({"attachment_id": "large"}, context)

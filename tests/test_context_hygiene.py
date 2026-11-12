@@ -41,7 +41,7 @@ def test_context_hygiene_keeps_normal_history_unchanged() -> None:
     assert report["current_request_boundary_inserted"] is False
 
 
-def test_context_hygiene_moves_prior_task_turns_to_context_pack_marker() -> None:
+def test_context_hygiene_preserves_task_turns_and_roles_despite_contract_metadata() -> None:
     messages = [
         {"role": "system", "content": "system prompt"},
         {"role": "user", "content": "Create a Blender house"},
@@ -66,24 +66,24 @@ def test_context_hygiene_moves_prior_task_turns_to_context_pack_marker() -> None
     cleaned, report = sanitize_model_context(messages)
     joined = "\n".join(str(item.get("content") or "") for item in cleaned)
 
-    assert report["task_candidate_messages"] == 1
-    assert report["task_user_anchor_messages"] == 1
-    assert report["compacted_task_marker_messages"] == 1
-    assert report["current_request_boundary_inserted"] is True
+    assert report["task_candidate_messages"] == 0
+    assert report["task_user_anchor_messages"] == 0
+    assert report["compacted_task_marker_messages"] == 0
+    assert report["current_request_boundary_inserted"] is False
     assert "task_lineage_context.v1" not in joined
-    assert "Historical task turns moved to Context Pack" in joined
+    assert "Historical task turns moved to Context Pack" not in joined
     assert "Historical task candidate moved to Context Pack" not in joined
     assert "Historical task user request moved to Context Pack" not in joined
-    assert "I changed the scene." not in joined
-    assert "Create a Blender house" not in joined
-    assert "Current request boundary" in joined
+    assert "I changed the scene." in joined
+    assert "Create a Blender house" in joined
+    assert "Current request boundary" not in joined
     assert cleaned[-1] == {"role": "user", "content": "Now update the teaching page code"}
     marker_messages = [
         item for item in cleaned
         if "moved to Context Pack" in str(item.get("content") or "")
     ]
-    assert marker_messages
-    assert {item["role"] for item in marker_messages} == {"system"}
+    assert not marker_messages
+    assert [item["role"] for item in cleaned] == ["system", "user", "assistant", "user"]
     assert all("_yuntao_metadata" not in item for item in cleaned)
 
 

@@ -142,7 +142,7 @@ def test_task_lineage_reference_anchor_keeps_model_declared_deliverables() -> No
     assert candidates[0]["actual_paths"] == ["lesson/src/app.js"]
 
 
-def test_task_lineage_skips_answer_only_contracts() -> None:
+def test_task_lineage_keeps_answer_only_contract_as_historical_evidence() -> None:
     candidate = task_candidate_from_message(
         role="assistant",
         content="explanation",
@@ -154,7 +154,9 @@ def test_task_lineage_skips_answer_only_contracts() -> None:
         },
     )
 
-    assert candidate is None
+    assert candidate is not None
+    assert candidate["model_response_excerpt"] == "explanation"
+    assert candidate["intent"] == "answer_only"
 
 
 def test_task_lineage_candidates_can_be_referenced_by_model_contract() -> None:

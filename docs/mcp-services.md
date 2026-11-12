@@ -40,7 +40,7 @@ facts and couples the core runtime to the external integration.
 
 ```text
 External Application
-  Blender Add-on socket server
+  Blender Lab MCP Add-on socket server
         |
 MCP Service
   blender-mcp process / transport / lifecycle
@@ -57,23 +57,65 @@ Task Runtime
 
 For Blender specifically:
 
+- The [official Blender Lab MCP](https://www.blender.org/lab/mcp-server/)
+  requires Blender 5.1+ and the MCP extension from `https://lab.blender.org/`.
 - Blender Add-on owns the in-application socket server.
 - Blender MCP Server owns the MCP protocol and socket bridge.
 - YuntaoCode connects to the MCP Server through the generic stdio MCP session.
 - Blender-specific tools are not copied into `runtime/skills/`.
 - A disabled `blender` example definition is created during the MCP service
-  schema migration. It uses the explicit `uvx blender-mcp` package-runner
-  command. It does not start automatically by default; users may explicitly
+  schema migration. It uses `uvx --from` with the versioned official source
+  `git+https://projects.blender.org/lab/blender_mcp.git@v1.0.3#subdirectory=mcp`,
+  followed by the `blender-mcp` entry point. It does not start automatically by default; users may explicitly
   enable the service and opt in to `lifecycle.auto_start`.
 - MCP service source/reference trees live under `mcp-services/<service-id>/`.
-  A local source copy, such as `mcp-services/blender-mcp/`, is third-party
+  The legacy local source copy at `mcp-services/blender-mcp/` is third-party
   reference material for the MCP service boundary. It is not a built-in Python
   skill, not an automatically loaded plugin, and not required by the default
-  `uvx blender-mcp` connection path.
+  official connection path.
 - The Blender example uses conservative per-tool timeouts because the official
   socket bridge can take longer than a normal local tool call, especially for
   viewport screenshots and code execution. These timeouts are operational
   defaults, not success guarantees.
+
+### Migrating an Existing Blender Connection
+
+The official and third-party projects both use the package name `blender-mcp`
+and the default add-on port `9876`, but their socket protocols and tools differ.
+The plain command `uvx blender-mcp` selects the third-party PyPI project.
+Use the explicit official source above; do not pair it with the old add-on.
+
+Schema `mcp_service.v9` introduced the official example for new configurations.
+Schema `mcp_service.v10` also removes the old preset deliverable and state-change
+claims from arbitrary Blender code execution. A successful script can be a
+read-only query; it does not by itself prove that a model was created. Provider,
+enablement, confirmation, and timeouts remain unchanged by this evidence migration.
+Existing definitions retain their provider, enablement, permissions, lifecycle,
+and diagnostics; schema migration does not silently replace an enabled server.
+To switch an existing connection:
+
+1. Back up the local MCP configuration and secrets, then stop the old service.
+2. Install and start the official MCP add-on in Blender 5.1+.
+3. Update the connection's stdio command and arguments using the example below.
+   Keep service ID `blender` to retain capability ID `mcp.blender`. Keep existing
+   confirmation permissions and explicitly choose whether to retain auto-start.
+4. Replace old tool policies and diagnostics with the official example's
+   policies from `DEFAULT_MCP_SERVICES` in `runtime/mcp_service_manager.py`.
+   Environment values are preserved when omitted from an update; explicitly
+   supply an empty `env` to remove legacy telemetry settings.
+5. Check prerequisites (`127.0.0.1:9876`, `uvx`, and Git), start the service, and
+   run the read-only probe. A successful TCP check alone does not identify which
+   add-on protocol is listening.
+
+Official inspection tools include `get_objects_summary`,
+`get_object_detail_summary`, and `get_blendfile_summary_datablocks`.
+Screenshots use `get_screenshot_of_window_as_image` and
+`get_screenshot_of_area_as_image`. Arbitrary code still uses
+`execute_blender_code`; return structured data by assigning a dict to `result`.
+Do not reuse legacy names such as `get_scene_info` or `get_viewport_screenshot`.
+The official code-execution and render-to-path tools retain confirmation;
+render-to-path policies override upstream read-only hints because these tools
+write files.
 
 ## Runtime Concepts
 
@@ -98,7 +140,7 @@ service and starts it manually or opts in to auto-start.
 External application readiness is also separate from MCP connection state.
 Service definitions may declare generic `tcp` or `executable` prerequisites.
 The Blender example checks both the Add-on socket at `127.0.0.1:9876` and the
-availability of `uvx`. A ready Add-on does not mean the MCP protocol session is
+availability of `uvx` and Git. A ready Add-on does not mean the MCP protocol session is
 connected; it only explains which part of the connection chain is ready.
 
 Capability readiness is advisory by default. If an MCP service is stopped,
@@ -110,9 +152,14 @@ the final tool snapshot. This keeps the model in charge of strategy while
 preventing a missing dynamic tool list from erasing the intended
 external-application boundary.
 
-The Blender example also sets `BLENDER_MCP_DISABLE_TELEMETRY=1` by default.
-This follows YuntaoCode's local-first boundary, but it is not a process-level
-network sandbox.
+Legacy third-party definitions keep `BLENDER_MCP_DISABLE_TELEMETRY=1` during
+older schema upgrades. The official example does not depend on this
+third-party setting. Neither configuration is a process-level network or
+filesystem sandbox.
+
+The generic stdio transport permits JSON lines up to 16 MiB so inline MCP
+screenshots can exceed asyncio's default 64 KiB line limit. This is a bounded
+transport buffer, not an image resize or a guarantee that every screenshot fits.
 
 The public service API exposes these views as `server_definition`,
 `connection_profile`, `session`, and `capability_bindings` while retaining the
@@ -147,14 +194,18 @@ MCP service.
 
 ```json
 {
-  "schema_version": "mcp_service.v1-draft",
+  "schema_version": "mcp_service.v10",
   "id": "blender",
-  "name": "Blender MCP",
+  "name": "Blender MCP (Blender Lab)",
   "enabled": false,
   "transport": {
     "type": "stdio",
     "command": "uvx",
-    "args": ["blender-mcp"],
+    "args": [
+      "--from",
+      "git+https://projects.blender.org/lab/blender_mcp.git@v1.0.3#subdirectory=mcp",
+      "blender-mcp"
+    ],
     "cwd": null,
     "env": {}
   },

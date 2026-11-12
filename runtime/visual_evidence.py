@@ -159,8 +159,13 @@ def visual_evidence_summary(evidence: dict[str, Any] | None) -> dict[str, Any] |
 
     if not isinstance(evidence, dict):
         return None
+    media_fields = {key: evidence[key] for key in (
+        "source_ref", "task_id", "image_ref", "content_index", "delivery_status", "omission_reason",
+        "inspection_status", "uniform_pixels", "pixel_ranges", "pixel_channels", "visual_review_status",
+    ) if key in evidence}
     if _is_visual_evidence_summary(evidence):
         return {
+            **media_fields,
             "schema_version": evidence.get("schema_version") or VISUAL_EVIDENCE_SCHEMA_VERSION,
             "kind": "visual_evidence",
             "source_type": evidence.get("source_type"),
@@ -193,6 +198,7 @@ def visual_evidence_summary(evidence: dict[str, Any] | None) -> dict[str, Any] |
         else {}
     )
     return {
+        **media_fields,
         "schema_version": evidence.get("schema_version") or VISUAL_EVIDENCE_SCHEMA_VERSION,
         "kind": "visual_evidence",
         "source_type": source.get("type"),
@@ -215,6 +221,21 @@ def visual_evidence_summary(evidence: dict[str, Any] | None) -> dict[str, Any] |
         "model_context_modality": model_context.get("modality"),
         "model_context_path": model_context.get("path") or "",
     }
+
+
+def inline_visual_evidence(output: dict[str, Any], task_id: str) -> list[dict[str, Any]]:
+    """将内联图片的审计元数据映射为视觉记录，不把引用伪装成本地文件路径。"""
+    images = output.get("inline_images")
+    if not task_id or not isinstance(images, list):
+        return []
+    return [{
+        **image, "schema_version": VISUAL_EVIDENCE_SCHEMA_VERSION, "kind": "visual_evidence",
+        "source_type": "mcp_inline_image", "artifact_kind": "image", "path": "",
+        "task_id": task_id, "source_ref": f"tool_task:{task_id}:mcp_content:{image['content_index']}",
+        "format": str(image.get("mime_type") or "").removeprefix("image/"),
+        "model_context_eligible": image.get("delivery_status") == "eligible",
+        "model_context_modality": "image", "visual_review_status": "unconfirmed",
+    } for image in images if isinstance(image, dict) and type(image.get("content_index")) is int]
 
 
 def _is_visual_evidence_summary(value: dict[str, Any]) -> bool:

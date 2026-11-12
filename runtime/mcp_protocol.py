@@ -12,6 +12,8 @@ from runtime.visual_evidence import build_visual_evidence
 MCP_PROTOCOL_VERSION = "2025-06-18"
 MCP_PROTOCOL_FALLBACK_VERSIONS = ("2024-11-05",)
 MCP_CLIENT_INFO = {"name": "YuntaoCode", "version": "0.1.0"}
+# MCP 图片通过单行 JSON 返回，不能使用 asyncio 默认的 64 KiB 行缓冲。
+MCP_STDIO_STREAM_LIMIT = 16 * 1024 * 1024
 VISUAL_ARTIFACT_EXTENSIONS = {
     ".png": ("image", "png"),
     ".jpg": ("image", "jpg"),

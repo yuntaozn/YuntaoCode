@@ -1,7 +1,136 @@
 import json
 import sqlite3
+import pytest
 
 from runtime.run_store import RunStore
+from runtime.run_events import RunEventHub
+from runtime.product_task_store import ProductTaskStore
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+@pytest.mark.parametrize("status,task_state", [("success", "completed"), ("failure", "failed"), ("partial", "paused"), ("stopped", "paused"), ("cancelled", "cancelled")])
+def test_finalized_run_keeps_late_evidence_without_reopening_or_overwriting_result(tmp_path, backend, status, task_state):
+    store = RunStore(tmp_path / "runs.json") if backend == "json" else RunStore.sqlite(tmp_path / "runs.db")
+    tasks = ProductTaskStore(tmp_path / "tasks.db")
+    task = tasks.create(goal="Model", conversation_id="conv", workspace_id="workspace")
+    run = store.create(conversation_id="conv", workspace_id="workspace", mode="terminal", user_content="Model", task_id=task.id)
+    tasks.attach_run(task.id, run.id)
+    hub = RunEventHub(store, product_tasks=tasks)
+    hub.emit(run.id, {"event": "result", "result": {"status": status, "goal_status": "complete"}})
+    hub.emit(run.id, {"event": "done", "run_status": status})
+    before = store.get(run.id)
+    queue = hub.subscribe(run.id)
+    for late in [
+        {"event": "tool", "tool": "filesystem.read_file", "status": "failure", "output": {"diagnostic": "late failure"}},
+        {"event": "status", "status": "resumed"},
+        {"event": "confirm", "message": "late confirmation"},
+        {"event": "error", "error": "late error"},
+        {"event": "result", "result": {"status": "success", "goal_status": "incomplete"}},
+        {"event": "task_contract", "contract": {"goal": "late replacement"}},
+        {"event": "done", "run_status": "success"},
+    ]:
+        live = hub.emit(run.id, late)
+        assert live["event"] == "late_event"
+        assert live["original_event"]["event"] == late["event"]
+        assert queue.get_nowait()["event"] == "late_event"
+    persisted = store.get(run.id)
+    assert (persisted.status, persisted.stage, persisted.message) == (before.status, "done", before.message)
+    assert [e["result"] for e in persisted.events if e["event"] == "result"] == [{"status": status, "goal_status": "complete"}]
+    assert tasks.get(task.id).state == task_state
+    assert "model_understanding" not in tasks.get(task.id).metadata
+    hub.unsubscribe(run.id, queue)
+    store.close()
+    tasks.close()
+
+
+def test_result_publication_seals_execution_but_allows_checkpoint_and_done(tmp_path):
+    store = RunStore(tmp_path / "runs.json")
+    run = store.create(conversation_id="conv", workspace_id="workspace", mode="terminal", user_content="Model")
+    store.record_event(run.id, {"event": "result", "result": {"status": "success"}})
+    late = store.record_event(run.id, {"event": "tool", "status": "failure"})
+    assert (late.status, late.stage) == ("success", "result")
+    assert late.events[-1]["event"] == "late_event"
+    store.record_event(run.id, {"event": "checkpoint", "checkpoint": {"id": "checkpoint-1"}})
+    done = store.record_event(run.id, {"event": "done", "run_status": "success"})
+    assert done.stage == "done"
+    assert any(e["event"] == "checkpoint" for e in done.events)
+    store.close()
+
+
+def test_user_stop_cannot_be_revived_by_late_execution_or_finalizer(tmp_path):
+    store = RunStore(tmp_path / "runs.json")
+    run = store.create(conversation_id="conv", workspace_id="workspace", mode="terminal", user_content="Model")
+    store.record_event(run.id, {"event": "status", "status": "stopped"})
+    for event in [{"event": "tool", "status": "failure"}, {"event": "status", "status": "resumed"}]:
+        assert store.record_event(run.id, event).status == "stopped"
+    store.record_event(run.id, {"event": "result", "result": {"status": "success"}})
+    assert store.record_event(run.id, {"event": "done", "run_status": "success"}).status == "stopped"
+    store.close()
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+@pytest.mark.parametrize("result_status", ["success", "partial", "no_tool_activity"])
+def test_result_seal_survives_event_retention_and_checkpoint(tmp_path, backend, result_status):
+    store = RunStore(tmp_path / "runs.json", keep_events=3) if backend == "json" else RunStore.sqlite(tmp_path / "runs.db", keep_events=3)
+    run = store.create(conversation_id="conv", workspace_id="workspace", mode="terminal", user_content="Inspect")
+    store.record_event(run.id, {"event": "result", "result": {"status": result_status}})
+    for _ in range(4):
+        store.record_event(run.id, {"event": "model_round"})
+    store.record_event(run.id, {"event": "checkpoint", "checkpoint": {"id": "checkpoint"}})
+    before = store.get(run.id)
+    assert not any(e["event"] == "result" for e in before.events)
+    assert before.stage == "result"
+    late = store.record_event(run.id, {"event": "tool", "tool": "read", "status": "failure"})
+    assert late.events[-1]["event"] == "late_event"
+    assert (late.stage, late.status) == (before.stage, before.status)
+    done = store.record_event(run.id, {"event": "done", "run_status": "success" if result_status == "no_tool_activity" else result_status})
+    assert done.stage == "done"
+    store.close()
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_user_stop_survives_event_retention(tmp_path, backend):
+    store = RunStore(tmp_path / "runs.json", keep_events=2) if backend == "json" else RunStore.sqlite(tmp_path / "runs.db", keep_events=2)
+    run = store.create(conversation_id="conv", workspace_id="workspace", mode="terminal", user_content="Stop")
+    store.record_event(run.id, {"event": "status", "status": "stopped"})
+    for _ in range(3):
+        store.record_event(run.id, {"event": "model_round"})
+    assert not any(e.get("status") == "stopped" for e in store.get(run.id).events)
+    store.record_event(run.id, {"event": "result", "result": {"status": "success"}})
+    assert store.record_event(run.id, {"event": "done", "run_status": "success"}).status == "stopped"
+    store.close()
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+@pytest.mark.parametrize("status", ["success", "partial", "stopped"])
+def test_terminal_state_survives_restart_after_source_events_are_pruned(tmp_path, backend, status):
+    path = tmp_path / ("runs.json" if backend == "json" else "runs.db")
+    factory = RunStore if backend == "json" else RunStore.sqlite
+    store = factory(path, keep_events=2)
+    run = store.create(conversation_id="conv", workspace_id="workspace", mode="terminal", user_content="Inspect")
+    if status == "stopped":
+        store.record_event(run.id, {"event": "status", "status": "stopped"})
+    else:
+        store.record_event(run.id, {"event": "result", "result": {"status": status}})
+    for _ in range(3):
+        store.record_event(run.id, {"event": "model_round"})
+    store.close()
+    reopened = factory(path, keep_events=2)
+    before = reopened.get(run.id)
+    late = reopened.record_event(run.id, {"event": "tool", "status": "failure"})
+    assert late.events[-1]["event"] == "late_event"
+    assert (late.status, late.stage) == (before.status, before.stage)
+    assert late.status == status
+    reopened.close()
+
+
+def test_checkpoint_before_result_does_not_seal_an_active_run(tmp_path):
+    store = RunStore(tmp_path / "runs.json")
+    run = store.create(conversation_id="conv", workspace_id="workspace", mode="terminal", user_content="Inspect")
+    store.record_event(run.id, {"event": "checkpoint", "checkpoint": {"kind": "pause"}})
+    active = store.record_event(run.id, {"event": "tool", "status": "success"})
+    assert active.events[-1]["event"] == "tool" and active.stage == "tool"
+    store.close()
 
 
 def test_run_store_persists_schema_version_and_record_kind(tmp_path) -> None:

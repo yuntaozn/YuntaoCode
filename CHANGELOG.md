@@ -6,22 +6,146 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ## [Unreleased]
 
+### Fixed
+
+- Frontend Run polling now reconciles a locally open stream with the sealed
+  backend Run state, recovering persisted final text and process metadata when
+  the end event is lost. It closes only the local receiver, releases pending
+  state and timers, and cannot clear a newer stream in the same conversation.
+  Panel pages now use content-hashed static URLs so cached older JavaScript
+  does not survive a frontend update behind a fixed version parameter.
+- Historical conversation images can now be read on demand through the
+  discoverable `attachment.read_image` capability. Image reads share the
+  existing conversation ID boundary and 10 MiB upload limit, and return original
+  pixels through the normal visual-context bridge. History keeps attachment
+  metadata without automatically resending image bytes. Attachment catalogs
+  no longer recommend text extraction, and image/text mismatches return factual
+  errors. Tool discovery favors more complete lexical matches so a new image
+  reader does not displace matching file tools.
+- Active model streams no longer stop at a fixed 300-second total deadline.
+  Connection and idle limits remain bounded; incoming SSE bytes, including
+  keepalives and partial frames, reset the idle clock. Background HTTP timeouts
+  and other request exceptions now reach the normal error/finalization path
+  instead of disappearing as an empty response. Idle diagnostics report the
+  effective limit without retry advice, and consumer cancellation still cleans
+  up the background fetch.
+- Removed progress-based round-budget extensions. All model-selected tasks and
+  tool outcomes now share one fixed resource limit of 120 rounds, preserving the
+  previous absolute ceiling without a task-dependent gate at round 40. Provider
+  errors, HTTP errors, and exhausted idle-timeout retries now save RunResult,
+  recovery checkpoints, and assistant messages through normal finalization.
+  Original transport errors and any existing writes are retained; the transport
+  loop no longer decides finalization based on prior tool evidence.
+- Chinese tool queries now match character pairs and rank lexical overlap by
+  catalog frequency. Word-order differences such as querying file reading
+  against a description phrased as reading files no longer hide real tools;
+  discovery still runs only on the model's explicit query.
+- Successful Runs no longer leave Tasks paused when the model omits the optional
+  completion declaration. Explicit incomplete declarations remain open and are
+  retained as current-attempt facts without leaking into retries. Published
+  results and user stops survive event pruning and restart; finalization waits
+  for a user pause to be resumed before publishing the result. Repetition audit
+  records no longer include generated next-step recommendations.
+- Tool-attempt errors now return factual failures without recommended actions
+  or unsolicited tool lists. Repeated protocol errors return their actual code
+  instead of entering a one-retry repair gate; model tool choices remain under
+  the normal permission, protocol, and resource boundaries.
+- Main-model final answers are preserved, including JSON examples and trailing
+  text. Removed implicit completion-header parsing, secondary answer synthesis,
+  task-preflight service startup, and automatic changed-file footers. Shell
+  failures retain actual exit codes and stderr without generated replacement
+  commands; recovery snapshots report historical state without route advice.
+
+- Removed per-call capability-route, document-coverage, and verification-method
+  advisories, including duplicate advisory-to-risk projection. Tool risks now
+  carry observations without recommended actions or replacement tools, while
+  preserving diagnostics, external side-effect uncertainty, and original
+  permission and confirmation checks.
+- Free-text tool discovery now ranks query matches instead of taking the first
+  alphabetical entries. Model queries for file read/write no longer bury those
+  tools behind patch and document-draft definitions.
+
+- Initial model requests now carry one tool-discovery definition instead of
+  the full tool catalog. Models explicitly search/load original schemas;
+  newly connected MCP tools appear on discovery, and normal execution guards
+  remain in force. Duplicate context ledgers, workspace snapshots, capability
+  catalogs, and workflow appendices no longer inflate the system prompt.
+  Production-request regressions cover greeting overhead, file write/read,
+  external-tool dispatch, availability, permissions, and optional task updates.
+
+- Removed pre-execution planning, plan-following prompt injection, generated
+  fallback steps, automatic tool-to-step matching, and unused task-judgment
+  entrypoints. Legacy planning settings cannot re-enable these paths. Chat,
+  settings, and automation screens no longer expose planning-policy controls.
+  Optional model-authored progress remains auditable and can be cleared.
+
+- Run result evaluation now has one owner instead of repeated API contract
+  checks. Missing delivery evidence stays partial rather than becoming a
+  failure; model completion claims, execution, and verification remain separate.
+  Optional task bookkeeping no longer downgrades successful tool execution.
+- Repeated failures, reads, and write recovery no longer inject extra system
+  strategy prompts. Task updates can send only changed fields, including a
+  completion-only update, while permission and protocol checks remain enforced.
+
+- MCP inline images now reach the main model as image attachments instead of
+  serialized base64 text. Audit records preserve source references, bounded
+  pixel observations, and actual transport receipt or fallback without claiming
+  visual review passed. Failed external calls explicitly retain uncertainty
+  about partial side effects and rollback.
+
+- Rejected stream requests no longer persist user messages or strand conversation
+  reservations. Setup cancellation releases ownership, and disconnected streams
+  keep background runs controllable until execution ends.
+- Finalized Runs retain late events as audit envelopes without reopening Tasks
+  or replacing published results. Explicit stops survive late tool results and
+  duplicate finalization.
+- Invalid structured call indices and malformed provider chunks reject the
+  complete round batch with bounded protocol recovery. Task declarations use
+  their advertised schema and reject invalid nested requirements atomically.
+
 ### Added
+
+- Run results separate execution termination, goal completion, and verification.
+  Undeclared or unclosed goals remain unconfirmed instead of inheriting success
+  from a tool probe. Native task declarations can record completion and plan
+  progress with checked references to observed tool tasks.
+- Tool evidence is independent of frontend previews, preserving complete path
+  and diagnostic arrays while referencing inline media through the original
+  ToolTask. Main-model rounds now have durable protocol summaries without
+  duplicating prompt or reasoning text.
+- Task storage enforces state transitions and current-attempt ownership;
+  terminal task replays create linked new Tasks. Text-call compatibility is
+  explicit per model/provider, excludes reasoning and prose examples, and
+  leaves ordinary answer content intact.
+
+- The disabled Blender MCP example now selects the official Blender Lab server
+  from a versioned source, with matching inspection and screenshot policies.
+  Existing connections keep their provider until explicitly migrated. Generic
+  MCP stdio reads support bounded image responses above 64 KiB, and official
+  render-to-path tools retain write confirmation despite upstream read-only hints.
 
 - End-to-end scripted Run scenarios around the real
   `ConversationRunExecutor`, `ToolCallLoop`, `ToolExecutionBatch`, and
   `RunFinalizer`, covering verified completion and model-selected route
   recovery without replacing the runtime with a second test-only loop.
-- Observable lifecycle records for auxiliary non-streaming model calls. Task
-  contract interpretation and result synthesis now
-  share purpose, timeout, heartbeat, cancellation, and audit events without
+- Observable lifecycle records for auxiliary non-streaming model calls,
+  including result synthesis, with
+  purpose, timeout, heartbeat, cancellation, and audit events without
   exposing prompts or turning transport failure into a task verdict.
-- Removed the separate automatic plan-judge model call. A valid Task Contract
-  now owns pre-execution plan generation; if contract interpretation is
-  unavailable, the Run returns directly to the main execution model instead of
-  cascading through another semantic auxiliary call.
-- Invalid Task Contract model output is now recorded as a protocol fallback
-  instead of silently appearing to be an ordinary policy-sourced contract.
+- Runs now enter the main execution model without a separate task-contract
+  interpretation call. Optional `runtime.update_task` declarations record task
+  and plan state inside the same model/tool loop, without granting permissions
+  or counting as executed deliverables.
+- User guidance preserves its original text without rejudging the task or
+  automatically interrupting plans. Recent user requests and assistant promises
+  retain their roles; answer-only turns remain available as lineage evidence.
+- Arbitrary Blender code execution no longer implies a delivered artifact or
+  observed external-state change. Existing preset success claims are migrated
+  conservatively while retaining confirmation and connection configuration.
+- Model rounds ending with `tool_calls` without a usable call now receive one
+  bounded protocol retry and report an error if the payload remains missing,
+  instead of treating earlier successful reads as task success. Result
+  synthesis also correctly adapts settings to the auxiliary-call interface.
 
 - Auditable memory selection in Context Runtime: relevant global/workspace
   memories now enter task-contract and planning Context Packs with source IDs,
@@ -102,6 +226,11 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
   stays visible in RunResult and recovery records. Write-task round budgets now
   extend only for material progress, repeated read-range notices are one-shot,
   and a synthesized final answer is included before final status is frozen.
+  Result synthesis receives an answer-independent execution snapshot, avoiding
+  false failure wording caused solely by the not-yet-generated final answer.
+  Obsolete completion-review state, API prompt plumbing, and strategy gates
+  have been removed; legacy model-declared assessments remain passive audit
+  input only.
 - Built-in ToolSpec registrations now provide complete capability and task-role
   metadata. Tool events persist declared artifacts separately from observed
   artifacts, and role classification uses provider contracts while isolating
@@ -116,19 +245,16 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
   user-facing answer even when `RunResult` is partial, failed, or stopped.
   Result synthesis is now reserved for missing or protocol-invalid final
   content; evidence status and risks remain separate audit facts.
-- Runtime repair, convergence, read-range, and completion-review notices now
+- Runtime repair, convergence, and read-range notices now
   have a one-response model-context lifecycle. A successful model response
   consumes them, while transport errors retain them for retry, preventing stale
   execution advice from accumulating across later routes and final review.
-- Completion review now treats the model's observable choice as authoritative
-  for loop control: tool calls continue execution, while an ordinary final
-  answer ends the loop. Runtime verification gaps remain in `RunResult` and
-  audit evidence instead of forcing repeated completion re-entry rounds.
-- Completion review now supports a model-declared
-  `completion_self_assessment.v1`. `RunResult` preserves the Runtime evidence
-  status separately and will not record success when the model explicitly
-  reports that the task goal remains open. The assessment is a compact first-line
-  header, so the user-facing answer no longer has to be encoded inside JSON.
+- The model's observable choice remains authoritative for loop control: tool
+  calls continue execution, while an ordinary final answer ends the loop.
+  Runtime verification gaps stay in `RunResult` and audit evidence.
+- Legacy model-declared `completion_self_assessment.v1` headers remain
+  passively readable. `RunResult` preserves Runtime evidence status separately
+  and does not let a model declaration upgrade missing evidence.
 - Conversation persistence now keeps bounded summaries of Context Packs and
   capability evidence instead of duplicating the full RunEvent audit payload in
   every assistant message.
@@ -151,7 +277,7 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
   strategy or whether the model/tool loop should continue.
 - Cross-round lifecycle facts now live in an explicit `RunExecutionState`
   instead of scattered runner locals. Round budgets, guidance resets,
-  completion review, transient model-context notices, and transport counters
+  transient model-context notices, and transport counters
   share one tested state contract that does not choose model strategy. Repeated
   execution evidence remains a pure `ExecutionConvergence` concern.
 - Removed an unreachable target-deliverable-gap prompt path and its unused
@@ -253,7 +379,7 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 - Reduced soft runtime steering by making execution-stage prompts status-only and limiting malformed/dangling/progress correction prompts to one retry.
 - Shifted planning, progress, write-repair, duplicate-read, and post-write nudges toward reminder/audit events instead of additional model-facing strategy prompts.
 - Count verification evidence only after the latest successful write, while
-  leaving the continue/finalize decision to model completion self-review.
+  leaving the continue/finalize decision to the main execution model.
 - Bumped panel asset versions so the conversation-level execution selector loads its matching JavaScript and CSS instead of stale cached assets.
 - Added a text-artifact integrity guard that rejects clearly truncated full HTML overwrites and prevents incomplete HTML reads from satisfying verification.
 - Added a Context Hygiene layer that cleans polluted model history before execution while preserving visible conversation history and audit records.

@@ -4,6 +4,24 @@ from runtime.agent_strategy.tool_result_risks import (
 )
 from runtime.api.conversations import ConversationMessagesStreamHandler
 
+import pytest
+
+
+def test_uniform_pixels_are_nonblocking_facts_not_a_task_failure():
+    risks = assess_tool_result_risks("mcp_demo.capture", "success", {
+        "inline_images": [{"content_index": 0, "uniform_pixels": True, "pixel_ranges": [[0, 0]] * 3}],
+    })
+    assert risks[0]["code"] == "visual_pixels_uniform"
+    assert risks[0]["blocking"] is False
+    assert risks[0]["pixel_ranges"] == [[0, 0]] * 3
+
+
+def test_external_failure_does_not_imply_rollback():
+    risks = assess_tool_result_risks("mcp_demo.execute_code", "failure", {}, error="failed after first mutation")
+    assert risks[0]["side_effects"] == "unknown"
+    assert risks[0]["rollback_observed"] is False
+    assert "partial changes may remain" in risks[0]["message"]
+
 
 def test_invalid_integrity_becomes_non_blocking_model_facing_risk() -> None:
     risks = assess_tool_result_risks(
@@ -26,15 +44,8 @@ def test_invalid_integrity_becomes_non_blocking_model_facing_risk() -> None:
             "source": "filesystem.read_file",
             "path": "viewer.html",
             "issues": ["html appears escaped as text"],
-            "action": "assess_before_state_change",
-            "suggested_tools": ["filesystem.transform_text"],
             "blocking": False,
-            "message": (
-                "The inspected artifact has an integrity warning. Before changing local state, "
-                "assess this evidence and choose whether to repair the artifact, continue with "
-                "an explicit assumption, or stop and report the risk. Prefer a bounded local "
-                "transformation over retransmitting the complete artifact."
-            ),
+            "message": "Artifact integrity check reported issues.",
         }
     ]
 
@@ -49,7 +60,7 @@ def test_valid_integrity_does_not_add_risk() -> None:
     assert "runtime_risks" not in payload
 
 
-def test_runtime_advisory_becomes_model_facing_risk_evidence() -> None:
+def test_legacy_runtime_advisory_does_not_become_model_facing_risk() -> None:
     payload = attach_tool_result_risks({
         "tool": "shell.run_command",
         "status": "success",
@@ -63,16 +74,8 @@ def test_runtime_advisory_becomes_model_facing_risk_evidence() -> None:
         ],
     })
 
-    assert payload["runtime_risks"] == [
-        {
-            "code": "verification_runtime_advisory",
-            "severity": "info",
-            "source": "runtime_advisory_governance",
-            "message": "long-running service is weak verification",
-            "action": "treat_as_weak_verification_evidence",
-            "blocking": False,
-        }
-    ]
+    assert "runtime_risks" not in payload
+    assert "runtime_advisories" not in payload
 
 
 def test_shell_success_with_exception_stderr_becomes_degraded_evidence_risk() -> None:
@@ -88,7 +91,6 @@ def test_shell_success_with_exception_stderr_becomes_degraded_evidence_risk() ->
 
     assert risks[0]["code"] == "shell_stderr_warning"
     assert risks[0]["blocking"] is False
-    assert risks[0]["action"] == "treat_as_degraded_verification_evidence"
     assert "HttpListenerException" in risks[0]["detail"]
 
 
@@ -110,8 +112,6 @@ def test_shell_failure_with_diagnostic_becomes_model_facing_risk() -> None:
     )
 
     assert risks[0]["code"] == "shell_node_check_inline_script"
-    assert risks[0]["action"] == "adjust_command_shape"
-    assert risks[0]["suggested_calls"][0]["args"] == ["--check", "app.js"]
 
 
 def test_encoding_warning_becomes_non_blocking_model_facing_risk() -> None:
@@ -133,7 +133,6 @@ def test_encoding_warning_becomes_non_blocking_model_facing_risk() -> None:
     assert risks[0]["code"] == "text_encoding_risk"
     assert risks[0]["risk_code"] == "html_charset_missing"
     assert risks[0]["blocking"] is False
-    assert risks[0]["action"] == "verify_rendered_text_encoding"
 
 
 def test_failed_external_capability_tool_becomes_model_facing_risk() -> None:
@@ -211,4 +210,22 @@ def test_compact_tool_message_keeps_risk_before_large_output_truncation() -> Non
     compact_message = handler._compact_tool_payload(payload)
 
     assert "artifact_integrity_invalid" in compact_message
-    assert "assess_before_state_change" in compact_message
+    assert "html appears escaped as text" in compact_message
+    assert "suggested_tools" not in compact_message
+
+
+@pytest.mark.parametrize("tool,status,output", [
+    ("mcp_demo.execute", "failure", {"message": "Unknown command"}),
+    ("shell.run_command", "failure", {"diagnostics": [{"code": "failed", "message": "bad input", "suggested_calls": [{"command": "alternate"}]}]}),
+    ("shell.run_command", "success", {"exit_code": 0, "stderr": "Error: partial result"}),
+    ("filesystem.read_file", "success", {"integrity": {"checked": True, "valid": False, "issues": ["escaped HTML"]}}),
+    ("filesystem.write_file", "success", {"encoding_risks": [{"code": "charset_missing", "message": "Missing charset"}]}),
+    ("mcp_demo.capture", "success", {"inline_images": [{"uniform_pixels": True}]}),
+])
+def test_risk_projection_preserves_observation_without_runtime_action_or_tool_suggestions(tool, status, output):
+    risks = assess_tool_result_risks(tool, status, output)
+    assert risks
+    for risk in risks:
+        assert not {"action", "suggested_tools", "suggested_calls"} & risk.keys()
+        assert risk["source"] == tool
+        assert risk["blocking"] is False

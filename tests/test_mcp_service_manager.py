@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +10,13 @@ import pytest
 import tornado.web
 
 from runtime.api.mcp_services import _with_linked_capabilities, require_local_mcp_control_request
-from runtime.mcp_service_manager import MCP_SERVICE_SCHEMA_VERSION, McpServiceManager, normalize_mcp_service
+from runtime.mcp_service_manager import (
+    BLENDER_OFFICIAL_PACKAGE,
+    MCP_SERVICE_SCHEMA_VERSION,
+    McpServiceManager,
+    normalize_mcp_service,
+)
+from runtime.mcp_protocol import McpToolDefinition
 from runtime.tool_registry import ToolRegistry
 
 
@@ -477,36 +484,26 @@ def test_mcp_manager_seeds_disabled_blender_example_once(tmp_path: Path) -> None
     assert blender["enabled"] is False
     assert blender["installation"] == {
         "kind": "package_runner",
-        "package": "blender-mcp",
+        "package": BLENDER_OFFICIAL_PACKAGE,
         "managed": False,
     }
     assert blender["transport"]["command"] == "uvx"
-    assert blender["transport"]["args"] == ["blender-mcp"]
-    assert blender["transport"]["env_keys"] == ["BLENDER_MCP_DISABLE_TELEMETRY"]
-    assert [item["id"] for item in blender["prerequisites"]] == ["blender-addon", "uvx"]
+    assert blender["transport"]["args"] == ["--from", BLENDER_OFFICIAL_PACKAGE, "blender-mcp"]
+    assert blender["transport"]["env_keys"] == []
+    assert [item["id"] for item in blender["prerequisites"]] == ["blender-addon", "uvx", "git"]
+    assert blender["lifecycle"]["auto_start"] is False
     assert blender["timeouts"]["call"] == 30
-    assert blender["tool_policies"]["get_scene_info"]["risk"] == "read_only"
-    assert blender["tool_policies"]["get_scene_info"]["roles"] == ["evidence", "verification"]
-    assert blender["tool_policies"]["get_scene_info"]["verification_strength"] == "weak"
-    assert blender["tool_policies"]["get_scene_info"]["call_timeout"] == 25
-    assert blender["tool_policies"]["get_viewport_screenshot"]["verification_strength"] == "standard"
-    assert blender["tool_policies"]["get_viewport_screenshot"]["artifacts"] == ["screenshot"]
-    assert blender["tool_policies"]["get_viewport_screenshot"]["call_timeout"] == 60
-    assert blender["tool_policies"]["execute_blender_code"]["effects"] == [
-        "external_state_change"
-    ]
+    assert blender["tool_policies"]["get_objects_summary"]["risk"] == "read_only"
+    assert blender["tool_policies"]["get_objects_summary"]["roles"] == ["evidence", "verification"]
+    assert blender["tool_policies"]["get_blendfile_summary_datablocks"]["verification_strength"] == "weak"
+    assert blender["tool_policies"]["get_screenshot_of_window_as_image"]["verification_strength"] == "standard"
+    assert blender["tool_policies"]["get_screenshot_of_window_as_image"]["artifacts"] == ["screenshot"]
+    assert blender["tool_policies"]["get_screenshot_of_window_as_image"]["call_timeout"] == 60
+    assert not blender["tool_policies"]["execute_blender_code"].get("effects")
+    assert not blender["tool_policies"]["execute_blender_code"].get("roles")
     assert blender["tool_policies"]["execute_blender_code"]["call_timeout"] == 120
-    assert blender["tool_policies"]["get_hunyuan3d_status"]["risk"] == "read_only"
-    assert blender["tool_policies"]["poll_hunyuan_job_status"]["risk"] == "read_only"
-    assert blender["tool_policies"]["get_sketchfab_status"]["risk"] == "read_only"
-    assert blender["tool_policies"]["search_sketchfab_models"]["risk"] == "read_only"
-    assert blender["tool_policies"]["get_sketchfab_model_preview"]["risk"] == "read_only"
-    assert blender["tool_policies"]["download_sketchfab_model"]["effects"] == [
-        "external_state_change"
-    ]
-    assert blender["tool_policies"]["generate_hunyuan3d_model"]["effects"] == [
-        "external_state_change"
-    ]
+    assert "get_scene_info" not in blender["tool_policies"]
+    assert "get_viewport_screenshot" not in blender["tool_policies"]
     assert blender["server_definition"]["id"] == "blender"
     assert blender["connection_profile"]["type"] == "stdio"
     assert blender["session"]["state"] == "disabled"
@@ -516,6 +513,126 @@ def test_mcp_manager_seeds_disabled_blender_example_once(tmp_path: Path) -> None
     reloaded = McpServiceManager(path)
     with pytest.raises(KeyError):
         reloaded.get_public("blender")
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_mcp_v9_migration_preserves_existing_blender_provider(tmp_path: Path, enabled: bool) -> None:
+    path = tmp_path / "mcp-services.json"
+    service = normalize_mcp_service({
+        "id": "blender",
+        "name": "My Blender",
+        "enabled": enabled,
+        "transport": {"type": "stdio", "command": "uvx", "args": ["blender-mcp"]},
+        "tool_policies": {"get_scene_info": {"risk": "read_only", "call_timeout": 17}},
+        "lifecycle": {"auto_start": enabled},
+        "permissions": {"arbitrary_code": "false"},
+        "tool_diagnostics": {"get_scene_info": {"health": "degraded", "last_error": "old error"}},
+    })
+    path.write_text(json.dumps({"schema_version": "mcp_service.v8", "services": [service]}), encoding="utf-8")
+
+    manager = McpServiceManager(path)
+
+    assert manager.get_config("blender") == service
+    assert McpServiceManager(path).get_config("blender") == service
+
+
+def test_official_blender_bindings_preserve_confirmation_and_verification(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    manager = McpServiceManager(tmp_path / "mcp-services.json", registry=registry)
+    names = [
+        "get_objects_summary", "get_screenshot_of_window_as_image", "execute_blender_code",
+        "render_viewport_to_path",
+    ]
+    manager._bind_tools("blender", [
+        McpToolDefinition(
+            name=name, title=name, description="", input_schema={},
+            annotations={"readOnlyHint": name == "render_viewport_to_path"},
+        )
+        for name in names
+    ])
+
+    summary = registry.get_public_spec("mcp_blender.get_objects_summary")
+    screenshot = registry.get_public_spec("mcp_blender.get_screenshot_of_window_as_image")
+    execute = registry.get_public_spec("mcp_blender.execute_blender_code")
+    assert summary["capability"] == "mcp.blender"
+    assert summary["requires_confirmation"] is False
+    assert summary["roles"] == ["evidence", "verification"]
+    assert screenshot["artifacts"] == ["screenshot"]
+    assert screenshot["verification_strength"] == "standard"
+    assert execute["requires_confirmation"] is True
+    assert execute["effects"] == []
+    assert execute["roles"] == []
+    render = registry.get_public_spec("mcp_blender.render_viewport_to_path")
+    assert render["requires_confirmation"] is True
+    assert render["effects"] == ["file_write"]
+
+
+def test_blender_migration_removes_unproven_execution_success_claims(tmp_path: Path) -> None:
+    path = tmp_path / "mcp-services.json"
+    service = normalize_mcp_service({
+        "id": "blender", "enabled": True,
+        "transport": {"type": "stdio", "command": "uvx", "args": ["blender-mcp"]},
+        "permissions": {"arbitrary_code": "confirm_each"},
+        "tool_policies": {"execute_blender_code": {
+            "risk": "state_change", "effects": ["external_state_change"],
+            "roles": ["deliverable"], "call_timeout": 95,
+        }},
+    })
+    path.write_text(json.dumps({"schema_version": "mcp_service.v9", "services": [service]}), encoding="utf-8")
+    manager = McpServiceManager(path)
+    migrated = manager.get_config("blender")
+    assert migrated["transport"] == service["transport"]
+    assert migrated["permissions"] == service["permissions"]
+    assert migrated["enabled"] is True
+    assert migrated["tool_policies"]["execute_blender_code"] == {"risk": "state_change", "call_timeout": 95}
+
+
+@pytest.mark.asyncio
+async def test_blender_read_script_does_not_count_as_a_created_deliverable(tmp_path: Path) -> None:
+    from runtime.run_result import build_run_result
+
+    registry = ToolRegistry()
+    manager = McpServiceManager(tmp_path / "mcp-services.json", registry=registry)
+    runtime = manager._runtime_for("blender")
+
+    async def read_script(name, arguments, *, timeout):
+        return {"content": [{"type": "text", "text": '{"status":"ok","result":{"objects":["Cube"]}}'}]}
+
+    runtime.protocol_connected = True
+    runtime.session = SimpleNamespace(call_tool=read_script)
+    manager._bind_tools("blender", [McpToolDefinition(
+        name="execute_blender_code", title="Execute code", description="", input_schema={}, annotations={},
+    )])
+    tool = registry.get("mcp_blender.execute_blender_code")
+    output = await tool.handler({"code": "result = {'objects': ['Cube']}"}, None)
+    result = build_run_result(
+        workspace_path=str(tmp_path), mode="terminal", requires_code_write=False, change_summary=None,
+        tool_events=[{"tool": tool.spec.id, "status": "success", "output": output, **tool.spec.to_event_contract()}],
+        task_contract={"intent": "write_required", "requires_state_change": True, "requires_verification": True,
+                       "capability_ids": ["mcp.blender"], "deliverables": [{"kind": "external_state", "capability_id": "mcp.blender"}]},
+    )
+    assert result["counts"]["external_state_changes"] == 0
+    assert result["counts"]["deliverable_successes"] == 0
+    assert result["status"] != "success"
+
+
+@pytest.mark.asyncio
+async def test_mcp_stdio_large_response_keeps_followup_roundtrip_working(tmp_path: Path) -> None:
+    manager = McpServiceManager(tmp_path / "mcp-services.json")
+    manager.upsert(_stdio_service())
+    try:
+        await manager.start("demo-mcp")
+        text = "x" * (256 * 1024)
+
+        large = await manager.call_tool("demo-mcp", "echo", {"text": text})
+        followup = await manager.call_tool("demo-mcp", "echo", {"text": "still connected"})
+
+        assert large["content"] == text
+        assert not large.get("error")
+        assert followup["content"] == "still connected"
+        assert manager.is_connected("demo-mcp") is True
+    finally:
+        await manager.stop("demo-mcp")
 
 
 def test_mcp_schema_migration_adds_new_seed_prerequisites_to_old_blender_config(

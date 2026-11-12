@@ -18,6 +18,10 @@ from runtime.run_result_presenter import (
     run_status_from_result,
 )
 from runtime.tool_call_loop import ToolCallLoop as RealToolCallLoop
+from runtime.task_store import TaskStore
+from runtime.tool_result_evidence import tool_output_evidence
+from runtime.user_guidance import add_user_guidance, clear_user_guidance, pop_user_guidance
+from runtime.agent_strategy.context_hygiene import sanitize_model_context
 
 
 @dataclass
@@ -82,9 +86,12 @@ class ScenarioModelStream:
     def __init__(self, rounds: list[list[dict[str, Any]]]) -> None:
         self._rounds = [list(events) for events in rounds]
         self.calls: list[dict[str, Any]] = []
+        self.on_start: Any = None
 
     async def stream(self, **kwargs: Any):
         self.calls.append(kwargs)
+        if self.on_start is not None:
+            self.on_start(len(self.calls))
         if not self._rounds:
             raise AssertionError("scenario model stream received an unexpected extra round")
         for event in self._rounds.pop(0):
@@ -105,9 +112,10 @@ class ScenarioEventStore:
 
 class ScenarioSettings:
     data_dir = None
+    supports_vision = False
 
     def get_model_config(self, model: str) -> dict[str, Any]:
-        return {"id": model, "context_limit": 32_000, "supports_vision": False}
+        return {"id": model, "context_limit": 32_000, "supports_vision": self.supports_vision}
 
     def is_memory_auto_extract_enabled(self) -> bool:
         return False
@@ -159,6 +167,9 @@ class RunScenario:
         requires_verification: bool = True,
         planning_policy: str = "off",
         model_task_contract_error: str = "",
+        prior_messages: list[ScenarioMessage] | None = None,
+        guidance_on_round: dict[int, str] | None = None,
+        supports_vision: bool = False,
     ) -> None:
         self.workspace_path = workspace_path
         self.user_content = user_content
@@ -169,6 +180,9 @@ class RunScenario:
         self.task_contract_calls = 0
         self.planning_policy = planning_policy
         self.model_task_contract_error = model_task_contract_error
+        self.prior_messages = prior_messages or []
+        self.guidance_on_round = guidance_on_round or {}
+        self.supports_vision = supports_vision
         self.contract = task_contracts.default_task_contract(
             task_intent=task_intent,
             mode="terminal",
@@ -197,6 +211,18 @@ class RunScenario:
     async def run(self, monkeypatch: Any) -> RunScenarioResult:
         self.workspace_path.mkdir(parents=True, exist_ok=True)
         conversation = ScenarioConversation(self.user_content)
+        conversation.messages = [*deepcopy(self.prior_messages), *conversation.messages]
+        clear_user_guidance(conversation.id)
+
+        def inject_guidance(round_number: int) -> None:
+            text = self.guidance_on_round.get(round_number)
+            if text:
+                add_user_guidance(conversation.id, text)
+                conversation.messages.append(ScenarioMessage(
+                    "user", text, {"guidance": True, "during_run": True},
+                ))
+
+        self.model_stream.on_start = inject_guidance
         run = SimpleNamespace(
             id="run-1",
             task_id="",
@@ -211,7 +237,9 @@ class RunScenario:
             attachments=ScenarioAttachments(),
             runs=ScenarioRuns(run),
             run_events=event_store,
+            tool_tasks=TaskStore(),
         )
+        runtime.settings.supports_vision = self.supports_vision
         helper = ScenarioRunHost(runtime, self)
 
         async def identity_compression(
@@ -267,6 +295,7 @@ class RunScenario:
             effective_mode="terminal",
             run=run,
         )
+        clear_user_guidance(conversation.id)
         if self.model_stream.remaining_rounds:
             raise AssertionError(
                 f"scenario completed with {self.model_stream.remaining_rounds} unused model rounds"
@@ -293,13 +322,15 @@ class ScenarioRunHost:
     def _build_model_messages(self, conversation: Any, workspace: dict[str, Any], **_kwargs: Any):
         self._last_context_hygiene_report = {"changed": False}
         self._last_memory_context = {}
-        return [
+        messages = [
             {"role": "system", "content": f"Workspace: {workspace['path']}"},
-            {"role": "user", "content": conversation.messages[-1].content},
+            *[{
+                "role": item.role, "content": item.content, "_yuntao_metadata": item.metadata,
+            } for item in conversation.messages],
         ]
+        messages, self._last_context_hygiene_report = sanitize_model_context(messages)
+        return messages
 
-    def _normalize_planning_policy(self, payload: dict[str, Any]) -> str:
-        return self._helper.scenario.planning_policy
 
     def _normalize_confirmation_policy(self, payload: dict[str, Any]) -> str:
         return "aggressive"
@@ -365,14 +396,13 @@ class ScenarioRunHost:
         name_map.update({tool_id.replace(".", "__"): tool_id for tool_id in tool_ids})
         return tools, name_map
 
-    def _task_contract_prompt(self, _contract: dict[str, Any]) -> str:
-        return "Follow the current task contract and use runtime evidence."
 
     def _capability_boundary_prompt(self, _preflight: dict[str, Any]) -> str:
         return ""
 
     def _pop_user_guidance(self, _conversation_id: str) -> tuple[str, str]:
-        return "", ""
+        batch = pop_user_guidance(_conversation_id)
+        return batch.prompt, batch.text
 
     def _messages_for_model_round(
         self,
@@ -431,14 +461,6 @@ class ScenarioRunHost:
     def _is_recoverable_write_failure(self, _tool_id: str, _event: dict[str, Any]) -> bool:
         return False
 
-    def _write_repair_prompt(self, *_args: Any) -> str:
-        return "Choose a materially different write route using the observed failure."
-
-    def _mark_next_plan_step_running(self, *_args: Any) -> None:
-        return None
-
-    def _finish_plan_step(self, *_args: Any) -> None:
-        return None
 
     def _is_recon_tool(self, tool_id: str) -> bool:
         return tool_id == "filesystem.read_file"
@@ -464,6 +486,11 @@ class ScenarioRunHost:
         event.setdefault("input", arguments)
         event.setdefault("output", {})
         event.setdefault("error", "")
+        task = self.runtime.tool_tasks.create(tool_id, arguments)
+        self.runtime.tool_tasks.update(task.id, status=event["status"], output=event["output"])
+        event.setdefault("task_id", task.id)
+        event["output_source"] = {"kind": "tool_task_output", "task_id": event["task_id"]}
+        event["output"] = tool_output_evidence(event["output"])
         scenario.tool_calls.append({"tool": tool_id, "arguments": arguments})
         return self._scenario_tool_message(tool_call, event), event
 
@@ -485,32 +512,9 @@ class ScenarioRunHost:
     def _read_file_range_record(self, *_args: Any) -> dict[str, Any]:
         return {}
 
-    def _has_successful_target_deliverable(
-        self,
-        _task_contract: dict[str, Any],
-        tool_events: list[dict[str, Any]],
-        *_args: Any,
-    ) -> bool:
-        return any(
-            self._is_write_tool(str(event.get("tool") or ""))
-            and event.get("status") == "success"
-            for event in tool_events
-        )
-
-    def _completion_review_prompt(self, *_args: Any, **_kwargs: Any) -> str:
-        return "Review fresh runtime evidence and declare completion_self_assessment.v1."
-
-    def _execution_convergence_prompt(self, *_args: Any) -> str:
-        return "The same route has repeated without progress; choose the next strategy."
 
     def _malformed_tool_call_prompt(self, *_args: Any) -> str:
         return "Resend a complete structured tool call."
-
-    def _read_range_summary_prompt(self, *_args: Any) -> str:
-        return "Use the observed read ranges."
-
-    def _task_contract_failures(self, *_args: Any, **_kwargs: Any) -> list[str]:
-        return []
 
     def _max_rounds_after_write_message(self, *_args: Any) -> str:
         return "Round budget ended after a write."

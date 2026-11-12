@@ -5,11 +5,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
 
 from runtime.api import conversations as conversations_api
 from runtime.api.conversations import ConversationMessagesStreamHandler
-from runtime.agent_strategy.document_contract_guard import document_contract_tool_guard_message
 
 
 def _handler_with_contract() -> ConversationMessagesStreamHandler:
@@ -19,89 +17,6 @@ def _handler_with_contract() -> ConversationMessagesStreamHandler:
         "expected_document_coverage": True,
     }
     return handler
-
-
-def test_task_contract_prompt_is_model_declaration_not_fixed_target() -> None:
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    handler.get_lang = lambda: "zh-CN"
-
-    prompt = handler._task_contract_prompt({
-        "workspace_path": r"D:\ifctool",
-        "access_scope": "project_only",
-        "planning_policy": "auto",
-        "confirmation_policy": "auto",
-        "intent": "write_required",
-        "goal": "创建模型查看页面",
-        "deliverables": [{"kind": "file", "path_hint": "viewer.html"}],
-        "routing_strategy": "model_first_task_contract",
-        "requires_write": True,
-        "requires_verification": True,
-        "success_conditions": ["target_deliverable_success"],
-    })
-
-    assert "当前任务理解" in prompt
-    assert "创建模型查看页面" in prompt
-    assert "仅作提示，不固定路径" in prompt
-    assert "执行策略由你自行选择" in prompt
-    assert "必须遵守以下硬条件" not in prompt
-
-
-def test_task_contract_prompt_marks_policy_fallback_as_revisable_context() -> None:
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    handler.get_lang = lambda: "zh-CN"
-
-    prompt = handler._task_contract_prompt({
-        "source": "policy_fallback",
-        "model_contract_error": "model service timeout",
-        "workspace_path": r"D:\ifctool",
-        "access_scope": "project_only",
-        "planning_policy": "auto",
-        "confirmation_policy": "auto",
-        "intent": "answer_only",
-        "goal": "",
-        "deliverables": [],
-        "routing_strategy": "model_first_task_contract",
-        "requires_write": False,
-        "requires_state_change": False,
-        "requires_verification": False,
-        "success_conditions": ["final_answer"],
-    })
-
-    assert "契约来源：policy_fallback" in prompt
-    assert "不是固定任务结论" in prompt
-    assert "任务契约判断曾发生异常" in prompt
-    assert "当前用户请求仍是语义依据" in prompt
-
-
-def test_task_contract_prompt_includes_execution_advisories_without_hard_constraint() -> None:
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    handler.get_lang = lambda: "zh-CN"
-
-    prompt = handler._task_contract_prompt({
-        "workspace_path": r"D:\ifctool",
-        "access_scope": "project_only",
-        "planning_policy": "auto",
-        "confirmation_policy": "auto",
-        "intent": "read_only_analysis",
-        "goal": "诊断页面访问问题",
-        "deliverables": [{"kind": "answer", "description": "诊断结果"}],
-        "routing_strategy": "model_first_task_contract",
-        "requires_write": False,
-        "requires_state_change": False,
-        "requires_verification": False,
-        "success_conditions": ["final_answer_with_evidence"],
-        "execution_advisories": [
-            {
-                "code": "evidence_may_require_repair",
-                "message": "Read first; repair if evidence shows the local artifact is broken.",
-                "suggested_first_action": "read",
-            }
-        ],
-    })
-
-    assert "Runtime execution advisories (not hard constraints)" in prompt
-    assert "Read first; repair if evidence shows the local artifact is broken." in prompt
-    assert "You may choose a different safe action" in prompt
 
 
 def test_runtime_confirmation_message_describes_file_creation(tmp_path: Path) -> None:
@@ -200,27 +115,6 @@ def test_runtime_confirmation_message_describes_patch_targets() -> None:
     assert "目标：src/app.js, src/new.js" in message
 
 
-def test_verification_runtime_guard_advises_on_long_running_server_after_write() -> None:
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    handler._active_task_contract = {"requires_verification": True}
-    handler._active_tool_events = [
-        {
-            "tool": "filesystem.write_file",
-            "status": "success",
-            "input": {"path": r"D:\ifctool\viewer.html"},
-        }
-    ]
-    message = handler._verification_runtime_tool_guard(
-        "shell.run_command",
-        {"command": "python -m http.server 8080", "timeout": 5},
-    )
-
-    assert message
-    assert "长驻服务" in message
-    assert "完成证据偏弱" in message
-    assert "不能作为" not in message
-
-
 def test_shell_output_preview_includes_timeout_fields() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
 
@@ -276,7 +170,7 @@ def test_task_contract_accepts_structured_artifact_facts_as_verification() -> No
         },
     ]
 
-    assert handler._task_contract_failures(contract, events, "document") == []
+    assert _contract_result(contract, events, "document")["status"] == "success"
 
 
 def test_task_contract_rejects_short_finalized_text_for_long_document() -> None:
@@ -302,7 +196,7 @@ def test_task_contract_rejects_short_finalized_text_for_long_document() -> None:
         },
     ]
 
-    assert "document_output_too_short" in handler._task_contract_failures(contract, events, "document")
+    assert "document_output_too_short" in _contract_result(contract, events, "document")["risks"]
 
 
 def test_task_contract_uses_declared_deliverable_role_for_write_and_verification() -> None:
@@ -348,7 +242,7 @@ def test_task_contract_uses_declared_deliverable_role_for_write_and_verification
         },
     ]
 
-    assert handler._task_contract_failures(contract, events, "coding") == []
+    assert _contract_result(contract, events, "coding")["status"] == "success"
 
 
 def test_execution_notice_reports_invalid_verification_method() -> None:
@@ -424,54 +318,9 @@ def test_execution_notice_reports_contract_gap_as_observed_fact() -> None:
     assert "系统已判定" not in notice["message"]
 
 
-def test_short_follow_up_uses_model_contract_when_conversation_has_task_context() -> None:
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    conversation = SimpleNamespace(messages=[
-        SimpleNamespace(role="user", content="重写一个 3D 模型查看器", metadata={}),
-        SimpleNamespace(
-            role="assistant",
-            content="已创建 viewer.html",
-            metadata={"task_contract": {"intent": "write_required", "goal": "创建模型查看器"}},
-        ),
-        SimpleNamespace(role="user", content="现在想加能选构件的能力", metadata={}),
-    ])
-
-    assert handler._should_use_model_task_contract(
-        "现在想加能选构件的能力",
-        "answer_only",
-        conversation,
-    )
-
-
-def test_short_action_request_uses_model_contract_without_task_context() -> None:
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    conversation = SimpleNamespace(messages=[
-        SimpleNamespace(role="user", content="在 Blender 中建个二层小楼", metadata={}),
-    ])
-
-    assert handler._should_use_model_task_contract(
-        "在 Blender 中建个二层小楼",
-        "answer_only",
-        conversation,
-    )
-
-
-def test_short_greeting_without_task_context_skips_model_contract() -> None:
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    conversation = SimpleNamespace(messages=[
-        SimpleNamespace(role="user", content="你好", metadata={}),
-    ])
-
-    assert not handler._should_use_model_task_contract(
-        "你好",
-        "answer_only",
-        conversation,
-    )
-
-
 def test_task_contract_failures_accept_answer_evidence_for_read_only_analysis() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
-    failures = handler._task_contract_failures(
+    failures = _contract_result(
         {
             "intent": "read_only_analysis",
             "workspace_path": "D:/workspace",
@@ -497,12 +346,12 @@ def test_task_contract_failures_accept_answer_evidence_for_read_only_analysis() 
         "terminal",
     )
 
-    assert failures == []
+    assert failures["status"] == "success"
 
 
 def test_task_contract_failures_use_final_answer_length_for_answer_deliverable() -> None:
     handler = object.__new__(ConversationMessagesStreamHandler)
-    failures = handler._task_contract_failures(
+    failures = _contract_result(
         {
             "intent": "read_only_analysis",
             "workspace_path": "D:/workspace",
@@ -517,239 +366,8 @@ def test_task_contract_failures_use_final_answer_length_for_answer_deliverable()
         answer_text="a" * 1751,
     )
 
-    assert failures == ["answer_output_too_short"]
-
-
-@pytest.mark.asyncio
-async def test_model_task_contract_receives_current_request_not_raw_history(monkeypatch: Any) -> None:
-    captured: dict[str, Any] = {}
-
-    async def fake_generate_chat_completion(**kwargs: Any) -> tuple[str, dict[str, Any]]:
-        captured.update(kwargs)
-        return (
-            '{"intent":"write_required","requires_write":true,"goal":"添加构件选择功能"}',
-            {},
-        )
-
-    monkeypatch.setattr(conversations_api, "generate_chat_completion", fake_generate_chat_completion)
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    handler.runtime = SimpleNamespace(
-        settings=SimpleNamespace(get_access_scope=lambda: "project_only"),
-    )
-
-    contract = await handler._decide_task_contract(
-        model="fake-model",
-        messages=[
-            {"role": "system", "content": "large tool catalog"},
-            {"role": "user", "content": "重写一个 3D 模型查看器"},
-            {"role": "assistant", "content": "已创建 viewer.html"},
-            {"role": "user", "content": "现在想加能选构件的能力"},
-        ],
-        workspace_path=r"D:\ifctool",
-        user_content="现在想加能选构件的能力",
-        fallback_contract=handler._build_task_contract(
-            task_intent="answer_only",
-            mode="terminal",
-            planning_policy="auto",
-            confirmation_policy="auto",
-            workspace_path=r"D:\ifctool",
-        ),
-    )
-
-    assert contract["intent"] == "write_required"
-    assert [item["role"] for item in captured["messages"]] == ["system", "user"]
-    assert captured["messages"][-1]["content"] == "现在想加能选构件的能力"
-    assert captured["request_timeout"] == 90.0
-    contents = "\n".join(item["content"] for item in captured["messages"])
-    assert "重写一个 3D 模型查看器" not in contents
-    assert "已创建 viewer.html" not in contents
-    assert all(item["content"] != "large tool catalog" for item in captured["messages"])
-
-
-@pytest.mark.asyncio
-async def test_invalid_model_task_contract_response_is_auditable_fallback(
-    monkeypatch: Any,
-) -> None:
-    async def fake_generate_chat_completion(**_kwargs: Any) -> tuple[str, dict[str, Any]]:
-        return "I should inspect the project first.", {}
-
-    monkeypatch.setattr(conversations_api, "generate_chat_completion", fake_generate_chat_completion)
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    handler.runtime = SimpleNamespace(
-        settings=SimpleNamespace(get_access_scope=lambda: "project_only"),
-    )
-    fallback = handler._build_task_contract(
-        task_intent="answer_only",
-        mode="terminal",
-        planning_policy="auto",
-        confirmation_policy="auto",
-        workspace_path=r"D:\project",
-    )
-
-    contract = await handler._decide_task_contract(
-        model="fake-model",
-        messages=[{"role": "user", "content": "Analyze the project"}],
-        workspace_path=r"D:\project",
-        user_content="Analyze the project",
-        fallback_contract=fallback,
-    )
-
-    assert contract["source"] == "policy_fallback"
-    assert contract["model_contract_error"] == (
-        "invalid task contract response: expected a JSON object"
-    )
-    assert contract["requires_plan"] is False
-
-
-@pytest.mark.asyncio
-async def test_model_task_contract_does_not_infer_revision_from_retry_wording(
-    monkeypatch: Any,
-) -> None:
-    async def fake_generate_chat_completion(**kwargs: Any) -> tuple[str, dict[str, Any]]:
-        return (
-            '{"intent":"write_required","requires_write":true,'
-            '"goal":"Improve the generated script",'
-            '"deliverables":[{"kind":"code","path_hint":"house_v2.py"}]}',
-            {},
-        )
-
-    monkeypatch.setattr(conversations_api, "generate_chat_completion", fake_generate_chat_completion)
-    handler = object.__new__(ConversationMessagesStreamHandler)
-    handler.runtime = SimpleNamespace(
-        settings=SimpleNamespace(get_access_scope=lambda: "project_only"),
-    )
-    previous = {
-        "intent": "write_required",
-        "goal": "Create the house in Blender",
-        "requires_write": False,
-        "requires_state_change": True,
-        "requires_verification": True,
-        "deliverables": [{"kind": "external_state", "description": "Blender scene"}],
-    }
-
-    contract = await handler._decide_task_contract(
-        model="fake-model",
-        messages=[
-            {"role": "user", "content": "Create the house in Blender"},
-            {"role": "assistant", "content": "I wrote a script"},
-            {"role": "user", "content": "not good enough, try again"},
-        ],
-        workspace_path=r"D:\blender",
-        user_content="not good enough, try again",
-        fallback_contract=handler._build_task_contract(
-            task_intent="answer_only",
-            mode="terminal",
-            planning_policy="auto",
-            confirmation_policy="auto",
-            workspace_path=r"D:\blender",
-        ),
-        previous_contract=previous,
-    )
-
-    assert contract["scope_relation"] == "new"
-    assert contract["goal"] == "Improve the generated script"
-    assert contract["requires_write"] is True
-    assert contract["deliverables"][0]["kind"] == "code"
-
-
-def test_document_contract_guard_advises_on_translation_script_write() -> None:
-    handler = _handler_with_contract()
-
-    message = handler._document_contract_tool_guard(
-        "filesystem.write_file",
-        {
-            "path": r"D:\code\测试项目\象棋\translate_to_chinese.py",
-            "content": "from deep_translator import GoogleTranslator\n",
-        },
-    )
-
-    assert message
-    assert "辅助脚本" in message
-    assert "运行时不指定后续路线" in message
-    assert "document.translate_docx" not in message
-    assert "禁止" not in message
-
-
-def test_document_contract_guard_pure_helper_requires_document_coverage() -> None:
-    message = document_contract_tool_guard_message(
-        "filesystem.write_file",
-        {
-            "path": r"D:\code\demo\translate_to_chinese.py",
-            "content": "from deep_translator import GoogleTranslator\n",
-        },
-        {
-            "intent": "document_export",
-            "expected_document_coverage": True,
-        },
-    )
-    skipped = document_contract_tool_guard_message(
-        "filesystem.write_file",
-        {
-            "path": r"D:\code\demo\translate_to_chinese.py",
-            "content": "from deep_translator import GoogleTranslator\n",
-        },
-        {
-            "intent": "document_export",
-            "expected_document_coverage": False,
-        },
-    )
-
-    assert "辅助脚本" in message
-    assert "document.translate_docx" not in message
-    assert "禁止" not in message
-    assert skipped == ""
-
-
-def test_document_contract_guard_advises_on_translation_shell_fallback() -> None:
-    handler = _handler_with_contract()
-
-    message = handler._document_contract_tool_guard(
-        "shell.run_command",
-        {
-            "command": "python",
-            "args": ["translate_to_chinese.py"],
-        },
-    )
-
-    assert message
-    assert "shell 调用本身不能证明" in message
-    assert "document.translate_docx" not in message
-    assert "禁止" not in message
-
-
-def test_document_contract_guard_advises_on_pdf_to_word_script_write() -> None:
-    handler = _handler_with_contract()
-
-    message = handler._document_contract_tool_guard(
-        "filesystem.write_file",
-        {
-            "path": r"D:\code\测试项目\象棋\pdf_to_word.py",
-            "content": "from pdf2docx import Converter\nConverter(src).convert(dst)\n",
-        },
-    )
-
-    assert message
-    assert "全文覆盖" in message
-    assert "document.extract_pdf_to_docx" not in message
-    assert "mode=text_with_images" not in message
-    assert "禁止" not in message
-
-
-def test_document_contract_guard_advises_on_pdf_to_word_shell_fallback() -> None:
-    handler = _handler_with_contract()
-
-    message = handler._document_contract_tool_guard(
-        "shell.run_command",
-        {
-            "command": "python",
-            "args": ["-m", "pdf2docx", "convert", "a.pdf", "a.docx"],
-        },
-    )
-
-    assert message
-    assert "全文覆盖" in message
-    assert "document.extract_pdf_to_docx" not in message
-    assert "禁止" not in message
+    assert "answer_output_too_short" in failures["risks"]
+    assert failures["status"] == "partial"
 
 
 def test_ai_plugin_draft_guard_blocks_workspace_ai_plugins_write() -> None:
@@ -819,21 +437,6 @@ def test_ai_plugin_draft_guard_allows_normal_workspace_write() -> None:
             "content": "ok",
         },
         r"D:\code\YuntaoCode",
-    )
-
-    assert message == ""
-
-
-def test_document_contract_guard_allows_builtin_translation_tool() -> None:
-    handler = _handler_with_contract()
-
-    message = handler._document_contract_tool_guard(
-        "document.translate_docx",
-        {
-            "path": r"D:\code\测试项目\象棋\国际象棋历史_提取结果.docx",
-            "output_path": r"D:\code\测试项目\象棋\国际象棋历史_中文版.docx",
-            "engine": "model",
-        },
     )
 
     assert message == ""
@@ -914,3 +517,12 @@ def test_tool_task_poll_interval_is_fast_for_short_local_tools() -> None:
     assert conversations_api._tool_task_poll_interval(0) < 1
     assert conversations_api._tool_task_poll_interval(2.9) < 1
     assert conversations_api._tool_task_poll_interval(3.0) == 1.0
+
+
+def _contract_result(contract, events, mode, *, answer_text=None):
+    from runtime.run_result import build_run_result
+
+    return build_run_result(
+        workspace_path=str(contract.get("workspace_path") or ""), tool_events=events,
+        mode=mode, change_summary=None, task_contract=contract, answer_text=answer_text,
+    )

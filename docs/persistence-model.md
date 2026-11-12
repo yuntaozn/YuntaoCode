@@ -52,6 +52,14 @@ audit trace in `conversations.json`.
   payloads;
 - detail queries load one run and its retained events.
 
+Lifecycle protection uses persisted Run `stage` and `status`, so pruning a
+result or stop event cannot reopen execution. Checkpoints after publication
+preserve `stage=result` until `done`. These facts survive JSON and SQLite
+reopening without adding a new schema field. Task `metadata.run_outcome`
+retains the current Run ID, `run_result` source, and goal status; it preserves
+explicit incomplete declarations after event pruning and is never applied to
+a different attempt. This metadata is persistence evidence, not a model prompt.
+
 On first startup with `runtime.db`, a valid historical `runs.json` is imported
 once. The source JSON file is retained unchanged as a migration snapshot. New
 runs are written only to SQLite.

@@ -87,3 +87,15 @@ def test_visual_verification_is_evidence_only_when_empty() -> None:
     assert summary["schema_version"] == "visual_verification.v1"
     assert summary["counts"]["visual_evidence"] == 0
     assert summary["flags"]["has_visual_evidence"] is False
+
+
+def test_prepared_or_rejected_images_are_not_counted_as_received():
+    records = [
+        {"source_type": "mcp_inline_image", "tool": "mcp_demo.capture", "source_ref": "task:1", "delivery_status": "attached", "injected_into_model_context": False},
+        {"source_type": "mcp_inline_image", "tool": "mcp_demo.capture", "source_ref": "task:2", "delivery_status": "omitted_transport_fallback", "injected_into_model_context": False},
+    ]
+    result = build_visual_verification_summary(visual_context=records)
+    assert result["counts"]["model_context_records"] == 2
+    assert result["counts"]["model_context_injected"] == 0
+    assert result["flags"]["model_context_injected"] is False
+    assert all(x["visual_review_status"] == "unconfirmed" for x in result["model_context_records"])

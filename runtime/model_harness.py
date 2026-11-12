@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from typing import Any
+from runtime.tool_media import image_context_ref
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ class ModelHarnessSpec:
     supports_stream: bool = True
     supports_vision: bool = True
     thinking_mode: str = ""
+    text_tool_protocol: str = "none"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -29,6 +31,7 @@ class ModelHarnessSpec:
             "supports_stream": self.supports_stream,
             "supports_vision": self.supports_vision,
             "thinking_mode": self.thinking_mode,
+            "text_tool_protocol": self.text_tool_protocol,
         }
 
 
@@ -115,6 +118,9 @@ def inspect_model_harness(settings: Any, model: str) -> ModelHarnessSpec:
         or provider.get("wire_api")
         or "chat_completions"
     ).strip() or "chat_completions"
+    text_tool_protocol = str(model_config.get("text_tool_protocol") or provider.get("text_tool_protocol") or "none").strip()
+    if text_tool_protocol not in {"none", "function_call", "tagged", "xml"}:
+        text_tool_protocol = "none"
     return ModelHarnessSpec(
         harness_id=_normalize_harness_id(
             model_config.get("harness")
@@ -132,6 +138,7 @@ def inspect_model_harness(settings: Any, model: str) -> ModelHarnessSpec:
             or provider.get("thinking_mode")
             or ""
         ).strip(),
+        text_tool_protocol=text_tool_protocol,
     )
 
 
@@ -148,13 +155,28 @@ def contains_image_context(messages: list[dict[str, Any]]) -> bool:
     return False
 
 
+def image_context_refs(messages: list[dict[str, Any]]) -> list[str]:
+    """返回请求中的图片指纹，供传输审计关联，不记录 URL 或二进制。"""
+    refs = []
+    for message in messages:
+        content = message.get("content") if isinstance(message, dict) else None
+        for part in content if isinstance(content, list) else []:
+            if not isinstance(part, dict) or part.get("type") not in {"image_url", "input_image"}:
+                continue
+            value = part.get("image_url")
+            url = value.get("url") if isinstance(value, dict) else value
+            if isinstance(url, str) and url:
+                refs.append(image_context_ref(url))
+    return list(dict.fromkeys(refs))
+
+
 def looks_like_visual_transport_error(error: Any) -> bool:
     text = str(error or "").lower()
     if not text:
         return False
     if "image" in text or "vision" in text or "multimodal" in text:
         return True
-    return any(code in text for code in ("http 400", "http 404", "status 400", "status 404"))
+    return False
 
 
 def downgrade_image_context(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

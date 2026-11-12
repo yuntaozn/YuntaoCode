@@ -123,14 +123,17 @@ the decision to continue using tools or return its answer.
 
 ## Model Call Lifecycle
 
-The main model/tool loop streams through `ToolCallLoop`. Auxiliary model calls
-used for task-contract interpretation and final result synthesis use
-`runtime/model_calls.py` instead of making invisible HTTP requests directly.
+The main model/tool loop streams through `ToolCallLoop`. Explicit non-streaming
+reply calls use `runtime/model_calls.py` for lifecycle audit. Finalization does
+not request another model response.
 
-Automatic planning has no separate model judge. A valid model task contract
-owns `requires_plan`; if that auxiliary interpretation is unavailable, the Run
-starts its main execution loop and lets the execution model choose its working
-strategy. This avoids cascading semantic calls before any task work begins.
+Runs start in the main execution loop without an auxiliary task-contract call.
+The same execution model can optionally record task and plan declarations with
+`runtime.update_task`; ordinary capabilities do not require this bookkeeping.
+There is no separate planner, plan-following prompt, generated fallback plan,
+or automatic tool-to-step matching. Legacy `planning_policy` values do not
+change the execution path. User guidance enters as
+user-authored text without another semantic judge or automatic plan interruption.
 
 This boundary records `model_call.v1` facts:
 
@@ -393,16 +396,12 @@ derived from observed facts such as writes, failures, verification gaps,
 round-budget exhaustion, and risk codes. They should describe evidence and
 continuation basis, not prescribe a fixed strategy or replace the model's
 completion judgment. A valid final answer from the execution model stays
-canonical regardless of the `RunResult` status. Model-backed result synthesis
-is reserved for missing or protocol-invalid final content and uses the same
-completion evidence pack shape as completion self-review, including route
-evidence, artifacts, verification closure, tool progress, failures, and risks.
-It is a bounded presentation fallback, not a second execution run or a new
-completion judge. The current user request is passed as a request-reference context rather
-than a raw tail slice: it keeps bounded request head/tail text, explicit
-request marker lines, and referenced files, paths, or URLs so early goals and
-late constraints can both remain visible without letting the original prompt
-override RunResult evidence.
+canonical regardless of the `RunResult` status. Finalization stores that text
+without parsing completion JSON, appending file lists, or synthesizing another
+answer. Missing final text, provider errors, and exhausted resource budgets are
+recorded as facts. Tool-attempt feedback carries actual error codes and inputs,
+without replacement-tool lists, recovery routes, or a separate one-retry gate.
+
 
 ## Diagnostic Export
 
@@ -544,15 +543,12 @@ task contract as evidence, draft, temporary artifact, target deliverable, or
 verification. Run completion is based on task-role evidence, not on a fixed list
 of tool IDs.
 
-The completion-review gate is also task-role aware. Write and external-state tasks
-enter completion self-review after the target deliverable appears. Read-only
-analysis and answer-evidence tasks have no file or external object to observe,
-so successful evidence-gathering tools can enter the same completion self-review
-loop. Verification sufficiency is not an input to this gate. It is evidence in
-the completion pack: the model decides whether to continue, verify, repair, ask
-the user, or finish with an explicit limitation. Once the model returns an
-ordinary answer without another tool call, Runtime does not create a separate
-verification-retry or tool-disabled final-answer round.
+Completion remains inside the main model/tool loop. Tool results and bounded
+Context Packs give the model execution evidence, but Runtime does not insert a
+separate completion-review round after a target deliverable or evidence read.
+The model decides whether to continue, verify, repair, ask the user, or finish
+with an explicit limitation. Once the model returns an ordinary answer without
+another tool call, Runtime proceeds to evidence-based finalization.
 
 `requires_write` specifically means that a local file artifact must be created
 or modified. `requires_state_change` covers the wider class of observable
@@ -594,15 +590,16 @@ The runtime records contract gaps as evidence, but it should not turn ordinary
 task-language heuristics into hidden routing locks. Explicit local permission
 boundaries, confirmation policy, and safety checks remain runtime-owned.
 
-## Planning And Confirmation Policies
+## Optional Progress And Confirmation Policy
 
-Planning and execution confirmation are independent policy lines:
+Plans are optional model-authored progress records. The runtime never requests
+a plan before execution or injects instructions to follow one. It does not
+advance steps from tool outcomes; only explicit model updates change them.
+An empty plan clears the record, and unfinished steps do not force continuation.
 
-- `planning_policy`: `off`, `auto`, or `always`
-- `confirmation_policy`: `conservative`, `auto`, or `aggressive`
-
-`planning_policy` controls whether the runtime asks the model to produce and
-follow an explicit plan. It does not grant permission to execute tools.
+Stored settings and automation templates may retain legacy `planning_policy`
+values for compatibility. These values have no execution effect and are no
+longer exposed as controls in the chat, settings, or automation UI.
 
 `confirmation_policy` controls the manual confirmation gate after input schema,
 workspace, permission, and safety checks:

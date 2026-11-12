@@ -1,6 +1,85 @@
 from runtime.run_result import build_run_result
 
 
+def test_unclassified_mcp_code_results_keep_completion_and_evidence_separate():
+    # 来自 Blender 保存与渲染任务的最小事件形状；不把任意代码输出提升为可信写入。
+    tool = "mcp_blender.execute_blender_code"
+    events = [
+        {"tool": tool, "status": "failure", "error": "node lookup returned None"},
+        {"tool": tool, "status": "failure", "error": "Collection has no attribute link"},
+        {"tool": tool, "status": "success", "output": {
+            "structured_content": {"status": "ok", "result": {"joined_mesh_piece_count": 88}},
+        }},
+        {"tool": tool, "status": "success", "output": {
+            "structured_content": {"status": "ok", "result": {
+                "blend_path": "D:/workspace/model.blend", "blend_exists": True,
+                "preview_path": "D:/workspace/preview.png", "preview_exists": True,
+            }},
+            "path": "D:/workspace/preview.png", "artifact_kind": "image",
+        }},
+    ]
+    result = build_run_result(
+        workspace_path="D:/workspace", mode="terminal", change_summary=None,
+        tool_events=events, task_contract={
+            "source": "model_execution", "intent": "write_required", "requires_write": True,
+            "requires_state_change": True, "requires_verification": True,
+            "required_verification_modalities": ["structural", "visual"],
+            "deliverables": [{"kind": "file", "path_hint": "model.blend"}],
+        },
+        completion_decision={"self_assessment": {
+            "kind": "completion_self_assessment", "goal_closed": True,
+        }},
+    )
+    assert result["status"] == "partial"
+    assert result["execution_status"] == "completed"
+    assert result["goal_status"] == "complete"
+    assert result["verification_status"] == "missing"
+    assert result["counts"]["deliverable_successes"] == 0
+    assert result["counts"]["recovered_failures"] == 2
+    assert "target_deliverable_not_observed" in result["risks"]
+    assert "execution_contract_failed" not in result["risks"]
+
+
+def test_actual_tool_failure_is_not_hidden_by_a_missing_deliverable():
+    result = build_run_result(
+        workspace_path="D:/workspace", mode="terminal", change_summary=None,
+        tool_events=[{"tool": "filesystem.write_file", "status": "failure",
+                      "input": {"path": "model.blend"}, "error": "permission denied"}],
+        task_contract={"requires_write": True, "deliverables": [{"kind": "file"}]},
+    )
+    assert result["status"] == "failure"
+    assert result["counts"]["blocking_failures"] == 1
+    assert result["failures"][0]["error"] == "permission denied"
+
+
+def test_pending_goal_with_successful_probe_remains_unconfirmed():
+    result = build_run_result(
+        workspace_path="D:/workspace", mode="terminal", change_summary=None,
+        task_contract={"source": "main_execution_pending", "intent": "undetermined", "goal": "Create a model"},
+        tool_events=[{"tool": "mcp_blender.get_objects_summary", "status": "success", "output": {"objects": ["Cube"]}}],
+        answer_text="Preparing the model.",
+    )
+    assert result["status"] == "success"
+    assert result["execution_status"] == "completed"
+    assert result["goal_status"] == "unknown"
+    assert result["verification_status"] == "unknown"
+    assert result["counts"]["deliverable_successes"] == 0
+    assert "goal_completion_unconfirmed" in result["risks"]
+
+
+def test_goal_declaration_is_independent_of_missing_required_output():
+    result = build_run_result(
+        workspace_path="D:/workspace", mode="terminal", change_summary=None,
+        task_contract={"source": "model_execution", "intent": "write_required", "requires_write": True, "requires_state_change": True,
+                       "requires_verification": True, "deliverables": [{"kind": "file", "path_hint": "model.blend"}]},
+        tool_events=[{"tool": "filesystem.read_file", "status": "success", "input": {"path": "README.md"}, "output": {"content": "project"}}],
+        completion_decision={"self_assessment": {"kind": "completion_self_assessment", "goal_closed": True}},
+    )
+    assert result["status"] == "partial"
+    assert result["goal_status"] == "complete"
+    assert result["verification_status"] == "missing"
+
+
 def test_build_run_result_records_writes_verification_and_risks() -> None:
     result = build_run_result(
         workspace_path="D:/workspace",
@@ -1410,7 +1489,6 @@ def test_build_run_result_reports_short_answer_with_actual_length() -> None:
         change_summary=None,
         expected_min_output_chars=2000,
         answer_text="a" * 1751,
-        contract_failed=True,
         task_contract={
             "intent": "read_only_analysis",
             "requires_write": False,
@@ -1521,7 +1599,6 @@ def test_build_run_result_accepts_recovered_external_state_with_structured_verif
         mode="terminal",
         change_summary=None,
         task_contract=contract,
-        contract_failed=True,
         tool_events=[
             {
                 "tool": "mcp_demo.execute",
@@ -1568,8 +1645,7 @@ def test_build_run_result_accepts_recovered_external_state_with_structured_verif
     assert result["counts"]["unrecovered_write_failures"] == 0
     assert result["verification_evidence"][0]["strength"] == "standard"
     assert result["verification_evidence"][0]["sufficient"] is True
-    assert result["flags"]["contract_failed"] is True
-    assert result["flags"]["unresolved_contract_failed"] is False
+    assert "contract_failed" not in result["flags"]
     assert "required_verification_not_satisfied" not in result["risks"]
     assert "verification_evidence_weak" not in result["risks"]
     assert "execution_contract_failed" not in result["risks"]
@@ -1717,7 +1793,6 @@ def test_build_run_result_counts_visual_artifact_deliverable_with_missing_behavi
         mode="terminal",
         change_summary=None,
         task_contract=contract,
-        contract_failed=True,
         tool_events=[
             {
                 "tool": "preview.capture_local_html",
@@ -1776,7 +1851,6 @@ def test_build_run_result_counts_page_preview_runtime_facts_as_structural() -> N
         mode="terminal",
         change_summary=None,
         task_contract=contract,
-        contract_failed=True,
         tool_events=[
             {
                 "tool": "preview.capture_local_html",
@@ -1876,7 +1950,6 @@ def test_build_run_result_marks_unverified_external_state_deliverable_partial() 
         change_summary=None,
         requires_code_write=False,
         task_contract=contract,
-        contract_failed=True,
         tool_events=[
             {
                 "tool": "mcp_blender.execute_blender_code",
@@ -1915,7 +1988,6 @@ def test_build_run_result_does_not_treat_external_state_as_required_file_write()
         change_summary=None,
         requires_code_write=True,
         task_contract=contract,
-        contract_failed=True,
         tool_events=[
             {
                 "tool": "mcp_blender.execute_blender_code",
@@ -1928,12 +2000,12 @@ def test_build_run_result_does_not_treat_external_state_as_required_file_write()
         ],
     )
 
-    assert result["status"] == "failure"
+    assert result["status"] == "partial"
     assert result["counts"]["deliverable_successes"] == 0
     assert "expected_write_not_observed" in result["risks"]
 
 
-def test_build_run_result_fails_external_state_contract_without_deliverable() -> None:
+def test_build_run_result_reports_missing_external_state_evidence_as_partial() -> None:
     contract = {
         "requires_write": False,
         "requires_state_change": True,
@@ -1949,7 +2021,7 @@ def test_build_run_result_fails_external_state_contract_without_deliverable() ->
         tool_events=[],
     )
 
-    assert result["status"] == "failure"
+    assert result["status"] == "partial"
     assert "target_deliverable_not_observed" in result["risks"]
 
 
@@ -1982,7 +2054,7 @@ def test_build_run_result_does_not_count_script_file_as_external_state_deliverab
         ],
     )
 
-    assert result["status"] == "failure"
+    assert result["status"] == "partial"
     assert result["counts"]["deliverable_successes"] == 0
     assert "target_deliverable_not_observed" in result["risks"]
 
@@ -2144,14 +2216,13 @@ def test_build_run_result_records_capability_preflight_advisory() -> None:
             "requires_write": False,
             "deliverables": [{"kind": "external_state"}],
         },
-        contract_failed=True,
         preflight_advisories=[{
             "code": "missing_external_state_capability",
             "message": "No external-state capability is available.",
         }],
     )
 
-    assert result["status"] == "failure"
+    assert result["status"] == "partial"
     assert result["failures"] == []
     assert result["capability_advisories"][0]["code"] == "missing_external_state_capability"
     assert "capability_preflight_advisory" in result["risks"]

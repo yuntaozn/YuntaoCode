@@ -18,52 +18,30 @@ def _initial_content(**overrides: Any) -> str:
     values = {
         "model_content": "模型结论",
         "model_provider_error": "",
-        "has_successful_write": False,
         "max_rounds_exceeded": False,
-        "max_rounds_after_write_message": "写入后的轮次提示",
-        "max_rounds_message": "普通轮次提示",
-        "tool_contract_failed": False,
-        "contract_failures": [],
+        "round_limit": 20,
     }
     values.update(overrides)
     return initial_assistant_content(**values)
 
 
-def test_initial_content_preserves_model_text_before_provider_error_fact() -> None:
+def test_initial_content_preserves_model_text_when_provider_errors() -> None:
     content = _initial_content(model_provider_error="provider unavailable")
-
-    assert content.startswith("模型结论\n\n")
-    assert "模型服务在工具执行后返回错误" in content
-
-
-def test_initial_content_uses_write_specific_round_limit_message() -> None:
-    content = _initial_content(
-        max_rounds_exceeded=True,
-        has_successful_write=True,
-    )
-
-    assert content == "写入后的轮次提示"
-
-
-def test_initial_content_preserves_model_text_when_contract_gap_exists() -> None:
-    content = _initial_content(
-        tool_contract_failed=True,
-        contract_failures=["document_output_too_short"],
-    )
 
     assert content == "模型结论"
 
 
-def test_initial_content_reports_neutral_contract_gap_without_model_text() -> None:
+def test_initial_content_reports_round_limit_only_when_model_answer_is_missing() -> None:
     content = _initial_content(
+        max_rounds_exceeded=True,
         model_content="",
-        tool_contract_failed=True,
-        contract_failures=["missing_target_verification"],
     )
 
-    assert content.startswith("运行事实提示")
-    assert "系统不会" not in content
-    assert "未完整完成" not in content
+    assert content == "执行轮次预算已用完（20 轮），模型未返回最终内容。"
+
+
+def test_initial_content_without_model_text_is_only_a_missing_answer_placeholder() -> None:
+    assert _initial_content(model_content="") == "模型未返回最终内容。"
 
 
 def test_initial_content_keeps_ordinary_model_answer() -> None:
@@ -127,11 +105,12 @@ class _FinalizationHost:
         )
         self.events: list[dict[str, Any]] = []
         self.flush_count = 0
-        self.contract_answer_text: str | None = None
+
+    async def _wait_if_paused(self) -> None:
+        pass
 
     def _task_contract_failures(self, *args: Any, **kwargs: Any) -> list[str]:
-        self.contract_answer_text = kwargs.get("answer_text")
-        return []
+        raise AssertionError("finalization must use RunResult rather than a second contract judge")
 
     def _max_rounds_after_write_message(self, *args: Any) -> str:
         return "after-write"
@@ -190,11 +169,6 @@ class _SynthesizingHost(_FinalizationHost):
 
 
 class _AnswerRepairHost(_SynthesizingHost):
-    def _task_contract_failures(self, *args: Any, **kwargs: Any) -> list[str]:
-        answer = str(kwargs.get("answer_text") or "").strip()
-        self.contract_answer_text = answer
-        return [] if len(answer) >= 100 else ["answer_output_length_unknown"]
-
     async def _generate_result_synthesis_answer(self, **kwargs: Any) -> tuple[str, dict[str, Any]]:
         self.synthesis_kwargs = kwargs
         return "这是基于运行证据生成的完整分析结论。" * 10, {"model": "test-model"}
@@ -205,6 +179,14 @@ async def test_finalizer_publishes_result_persists_answer_and_finishes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(finalizer_module, "count_messages_tokens", lambda messages: 7)
+    result_calls = []
+    build_result = finalizer_module.build_run_result
+
+    def observe_result(**kwargs):
+        result_calls.append(kwargs)
+        return build_result(**kwargs)
+
+    monkeypatch.setattr(finalizer_module, "build_run_result", observe_result)
     conversation = _Conversation()
     host = _FinalizationHost(conversation)
     metadata: dict[str, Any] = {"effective_context_limit": 4096}
@@ -214,11 +196,6 @@ async def test_finalizer_publishes_result_persists_answer_and_finishes(
     )
     execution_state = RunExecutionState.create(20)
     execution_state.record_guidance()
-    execution_state.malformed_tool_call_retries = 1
-    execution_state.completion_review.begin(
-        event_count=0,
-        run_result={"status": "no_tool_activity"},
-    )
 
     outcome = await RunFinalizer(host).finalize(
         RunFinalizationRequest(
@@ -260,7 +237,8 @@ async def test_finalizer_publishes_result_persists_answer_and_finishes(
     )
 
     assert outcome.assistant_content == "这是模型的回答。"
-    assert host.contract_answer_text == "这是模型的回答。"
+    assert len(result_calls) == 1
+    assert result_calls[0]["answer_text"] == outcome.assistant_content
     assert outcome.run_result["status"] == "no_tool_activity"
     assert outcome.run_result["capability_advisories"][0]["code"] == "service_stopped"
     assert "capability_preflight_advisory" in outcome.run_result["risks"]
@@ -269,8 +247,6 @@ async def test_finalizer_publishes_result_persists_answer_and_finishes(
     assert metadata["reasoning"] == "内部推理"
     assert metadata["guidance_count"] == 1
     assert metadata["runtime_intervention_count"] == 1
-    assert metadata["malformed_tool_call_retries"] == 1
-    assert metadata["completion_review_count"] == 1
     assert [event["event"] for event in host.events] == [
         "context_pack",
         "result",
@@ -283,7 +259,7 @@ async def test_finalizer_publishes_result_persists_answer_and_finishes(
 
 
 @pytest.mark.asyncio
-async def test_finalizer_passes_observed_evidence_to_result_synthesis(
+async def test_finalizer_keeps_main_model_answer_without_secondary_synthesis_or_footer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(finalizer_module, "count_messages_tokens", lambda messages: 9)
@@ -358,21 +334,16 @@ async def test_finalizer_passes_observed_evidence_to_result_synthesis(
         )
     )
 
-    assert outcome.assistant_content.startswith("基于运行事实生成的最终总结。")
-    assert "本轮新增/变更文件" in outcome.assistant_content
-    assert "viewer.html" in outcome.assistant_content
-    assert host.synthesis_kwargs["tool_events"] == tool_events
-    assert host.synthesis_kwargs["completion_decisions"] == metadata["completion_decisions"]
-    assert host.synthesis_kwargs["task_route_evidence"] == metadata["task_route_evidence"]
+    assert outcome.assistant_content == "Done."
+    assert host.synthesis_kwargs == {}
     assert outcome.run_result["completion_assessment"]["goal_closed"] is False
-    assert outcome.run_result["completion_assessment"]["remaining_work"] == [
-        "run the browser verification"
-    ]
-    assert metadata["synthesized_final_answer_source"] == "model_from_runtime_facts"
+    assert "synthesized_final_answer" not in metadata
+    assert "changed_files_footer_appended" not in metadata
+
 
 
 @pytest.mark.asyncio
-async def test_synthesized_answer_participates_in_final_run_result(
+async def test_missing_final_answer_is_not_replaced_by_a_second_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(finalizer_module, "count_messages_tokens", lambda messages: 9)
@@ -421,12 +392,13 @@ async def test_synthesized_answer_participates_in_final_run_result(
         )
     )
 
-    assert outcome.run_result["status"] == "success"
-    assert outcome.run_result["counts"]["answer_deliverable_successes"] == 1
-    assert outcome.run_result["flags"]["observed_text_output_chars"] >= 100
-    assert metadata.get("contract_failures") is None
+    assert outcome.assistant_content == "模型未返回最终内容。"
+    assert outcome.run_result["counts"]["answer_deliverable_successes"] == 0
+    assert host.synthesis_kwargs == {}
+    assert metadata["final_answer_error"] == "model did not return a final answer"
+    assert "synthesized_final_answer" not in metadata
     assert host.events[1]["event"] == "result"
-    assert host.events[1]["result"]["status"] == "success"
+
 
 
 @pytest.mark.asyncio

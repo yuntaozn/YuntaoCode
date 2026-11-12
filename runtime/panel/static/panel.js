@@ -27,7 +27,6 @@ const state = {
     pinnedWorkspaceIds: loadPinnedWorkspaceIds(),
     openWorkspaceMenuId: "",
     accessScope: loadAccessScope(),
-    planningPolicy: loadPlanningPolicy(),
     confirmationPolicy: loadConfirmationPolicy(),
     settings: null,
     currentWorkspaceId: localStorage.getItem("lit_workspace_id") || "",
@@ -35,6 +34,7 @@ const state = {
     currentMessages: [],
     activeStreams: new Map(),
     locallyStoppedRunIds: new Set(),
+    finishedRunIds: new Set(),
     pendingComposerSubmits: new Set(),
     submitSeq: 0,
     isSending: false,
@@ -78,9 +78,6 @@ function savePinnedWorkspaceIds() {
     localStorage.setItem("lit_pinned_workspace_ids", JSON.stringify(state.pinnedWorkspaceIds));
 }
 
-function normalizePlanningPolicy(value) {
-    return ["off", "auto", "always"].includes(value) ? value : "auto";
-}
 
 function normalizeConfirmationPolicy(value) {
     return ["conservative", "auto", "aggressive"].includes(value) ? value : "auto";
@@ -94,11 +91,6 @@ function loadAccessScope() {
     return normalizeAccessScope(localStorage.getItem("lit_access_scope") || "project_only");
 }
 
-function loadPlanningPolicy() {
-    const stored = localStorage.getItem("lit_planning_policy");
-    if (stored) return normalizePlanningPolicy(stored);
-    return "auto";
-}
 
 function loadConfirmationPolicy() {
     return normalizeConfirmationPolicy(localStorage.getItem("lit_confirmation_policy") || "auto");
@@ -220,6 +212,7 @@ function runDotMarkup(runs, fallbackActive = false) {
 
 async function refreshActiveRuns() {
     const currentConversationId = state.currentConversationId;
+    const observedStreams = Array.from(state.activeStreams.entries());
     const hadPersistentRun = Boolean(
         currentConversationId
         && !state.activeStreams.has(currentConversationId)
@@ -232,12 +225,15 @@ async function refreshActiveRuns() {
             api("/runs?status=paused"),
         ]);
         const merged = [...(running || []), ...(waiting || []), ...(paused || [])]
-            .filter((run) => !state.locallyStoppedRunIds.has(run?.id || ""));
+            .filter((run) => !state.locallyStoppedRunIds.has(run?.id || "") && !state.finishedRunIds.has(run?.id || ""));
         const byId = new Map();
         for (const run of merged) {
             if (run?.id) byId.set(run.id, run);
         }
         state.activeRuns = Array.from(byId.values());
+        await Promise.allSettled(observedStreams
+            .filter(([, stream]) => stream.runId && !byId.has(stream.runId))
+            .map(([conversationId, stream]) => reconcileCompletedStream(conversationId, stream)));
         renderWorkspaces();
         renderConversations();
         renderCurrentWorkspace();
@@ -260,6 +256,30 @@ async function refreshActiveRuns() {
     } catch (error) {
         console.warn("refreshActiveRuns failed:", error);
     }
+}
+
+async function reconcileCompletedStream(conversationId, stream) {
+    // 流连接不是执行状态；只用已封存的后台终态纠正前端，不按静默时间猜测结束。
+    if (!stream.runId || !stream.finishFromSnapshot || state.activeStreams.get(conversationId) !== stream) return false;
+    const run = await api(`/runs/${encodeURIComponent(stream.runId)}`);
+    if (!run || run.id !== stream.runId || !["done", "interrupted"].includes(run.stage)
+        || !["success", "failure", "partial", "stopped", "cancelled"].includes(run.status)) return false;
+    const conversation = await api(`/conversations/${encodeURIComponent(conversationId)}`);
+    if (state.activeStreams.get(conversationId) !== stream) return false;
+    stream.finishFromSnapshot(conversation, run);
+    if (state.activeStreams.get(conversationId) === stream) {
+        state.activeStreams.delete(conversationId);
+        state.pendingComposerSubmits.delete(composerSubmitKey(conversationId));
+    }
+    state.finishedRunIds.add(run.id);
+    state.activeRuns = state.activeRuns.filter((item) => item.id !== run.id);
+    state.abortController = state.activeStreams.get(state.currentConversationId)?.abortController || null;
+    updateSendingState();
+    syncCurrentConversationStreamStatus();
+    renderWorkspaces();
+    renderConversations();
+    renderCurrentWorkspace();
+    return true;
 }
 
 function syncPendingConfirmationBar() {
@@ -1831,10 +1851,8 @@ async function loadAll() {
     }
     if ($("model-select")) $("model-select").value = state.model;
     state.accessScope = normalizeAccessScope(settings.access_scope || state.accessScope);
-    state.planningPolicy = normalizePlanningPolicy(settings.planning_policy || state.planningPolicy);
     state.confirmationPolicy = normalizeConfirmationPolicy(settings.confirmation_policy || state.confirmationPolicy);
     localStorage.setItem("lit_access_scope", state.accessScope);
-    localStorage.setItem("lit_planning_policy", state.planningPolicy);
     localStorage.setItem("lit_confirmation_policy", state.confirmationPolicy);
     state.pinnedWorkspaceIds = state.pinnedWorkspaceIds.filter((id) =>
         state.workspaces.some((item) => item.id === id),
@@ -2006,7 +2024,6 @@ function renderSettings() {
     if ($("backup-enabled-input")) $("backup-enabled-input").checked = backups.enabled !== false;
     if ($("backup-keep-input")) $("backup-keep-input").value = backups.keep_rounds || 50;
     if ($("access-scope-input")) $("access-scope-input").value = state.accessScope;
-    if ($("planning-policy-input")) $("planning-policy-input").value = state.planningPolicy;
     if ($("confirmation-policy-input")) $("confirmation-policy-input").value = state.confirmationPolicy;
     renderBackups();
 }
@@ -2111,7 +2128,6 @@ function renderCurrentWorkspace() {
         : (workspace ? workspace.path : t('topbar.bind_conversation'));
     $("composer-meta").textContent = workspace ? `${workspace.name} · ${getModeLabel()}` : t('composer.select_project_first');
     renderAccessScopeControl();
-    renderPlanExecutionControl();
     renderConfirmationExecutionControl();
 }
 
@@ -2144,29 +2160,7 @@ function cycleAccessScope() {
     }).catch((error) => showToast(error.message));
 }
 
-function renderPlanExecutionControl() {
-    const btn = $("plan-mode-btn");
-    if (!btn) return;
-    const planningLabels = { off: t('plan.policy_off'), auto: t('plan.policy_auto'), always: t('plan.policy_always') };
-    btn.textContent = planningLabels[state.planningPolicy] || planningLabels.auto;
-    btn.classList.toggle("active", state.planningPolicy !== "off");
-    btn.setAttribute("data-plan-mode", state.planningPolicy);
-}
 
-function cyclePlanExecutionMode() {
-    const modes = ["auto", "always", "off"];
-    const currentIndex = modes.indexOf(state.planningPolicy);
-    state.planningPolicy = modes[(currentIndex + 1) % modes.length];
-    localStorage.setItem("lit_planning_policy", state.planningPolicy);
-    renderPlanExecutionControl();
-    api("/settings", {
-        method: "POST",
-        body: JSON.stringify({ planning_policy: state.planningPolicy }),
-    }).then((settings) => {
-        state.settings = settings;
-        renderSettings();
-    }).catch((error) => showToast(error.message));
-}
 
 function renderConfirmationExecutionControl() {
     const btn = $("confirmation-mode-btn");
@@ -2662,11 +2656,11 @@ function mergeStreamGuidanceMessages(conversationId, streamingMessages) {
     activeStream.messages = streamingMessages;
 }
 
-function mergeFinalStreamMetadata(finalMessages, streamingAssistant) {
+function mergeFinalStreamMetadata(finalMessages, streamingAssistant, runId = "") {
     if (!Array.isArray(finalMessages) || !streamingAssistant?.metadata) return finalMessages || [];
     const assistantIndex = [...finalMessages].map((message, index) => ({ message, index }))
         .reverse()
-        .find((item) => item.message?.role === "assistant")?.index;
+        .find((item) => item.message?.role === "assistant" && (!runId || item.message.metadata?.run_id === runId))?.index;
     if (assistantIndex === undefined) return finalMessages;
     const liveMetadata = streamingAssistant.metadata || {};
     const merged = finalMessages.map((message) => ({
@@ -2795,6 +2789,7 @@ async function sendMessage(event) {
         streamingMessages[assistantIndex].metadata = metadata;
     };
     const renderStreamMessages = (immediate = false) => {
+        if (finished) return;
         mergeStreamGuidanceMessages(conversationId, streamingMessages);
         const activeStream = state.activeStreams.get(conversationId);
         if (activeStream) {
@@ -2810,7 +2805,7 @@ async function sendMessage(event) {
         renderScheduled = true;
         window.requestAnimationFrame(() => {
             renderScheduled = false;
-            if (state.currentConversationId === conversationId) {
+            if (!finished && state.currentConversationId === conversationId) {
                 renderMessages(streamingMessages);
             }
         });
@@ -2861,7 +2856,7 @@ async function sendMessage(event) {
     setStatusBarElapsed(formatElapsed(0));
 
     const abortController = new AbortController();
-    state.activeStreams.set(conversationId, {
+    const streamState = {
         abortController,
         messages: streamingMessages,
         workspaceId,
@@ -2869,7 +2864,8 @@ async function sendMessage(event) {
         stage: "streaming",
         message: t('status.thinking'),
         updatedAt: new Date().toISOString(),
-    });
+    };
+    state.activeStreams.set(conversationId, streamState);
     state.abortController = abortController;
     state.pendingComposerSubmits.delete(conversationSubmitKey);
     updateSendingState();
@@ -2913,12 +2909,54 @@ async function sendMessage(event) {
         renderStreamMessages();
     }, 1000);
 
+    const finishConversation = (eventData) => {
+        if (finished || state.activeStreams.get(conversationId) !== streamState) return;
+        finished = true;
+        if (progressTimer) clearInterval(progressTimer);
+        const metadata = streamingMessages[assistantIndex].metadata || {};
+        metadata.pending = false;
+        metadata.waitingConfirmation = false;
+        streamState.status = eventData.run_status || "success";
+        streamState.stage = "done";
+        if (streamState.runId) {
+            state.finishedRunIds.add(streamState.runId);
+            state.activeRuns = state.activeRuns.filter((run) => run.id !== streamState.runId);
+        }
+        hideStatusBar();
+        const conversation = eventData.conversation;
+        upsertConversationSummary(conversation);
+        const finalMessages = mergeFinalStreamMetadata(
+            conversation.messages, streamingMessages[assistantIndex], streamState.runId,
+        );
+        streamState.messages = finalMessages;
+        if (state.currentConversationId === conversationId) {
+            if (Number.isFinite(eventData.context_tokens)) {
+                state.contextTokens = eventData.context_tokens;
+                state.contextLimit = eventData.context_limit || 0;
+                renderContextBar();
+                renderCurrentWorkspace();
+            }
+            renderMessages(finalMessages);
+            $("last-task-output").textContent = JSON.stringify(eventData.assistant?.metadata || {}, null, 2);
+        }
+        renderConversations();
+    };
+    streamState.finishFromSnapshot = (conversation, run) => {
+        const assistant = [...(conversation.messages || [])].reverse().find((message) =>
+            message.role === "assistant" && message.metadata?.run_id === run.id);
+        finishConversation({
+            conversation, assistant, run_status: run.status,
+            context_tokens: conversation.context_tokens, context_limit: conversation.context_limit,
+        });
+        // 只关闭本地接收连接，不发送停止、重试等 Run 操作。
+        abortController.abort();
+    };
+
     try {
         const body = {
             content,
             model: state.model,
             access_scope: state.accessScope,
-            planning_policy: state.planningPolicy,
             confirmation_policy: state.confirmationPolicy,
             request_id: requestId,
         };
@@ -2934,7 +2972,7 @@ async function sendMessage(event) {
             `/conversations/${conversationId}/messages/stream`,
             body,
             (eventData) => {
-                if (state.activeStreams.get(conversationId)?.locallyStopped) {
+                if (finished || state.activeStreams.get(conversationId) !== streamState || streamState.locallyStopped) {
                     return;
                 }
                 if (eventData.event === "error") {
@@ -3159,6 +3197,7 @@ async function sendMessage(event) {
                         task_id: eventData.task_id || "",
                         error: eventData.error || "",
                         output: eventData.output || null,
+                        output_preview: eventData.output_preview,
                         progress: eventData.progress || (existIdx >= 0 ? toolEvents[existIdx].progress || null : null),
                         logs: existIdx >= 0 ? (toolEvents[existIdx].logs || []) : [],
                         startedAt,
@@ -3271,26 +3310,7 @@ async function sendMessage(event) {
                     renderStreamMessages();
                 }
                 if (eventData.event === "done") {
-                    finished = true;
-                    hideStatusBar();
-                    upsertConversationSummary(eventData.conversation);
-                    if (eventData.context_tokens && state.currentConversationId === conversationId) {
-                        state.contextTokens = eventData.context_tokens;
-                        state.contextLimit = eventData.context_limit || 0;
-                        renderContextBar();
-                        renderCurrentWorkspace();
-                    }
-                    if (state.currentConversationId === conversationId) {
-                        const finalMessages = mergeFinalStreamMetadata(
-                            eventData.conversation.messages,
-                            streamingMessages[assistantIndex],
-                        );
-                        renderMessages(finalMessages);
-                    }
-                    renderConversations();
-                    if (state.currentConversationId === conversationId) {
-                        $("last-task-output").textContent = JSON.stringify(eventData.assistant?.metadata || {}, null, 2);
-                    }
+                    finishConversation(eventData);
                 }
                 if (eventData.event === "confirm") {
                     // 后端请求用户确认，暂停流并显示确认UI
@@ -3308,6 +3328,9 @@ async function sendMessage(event) {
             abortController.signal,
         );
         if (!finished) {
+            await reconcileCompletedStream(conversationId, streamState).catch((error) => console.warn("stream completion refresh failed:", error));
+        }
+        if (!finished) {
             streamingMessages[assistantIndex].metadata = {
                 ...(streamingMessages[assistantIndex].metadata || {}),
                 pending: false,
@@ -3315,7 +3338,7 @@ async function sendMessage(event) {
             renderStreamMessages();
         }
     } catch (error) {
-        if (error.name === "AbortError") {
+        if (!finished && error.name === "AbortError") {
             streamingMessages[assistantIndex].metadata = {
                 ...(streamingMessages[assistantIndex].metadata || {}),
                 pending: false,
@@ -3325,7 +3348,7 @@ async function sendMessage(event) {
                 streamingMessages[assistantIndex].content = t('status.stopped_generating');
             }
             renderStreamMessages();
-        } else {
+        } else if (!finished) {
             await Promise.allSettled(uploadedAttachments.map((item) => api(`/attachments/${encodeURIComponent(item.id)}`, {
                 method: "DELETE",
             })));
@@ -3351,15 +3374,17 @@ async function sendMessage(event) {
         if (progressTimer) {
             clearInterval(progressTimer);
         }
-        hideStatusBar();
-        state.activeStreams.delete(conversationId);
-        state.pendingComposerSubmits.delete(conversationSubmitKey);
-        updateSendingState();
-        state.abortController = state.activeStreams.get(state.currentConversationId)?.abortController || null;
-        syncCurrentConversationStreamStatus();
-        renderConversations();
-        renderWorkspaces();
-        renderCurrentWorkspace();
+        if (state.activeStreams.get(conversationId) === streamState) {
+            hideStatusBar();
+            state.activeStreams.delete(conversationId);
+            state.pendingComposerSubmits.delete(conversationSubmitKey);
+            updateSendingState();
+            state.abortController = state.activeStreams.get(state.currentConversationId)?.abortController || null;
+            syncCurrentConversationStreamStatus();
+            renderConversations();
+            renderWorkspaces();
+            renderCurrentWorkspace();
+        }
     }
 }
 
@@ -3898,8 +3923,8 @@ function renderToolOutput(item) {
             </div>
         `;
     }
-    if (!item.output || item.status === "running") return "";
-    const o = item.output;
+    const o = item.output_preview !== undefined ? item.output_preview : item.output;
+    if (!o || item.status === "running") return "";
     if (o.type === "shell") {
         const exitLabel = o.exit_code === 0 ? t('tools.exit_code_0') : t('tools.exit_code', {code: o.exit_code});
         const stdout = o.stdout ? `<pre class="shell-output">${escapeHtml(o.stdout)}</pre>` : "";
@@ -4351,7 +4376,6 @@ on("message-input", "keydown", (event) => {
 });
 on("upload-attachment-btn", "click", () => $("attachment-file-input")?.click());
 on("access-scope-btn", "click", () => cycleAccessScope());
-on("plan-mode-btn", "click", () => cyclePlanExecutionMode());
 on("confirmation-mode-btn", "click", () => cycleConfirmationPolicy());
 on("token-battery", "click", () => compressContext().catch((error) => showToast(error.message)));
 on("confirm-continue-btn", "click", () => sendConfirmAction("continue"));
@@ -4541,7 +4565,6 @@ async function saveSettings() {
         body: JSON.stringify({
             default_model: state.model,
             access_scope: $("access-scope-input") ? $("access-scope-input").value : state.accessScope,
-            planning_policy: $("planning-policy-input") ? $("planning-policy-input").value : state.planningPolicy,
             confirmation_policy: $("confirmation-policy-input") ? $("confirmation-policy-input").value : state.confirmationPolicy,
             backups: {
                 enabled: $("backup-enabled-input") ? $("backup-enabled-input").checked : true,
@@ -4553,14 +4576,11 @@ async function saveSettings() {
     $("volcengine-key-input").value = "";
     $("qwen-key-input").value = "";
     state.accessScope = normalizeAccessScope(state.settings.access_scope || state.accessScope);
-    state.planningPolicy = normalizePlanningPolicy(state.settings.planning_policy || state.planningPolicy);
     state.confirmationPolicy = normalizeConfirmationPolicy(state.settings.confirmation_policy || state.confirmationPolicy);
     localStorage.setItem("lit_access_scope", state.accessScope);
-    localStorage.setItem("lit_planning_policy", state.planningPolicy);
     localStorage.setItem("lit_confirmation_policy", state.confirmationPolicy);
     renderSettings();
     renderAccessScopeControl();
-    renderPlanExecutionControl();
     renderConfirmationExecutionControl();
     $("settings-dialog").close();
     showToast(t('toast.settings_saved'));

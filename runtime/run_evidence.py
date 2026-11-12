@@ -372,17 +372,18 @@ def _tool_step(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def _visual_context_records(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
+    records: dict[tuple[str, str], dict[str, Any]] = {}
     for event in events:
         for record in _dict_list(event.get("records")):
             summary = visual_evidence_summary(record)
             if not summary:
                 continue
             summary["tool"] = str(record.get("tool") or "")
-            summary["injected_into_model_context"] = True
+            summary["injected_into_model_context"] = bool(record.get("injected_into_model_context", "delivery_status" not in record))
             summary["mime_type"] = str(record.get("mime_type") or "")
-            records.append(summary)
-    return records[-24:]
+            key = (summary["tool"], str(summary.get("source_ref") or summary.get("path") or summary.get("image_ref") or ""))
+            records[key] = summary
+    return list(records.values())[-24:]
 
 
 def _status_step(event: dict[str, Any]) -> dict[str, Any]:

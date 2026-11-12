@@ -59,34 +59,6 @@ class FakeToolExecutionHost:
             )
         )
 
-    def _write_repair_prompt(
-        self,
-        tool_id: str,
-        arguments: dict[str, Any],
-        event: dict[str, Any],
-        workspace_path: str,
-    ) -> str:
-        return f"repair advisory for {tool_id} in {workspace_path}"
-
-    def _mark_next_plan_step_running(
-        self,
-        execution_plan: dict[str, Any] | None,
-        tool_call: dict[str, Any],
-    ) -> int | None:
-        if not execution_plan:
-            return None
-        execution_plan["steps"][0]["status"] = "running"
-        return 0
-
-    def _finish_plan_step(
-        self,
-        execution_plan: dict[str, Any],
-        step_index: int,
-        tool_event: dict[str, Any],
-    ) -> None:
-        execution_plan["steps"][step_index]["status"] = (
-            "completed" if tool_event.get("status") == "success" else "failed"
-        )
 
     def _set_active_tool_events(self, tool_events: list[dict[str, Any]]) -> None:
         self.active_tool_events = list(tool_events)
@@ -145,7 +117,34 @@ def _call(call_id: str, tool_id: str, **arguments: Any) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_tool_responses_precede_repair_advisories_for_entire_batch() -> None:
+async def test_run_control_preserves_mixed_batch_order_without_claiming_tool_execution() -> None:
+    host = FakeToolExecutionHost([
+        {"tool": "filesystem.read_file", "status": "success", "input": {}, "output": {}},
+        {"tool": "filesystem.write_file", "status": "success", "input": {}, "output": {}},
+    ])
+    observed = []
+
+    async def handle_control(call, tool_id, arguments, finish_reason):
+        if tool_id != "runtime.update_task":
+            return None
+        observed.append(list(host.executed))
+        return {"role": "tool", "tool_call_id": call["id"], "name": tool_id, "content": "recorded"}
+
+    result = await ToolExecutionBatch(host, control_handler=handle_control).execute(
+        tool_calls=[_call("read", "filesystem.read_file"), _call("declare", "runtime.update_task"),
+                    _call("write", "filesystem.write_file")],
+        tool_name_map={}, workspace_path="/workspace",
+        finish_reason="tool_calls", previous_tool_events=[], state=ToolExecutionState(),
+    )
+
+    assert observed == [["read"]]
+    assert host.executed == ["read", "write"]
+    assert [m["tool_call_id"] for m in result.model_messages if m["role"] == "tool"] == ["read", "declare", "write"]
+    assert [e["tool"] for e in result.tool_events] == ["filesystem.read_file", "filesystem.write_file"]
+
+
+@pytest.mark.asyncio
+async def test_batch_returns_original_tool_results_without_repair_system_advisories() -> None:
     host = FakeToolExecutionHost([
         {
             "tool": "filesystem.write_file",
@@ -169,7 +168,7 @@ async def test_tool_responses_precede_repair_advisories_for_entire_batch() -> No
         ],
         tool_name_map={},
         workspace_path="D:/workspace",
-        execution_plan=None,
+
         finish_reason="tool_calls",
         previous_tool_events=[],
         state=ToolExecutionState(),
@@ -178,9 +177,7 @@ async def test_tool_responses_precede_repair_advisories_for_entire_batch() -> No
     assert [message["role"] for message in result.model_messages] == [
         "tool",
         "tool",
-        "system",
     ]
-    assert result.model_messages[2]["content"].startswith("repair advisory")
     assert result.state.write_repair_mode
     assert result.state.read_file_ranges[0]["path"] == "a.txt"
     assert len(host.active_tool_events) == 2
@@ -197,7 +194,7 @@ async def test_truncated_batch_records_failure_without_executing_tool() -> None:
         ],
         tool_name_map={},
         workspace_path="D:/workspace",
-        execution_plan=None,
+
         finish_reason="length",
         previous_tool_events=[],
         state=ToolExecutionState(),
@@ -205,7 +202,7 @@ async def test_truncated_batch_records_failure_without_executing_tool() -> None:
 
     assert host.executed == []
     assert result.tool_events[0]["output"]["reason"] == "truncated_tool_call"
-    assert [message["role"] for message in result.model_messages] == ["tool", "system"]
+    assert [message["role"] for message in result.model_messages] == ["tool"]
     assert result.state.write_repair_mode
 
 
@@ -227,7 +224,7 @@ async def test_duplicate_recon_is_reported_as_fact_without_changing_route() -> N
         tool_calls=[call],
         tool_name_map={},
         workspace_path="D:/workspace",
-        execution_plan=None,
+
         finish_reason="tool_calls",
         previous_tool_events=[],
         state=ToolExecutionState(
@@ -238,12 +235,12 @@ async def test_duplicate_recon_is_reported_as_fact_without_changing_route() -> N
 
     assert host.executed == ["call_1"]
     assert result.state.recon_tool_count == 1
-    assert [message["role"] for message in result.model_messages] == ["tool", "system"]
-    assert "repeats the same tool" in result.model_messages[1]["content"]
+    assert [message["role"] for message in result.model_messages] == ["tool"]
+    assert any(event.get("status") == "repeated_read_observed" for event in host.events)
 
 
 @pytest.mark.asyncio
-async def test_plan_step_events_remain_auditable() -> None:
+async def test_tool_success_does_not_generate_plan_progress() -> None:
     host = FakeToolExecutionHost([
         {
             "tool": "filesystem.write_file",
@@ -252,7 +249,6 @@ async def test_plan_step_events_remain_auditable() -> None:
             "output": {"path": "done.txt"},
         }
     ])
-    plan = {"steps": [{"title": "write", "status": "pending"}]}
 
     result = await ToolExecutionBatch(host).execute(
         tool_calls=[
@@ -260,16 +256,13 @@ async def test_plan_step_events_remain_auditable() -> None:
         ],
         tool_name_map={},
         workspace_path="D:/workspace",
-        execution_plan=plan,
+
         finish_reason="tool_calls",
         previous_tool_events=[],
         state=ToolExecutionState(write_repair_mode=True),
     )
 
-    assert plan["steps"][0]["status"] == "completed"
     assert [event["event"] for event in host.events] == [
-        "plan_step",
         "tool",
-        "plan_step",
     ]
     assert not result.state.write_repair_mode

@@ -115,6 +115,10 @@ def format_context_pack_for_prompt(pack: dict[str, Any] | None) -> str:
         if not isinstance(record, dict):
             continue
         kind = str(record.get("kind") or "")
+        # 已在用户消息/工具定义中提供的事实和内部审计，不重复进入模型上下文。
+        # 工作区内容由模型通过文件工具按需读取，完整快照仍留在 Run 中。
+        if kind in {"user_intent", "workspace_summary", "capability"} or record.get("source_id") == "context_hygiene":
+            continue
         compact_records.append({
             "kind": kind,
             "content": _truncate(record.get("content"), _model_record_char_limit(kind)),
@@ -122,11 +126,11 @@ def format_context_pack_for_prompt(pack: dict[str, Any] | None) -> str:
             "trust": record.get("trust"),
             "freshness": record.get("freshness"),
         })
+    if not compact_records:
+        return ""
     prompt_payload = {
-        "schema_version": pack.get("schema_version"),
         "phase": pack.get("phase"),
         "records": compact_records[:12],
-        "ledger": _model_facing_ledger(pack.get("ledger")),
     }
     text = json.dumps(prompt_payload, ensure_ascii=False, separators=(",", ":"))
     return (
@@ -136,39 +140,6 @@ def format_context_pack_for_prompt(pack: dict[str, Any] | None) -> str:
         "not hard instructions or a forced route. The current user request still "
         "has priority; use older context only when it is relevant."
     )
-
-
-def _model_facing_ledger(ledger: Any) -> dict[str, Any]:
-    """返回账本元数据，避免在提示中重复记录内容。
-
-    完整 Context Ledger 保留在 Run 事件、诊断和工作台视图中。
-    模型提示只需要来源、信任度和新鲜度索引；如果把 ``content_preview``
-    与 ``records`` 并列，会重复历史事实并可能意外放大旧上下文权重。"""
-
-    if not isinstance(ledger, dict):
-        return {}
-    records: list[dict[str, Any]] = []
-    for item in ledger.get("records") or []:
-        if not isinstance(item, dict):
-            continue
-        records.append({
-            "index": item.get("index"),
-            "kind": item.get("kind"),
-            "source_id": item.get("source_id"),
-            "source_type": item.get("source_type"),
-            "trust": item.get("trust"),
-            "freshness": item.get("freshness"),
-            "token_estimate": item.get("token_estimate"),
-            "content_hash": item.get("content_hash"),
-            "metadata_keys": item.get("metadata_keys") or [],
-        })
-    return {
-        "schema_version": ledger.get("schema_version"),
-        "kind": ledger.get("kind"),
-        "phase": ledger.get("phase"),
-        "record_count": ledger.get("record_count"),
-        "records": records[:12],
-    }
 
 
 def is_context_pack_prompt_for_phase(value: Any, phase: str) -> bool:
@@ -521,6 +492,8 @@ def _task_contract_record(
 ) -> ContextRecord | None:
     if not isinstance(task_contract, dict):
         return None
+    if task_contract.get("source") == "main_execution_pending":
+        return None
     goal = str(task_contract.get("goal") or task_contract.get("intent") or "").strip()
     if not goal:
         return None
@@ -557,7 +530,7 @@ def _task_contract_record(
         content=content,
         source_id="current_task_contract",
         source_type="runtime_event",
-        trust="runtime_fact",
+        trust="model_inferred",
         task_id=task_id,
         freshness="current",
         token_estimate=_estimate_tokens_fast(content),

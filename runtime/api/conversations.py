@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import tornado.web
 import tornado.iostream
@@ -13,7 +14,6 @@ from runtime import i18n
 from runtime.capability_governance import ai_plugin_draft_workspace_guard_message
 from runtime.agent_strategy.capability_router import (
     build_capability_catalog,
-    format_capability_catalog_for_prompt,
     order_tool_specs_for_model_prompt,
 )
 from runtime.agent_strategy import classifiers as _clf
@@ -21,22 +21,14 @@ from runtime.agent_strategy import capability_preflight as _cap_preflight
 from runtime.agent_strategy import confirmation_policy as _cp
 from runtime.agent_strategy import conversation_task_context as _task_ctx
 from runtime.agent_strategy import context_hygiene as _ctx_hygiene
-from runtime.agent_strategy.document_contract_guard import document_contract_tool_guard_message
-from runtime.agent_strategy.document_completion import (
-    contract_expects_answer_output,
-    min_text_output_check,
-)
 from runtime.agent_strategy import prompts as _prp
-from runtime.agent_strategy import plan_tracker as _pt
 from runtime.agent_strategy import task_contract as _tc
 from runtime.agent_strategy.tool_execution_guard import (
     ToolExecutionGuardChecks,
     evaluate_tool_execution_guard,
 )
-from runtime.agent_strategy import tool_event_roles as _event_roles
 from runtime.agent_strategy import tool_result_risks as _tool_risks
 from runtime.model_providers import generate_chat_completion
-from runtime.model_providers.client import stream_chat_completion
 from runtime.model_calls import run_model_call
 from runtime.terminal_profile import get_terminal_config
 from runtime.context_manager import (
@@ -59,18 +51,14 @@ from runtime.run_result_presenter import (
     answer_only_final_answer_error,
     build_execution_notice,
     build_max_rounds_after_write_message,
-    needs_synthesized_final_answer,
     run_status_from_result,
-    synthesize_failure_answer,
-    synthesize_final_answer,
-    synthesize_partial_answer,
 )
-from runtime.run_result_synthesis import generate_result_synthesis_answer
 from runtime.shell_command_facts import shell_command_facts
 from runtime.task_runner import ToolContext
 from runtime.user_guidance import add_user_guidance, pop_user_guidance
 from runtime import tool_event_presentation as _tool_present
 from runtime import tool_call_protocol as _tool_proto
+from runtime.tool_result_evidence import tool_output_evidence
 
 
 _ACTIVE_CONVERSATION_RUN_STATUSES = {"running", "waiting_confirmation", "paused"}
@@ -123,17 +111,14 @@ def _message_content_with_attachment_catalog(
         catalog = (
             "\n\nHistorical message attachments from an earlier turn:\n"
             + "\n".join(rows)
-            + "\nThese attachments are available as historical context candidates only. "
-            "Use attachment.extract_text only when the current user request clearly refers "
-            "to this earlier attachment or asks to continue/evaluate that attachment task. "
-            "Do not treat attachment storage as a project path."
+            + "\nThese immutable attachments belong to earlier messages in this conversation; "
+            "attachment storage is separate from project paths."
         )
     else:
         catalog = (
             "\n\nCurrent user-provided immutable conversation attachments:\n"
             + "\n".join(rows)
-            + "\nUse attachment.extract_text for text, PDF, or Word attachments when they are "
-            "relevant to the current request. Do not treat attachment storage as a project path."
+            + "\nAttachment storage is separate from project paths."
     )
     return f"{content}{catalog}"
 
@@ -355,14 +340,11 @@ class ConversationMessagesHandler(ApiHandler):
             workspace_id=str(workspace.get("id") or ""),
             user_message=latest_user_message,
             user_memory="",
-            capability_context=self._capability_context_prompt(mode_config),
         )
         messages = [{"role": "system", "content": system_prompt}]
         latest_user_message_id = _latest_user_message_id(conversation)
         for item in conversation.messages:
             metadata = getattr(item, "metadata", {}) or {}
-            if metadata.get("guidance") and metadata.get("during_run"):
-                continue
             role = "assistant" if item.role == "assistant" else "user"
             messages.append({
                 "role": role,
@@ -380,16 +362,6 @@ class ConversationMessagesHandler(ApiHandler):
         self._last_context_hygiene_report = hygiene_report
         self._last_memory_context = memory_context
         return messages
-
-    def _capability_context_prompt(self, mode_config: dict[str, Any] | None = None) -> str:
-        if not hasattr(self.runtime, "registry"):
-            return ""
-        specs = [
-            spec
-            for spec in self._capability_tool_specs(mode_config)
-            if bool(spec.get("available"))
-        ]
-        return format_capability_catalog_for_prompt(build_capability_catalog(specs), compact=True)
 
     def _capability_tool_specs(self, mode_config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         allowed_tools: set[str] | None = None
@@ -449,86 +421,6 @@ class ConversationMessagesHandler(ApiHandler):
     ) -> dict[str, Any]:
         return _cap_preflight.preflight_task_capabilities(task_contract, capability_snapshot)
 
-    async def _auto_start_mcp_services_for_preflight(self, preflight: dict[str, Any]) -> list[dict[str, Any]]:
-        if not isinstance(preflight, dict):
-            return []
-        target_capability_ids = [
-            str(item).strip()
-            for item in preflight.get("target_capability_ids") or []
-            if str(item).strip().startswith("mcp.")
-        ]
-        if not target_capability_ids:
-            return []
-        advisories = preflight.get("advisories") if isinstance(preflight.get("advisories"), list) else []
-        startable_targets = {
-            str(item.get("capability_id") or "").strip()
-            for item in advisories
-            if isinstance(item, dict)
-            and str(item.get("capability_id") or "").strip() in set(target_capability_ids)
-            and str(item.get("recommended_action") or "").strip() == "start"
-        }
-        if not startable_targets:
-            return []
-        mcp_services = getattr(self.runtime, "mcp_services", None)
-        if mcp_services is None or not hasattr(mcp_services, "start_capability_services"):
-            return []
-        try:
-            return await mcp_services.start_capability_services(sorted(startable_targets))
-        except Exception as exc:
-            return [{
-                "service_id": "",
-                "capability_id": ",".join(sorted(startable_targets)),
-                "status": "failed",
-                "message": str(exc),
-            }]
-
-    def _capability_fallback_guard(self, tool_id: str) -> str:
-        preflight = getattr(self, "_active_capability_preflight", None)
-        if _cap_preflight.tool_allowed_by_preflight(preflight, tool_id):
-            return ""
-        targets = ", ".join(preflight.get("target_capability_ids") or []) if isinstance(preflight, dict) else ""
-        if targets:
-            return (
-                f"Runtime capability advisory: tool {tool_id} is outside the target capability facts ({targets}). "
-                "This is advisory evidence, not a hard stop; use the visible capability tools when they fit, "
-                "or choose another safe strategy and make the reason observable."
-            )
-        return (
-            f"Runtime capability advisory: tool {tool_id} is outside the current capability preflight facts. "
-            "Use an available target capability when it fits the goal, or choose another safe strategy and "
-            "explain the observable reason."
-        )
-
-    def _capability_boundary_prompt(self, preflight: dict[str, Any]) -> str:
-        if not isinstance(preflight, dict):
-            return ""
-        advisory_messages = _cap_preflight.preflight_advisory_messages(preflight)
-        if not advisory_messages:
-            return ""
-        targets = ", ".join(preflight.get("target_capability_ids") or [])
-        lines = [
-            "Capability preflight advisory: use these runtime facts when choosing the task strategy.",
-            (
-                "Call only exact tool IDs that are visible in the current tool list. "
-                "Do not invent generic discovery or management tools such as mcp.list_tools "
-                "unless that exact tool ID is listed."
-            ),
-        ]
-        if targets:
-            lines.append(f"Target capability: {targets}.")
-        if advisory_messages:
-            lines.append("Current capability notes:")
-            lines.extend(f"- {message}" for message in advisory_messages[:6])
-        if str(preflight.get("requires_external_state_capability") or "").lower() == "true":
-            lines.append(
-                "External application or MCP state changes need provider evidence before the runtime can record them as observed."
-            )
-        lines.append(
-            "This is not a hard blocker and it does not restrict the visible tool list. "
-            "You may choose another safe strategy, ask the user, or explain the missing capability. "
-            "Do not claim an external application state changed unless tool evidence confirms it."
-        )
-        return "\n".join(lines)
 
 class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def flush(self, include_footers: bool = False) -> asyncio.Task[None]:
@@ -558,8 +450,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             raise tornado.web.HTTPError(400, reason="a message supports at most 8 attachments")
         if not content and not image_data and not attachment_ids:
             raise tornado.web.HTTPError(400, reason="content is required")
-        if payload.get("access_scope"):
-            self.runtime.settings.update({"access_scope": payload.get("access_scope")})
 
         workspace = self.runtime.workspaces.get(conversation.workspace_id)
         if not workspace:
@@ -582,25 +472,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 409,
                 reason=f"conversation already has an active run: {active_run_id}",
             )
-        _active_stream_conversation_runs[conversation_id] = "pending"
-
-        self.set_header("Content-Type", "application/x-ndjson; charset=utf-8")
-        msg_metadata: dict[str, Any] = {}
-        if image_data:
-            msg_metadata["has_image"] = True
-        if attachment_records:
-            msg_metadata["attachments"] = [record.to_public_dict() for record in attachment_records]
-            msg_metadata["has_image"] = any(record.is_image for record in attachment_records)
-        user_message = self.runtime.conversations.add_message(
-            conversation_id,
-            "user",
-            content or ("[Attachment]" if attachment_records else self.t("conv.image_placeholder")),
-            msg_metadata,
-        )
-        self.runtime.attachments.bind_message(attachment_ids, user_message.id)
-        self.write_event({"event": "user", "message": user_message.to_public_dict()})
-        await self.flush()
-
         model = payload.get("model") or self.runtime.settings.get_default_model()
         requested_mode = "terminal"
         effective_mode = self._effective_mode(requested_mode, content, conversation)
@@ -609,6 +480,12 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         resume_from_checkpoint_id = str(payload.get("resume_from_checkpoint_id") or "").strip()
         prepared_run_id = str(payload.get("prepared_run_id") or "").strip()
         task_id = str(payload.get("task_id") or "").strip()
+        if source_run_id:
+            source_run = self.runtime.runs.get(source_run_id)
+            if not source_run or source_run.conversation_id != conversation_id or source_run.workspace_id != conversation.workspace_id:
+                raise tornado.web.HTTPError(409, reason="source run belongs to another conversation or workspace")
+            if not task_id:
+                task_id = source_run.task_id
         prepared_run = self.runtime.runs.get(prepared_run_id) if prepared_run_id else None
         if prepared_run_id and not prepared_run:
             raise tornado.web.HTTPError(404, reason="prepared run not found")
@@ -626,115 +503,171 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             raise tornado.web.HTTPError(404, reason="task not found")
         if product_task and product_task.workspace_id != conversation.workspace_id:
             raise tornado.web.HTTPError(409, reason="task belongs to another workspace")
-        if not product_task:
-            product_task = self.runtime.product_tasks.create(
-                goal=content or ("Process attachments" if attachment_records else "Process image"),
-                conversation_id=conversation_id,
-                workspace_id=conversation.workspace_id,
-                kind="conversation_task",
-                metadata={"source": "conversation"},
-            )
-        if prepared_run:
-            run = prepared_run
-            source_run_id = run.source_run_id
-            resume_from_checkpoint_id = run.resume_from_checkpoint_id
-            payload["source_run_id"] = source_run_id
-            payload["resume_from_checkpoint_id"] = resume_from_checkpoint_id
-            self.runtime.run_events.emit(run.id, {
-                "event": "status",
-                "status": "resumed",
-                "message": "prepared replay run started",
-            })
-        else:
-            attempt = max(1, int(product_task.run_count or 0) + 1)
-            run = self.runtime.runs.create(
-                conversation_id=conversation_id,
-                workspace_id=conversation.workspace_id,
-                mode=effective_mode,
-                user_content=content or ("[attachment]" if attachment_records else "[image]"),
-                task_id=product_task.id,
-                parent_run_id=parent_run_id,
-                source_run_id=source_run_id,
-                attempt=attempt,
-                resume_from_checkpoint_id=resume_from_checkpoint_id,
-            )
-            self.runtime.product_tasks.attach_run(product_task.id, run.id)
-        self._active_run_id = run.id
-        self._active_conversation_id = conversation_id
-        _active_stream_conversation_runs[conversation_id] = run.id
-        self.write_event({"event": "run", "run": run.to_public_dict(include_events=True)})
-        await self.flush()
-        executor = ConversationRunExecutor(
-            self,
-            run_id=run.id,
-            conversation_id=conversation_id,
-        )
-        event_queue = self.runtime.run_events.subscribe(run.id)
+        if product_task and product_task.conversation_id != conversation_id:
+            raise tornado.web.HTTPError(409, reason="task belongs to another conversation")
+        if prepared_run and product_task and product_task.current_run_id != prepared_run.id:
+            raise tornado.web.HTTPError(409, reason="prepared run has been superseded by another attempt")
+        if product_task and product_task.state in {"completed", "cancelled"}:
+            raise tornado.web.HTTPError(409, reason="terminal tasks require an explicit replay to create a new task")
+        if not prepared_run and product_task and product_task.current_run_id and product_task.state in {
+            "running", "planning", "waiting_confirmation", "verifying", "resuming",
+        }:
+            raise tornado.web.HTTPError(409, reason="task already has an active run")
 
-        async def execute_run() -> None:
-            try:
-                await executor.execute(
-                    conversation_id=conversation_id,
-                    conversation=conversation,
-                    workspace=workspace,
-                    payload=payload,
-                    content=content,
-                    image_data=image_data,
-                    attachments=attachment_records,
-                    model=model,
-                    requested_mode=requested_mode,
-                    effective_mode=effective_mode,
-                    run=run,
-                )
-            except Exception as exc:
-                self.runtime.run_events.emit(run.id, {
-                    "event": "error",
-                    "error": str(exc) or exc.__class__.__name__,
-                })
-
-        task = asyncio.create_task(execute_run())
-        _active_run_tasks[run.id] = task
+        # 引用和状态校验全部通过后才持久化消息；预约使用请求独有标识。
+        reservation = f"pending:{uuid4()}"
+        _active_stream_conversation_runs[conversation_id] = reservation
+        run = None
+        task = None
         try:
-            while True:
-                if getattr(self, "_client_stream_closed", False):
-                    return
-                if task.done() and event_queue.empty():
-                    break
-                try:
-                    event_data = await asyncio.wait_for(event_queue.get(), timeout=15.0)
-                except asyncio.TimeoutError:
-                    self.write_json_line({
-                        "event": "heartbeat",
-                        "run_id": run.id,
-                        "message": self.t("conv.model_processing"),
-                        "phase": "run_stream",
-                        "connection_alive": True,
-                    })
-                    await self.flush()
-                    continue
-                payload_for_client = dict(event_data)
-                payload_for_client.pop("time", None)
-                self.write_json_line(payload_for_client)
-                await self.flush()
-                if payload_for_client.get("event") == "done":
-                    break
-                if (
-                    payload_for_client.get("event") == "error"
-                    and payload_for_client.get("terminal", True) is not False
-                ):
-                    break
-        finally:
-            self.runtime.run_events.unsubscribe(run.id, event_queue)
-            if _active_run_tasks.get(run.id) is task:
-                _active_run_tasks.pop(run.id, None)
-            if _active_stream_conversation_runs.get(conversation_id) in {run.id, "pending"}:
-                _active_stream_conversation_runs.pop(conversation_id, None)
+            if payload.get("access_scope"):
+                self.runtime.settings.update({"access_scope": payload.get("access_scope")})
+            self.set_header("Content-Type", "application/x-ndjson; charset=utf-8")
+            msg_metadata: dict[str, Any] = {}
+            if image_data:
+                msg_metadata["has_image"] = True
+            if attachment_records:
+                msg_metadata["attachments"] = [record.to_public_dict() for record in attachment_records]
+                msg_metadata["has_image"] = any(record.is_image for record in attachment_records)
+            user_message = self.runtime.conversations.add_message(
+                conversation_id,
+                "user",
+                content or ("[Attachment]" if attachment_records else self.t("conv.image_placeholder")),
+                msg_metadata,
+            )
+            self.runtime.attachments.bind_message(attachment_ids, user_message.id)
+            self.write_event({"event": "user", "message": user_message.to_public_dict()})
+            await self.flush()
 
-    def _normalize_planning_policy(self, payload: dict[str, Any]) -> str:
-        policy = str(payload.get("planning_policy") or "").strip().lower()
-        if policy in {"off", "auto", "always"}:
-            return policy
-        return self.runtime.settings.get_planning_policy()
+            if not product_task:
+                product_task = self.runtime.product_tasks.create(
+                    goal=content or ("Process attachments" if attachment_records else "Process image"),
+                    conversation_id=conversation_id,
+                    workspace_id=conversation.workspace_id,
+                    kind="conversation_task",
+                    metadata={"source": "conversation"},
+                )
+            if prepared_run:
+                run = prepared_run
+                source_run_id = run.source_run_id
+                resume_from_checkpoint_id = run.resume_from_checkpoint_id
+                payload["source_run_id"] = source_run_id
+                payload["resume_from_checkpoint_id"] = resume_from_checkpoint_id
+                self.runtime.run_events.emit(run.id, {
+                    "event": "status",
+                    "status": "resumed",
+                    "message": "prepared replay run started",
+                })
+            else:
+                attempt = max(1, int(product_task.run_count or 0) + 1)
+                run = self.runtime.runs.create(
+                    conversation_id=conversation_id,
+                    workspace_id=conversation.workspace_id,
+                    mode=effective_mode,
+                    user_content=content or ("[attachment]" if attachment_records else "[image]"),
+                    task_id=product_task.id,
+                    parent_run_id=parent_run_id,
+                    source_run_id=source_run_id,
+                    attempt=attempt,
+                    resume_from_checkpoint_id=resume_from_checkpoint_id,
+                )
+                self.runtime.product_tasks.attach_run(product_task.id, run.id)
+            self._active_run_id = run.id
+            self._active_conversation_id = conversation_id
+            _active_stream_conversation_runs[conversation_id] = run.id
+            self.write_event({"event": "run", "run": run.to_public_dict(include_events=True)})
+            await self.flush()
+            executor = ConversationRunExecutor(
+                self,
+                run_id=run.id,
+                conversation_id=conversation_id,
+            )
+            event_queue = self.runtime.run_events.subscribe(run.id)
+
+            async def execute_run() -> None:
+                try:
+                    await executor.execute(
+                        conversation_id=conversation_id,
+                        conversation=conversation,
+                        workspace=workspace,
+                        payload=payload,
+                        content=content,
+                        image_data=image_data,
+                        attachments=attachment_records,
+                        model=model,
+                        requested_mode=requested_mode,
+                        effective_mode=effective_mode,
+                        run=run,
+                    )
+                except Exception as exc:
+                    self.runtime.run_events.emit(run.id, {
+                        "event": "error",
+                        "error": str(exc) or exc.__class__.__name__,
+                    })
+                finally:
+                    current = self.runtime.runs.get(run.id)
+                    if current and current.stage != "done":
+                        # 覆盖 Provider 提前返回和未经过 Finalizer 的异常退出。
+                        self.runtime.run_events.emit(run.id, {
+                            "event": "done",
+                            "run_status": current.status if current.status in {"failure", "stopped", "cancelled"} else "failure",
+                        })
+
+            task = asyncio.create_task(execute_run())
+            _active_run_tasks[run.id] = task
+
+            def release_execution(completed: asyncio.Task[None]) -> None:
+                # HTTP 连接关闭不代表执行结束；控制句柄和会话占用随后台执行释放。
+                if _active_run_tasks.get(run.id) is completed:
+                    _active_run_tasks.pop(run.id, None)
+                if _active_stream_conversation_runs.get(conversation_id) == run.id:
+                    _active_stream_conversation_runs.pop(conversation_id, None)
+
+            task.add_done_callback(release_execution)
+            try:
+                while True:
+                    if getattr(self, "_client_stream_closed", False):
+                        return
+                    if task.done() and event_queue.empty():
+                        break
+                    try:
+                        event_data = await asyncio.wait_for(event_queue.get(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        self.write_json_line({
+                            "event": "heartbeat",
+                            "run_id": run.id,
+                            "message": self.t("conv.model_processing"),
+                            "phase": "run_stream",
+                            "connection_alive": True,
+                        })
+                        await self.flush()
+                        continue
+                    payload_for_client = dict(event_data)
+                    payload_for_client.pop("time", None)
+                    self.write_json_line(payload_for_client)
+                    await self.flush()
+                    if payload_for_client.get("event") == "done":
+                        break
+                    if (
+                        payload_for_client.get("event") == "error"
+                        and payload_for_client.get("terminal", True) is not False
+                    ):
+                        break
+            finally:
+                self.runtime.run_events.unsubscribe(run.id, event_queue)
+        finally:
+            if task is None:
+                try:
+                    if run is not None:
+                        self.runtime.run_events.emit(run.id, {
+                            "event": "error", "error": "run setup interrupted before execution",
+                        })
+                        self.runtime.run_events.emit(run.id, {"event": "done", "run_status": "failure"})
+                finally:
+                    owned_ids = {reservation} | ({run.id} if run is not None else set())
+                    if _active_stream_conversation_runs.get(conversation_id) in owned_ids:
+                        _active_stream_conversation_runs.pop(conversation_id, None)
+
 
     def _normalize_confirmation_policy(self, payload: dict[str, Any]) -> str:
         return _cp.normalize_confirmation_policy(
@@ -766,18 +699,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             source=source,
         )
 
-    def _should_use_model_task_contract(
-        self,
-        content: str,
-        fallback_intent: str,
-        conversation: Any | None = None,
-    ) -> bool:
-        text = str(content or "").strip()
-        return _tc.should_use_model_task_contract(
-            text,
-            fallback_intent,
-            has_recent_task_context=self._has_recent_task_context(conversation, text),
-        )
 
     async def _run_auxiliary_model_call(
         self,
@@ -805,365 +726,14 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             flush=self.flush if observable else None,
         )
 
-    async def _decide_task_contract(
-        self,
-        *,
-        model: str,
-        messages: list[dict[str, Any]],
-        workspace_path: str,
-        user_content: str,
-        fallback_contract: dict[str, Any],
-        previous_contract: dict[str, Any] | None = None,
-        workspace_context: str = "",
-    ) -> dict[str, Any]:
-        try:
-            lang = self.get_lang()
-        except Exception:
-            lang = ""
-        mode_config = get_terminal_config(lang)
-        prompt = _tc.task_contract_prompt(
-            workspace_path,
-            fallback_contract,
-            capability_context=self._capability_context_prompt(mode_config),
-            workspace_context=workspace_context,
-            previous_contract=previous_contract,
-        )
-        try:
-            decision_messages: list[dict[str, Any]] = [
-                {"role": "system", "content": prompt},
-                *_tc.task_contract_context_messages(
-                    messages,
-                    user_content,
-                    include_history=False,
-                ),
-            ]
-            answer, _metadata = await self._run_auxiliary_model_call(
-                purpose="task_contract",
-                model=model,
-                messages=decision_messages,
-                enable_thinking=False,
-                reasoning_effort="low",
-                tools=None,
-            )
-            parsed = _tc.extract_task_contract_json(answer)
-            if parsed is None:
-                contract = _tc.merge_model_task_contract(None, fallback_contract)
-                contract["source"] = "policy_fallback"
-                contract["model_contract_error"] = (
-                    "invalid task contract response: expected a JSON object"
-                )
-                return _tc.apply_task_continuity(
-                    contract,
-                    previous_contract=previous_contract,
-                    current_user_content=user_content,
-                )
-            contract = _tc.merge_model_task_contract(
-                parsed,
-                fallback_contract,
-            )
-            return _tc.apply_task_continuity(
-                contract,
-                previous_contract=previous_contract,
-                current_user_content=user_content,
-            )
-        except Exception as exc:
-            contract = _tc.merge_model_task_contract(
-                None,
-                fallback_contract,
-            )
-            contract["source"] = "policy_fallback"
-            contract["model_contract_error"] = str(exc)[:500]
-            return _tc.apply_task_continuity(
-                contract,
-                previous_contract=previous_contract,
-                current_user_content=user_content,
-            )
-
-    def _task_contract_prompt(self, contract: dict[str, Any]) -> str:
-        conditions = ", ".join(contract.get("success_conditions") or [])
-        goal = str(contract.get("goal") or "").strip() or "(not declared)"
-        deliverables = json.dumps(contract.get("deliverables") or [], ensure_ascii=False)
-        lang = self.get_lang()
-        source = str(contract.get("source") or "").strip()
-        source_notice = ""
-        if source and source != "model":
-            source_notice += i18n.t("contract.source_notice", lang, source=source)
-            if contract.get("model_contract_error"):
-                source_notice += i18n.t("contract.source_error", lang)
-        prompt = (
-            i18n.t("contract.title", lang)
-            + source_notice
-            + i18n.t("contract.workspace", lang, workspace_path=str(contract.get("workspace_path")))
-            + i18n.t("contract.access", lang, access_scope=str(contract.get("access_scope")))
-            + i18n.t("contract.planning_policy", lang, planning_policy=str(contract.get("planning_policy")))
-            + i18n.t("contract.confirmation_policy", lang, confirmation_policy=str(contract.get("confirmation_policy")))
-            + i18n.t("contract.intent", lang, intent=str(contract.get("intent")))
-            + i18n.t("contract.goal", lang, goal=goal)
-            + i18n.t("contract.deliverables", lang, deliverables=deliverables)
-            + f"任务路由：{contract.get('routing_strategy')}（模型理解任务，系统校验能力契约与执行结果）\n"
-            + i18n.t("contract.must_write", lang, requires_write=str(bool(contract.get("requires_write"))))
-            + i18n.t(
-                "contract.must_change_state",
-                lang,
-                requires_state_change=str(bool(contract.get("requires_state_change"))),
-            )
-            + i18n.t("contract.must_verify", lang, requires_verification=str(bool(contract.get("requires_verification"))))
-            + i18n.t("contract.success", lang, conditions=conditions)
-            + i18n.t("contract.write_rule", lang)
-            + i18n.t("contract.verify_rule", lang)
-            + i18n.t("contract.summary_rule", lang)
-        )
-        if contract.get("expected_document_coverage"):
-            prompt += (
-                "\n文档覆盖要求：本轮是全文/整文档输出任务。生成文件后必须验证输出规模，"
-                "不要只验证文件存在；如果输出明显少于源文档，请明确说明证据不足和下一步处理方式。\n"
-            )
-        try:
-            min_chars = int(contract.get("expected_min_output_chars") or 0)
-        except (TypeError, ValueError):
-            min_chars = 0
-        if min_chars > 0:
-            prompt += (
-                f"\nDocument size target: the user requested at least about {min_chars} characters. "
-                "After exporting, compare the tool-reported content_chars/text_chars with this target. "
-                "If the output is shorter, say it is not fully complete.\n"
-            )
-        modalities = [
-            str(item or "").strip().lower()
-            for item in contract.get("required_verification_modalities") or []
-            if str(item or "").strip()
-        ]
-        if "visual" in modalities:
-            prompt += (
-                "\nVisual verification required: the target depends on appearance, layout, render quality, "
-                "or what the user can see. After changing the target, use any safe available strategy that "
-                "returns a visual artifact or visual facts, such as a screenshot, render, capture, exported "
-                "image, or PDF. Do not assume one fixed tool name is required. Structural state facts alone "
-                "are useful but do not prove visual quality. If no visual evidence is available, say the "
-                "result is not visually verified instead of repeating the same failing call.\n"
-            )
-        execution_advisories = (
-            contract.get("execution_advisories")
-            if isinstance(contract.get("execution_advisories"), list)
-            else []
-        )
-        if execution_advisories:
-            prompt += "\nRuntime execution advisories (not hard constraints):\n"
-            for advisory in execution_advisories[:4]:
-                if not isinstance(advisory, dict):
-                    continue
-                message = str(advisory.get("message") or advisory.get("code") or "").strip()
-                if not message:
-                    continue
-                prompt += f"- {message}\n"
-                suggested = str(advisory.get("suggested_first_action") or "").strip()
-                if suggested:
-                    prompt += (
-                        f"  Suggested first action: {suggested}. You may choose a different "
-                        "safe action if the current task evidence requires it.\n"
-                    )
-        continuity_advisories = (
-            contract.get("continuity_advisories")
-            if isinstance(contract.get("continuity_advisories"), list)
-            else []
-        )
-        if continuity_advisories:
-            prompt += "\nRuntime continuity advisories (not hard constraints):\n"
-            for advisory in continuity_advisories[:4]:
-                if not isinstance(advisory, dict):
-                    continue
-                message = str(advisory.get("message") or advisory.get("code") or "").strip()
-                if not message:
-                    continue
-                prompt += f"- {message}\n"
-                suggested = str(advisory.get("suggested_first_action") or "").strip()
-                if suggested:
-                    prompt += (
-                        f"  Suggested first action: {suggested}. You may choose a different "
-                        "safe action if the current user intent requires it.\n"
-                    )
-        return prompt
-
-    def _task_contract_failures(
-        self,
-        contract: dict[str, Any],
-        tool_events: list[dict[str, Any]],
-        mode: str | None,
-        *,
-        answer_text: str | None = None,
-    ) -> list[str]:
-        failures: list[str] = []
-        workspace_path = str(contract.get("workspace_path") or "")
-        deliverables = _event_roles.successful_deliverable_events(
-            tool_events,
-            task_contract=contract,
-            workspace_path=workspace_path,
-            mode=mode,
-        )
-        verifications = _event_roles.sufficient_task_verification_events(
-            tool_events,
-            task_contract=contract,
-            workspace_path=workspace_path,
-            mode=mode,
-        )
-        requires_state_deliverable = bool(
-            contract.get("requires_write") or contract.get("requires_state_change")
-        )
-        requires_answer_deliverable = bool(
-            answer_text is not None and contract_expects_answer_output(contract)
-        )
-        if (
-            (requires_state_deliverable and not deliverables)
-            or (requires_answer_deliverable and not str(answer_text or "").strip())
-        ):
-            failures.append("missing_target_deliverable_success")
-        if (
-            contract.get("requires_verification")
-            and (deliverables or not requires_state_deliverable)
-            and not verifications
-        ):
-            failures.append("missing_target_verification")
-        min_output_check = min_text_output_check(
-            tool_events,
-            expected_min_output_chars=contract.get("expected_min_output_chars") or 0,
-            task_contract=contract,
-            workspace_path=workspace_path,
-            mode=mode,
-            answer_text=answer_text,
-        )
-        if min_output_check.get("required") and not min_output_check.get("ok"):
-            failures.append(str(min_output_check.get("reason") or "document_output_too_short"))
-        return failures
-
-    async def _generate_result_synthesis_answer(
-        self,
-        *,
-        model: str,
-        workspace_path: str,
-        user_content: str,
-        task_contract: dict[str, Any] | None,
-        run_result: dict[str, Any],
-        previous_answer: str,
-        tool_events: list[dict[str, Any]] | None = None,
-        completion_decisions: list[dict[str, Any]] | None = None,
-        task_route_evidence: dict[str, Any] | None = None,
-    ) -> tuple[str, dict[str, Any]]:
-        async def model_call(**kwargs: Any) -> tuple[str, dict[str, Any]]:
-            return await self._run_auxiliary_model_call(
-                purpose="result_synthesis",
-                **kwargs,
-            )
-
-        return await generate_result_synthesis_answer(
-            settings=self.runtime.settings,
-            model=model,
-            workspace_path=workspace_path,
-            user_content=user_content,
-            task_contract=task_contract,
-            run_result=run_result,
-            previous_answer=previous_answer,
-            tool_events=tool_events,
-            completion_decisions=completion_decisions,
-            task_route_evidence=task_route_evidence,
-            model_call=model_call,
-        )
-
-    async def _generate_execution_plan(
-        self,
-        *,
-        model: str,
-        messages: list[dict[str, Any]],
-        workspace_path: str,
-        mode: str | None,
-        enable_thinking: bool,
-        reasoning_effort: str,
-    ) -> dict[str, Any]:
-        plan_messages = [*messages, {
-            "role": "system",
-            "content": self._planning_prompt(workspace_path, mode),
-        }]
-        plan_parts: list[str] = []
-        async for event in stream_chat_completion(
-            settings=self.runtime.settings,
-            model=model,
-            messages=plan_messages,
-            enable_thinking=enable_thinking,
-            reasoning_effort=reasoning_effort,
-            tools=None,
-        ):
-            if event.get("error"):
-                raise tornado.web.HTTPError(502, reason=event["error"])
-            if event.get("message"):
-                plan_parts.append(event["message"])
-            if event.get("reasoning"):
-                self.write_event({"event": "reasoning", "reasoning": event["reasoning"]})
-                await self.flush()
-            if event.get("heartbeat"):
-                self.write_event({
-                    "event": "heartbeat",
-                    "message": event.get("message") or "模型仍在处理，请稍候",
-                    "idle_seconds": event.get("idle_seconds"),
-                    "phase": event.get("phase") or "model_stream",
-                    "connection_alive": event.get("connection_alive", True),
-                })
-                await self.flush()
-        raw_plan = "".join(plan_parts).strip()
-        return self._normalize_execution_plan(raw_plan, mode)
-
-    def _planning_prompt(self, workspace_path: str, mode: str | None) -> str:
-        lang = self.get_lang()
-        _ = mode
-        focus = i18n.t("planner.focus_general", lang)
-        return (
-            i18n.t("planner.intro", lang, workspace_path=workspace_path)
-            + focus + "\n"
-            + i18n.t("planner.json_format", lang)
-        )
-
-    def _normalize_execution_plan(self, raw_plan: str, mode: str | None) -> dict[str, Any]:
-        return _pt.normalize_execution_plan(raw_plan, mode)
-
-    def _fallback_execution_plan(self, mode: str | None) -> dict[str, Any]:
-        return _pt.fallback_execution_plan(mode)
-
-    def _format_execution_plan_for_context(self, plan: dict[str, Any]) -> str:
-        return _prp.format_execution_plan_for_context(plan)
-
-    def _execute_plan_prompt(self, plan: dict[str, Any], mode: str | None) -> str:
-        return _prp.execute_plan_prompt(plan, mode)
 
     def _explorer_tool_ids(self, mode: str | None) -> set[str]:
         return _clf.explorer_tool_ids(mode)
 
-    def _mark_next_plan_step_running(
-        self,
-        execution_plan: dict[str, Any] | None,
-        tool_call: dict[str, Any],
-    ) -> int | None:
-        return _pt.mark_next_plan_step_running(execution_plan, tool_call)
 
     def _normalize_tool_id(self, value: Any) -> str:
-        return _pt.normalize_tool_id(value)
+        return _clf.canonical_tool_id(value)
 
-    def _tool_matches_plan_step(self, tool_id: str, step: dict[str, Any]) -> bool:
-        return _pt.tool_matches_plan_step(tool_id, step)
-
-    def _finish_plan_step(
-        self,
-        execution_plan: dict[str, Any],
-        step_index: int,
-        tool_event: dict[str, Any],
-    ) -> None:
-        _pt.finish_plan_step(execution_plan, step_index, tool_event)
-
-    def _complete_remaining_plan_steps(
-        self,
-        execution_plan: dict[str, Any],
-        *,
-        failed: bool,
-        had_tool_events: bool = True,
-    ) -> None:
-        _pt.complete_remaining_plan_steps(execution_plan, failed=failed, had_tool_events=had_tool_events)
 
     def _build_model_tools(
         self,
@@ -1333,7 +903,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             raw_tool_name=str(model_tool_name or ""),
             raw_arguments_text=raw_arguments_text,
             missing_fields=self._tool_attempt_missing_fields(tool_id, arguments, reason),
-            available_tool_ids=self._tool_attempt_available_tool_ids(reason),
         )
         output = _tool_proto.tool_attempt_output(observation)
         event = {
@@ -1377,35 +946,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         except Exception:
             return []
 
-    def _tool_attempt_available_tool_ids(self, reason: str) -> list[str]:
-        if reason != "unknown_tool":
-            return []
-        try:
-            tool_ids: list[str] = []
-            for spec in self.runtime.registry.list_specs():
-                tool_id = str(spec.get("id") or "").strip()
-                if not tool_id:
-                    continue
-                if hasattr(self.runtime, "settings") and not self.runtime.settings.is_tool_enabled(tool_id):
-                    continue
-                if hasattr(self.runtime, "is_tool_available") and not self.runtime.is_tool_available(spec):
-                    continue
-                tool_ids.append(tool_id)
-            return tool_ids[:24]
-        except Exception:
-            return []
-
-    def _consecutive_repeated_failure_count(self, tool_events: list[dict[str, Any]]) -> int:
-        return _clf.consecutive_repeated_failure_count(tool_events)
-
-    def _failure_route_attempt_count_since_progress(self, tool_events: list[dict[str, Any]]) -> int:
-        return _clf.failure_route_attempt_count_since_progress(tool_events)
-
-    def _repeated_failure_action(
-        self,
-        tool_events: list[dict[str, Any]],
-    ) -> str:
-        return _clf.repeated_failure_action(tool_events)
 
     def _has_unresolved_tool_call_markup(self, content: str) -> bool:
         return _clf.has_unresolved_tool_call_markup(content)
@@ -1413,8 +953,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     def _strip_native_tool_call_blocks(self, content: str) -> str:
         return _clf.strip_native_tool_call_blocks(content)
 
-    def _malformed_tool_call_prompt(self, workspace_path: str, unfinished_text: str) -> str:
-        return _prp.malformed_tool_call_prompt(workspace_path, unfinished_text)
 
     def _answer_only_final_answer_error(
         self,
@@ -1424,43 +962,10 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     ) -> str:
         return answer_only_final_answer_error(content, tool_events, task_contract)
 
-    def _needs_synthesized_final_answer(
-        self,
-        content: str,
-        tool_events: list[dict[str, Any]],
-        task_contract: dict[str, Any] | None = None,
-    ) -> bool:
-        return needs_synthesized_final_answer(content, tool_events, task_contract)
 
     def _run_status_from_result(self, run_result: dict[str, Any]) -> str:
         return run_status_from_result(run_result)
 
-    def _synthesize_failure_answer(
-        self,
-        workspace_path: str,
-        tool_events: list[dict[str, Any]],
-        run_result: dict[str, Any],
-    ) -> str:
-        return synthesize_failure_answer(
-            workspace_path,
-            tool_events,
-            run_result,
-            tool_event_failed=self._tool_event_failed,
-            tool_event_failure_message=self._tool_event_failure_message,
-            tool_event_display_path=self._tool_event_display_path,
-        )
-
-    def _synthesize_partial_answer(
-        self,
-        workspace_path: str,
-        tool_events: list[dict[str, Any]],
-        run_result: dict[str, Any],
-    ) -> str:
-        return synthesize_partial_answer(
-            workspace_path,
-            tool_events,
-            run_result,
-        )
 
     def _tool_event_failed(self, event: dict[str, Any]) -> bool:
         if str(event.get("status") or "") == "failure":
@@ -1514,33 +1019,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return ""
         return self._relative_workspace_path(workspace_path, str(path))
 
-    def _synthesize_final_answer(
-        self,
-        workspace_path: str,
-        tool_events: list[dict[str, Any]],
-        change_summary: dict[str, Any] | None,
-        mode: str | None,
-        task_contract: dict[str, Any] | None = None,
-    ) -> str:
-        return synthesize_final_answer(
-            workspace_path,
-            tool_events,
-            change_summary,
-            mode,
-            task_contract,
-            is_write_tool=self._is_write_tool,
-            is_verification_tool=self._is_verification_tool,
-            relative_workspace_path=self._relative_workspace_path,
-            tool_event_failed=self._tool_event_failed,
-            tool_event_failure_message=self._tool_event_failure_message,
-        )
-
-    def _execution_convergence_prompt(
-        self,
-        workspace_path: str,
-        tool_events: list[dict[str, Any]],
-    ) -> str:
-        return _prp.execution_convergence_prompt(workspace_path, tool_events)
 
     def _runtime_confirmation_decision(self, tool_id: str) -> _cp.ConfirmationDecision:
         try:
@@ -1557,35 +1035,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             declared_confirmation=bool(tool.spec.requires_confirmation),
         )
 
-    def _document_contract_tool_guard(self, tool_id: str, arguments: dict[str, Any]) -> str:
-        contract = getattr(self, "_active_task_contract", None)
-        return document_contract_tool_guard_message(
-            tool_id,
-            arguments,
-            contract if isinstance(contract, dict) else None,
-        )
-
-    def _verification_runtime_tool_guard(self, tool_id: str, arguments: dict[str, Any]) -> str:
-        if tool_id != "shell.run_command":
-            return ""
-        if not _clf.is_long_running_service_command(arguments):
-            return ""
-        contract = getattr(self, "_active_task_contract", None)
-        if not isinstance(contract, dict) or not contract.get("requires_verification"):
-            return ""
-        tool_events = getattr(self, "_active_tool_events", [])
-        verification_context = _clf.has_successful_write(
-            tool_events if isinstance(tool_events, list) else []
-        )
-        if not verification_context:
-            return ""
-        command = _clf.shell_command_text(arguments)
-        return (
-            "验证证据提示：检测到长驻服务启动命令被用于验证："
-            f"{command}。这类命令通常不会自行退出，作为完成证据偏弱。"
-            "可考虑改用可退出的语法检查、构建、测试、读取生成文件、git diff/status，"
-            "或在最终总结中明确说明仍需用户手动打开浏览器验证。"
-        )
 
     def _ai_plugin_draft_workspace_guard(
         self,
@@ -1616,10 +1065,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                     self.runtime.registry.get_public_spec(current_tool_id)
                 ),
                 missing_required_input_fields=self.runtime.registry.missing_required_input_fields,
-                capability_fallback_message=self._capability_fallback_guard,
                 ai_plugin_draft_workspace_message=self._ai_plugin_draft_workspace_guard,
-                document_contract_message=self._document_contract_tool_guard,
-                verification_runtime_message=self._verification_runtime_tool_guard,
             ),
         )
 
@@ -1745,7 +1191,16 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             pass
         finally:
             _pending_confirms.pop(conversation_id, None)
-        return _confirm_responses.pop(conversation_id, "cancel") == "continue"
+        confirmed = _confirm_responses.pop(conversation_id, "cancel") == "continue"
+        run_id = str(getattr(self, "_active_run_id", "") or "")
+        current = self.runtime.runs.get(run_id) if run_id else None
+        if current and current.status == "waiting_confirmation":
+            self.write_event({
+                "event": "status", "status": "resumed",
+                "message": "操作确认等待已结束，继续处理当前任务。",
+            })
+            await self.flush()
+        return confirmed
 
     async def _execute_tool_call(
         self,
@@ -1780,12 +1235,11 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 tool_id,
                 arguments,
                 reason="unknown_tool",
-                message=f"未知工具：{tool_id}。请改用当前工具列表中的规范工具 ID。",
+                message=f"未知工具：{tool_id}。本次调用未执行。",
             )
 
         guard_decision = self._tool_execution_guard_decision(tool_id, arguments, workspace_path)
-        runtime_advisories = []
-        if guard_decision and getattr(guard_decision, "blocking", True):
+        if guard_decision:
             return self._skipped_tool_call(
                 tool_call,
                 tool_id,
@@ -1793,8 +1247,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                 reason=guard_decision.reason,
                 message=guard_decision.message,
             )
-        if guard_decision:
-            runtime_advisories.append(guard_decision.to_public_dict())
 
         confirmation_decision = self._runtime_confirmation_decision(tool_id)
         if confirmation_decision.requires_confirmation:
@@ -1807,6 +1259,7 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
                     reason="user_cancelled_tool",
                     message=f"用户取消了写入工具调用：{tool_id}",
                 )
+            await self._wait_if_paused()
 
         task = await self.runtime.runner.submit(
             tool_id,
@@ -1903,19 +1356,19 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "input": arguments,
             "task_id": task.id,
             "error": task_error,
-            "output": output_preview,
+            "output": tool_output_evidence(task.output),
+            "output_preview": output_preview,
+            "output_source": {"kind": "tool_task_output", "task_id": task.id},
             "progress": self._tool_progress_snapshot(tool_id, task),
             **tool_spec.to_event_contract(),
         }
-        if runtime_advisories:
-            event["runtime_advisories"] = runtime_advisories
         tool_payload = _tool_risks.attach_tool_result_risks({
             "tool": tool_id,
+            "task_id": task.id,
             "input": arguments,
             "status": task.status,
-            "output": task.output,
+            "output": event["output"],
             "error": task_error,
-            "runtime_advisories": runtime_advisories,
         })
         if tool_payload.get("runtime_risks"):
             event["runtime_risks"] = tool_payload["runtime_risks"]
@@ -2111,31 +1564,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             "next_end_line": next_end_line,
         }
 
-    def _read_range_summary_prompt(
-        self,
-        workspace_path: str,
-        ranges: list[dict[str, Any]],
-    ) -> str:
-        lines = ["已读取文件片段（按行号范围记录）："]
-        next_calls: list[str] = []
-        for item in ranges:
-            rel = self._relative_workspace_path(workspace_path, item.get("path")) or str(item.get("path") or "")
-            start_line = item.get("start_line") or 1
-            end_line = item.get("end_line") or "?"
-            total = item.get("total_lines") or "?"
-            lines.append(f"- {rel}: {start_line}-{end_line} / {total}")
-            if item.get("truncated") and item.get("next_start_line"):
-                next_calls.append(
-                    f"- 如确实需要继续阅读 {rel}，请调用 filesystem.read_file "
-                    f"并传入 start_line={item.get('next_start_line')}, end_line={item.get('next_end_line')}"
-                )
-        lines.append("不要重复读取完全相同的文件行号范围。")
-        if next_calls:
-            lines.append("长文件尚有后续内容；只有当当前任务确实依赖后续代码时，才继续读取下一段：")
-            lines.extend(next_calls[:4])
-        lines.append("如果现有片段已足以支持当前目标，可进入编辑/写入或验证，不必因为文件尚未读完整而停止。")
-        return "\n".join(lines)
-
     def _has_recent_task_context(self, conversation: Any | None, current_content: str) -> bool:
         return _task_ctx.has_recent_task_context(conversation, current_content)
 
@@ -2159,8 +1587,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
     ) -> dict[str, Any] | None:
         return _task_ctx.referenced_task_candidate_contract(candidates, candidate_id)
 
-    def _plan_has_pending_write_step(self, execution_plan: Any) -> bool:
-        return _clf.plan_has_pending_write_step(execution_plan)
 
     def _effective_mode(
         self,
@@ -2171,105 +1597,10 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
         _ = (requested_mode, content, conversation)
         return "terminal"
 
-    def _has_successful_write(self, tool_events: list[dict[str, Any]]) -> bool:
-        return _clf.has_successful_write(tool_events)
-
-    def _has_successful_target_deliverable(
-        self,
-        task_contract: dict[str, Any] | None,
-        tool_events: list[dict[str, Any]],
-        workspace_path: str,
-        mode: str | None,
-    ) -> bool:
-        if not isinstance(task_contract, dict):
-            return self._has_successful_write(tool_events)
-        return bool(_event_roles.successful_deliverable_events(
-            tool_events,
-            task_contract=task_contract,
-            workspace_path=workspace_path,
-            mode=mode,
-        ))
 
     def _is_recoverable_write_failure(self, tool_id: str, event: dict[str, Any]) -> bool:
         return _clf.is_recoverable_write_failure(tool_id, event)
 
-    def _write_repair_prompt(
-        self,
-        tool_id: str,
-        arguments: dict[str, Any],
-        event: dict[str, Any],
-        workspace_path: str,
-    ) -> str:
-        return _prp.write_repair_prompt(tool_id, arguments, event, workspace_path)
-
-    async def _auto_read_failed_target(
-        self,
-        tool_id: str,
-        arguments: dict[str, Any],
-        workspace_path: str,
-    ) -> str:
-        """edit_file 失败后，自动读取目标文件的相关片段，返回文件内容片段供模型使用。"""
-        from pathlib import Path
-        target = arguments.get("path") or arguments.get("output_path") or ""
-        if not target:
-            return ""
-        try:
-            access_scope = self.runtime.settings.get_access_scope()
-            guard = self.runtime.runner.path_guard.scoped(
-                workspace_path,
-                allow_all=access_scope == "full_local",
-            )
-            target_path = guard.resolve(target)
-            if not target_path.exists() or not target_path.is_file():
-                return ""
-            text = target_path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            return ""
-
-        # 尝试定位失败的 old_text 周边内容
-        old_text = ""
-        edits = arguments.get("edits")
-        if isinstance(edits, list) and edits:
-            old_text = (edits[0].get("old_text") or edits[0].get("old_string") or "")
-        elif isinstance(arguments.get("old_text"), str):
-            old_text = arguments["old_text"]
-        elif isinstance(arguments.get("old_string"), str):
-            old_text = arguments["old_string"]
-
-        lines = text.splitlines()
-        total_lines = len(lines)
-
-        if old_text:
-            # 模糊定位：找 old_text 首行在文件中的大致位置
-            first_line = old_text.strip().splitlines()[0].strip() if old_text.strip() else ""
-            center_line = 0
-            if first_line:
-                for i, line in enumerate(lines):
-                    if first_line in line:
-                        center_line = i
-                        break
-            # 取前后 30 行上下文，返回纯文本（不带行号），避免模型把行号写进 old_text
-            start = max(0, center_line - 30)
-            end = min(total_lines, center_line + 30)
-            snippet = "\n".join(lines[start:end])
-            return f"文件：{target_path.name}（第 {start+1}-{end} 行，共 {total_lines} 行，以下为不含行号的原始文本）\n{snippet}"
-
-        # 没有 old_text，返回文件前 60 行纯文本
-        end = min(total_lines, 60)
-        snippet = "\n".join(lines[:end])
-        suffix = f"\n... (剩余 {total_lines - end} 行省略)" if total_lines > end else ""
-        return f"文件：{target_path.name}（共 {total_lines} 行，以下为不含行号的原始文本）\n{snippet}{suffix}"
-
-    def _interrupt_execution_plan(self, execution_plan: dict[str, Any]) -> None:
-        _pt.interrupt_execution_plan(execution_plan)
-
-    def _guidance_reorientation_prompt(
-        self,
-        workspace_path: str,
-        tool_events: list[dict[str, Any]],
-        execution_plan: dict[str, Any] | None,
-    ) -> str:
-        return _prp.guidance_reorientation_prompt(workspace_path, tool_events, execution_plan)
 
     def _pop_user_guidance(self, conversation_id: str) -> tuple[str, str]:
         batch = pop_user_guidance(conversation_id)
@@ -2277,41 +1608,6 @@ class ConversationMessagesStreamHandler(ConversationMessagesHandler):
             return "", ""
         return batch.prompt, batch.text
 
-    def _completion_review_prompt(
-        self,
-        workspace_path: str,
-        task_contract: dict[str, Any],
-        run_result: dict[str, Any],
-        *,
-        tool_events: list[dict[str, Any]] | None = None,
-        completion_decisions: list[dict[str, Any]] | None = None,
-        task_route_evidence: dict[str, Any] | None = None,
-        evidence_pack: dict[str, Any] | None = None,
-    ) -> str:
-        return _prp.completion_review_prompt(
-            workspace_path,
-            task_contract,
-            run_result,
-            tool_events=tool_events,
-            completion_decisions=completion_decisions,
-            task_route_evidence=task_route_evidence,
-            evidence_pack=evidence_pack,
-        )
-
-    def _oversized_tool_arguments_prompt(
-        self,
-        workspace_path: str,
-        accumulated_chars: int,
-        limit_chars: int,
-    ) -> str:
-        return _prp.oversized_tool_arguments_prompt(
-            workspace_path,
-            accumulated_chars,
-            limit_chars,
-        )
-
-    def _user_requests_code_change(self, content: str, mode: str | None) -> bool:
-        return _clf.user_requests_code_change(content, mode)
 
     def _max_rounds_message(self, max_rounds: int, tool_events: list[dict[str, Any]]) -> str:
         return _prp.max_rounds_message(max_rounds, tool_events)

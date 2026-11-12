@@ -34,7 +34,7 @@ def test_current_attachment_catalog_is_current_request_scoped() -> None:
     )
 
     assert "Current user-provided immutable conversation attachments" in text
-    assert "Use attachment.extract_text" in text
+    assert "Use attachment." not in text
     assert "att-current" in text
     assert "Historical message attachments" not in text
 
@@ -56,6 +56,7 @@ def test_historical_attachment_catalog_is_not_current_request_scoped() -> None:
     )
 
     assert "Historical message attachments from an earlier turn" in text
-    assert "historical context candidates only" in text
+    assert "earlier messages in this conversation" in text
+    assert "Use attachment." not in text
     assert "current user-provided" not in text.lower()
     assert "att-old" in text

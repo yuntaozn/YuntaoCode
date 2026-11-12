@@ -6,6 +6,20 @@ from runtime.context_pack import (
 )
 
 
+def test_task_contract_declaration_is_not_promoted_to_verified_runtime_fact() -> None:
+    pack = build_context_pack(
+        phase="execution", user_content="Create a model",
+        task_contract={"source": "model_execution", "goal": "Create a model", "requires_state_change": True},
+    )
+    contract = next(item for item in pack["records"] if item["kind"] == "task_contract")
+    assert contract["trust"] == "model_inferred"
+    pending = build_context_pack(
+        phase="execution", user_content="Confirmed",
+        task_contract={"source": "main_execution_pending", "goal": "Confirmed", "intent": "undetermined"},
+    )
+    assert not any(item["kind"] == "task_contract" for item in pending["records"])
+
+
 def test_context_pack_builds_phase_selected_records() -> None:
     pack = build_context_pack(
         phase="task_contract",
@@ -234,27 +248,19 @@ def test_context_pack_records_task_lineage_hygiene_counts() -> None:
     assert risk["metadata"]["current_request_boundary_inserted"] is True
 
 
-def test_context_pack_prompt_marks_records_as_facts_not_route() -> None:
+def test_runtime_audit_and_duplicate_user_request_do_not_enter_model_prompt() -> None:
     pack = build_context_pack(
-        phase="task_contract",
-        user_content="analyze the current project",
-        workspace_snapshot={
-            "schema_version": "workspace_snapshot.v1",
-            "name": "demo",
-            "exists": True,
-            "readable": True,
-        },
+        phase="planning", user_content="你好",
+        workspace_snapshot={"name": "demo", "exists": True, "readable": True},
+        capability_snapshot={"capabilities": []},
+        context_hygiene_report={"changed": True, "sanitized_messages": 1},
     )
-
-    prompt = format_context_pack_for_prompt(pack)
-
-    assert "Context Pack for this model call" in prompt
-    assert "not hard instructions or a forced route" in prompt
-    assert "workspace_summary" in prompt
-    assert "content_preview" not in prompt
+    assert pack["records"]
+    assert pack["ledger"]["records"]
+    assert format_context_pack_for_prompt(pack) == ""
 
 
-def test_context_pack_prompt_uses_ledger_index_without_repeating_content() -> None:
+def test_context_pack_prompt_preserves_history_source_without_ledger() -> None:
     pack = build_context_pack(
         phase="task_contract",
         user_content="continue",
@@ -271,6 +277,9 @@ def test_context_pack_prompt_uses_ledger_index_without_repeating_content() -> No
     assert "Old task target" in prompt
     assert "content_preview" not in prompt
     assert prompt.count("Old task target") == 1
+    assert '"ledger":' not in prompt
+    assert "conversation_history" in prompt
+    assert "not hard instructions or a forced route" in prompt
 
 
 def test_context_pack_prompt_preserves_all_bounded_task_candidates() -> None:

@@ -60,6 +60,8 @@ Experience Layer
 
 The first three lines support task execution. The Experience Layer preserves evidence and lessons without registering AI-generated code by default or bypassing Runtime permission, verification, and manual confirmation boundaries. The model understands the goal, chooses the strategy, and writes the conclusion; the Runtime preserves state, boundaries, evidence, and auditable closure facts.
 
+Runs enter the main execution model directly, without a separate task-interpretation call. User guidance keeps its original text and conversation continuity. The execution model can optionally record task state and plans; those declarations do not prove that a deliverable exists. See the [task model](docs/task-model.md).
+
 ### Task First
 
 YuntaoCode treats each request as a manageable task instead of a plain chat turn:
@@ -161,7 +163,7 @@ The Tauri desktop application is only one possible interface layer. The Runtime 
 
 The current implementation already includes tool calling, model-decided planning, confirmation, pre-write backups, execution records, context snapshots, context audit, and experience sample export. The Runtime no longer drives tasks through preset role stages: the model continuously judges the goal, visible capabilities, and observed facts, while the system owns safety, protocol, state, evidence, and audit boundaries.
 
-The Agent Runtime strategy layer lives in `runtime/agent_strategy/`. It owns model task contracts, internal profile descriptions, planning policy, factual advisories, and execution-plan lifecycle helpers so that `conversation_runner.py` can remain an orchestration layer.
+The Agent Runtime strategy layer lives in `runtime/agent_strategy/`. It owns model task contracts, internal profile descriptions, factual advisories, and optional model-declared progress records so that `conversation_runner.py` can remain an orchestration layer.
 
 Start from the documentation map in [docs/README.md](docs/README.md). The core foundation contract is [docs/runtime-foundation.md](docs/runtime-foundation.md), the Task / Context / Capability lines are described in [docs/task-model.md](docs/task-model.md), [docs/context-runtime.md](docs/context-runtime.md), and [docs/capability-runtime.md](docs/capability-runtime.md), and the Experience Layer is described in [docs/experience-runtime.md](docs/experience-runtime.md).
 
@@ -329,14 +331,17 @@ AI may help create local Capability Packs. By default, it should first distill m
 
 External MCP service source copies, service-level reference material, and
 integration notes live under `mcp-services/`. For example,
-`mcp-services/blender-mcp/` is a local reference copy of the Blender MCP
+`mcp-services/blender-mcp/` is a local reference copy of the legacy third-party Blender MCP
 service. It is not a built-in `runtime.skills.*` module and is not imported by
 the Runtime automatically.
 
 MCP service enablement, connection state, permissions, logs, tool discovery, and
 capability bindings remain owned by the MCP Service Manager. The default
-Blender example uses the explicit `uvx blender-mcp` package runner and connects
-only after the user enables and starts the service.
+Blender example uses the [official Blender Lab MCP](https://www.blender.org/lab/mcp-server/),
+with its source and version explicitly selected by `uvx --from`. It requires
+Blender 5.1+ and the official MCP add-on, and connects only after the user enables
+and starts the service. Existing connections keep their provider; see the
+[MCP service guide](docs/mcp-services.md) for migration.
 
 ---
 

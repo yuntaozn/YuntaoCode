@@ -188,6 +188,28 @@ class RunStore:
             return None
         event_type = str(event.get("event") or "")
         stored_event = {"time": utc_now(), **event}
+        # 生命周期以持久状态为准；历史事件可能被保留上限裁剪。
+        # 事件扫描仅兼容旧版在 result 后改变 stage 的记录。
+        result_published = run.stage == "result" or any(item.get("event") == "result" for item in run.events)
+        stop_requested = run.status in {"stopped", "cancelled"}
+        execution_event = event_type in {
+            "status", "tool", "confirm", "error", "result", "task_contract",
+            "plan", "plan_decision", "plan_step",
+        }
+        if run.stage in {"done", "interrupted"} or (
+            (result_published or stop_requested) and execution_event
+            and not (stop_requested and not result_published and event_type == "result")
+        ):
+            # 终态后的证据仍可审计，但不得被结果读取器或在线客户端当成新生命周期事件。
+            stored_event = {
+                "time": utc_now(), "schema_version": RUN_RECORD_SCHEMA_VERSION,
+                "event": "late_event", "event_name": "run.late_event",
+                "reason": "run_already_finalized", "original_event": dict(event),
+            }
+            event_type = "late_event"
+        elif result_published and event_type not in {"checkpoint", "done"}:
+            # 收束期可补充只读审计材料，但不能改变已公布结果的生命周期投影。
+            event_type = ""
         run.events.append(stored_event)
         run.events = run.events[-self.keep_events:]
         run.stored_event_count = len(run.events)
@@ -236,7 +258,8 @@ class RunStore:
                 run.status = "failure"
                 run.stage = "error"
         elif event_type == "done":
-            run.status = str(event.get("run_status") or "success")
+            run.status = run.status if stop_requested else str(event.get("run_status") or "success")
+            stored_event["run_status"] = run.status
             run.stage = "done"
             run.message = "run completed"
         elif event_type == "result":
@@ -244,11 +267,12 @@ class RunStore:
             result = event.get("result") if isinstance(event.get("result"), dict) else {}
             status = str(result.get("status") or "").strip()
             run.message = f"result {status}".strip()
-            if status in {"success", "failure", "partial", "stopped"}:
+            if not stop_requested and status in {"success", "failure", "partial", "stopped"}:
                 run.status = status
         elif event_type == "checkpoint":
-            run.stage = "checkpoint"
-            run.message = "checkpoint created"
+            if not result_published:
+                run.stage = "checkpoint"
+                run.message = "checkpoint created"
         elif event_type == "context_pack":
             run.stage = "context_pack"
             run.message = "context pack recorded"

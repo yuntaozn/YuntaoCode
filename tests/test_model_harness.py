@@ -7,6 +7,13 @@ from runtime.model_harness import (
     inspect_model_harness,
     looks_like_visual_transport_error,
 )
+from runtime.settings_store import normalize_model_config
+
+
+def test_text_tool_protocol_config_is_preserved_and_defaults_closed():
+    assert normalize_model_config({"id": "demo"})["text_tool_protocol"] == ""
+    assert normalize_model_config({"id": "demo", "text_tool_protocol": "tagged"})["text_tool_protocol"] == "tagged"
+    assert normalize_model_config({"id": "demo", "text_tool_protocol": "unknown"})["text_tool_protocol"] == "none"
 
 
 class FakeSettings:
@@ -84,3 +91,5 @@ def test_visual_transport_error_detection_is_transport_only() -> None:
     assert looks_like_visual_transport_error("HTTP 400: image input is not accepted")
     assert looks_like_visual_transport_error("vision input unsupported")
     assert not looks_like_visual_transport_error("tool execution failed")
+    assert not looks_like_visual_transport_error("HTTP 400: invalid tool schema")
+    assert not looks_like_visual_transport_error("HTTP 404: model not found")

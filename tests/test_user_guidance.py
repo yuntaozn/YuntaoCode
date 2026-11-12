@@ -6,7 +6,7 @@ from runtime.user_guidance import (
 )
 
 
-def test_user_guidance_queue_pops_prompt_without_intervention_word() -> None:
+def test_user_guidance_queue_preserves_user_text_without_reorientation_instruction() -> None:
     conversation_id = "conv-guidance-a"
     clear_user_guidance(conversation_id)
 
@@ -16,8 +16,7 @@ def test_user_guidance_queue_pops_prompt_without_intervention_word() -> None:
     batch = pop_user_guidance(conversation_id)
 
     assert batch.items == ("先看最新要求",)
-    assert "运行中插话" in batch.prompt
-    assert "干预" not in batch.prompt
+    assert batch.prompt == batch.text == "先看最新要求"
     assert not has_pending_user_guidance(conversation_id)
 
 

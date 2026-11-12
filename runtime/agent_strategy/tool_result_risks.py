@@ -13,7 +13,7 @@ def assess_tool_result_risks(
     *,
     error: Any = "",
 ) -> list[dict[str, Any]]:
-    """返回已完成工具结果中发现的建议性风险。
+    """返回已完成工具结果中的风险事实。
 
     风险是面向模型的证据和审计事实，不选择模型下一动作，也不阻止后续工具调用。"""
     normalized_status = str(status or "").strip()
@@ -25,19 +25,32 @@ def assess_tool_result_risks(
         return []
 
     risks: list[dict[str, Any]] = []
+    images = output.get("inline_images")
+    for image in images if isinstance(images, list) else []:
+        if not isinstance(image, dict):
+            continue
+        if image.get("uniform_pixels") is True or image.get("omission_reason"):
+            risks.append({
+                "code": "visual_pixels_uniform" if image.get("uniform_pixels") else "visual_image_unavailable",
+                "severity": "warning", "source": tool_id, "blocking": False,
+                "content_index": image.get("content_index"),
+                "pixel_ranges": image.get("pixel_ranges"),
+                "omission_reason": image.get("omission_reason"),
+                "message": (
+                    "Captured image has uniform pixel values."
+                    if image.get("uniform_pixels")
+                    else "Image data was unavailable for model input."
+                ),
+            })
     if str(tool_id or "").strip() == "shell.run_command" and shell_success_has_stderr_warning(output):
         risks.append({
             "code": SHELL_STDERR_WARNING_CODE,
             "severity": "warning",
             "source": tool_id,
             "detail": _stderr_detail(output),
-            "action": "treat_as_degraded_verification_evidence",
             "blocking": False,
             "message": (
-                "The command exited with code 0, but stderr contains an error-like "
-                "or exception-like signal. Treat this as degraded evidence: inspect "
-                "the stderr, choose a stronger verification route, or report the "
-                "uncertainty honestly instead of counting it as clean verification."
+                "The command exited with code 0; stderr contains an error-like signal."
             ),
         })
     for risk in _encoding_risk_records(output):
@@ -49,13 +62,8 @@ def assess_tool_result_risks(
             "encoding": risk.get("encoding") or output.get("encoding") or "",
             "risk_code": risk.get("code") or "",
             "detail": risk.get("message") or "",
-            "action": "verify_rendered_text_encoding",
             "blocking": False,
-            "message": (
-                "The tool result includes text encoding evidence that may affect rendered output. "
-                "Treat it as advisory evidence: inspect the affected file or rendered page, add an "
-                "explicit charset/encoding fix when appropriate, or report the uncertainty."
-            ),
+            "message": "The tool reported a text encoding warning.",
         })
     integrity = output.get("integrity")
     if isinstance(integrity, dict) and integrity.get("checked") is True and integrity.get("valid") is not True:
@@ -70,15 +78,8 @@ def assess_tool_result_risks(
             "source": tool_id,
             "path": str(output.get("path") or ""),
             "issues": issues,
-            "action": "assess_before_state_change",
-            "suggested_tools": ["filesystem.transform_text"],
             "blocking": False,
-            "message": (
-                "The inspected artifact has an integrity warning. Before changing local state, "
-                "assess this evidence and choose whether to repair the artifact, continue with "
-                "an explicit assumption, or stop and report the risk. Prefer a bounded local "
-                "transformation over retransmitting the complete artifact."
-            ),
+            "message": "Artifact integrity check reported issues.",
         })
     return risks
 
@@ -124,48 +125,19 @@ def shell_success_has_stderr_warning(output: Any) -> bool:
 
 def attach_tool_result_risks(payload: dict[str, Any]) -> dict[str, Any]:
     """返回附带模型侧运行时风险证据的载荷副本。"""
+    result = dict(payload)
+    # 兼容旧载荷时也不将历史策略建议重新投射为工具结果或风险。
+    result.pop("runtime_advisories", None)
     risks = assess_tool_result_risks(
         str(payload.get("tool") or ""),
         str(payload.get("status") or ""),
         payload.get("output"),
         error=payload.get("error"),
     )
-    risks = _runtime_advisory_risks(payload.get("runtime_advisories")) + risks
     if not risks:
-        return dict(payload)
-    # 将风险放在可能很大的输出之前，避免紧凑传输
-    # 在模型看到建议前将其截断。
-    return {"runtime_risks": risks, **payload}
-
-
-def _runtime_advisory_risks(advisories: Any) -> list[dict[str, Any]]:
-    if not isinstance(advisories, list):
-        return []
-    risks: list[dict[str, Any]] = []
-    for advisory in advisories[:8]:
-        if not isinstance(advisory, dict):
-            continue
-        reason = str(advisory.get("reason") or "runtime_advisory").strip() or "runtime_advisory"
-        message = str(advisory.get("message") or "").strip()
-        if not message:
-            continue
-        risks.append({
-            "code": reason,
-            "severity": "info",
-            "source": "runtime_advisory_governance",
-            "message": message[:800],
-            "action": _advisory_action(reason),
-            "blocking": bool(advisory.get("blocking")) is True,
-        })
-    return risks
-
-
-def _advisory_action(reason: str) -> str:
-    return {
-        "capability_fallback_advisory": "treat_as_capability_fact_not_tool_blocker",
-        "document_contract_advisory": "treat_as_document_coverage_risk",
-        "verification_runtime_advisory": "treat_as_weak_verification_evidence",
-    }.get(reason, "treat_as_runtime_advisory")
+        return result
+    # 风险事实位于大输出之前，避免载荷压缩先截断诊断。
+    return {"runtime_risks": risks, **result}
 
 
 def _failed_tool_risks(tool_id: str, output: Any, *, error: Any = "") -> list[dict[str, Any]]:
@@ -180,24 +152,16 @@ def _failed_tool_risks(tool_id: str, output: Any, *, error: Any = "") -> list[di
         if unsupported
         else "external_capability_tool_failed"
     )
-    action = (
-        "refresh_capability_or_choose_alternative"
-        if unsupported
-        else "do_not_retry_same_call_blindly"
-    )
     return [{
         "code": code,
         "severity": "warning",
         "source": str(tool_id or ""),
         "message": (
-            "The external capability tool failed in this run. Treat this as "
-            "runtime evidence, avoid repeating the same call without new "
-            "information, and either choose another available strategy, run a "
-            "small roundtrip check, restart/refresh the capability, or report "
-            "the limitation honestly."
+            "External tool call failed; partial changes may remain. Rollback is unconfirmed."
         ),
+        "side_effects": "unknown",
+        "rollback_observed": False,
         "detail": text[:500],
-        "action": action,
         "blocking": False,
     }]
 
@@ -214,14 +178,8 @@ def _failed_shell_risks(tool_id: str, output: Any, *, error: Any = "") -> list[d
         "code": f"shell_{code}",
         "severity": "warning",
         "source": str(tool_id or ""),
-        "message": (
-            "The shell command failed with a structured diagnostic. Treat the "
-            "diagnostic as evidence, change the command shape or verification "
-            "route, and avoid repeating the same invocation blindly."
-        ),
+        "message": "Shell command failed with a structured diagnostic.",
         "detail": str(first.get("message") or _failure_text(output, error=error))[:500],
-        "suggested_calls": first.get("suggested_calls") or [],
-        "action": "adjust_command_shape",
         "blocking": False,
     }]
 

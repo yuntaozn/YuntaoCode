@@ -38,7 +38,7 @@ def test_panel_pages_use_the_shared_in_app_confirmation() -> None:
 
     for template_name, page_script in pages.items():
         template = (template_root / template_name).read_text(encoding="utf-8")
-        assert template.index("/static/confirm-dialog.js") < template.index(f"/static/{page_script}")
+        assert template.index('static_url("confirm-dialog.js")') < template.index(f'static_url("{page_script}")')
 
         source = (static_root / page_script).read_text(encoding="utf-8")
         assert "window.confirm" not in source

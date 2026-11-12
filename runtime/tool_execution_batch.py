@@ -1,13 +1,12 @@
 """执行模型提出的一批工具调用。
 
 批处理控制器管理协议顺序和执行账目，不选择工具，也不重新解释任务。
-运行时建议之前始终先把工具响应返回模型，使 Provider 工具调用协议保持有效，
-即使写入操作需要修复提示也不例外。"""
+工具响应保留 Provider 调用顺序，只返回执行结果与协议错误事实。"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 from runtime.agent_strategy.classifiers import finish_reason_indicates_truncation
 
@@ -37,26 +36,6 @@ class ToolExecutionHost(Protocol):
         event: dict[str, Any],
     ) -> bool: ...
 
-    def _write_repair_prompt(
-        self,
-        tool_id: str,
-        arguments: dict[str, Any],
-        event: dict[str, Any],
-        workspace_path: str,
-    ) -> str: ...
-
-    def _mark_next_plan_step_running(
-        self,
-        execution_plan: dict[str, Any] | None,
-        tool_call: dict[str, Any],
-    ) -> int | None: ...
-
-    def _finish_plan_step(
-        self,
-        execution_plan: dict[str, Any],
-        step_index: int,
-        tool_event: dict[str, Any],
-    ) -> None: ...
 
     def _set_active_tool_events(self, tool_events: list[dict[str, Any]]) -> None: ...
 
@@ -110,8 +89,14 @@ class ToolExecutionBatchResult:
 class ToolExecutionBatch:
     """在保持协议不变量的同时执行模型选中的可见工具。"""
 
-    def __init__(self, host: ToolExecutionHost) -> None:
+    def __init__(
+        self,
+        host: ToolExecutionHost,
+        *,
+        control_handler: Callable[..., Awaitable[dict[str, Any] | None]] | None = None,
+    ) -> None:
         self._host = host
+        self._control_handler = control_handler
 
     async def execute(
         self,
@@ -119,7 +104,6 @@ class ToolExecutionBatch:
         tool_calls: list[dict[str, Any]],
         tool_name_map: dict[str, str],
         workspace_path: str,
-        execution_plan: dict[str, Any] | None,
         finish_reason: str,
         previous_tool_events: list[dict[str, Any]],
         state: ToolExecutionState,
@@ -127,7 +111,6 @@ class ToolExecutionBatch:
         next_state = state.copy()
         batch_events: list[dict[str, Any]] = []
         tool_messages: list[dict[str, Any]] = []
-        advisories: list[dict[str, Any]] = []
 
         for tool_call in tool_calls:
             await self._host._wait_if_paused()
@@ -135,6 +118,13 @@ class ToolExecutionBatch:
                 tool_call,
                 tool_name_map,
             )
+            if self._control_handler is not None:
+                control_message = await self._control_handler(
+                    tool_call, tool_id, arguments, finish_reason,
+                )
+                if control_message is not None:
+                    tool_messages.append(control_message)
+                    continue
             if finish_reason_indicates_truncation(finish_reason):
                 tool_message, tool_event = self._host._skipped_tool_call(
                     tool_call,
@@ -143,9 +133,7 @@ class ToolExecutionBatch:
                     reason="truncated_tool_call",
                     message=(
                         "The model response stopped at its output limit while building "
-                        "this tool call. The runtime did not execute incomplete arguments. "
-                        "Retry with materially smaller complete arguments; split large "
-                        "content across several tool calls."
+                        "this tool call. The runtime did not execute incomplete arguments."
                     ),
                 )
                 batch_events.append(tool_event)
@@ -153,32 +141,12 @@ class ToolExecutionBatch:
                 await self._publish({"event": "tool", **tool_event})
                 if self._host._is_recoverable_write_failure(tool_id, tool_event):
                     next_state.write_repair_mode = True
-                    advisories.append({
-                        "role": "system",
-                        "content": self._host._write_repair_prompt(
-                            tool_id,
-                            arguments,
-                            tool_event,
-                            workspace_path,
-                        ),
-                    })
                     await self._publish({
                         "event": "status",
                         "status": "write_repair_mode",
-                        "message": "写入工具参数被截断，正在要求模型换成更小步的写入策略。",
+                        "message": "写入工具参数被截断，未执行该调用；已记录失败事实。",
                     })
                 continue
-
-            plan_step_index = self._host._mark_next_plan_step_running(
-                execution_plan,
-                tool_call,
-            )
-            if plan_step_index is not None and execution_plan:
-                await self._publish({
-                    "event": "plan_step",
-                    "index": plan_step_index,
-                    "step": execution_plan["steps"][plan_step_index],
-                })
 
             active_events = [*previous_tool_events, *batch_events]
             self._host._set_active_tool_events(active_events)
@@ -204,14 +172,9 @@ class ToolExecutionBatch:
                 and arguments.get("path")
             ):
                 if duplicate_recon:
-                    advisories.append({
-                        "role": "system",
-                        "content": (
-                            "Runtime observation only. The latest read/search repeats "
-                            "the same tool and range as an earlier call. Decide whether "
-                            "that evidence is already enough, whether a different range "
-                            "is needed, or whether the task should move to another step."
-                        ),
+                    await self._publish({
+                        "event": "status", "status": "repeated_read_observed",
+                        "tool": tool_id, "message": "已记录同一工具与范围的重复读取。",
                     })
                 else:
                     next_state.seen_recon_signatures.add(signature)
@@ -219,19 +182,10 @@ class ToolExecutionBatch:
 
             if self._host._is_recoverable_write_failure(tool_id, tool_event):
                 next_state.write_repair_mode = True
-                advisories.append({
-                    "role": "system",
-                    "content": self._host._write_repair_prompt(
-                        tool_id,
-                        arguments,
-                        tool_event,
-                        workspace_path,
-                    ),
-                })
                 await self._publish({
                     "event": "status",
                     "status": "write_repair_mode",
-                    "message": "写入工具失败，已把失败事实反馈给模型自行选择修复策略。",
+                    "message": "已记录写入工具失败；模型将收到原始工具结果。",
                 })
             elif self._host._is_write_tool(tool_id) and tool_event.get("status") == "success":
                 next_state.write_repair_mode = False
@@ -242,22 +196,11 @@ class ToolExecutionBatch:
                 )
 
             await self._publish({"event": "tool", **tool_event})
-            if plan_step_index is not None and execution_plan:
-                self._host._finish_plan_step(
-                    execution_plan,
-                    plan_step_index,
-                    tool_event,
-                )
-                await self._publish({
-                    "event": "plan_step",
-                    "index": plan_step_index,
-                    "step": execution_plan["steps"][plan_step_index],
-                })
 
         self._host._set_active_tool_events([*previous_tool_events, *batch_events])
         return ToolExecutionBatchResult(
             tool_events=batch_events,
-            model_messages=[*tool_messages, *advisories],
+            model_messages=tool_messages,
             state=next_state,
         )
 

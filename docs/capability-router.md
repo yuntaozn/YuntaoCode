@@ -51,7 +51,7 @@ User Request
 ## Capability Affordance
 
 同一工具可能因参数不同而具有不同的执行形态。Capability Router 会把
-`ToolSpec.affordances` 聚合为条件能力事实，并在任务契约判断前提供给模型：
+`ToolSpec.affordances` 聚合为条件能力事实，并作为主执行模型可见的能力事实：
 
 ```text
 affordance=process.start_background via shell.run_command:
@@ -82,7 +82,7 @@ limits=process creation is not behavioral verification)
 }
 ```
 
-Runtime 会验证模型提案并形成事实证据。未知能力、未知工具、工具不属于能力、需要写入但没有确认、需要产物但未生成，都应作为证据缺口或风险进入 Trace、RunEvidence 和完成自审，而不是由运行时静默改写成另一条路线。
+Runtime 会验证模型提案并形成事实证据。未知能力、未知工具、工具不属于能力、需要写入但没有确认、需要产物但未生成，都应作为证据缺口或风险进入 Trace、RunEvidence 和最终 RunResult，而不是由运行时静默改写成另一条路线。
 
 ## Relation To Existing Policy
 
@@ -106,7 +106,7 @@ Runtime 会验证模型提案并形成事实证据。未知能力、未知工具
   - 条件 Capability Affordance 聚合和模型可见事实。
   - 任务路由提案结构。
   - 提案验证。
-  - 能力目录 prompt。
+  - 能力目录格式化；不自动注入每轮 system 消息。
 - `runtime/agent_strategy/task_contract.py`
   - 模型可以在 Task Contract 中声明 `capability_ids` 和可选
     `route_proposals`。
@@ -120,12 +120,7 @@ Runtime 会验证模型提案并形成事实证据。未知能力、未知工具
     有效性、能力缺口、产物和验证事实自行判断继续、修复或总结。
 - `runtime/tool_registry.py`
   - `ToolSpec` 支持能力元数据和可选条件 affordance。
-- 系统提示中加入 Capability Router 原则和可用能力目录。
+- `runtime/tool_discovery.py` 提供单个发现入口；模型显式查询后按需加载原始工具定义。完整能力目录只保留在审计与管理视图中。
 
-后续可以继续强化模型路由预检，但不要急于替换主循环：
-
-1. 在进入主循环前请求模型生成 `TaskRouteProposal`。
-2. Runtime 校验提案。
-3. 低置信度或提案不合法时，把证据缺口交回模型。
-4. 把 `capability_id`、`tool_id`、`expected_artifacts` 写入 Task Trace。
-5. 最终结果根据工具事件和产物验证生成，而不是只相信模型总结。
+工具发现不需要在主循环前生成 TaskRouteProposal，也不需要低置信度裁决。
+主模型自行选择能力；Runtime 保留权限、参数、确认及执行证据校验。

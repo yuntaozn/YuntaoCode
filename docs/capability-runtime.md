@@ -442,6 +442,15 @@ Additional runtime guards now exist in `runtime/agent_strategy/capability_prefli
 
 Current built-in local file capability split:
 
+- `attachment.user_input`: conversation-scoped immutable inputs. The existing
+  attachment provider offers `attachment.extract_text` and
+  `attachment.read_image`; both use the Run's authorized attachment IDs.
+  Image reads return the original PNG/JPEG/WebP/GIF bytes for visual context,
+  up to the upload limit of 10 MiB, without granting project-path or URL access.
+  The capability uses Python storage and standard inline image results on
+  Windows, macOS, and Linux. Models discover and call it explicitly; history
+  catalogs do not choose tools or automatically load earlier images.
+
 - The 0.1 foundation treats YuntaoCode's own local file capability as the
   primary file channel. Editor-specific bridges are deferred until there is a
   separate product decision and a clear provider lifecycle.

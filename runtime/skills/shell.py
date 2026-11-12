@@ -515,14 +515,7 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
     stdout = _decode_output(stdout_capture.value)
     stderr = _decode_output(stderr_capture.value)
     exit_code = process.returncode if process is not None and process.returncode is not None else 0
-    diagnostics = _shell_result_diagnostics(
-        command=command,
-        argv=argv,
-        cwd=cwd,
-        exit_code=exit_code,
-        stdout=stdout,
-        stderr=stderr,
-    )
+
 
     context.log(
         "info" if exit_code == 0 else "error",
@@ -552,9 +545,6 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
         "stdout_truncated": stdout_capture.truncated,
         "stderr_truncated": stderr_capture.truncated,
     }
-    if diagnostics:
-        output["diagnostics"] = diagnostics
-        output["failure_message"] = str(diagnostics[0].get("message") or "")
     output["debug_session"] = build_debug_session(
         source_type="shell.run_command",
         command=display_command,
@@ -569,7 +559,7 @@ async def run_command(input_data: dict[str, Any], context: Any) -> dict[str, Any
         stderr=stderr,
         stdout_truncated=stdout_capture.truncated,
         stderr_truncated=stderr_capture.truncated,
-        diagnostics=diagnostics,
+        diagnostics=[],
         started_at=started_at,
         finished_at=_utc_now_iso(),
         duration_seconds=round(max(0.0, time.monotonic() - started_monotonic), 3),
@@ -613,112 +603,16 @@ def _context_temp_dir(context: Any) -> Path | None:
     return Path(temp_dir).resolve()
 
 
-def _shell_result_diagnostics(
-    *,
-    command: str,
-    argv: list[str],
-    cwd: str,
-    exit_code: int,
-    stdout: str,
-    stderr: str,
-) -> list[dict[str, Any]]:
-    if exit_code == 0:
-        return []
-    node_check = _node_check_inline_script_diagnostic(command, argv, cwd)
-    if node_check:
-        return [node_check]
-    return []
-
-
-def _node_check_inline_script_diagnostic(
-    command: str,
-    argv: list[str],
-    cwd: str,
-) -> dict[str, Any] | None:
-    executable = Path(str(command or "")).name.lower()
-    if executable not in {"node", "node.exe"}:
-        return None
-    if not argv or str(argv[0]).strip().lower() not in {"-c", "--check"}:
-        return None
-    if len(argv) < 2:
-        return None
-    candidate = str(argv[1] or "").strip()
-    if not candidate or not _looks_like_inline_javascript(candidate, cwd):
-        return None
-    suggested_file = _extract_read_file_sync_path(candidate)
-    suggested: list[dict[str, Any]] = []
-    if suggested_file:
-        suggested.append({
-            "command": "node",
-            "args": ["--check", suggested_file],
-            "purpose": "syntax-check the JavaScript file without executing it",
-        })
-    suggested.append({
-        "command": "node",
-        "args": ["-e", "<inline JavaScript>"],
-        "purpose": "run a small inline Node.js probe when execution is intended",
-    })
-    return {
-        "code": "node_check_inline_script",
-        "severity": "error",
-        "message": (
-            "Node -c/--check expects a JavaScript file path, but this call passed "
-            "inline JavaScript. Use node --check <file> for syntax-only checks, "
-            "or node -e <code> for a small execution probe."
-        ),
-        "received_arg_preview": candidate[:500],
-        "suggested_calls": suggested,
-    }
-
-
-def _looks_like_inline_javascript(value: str, cwd: str) -> bool:
-    path_candidate = Path(value)
-    if not path_candidate.is_absolute():
-        path_candidate = Path(cwd) / value
-    try:
-        if path_candidate.exists():
-            return False
-    except OSError:
-        pass
-    lowered = value.lower()
-    inline_markers = (
-        "const ",
-        "let ",
-        "var ",
-        "require(",
-        "import ",
-        "console.",
-        "=>",
-        ";",
-        "\n",
-    )
-    return any(marker in lowered for marker in inline_markers)
-
-
-def _extract_read_file_sync_path(value: str) -> str:
-    match = re.search(r"readFileSync\(\s*['\"]([^'\"]+)['\"]", value)
-    return match.group(1).replace("\\\\", "\\") if match else ""
-
-
 def register_shell_tools(registry: ToolRegistry) -> None:
     registry.register(
         ToolSpec(
             id="shell.run_command",
             name="执行终端命令",
             description=(
-                "在允许工作区或当前任务临时目录内执行终端命令。适合运行构建、测试、安装依赖等操作。"
-                "跨平台任务和启动外部程序应显式传 command+args（即使 args=[]），此时运行时直接执行程序而不经过 shell。"
-                + (
-                    "当前 Windows 字符串命令使用 Windows PowerShell 5.1，不是 cmd.exe；不要使用 %VAR%、2>nul 或 ||，"
-                    "应使用 $env:VAR、2>$null 和 PowerShell 条件语句。"
-                    if sys.platform.startswith("win")
-                    else "当前字符串命令使用 POSIX shell；不要假设 PowerShell 或 cmd.exe 语法可用。"
-                )
-                + "不要假设 bash、PowerShell、cp、rm、Copy-Item 等平台专属语法在其他系统可用。"
-                "运行 filesystem.write_temp_file 创建的临时脚本时，"
-                "可传 cwd='task_temp' 或 use_task_temp=true。不要把 python -m http.server、npm run dev 等长驻服务命令"
-                "当作普通前台验证命令；需要启动 GUI 或长驻进程时传 background=true，运行时会直接执行程序并立即返回 PID。"
-                "前台命令输出会在运行中持续显示；无输出时会显示心跳。"
+                "在允许工作区或当前任务临时目录执行命令。command+args 形式直接执行程序；省略 args 时通过 "
+                + ("Windows PowerShell 5.1" if sys.platform.startswith("win") else "POSIX shell")
+                + " 执行 command 字符串。cwd='task_temp' 或 use_task_temp=true 指向任务临时目录。"
+                "background=true 时直接启动进程并返回 PID；前台执行返回退出码、stdout、stderr 和超时状态。"
                 "普通命令超时默认30秒，依赖安装默认600秒，最大900秒。"
             ),
             input_schema={

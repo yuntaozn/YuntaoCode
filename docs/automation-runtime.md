@@ -75,7 +75,7 @@ manual task would use:
 - natural-language goal;
 - workspace;
 - model;
-- planning policy;
+- legacy planning-policy data (accepted for compatibility, without execution effects);
 - confirmation policy;
 - access scope.
 

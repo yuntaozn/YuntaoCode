@@ -22,9 +22,13 @@ def test_result_context_snapshot_keeps_verified_facts_and_unresolved_risks() -> 
     assert snapshot["metadata"]["observed_written_paths"] == ["viewer.html"]
     assert snapshot["evidence"][0]["path"] == "viewer.html"
     assert snapshot["unresolved"] == ["write_not_verified"]
+    assert snapshot["records"][0]["trust"] == "model_inferred"
+    text = format_recovery_context({"id": "checkpoint", "run_id": "run-1"}, {"snapshot": snapshot})
+    assert "Create viewer" in text
+    assert "historical, revisable" in text
 
 
-def test_format_recovery_context_warns_against_repeating_failed_steps() -> None:
+def test_format_recovery_context_reports_historical_boundary_without_recovery_advice() -> None:
     text = format_recovery_context(
         {
             "id": "checkpoint-1",
@@ -43,4 +47,5 @@ def test_format_recovery_context_warns_against_repeating_failed_steps() -> None:
     assert "checkpoint-1" in text
     assert "viewer.html" in text
     assert "write_not_verified" in text
-    assert "do not assume old outputs are still valid" in text
+    assert "does not establish current workspace state" in text
+    assert "Re-evaluate" not in text

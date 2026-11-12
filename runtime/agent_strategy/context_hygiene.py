@@ -1,7 +1,7 @@
 """模型执行前的对话上下文卫生处理。
 
-UI 与 Run 审计保留完整历史；模型侧上下文不应把历史失败噪声、文本工具调用示例
-或旧任务目标当作当前指令重新播放。"""
+UI 与 Run 审计保留完整历史；模型侧清理失败日志与文本工具调用示例，
+保留近期用户原话和助手承诺的角色与时序，不依据任务意图标签删除对话。"""
 
 from __future__ import annotations
 
@@ -18,9 +18,7 @@ from runtime.agent_strategy.context_noise import (
 )
 from runtime.agent_strategy.model_context_boundary import (
     current_request_boundary_notice,
-    historical_task_candidate_marker,
     historical_task_turns_marker,
-    historical_user_request_marker,
     insert_current_request_boundary,
     insert_hygiene_notice,
     is_historical_task_marker,
@@ -28,7 +26,6 @@ from runtime.agent_strategy.model_context_boundary import (
     marker_candidate_id,
     model_context_hygiene_notice,
 )
-from runtime.agent_strategy.task_lineage import task_candidate_from_message
 
 
 DEFAULT_MAX_ASSISTANT_CHARS = 1800
@@ -94,8 +91,8 @@ def sanitize_model_context(
 
     report = ContextHygieneReport()
     latest_user_index = latest_user_index_in(messages)
-    historical_user_links = _historical_task_user_links(messages, latest_user_index)
     result: list[dict[str, Any]] = []
+    recent_start = max(0, len(messages) - 8)
 
     for index, message in enumerate(messages):
         role = str(message.get("role") or "")
@@ -108,26 +105,22 @@ def sanitize_model_context(
             cleaned = _sanitize_assistant_message(
                 content,
                 report,
-                metadata=_message_metadata(message),
-                index=index,
             )
             if cleaned is None:
                 report.dropped_messages += 1
                 continue
-            result.append(_cleaned_message(role, content, cleaned, report, max_assistant_chars))
+            result.append(_cleaned_message(
+                role, content, cleaned, report, None if index >= recent_start else max_assistant_chars,
+            ))
             continue
 
         if role == "user" and index != latest_user_index:
-            if index in historical_user_links:
-                cleaned = _historical_user_request_marker(historical_user_links[index])
-                report.task_user_anchor_messages += 1
-            else:
-                cleaned = _sanitize_prior_user_message(
-                    content,
-                    report,
-                    max_chars=max_prior_user_log_chars,
-                )
-            result.append(_cleaned_message(role, content, cleaned, report, max_prior_user_log_chars))
+            cleaned = _sanitize_prior_user_message(
+                content, report, max_chars=max_prior_user_log_chars,
+            )
+            result.append(_cleaned_message(
+                role, content, cleaned, report, None if index >= recent_start else max_prior_user_log_chars,
+            ))
             continue
 
         result.append(_public_message(message))
@@ -155,20 +148,7 @@ def context_hygiene_notice() -> str:
 def _sanitize_assistant_message(
     content: str,
     report: ContextHygieneReport,
-    *,
-    metadata: dict[str, Any] | None = None,
-    index: int = 0,
 ) -> str | None:
-    candidate = task_candidate_from_message(
-        role="assistant",
-        content=content,
-        metadata=metadata,
-        index=index,
-    )
-    if candidate:
-        report.task_candidate_messages += 1
-        return _historical_task_candidate_marker(candidate)
-
     noise = classify_context_noise(content)
 
     if noise.has_tool_markup:
@@ -212,56 +192,16 @@ def _cleaned_message(
     original: str,
     cleaned: str,
     report: ContextHygieneReport,
-    max_chars: int,
+    max_chars: int | None,
 ) -> dict[str, Any]:
     value = cleaned
-    if len(value) > max_chars:
+    if max_chars is not None and len(value) > max_chars:
         value = truncate(value, max_chars)
         report.truncated_messages += 1
     if value != original:
         report.sanitized_messages += 1
-        role = "system" if is_historical_task_marker(value) else role
         return {"role": role, "content": value}
     return {"role": role, "content": original}
-
-
-def _historical_task_user_links(
-    messages: list[dict[str, Any]],
-    latest_user_index: int,
-) -> dict[int, dict[str, str]]:
-    links: dict[int, dict[str, str]] = {}
-    for index, message in enumerate(messages):
-        if str(message.get("role") or "") != "assistant":
-            continue
-        candidate = task_candidate_from_message(
-            role="assistant",
-            content=_message_text(message.get("content")),
-            metadata=_message_metadata(message),
-            index=index,
-        )
-        if not candidate:
-            continue
-        for previous_index in range(index - 1, -1, -1):
-            if previous_index == latest_user_index:
-                break
-            previous = messages[previous_index]
-            if str(previous.get("role") or "") != "user":
-                continue
-            links.setdefault(previous_index, {
-                "candidate_id": str(candidate.get("candidate_id") or ""),
-            })
-            break
-    return links
-
-
-def _historical_task_candidate_marker(candidate: dict[str, Any]) -> str:
-    candidate_id = str(candidate.get("candidate_id") or "")
-    return historical_task_candidate_marker(candidate_id)
-
-
-def _historical_user_request_marker(link: dict[str, str]) -> str:
-    candidate_id = str(link.get("candidate_id") or "")
-    return historical_user_request_marker(candidate_id)
 
 
 def _compact_historical_task_markers(

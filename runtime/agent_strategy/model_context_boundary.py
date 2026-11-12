@@ -12,8 +12,8 @@ from typing import Any
 CONTEXT_HYGIENE_NOTICE = (
     "[Context hygiene]\n"
     "Some earlier messages were compacted before this model call. Visible "
-    "chat history and audit records are unchanged. Historical task details "
-    "belong in Context Pack task_lineage records; textual tool-call examples "
+    "chat history and audit records are unchanged. Read the retained conversation "
+    "and supporting task_lineage records together; textual tool-call examples "
     "from old messages are invalid examples. Use only structured runtime "
     "tool calls when tools are needed."
 )

@@ -173,6 +173,7 @@ class SettingsStore:
                 "chat_path": config.get("chat_path", "/chat/completions"),
                 "kind": config.get("kind", "openai"),
                 "wire_api": config.get("wire_api", "chat_completions"),
+                "text_tool_protocol": config.get("text_tool_protocol", "none"),
                 "api_key_required": bool(config.get("api_key_required", True)),
                 "request_options": config.get("request_options") if isinstance(config.get("request_options"), dict) else {},
                 "has_api_key": bool(api_key),
@@ -328,6 +329,9 @@ class SettingsStore:
                     target["kind"] = str(incoming.get("kind") or "openai").strip() or "openai"
                 if "wire_api" in incoming:
                     target["wire_api"] = normalize_wire_api(incoming.get("wire_api"))
+                if "text_tool_protocol" in incoming:
+                    value = str(incoming.get("text_tool_protocol") or "none").strip()
+                    target["text_tool_protocol"] = value if value in {"none", "function_call", "tagged", "xml"} else "none"
                 if "api_key_required" in incoming:
                     target["api_key_required"] = bool(incoming["api_key_required"])
                 if isinstance(incoming.get("request_options"), dict):
@@ -648,6 +652,9 @@ def normalize_model_config(value: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         max_output_tokens = 0
     output_token_param = str(value.get("output_token_param") or "").strip()
+    text_tool_protocol = str(value.get("text_tool_protocol") or "").strip()
+    if text_tool_protocol not in {"", "none", "function_call", "tagged", "xml"}:
+        text_tool_protocol = "none"
     if output_token_param not in {"", "max_tokens", "max_completion_tokens", "max_output_tokens"}:
         output_token_param = ""
     if "supports_vision" in value:
@@ -670,6 +677,7 @@ def normalize_model_config(value: dict[str, Any]) -> dict[str, Any]:
         "supports_stream": bool(value.get("supports_stream", True)),
         "supports_vision": supports_vision,
         "thinking_mode": str(value.get("thinking_mode") or "").strip(),
+        "text_tool_protocol": text_tool_protocol,
         "allow_disable_thinking": bool(value.get("allow_disable_thinking", False)),
         "supports_reasoning_effort": bool(value.get("supports_reasoning_effort", False)),
         "request_options": sanitize_request_options(value.get("request_options")),

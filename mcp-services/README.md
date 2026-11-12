@@ -9,10 +9,15 @@ code from this directory.
 
 Current layout:
 
-- `blender-mcp/`: local reference copy of the Blender MCP service and add-on
-  materials. The default YuntaoCode MCP configuration still uses the explicit
-  `uvx blender-mcp` package runner. It starts only after the user enables and
-  starts the service, or explicitly opts that service in to auto-start.
+- `blender-mcp/`: legacy third-party Blender MCP service and add-on reference
+  material. It is distinct from the official Blender Lab server and is not
+  used by the default connection.
+
+The default Blender connection uses the official
+[Blender Lab MCP server](https://projects.blender.org/lab/blender_mcp), pinned to
+`v1.0.3` through `uvx --from`. It starts only after the user enables and starts
+the service, or explicitly opts that service in to auto-start. See
+[the connection and migration guide](../docs/mcp-services.md).
 
 Use this directory when an integration needs service-specific source,
 third-party reference files, or development notes. Runtime-facing service

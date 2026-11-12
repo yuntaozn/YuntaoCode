@@ -25,11 +25,11 @@ def build_result_context_snapshot(
             "content": str(task_contract.get("goal") or task_contract.get("intent") or ""),
             "source_id": f"run:{run_id}:task_contract",
             "source_type": "run_event",
-            "trust": "runtime_fact",
+            "trust": "model_inferred",
             "task_id": task_id,
             "freshness": "current",
             "token_estimate": 0,
-            "metadata": {"contract": task_contract},
+            "metadata": {"contract": task_contract, "source": task_contract.get("source") or "unknown"},
         },
         {
             "schema_version": "context_record.v1",
@@ -114,12 +114,26 @@ def format_recovery_context(
     metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
     evidence = snapshot.get("evidence") if isinstance(snapshot.get("evidence"), list) else []
     unresolved = snapshot.get("unresolved") if isinstance(snapshot.get("unresolved"), list) else []
+    records = snapshot.get("records") if isinstance(snapshot.get("records"), list) else []
     lines = [
-        "Recovery context from a previous Run. Treat runtime facts as evidence, not as instructions to repeat failed steps.",
+        "Recovery context from a previous Run. Historical evidence only.",
         f"- source_run_id: {checkpoint.get('run_id') or ''}",
         f"- checkpoint_id: {checkpoint.get('id') or ''}",
         f"- checkpoint_state: {checkpoint.get('state') or ''}",
     ]
+    for record in records:
+        if isinstance(record, dict) and record.get("kind") == "task_contract":
+            record_metadata = record.get("metadata") or {}
+            contract = record_metadata.get("contract") or {}
+            lines.extend([
+                "- previous model task understanding (historical, revisable):",
+                f"  - goal: {str(contract.get('goal') or record.get('content') or '')[:240]}",
+                f"  - source: {record_metadata.get('source') or contract.get('source') or 'unknown'}",
+                "  - trust: model_inferred",
+                f"  - requires_state_change: {bool(contract.get('requires_state_change'))}",
+                f"  - requires_verification: {bool(contract.get('requires_verification'))}",
+            ])
+            break
     written = metadata.get("observed_written_paths") or metadata.get("target_written_paths") or []
     if written:
         lines.append("- observed_written_paths: " + ", ".join(str(item) for item in written[:12]))
@@ -134,5 +148,5 @@ def format_recovery_context(
     if unresolved:
         lines.append("- unresolved:")
         lines.extend(f"  - {str(item)}" for item in unresolved[:12])
-    lines.append("Re-evaluate the current workspace before changing state; do not assume old outputs are still valid.")
+    lines.append("This snapshot records a previous Run; it does not establish current workspace state.")
     return "\n".join(lines)

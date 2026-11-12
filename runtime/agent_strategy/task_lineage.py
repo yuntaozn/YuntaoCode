@@ -35,7 +35,7 @@ def task_candidate_from_message(
         return None
     intent = str(contract.get("intent") or "").strip()
     goal = str(contract.get("goal") or intent or "").strip()
-    if not goal or intent == "answer_only":
+    if not goal:
         return None
     run_id = str(metadata.get("run_id") or "").strip()
     task_id = str(metadata.get("task_id") or "").strip()

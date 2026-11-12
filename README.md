@@ -60,6 +60,8 @@ Experience Layer
 
 前三条主线支撑任务运行；Experience Layer 只沉淀证据和经验，不默认注册 AI 生成代码，也不绕过 Runtime 的权限、验证和人工确认边界。模型负责理解目标、选择策略并书写结论，Runtime 负责保存状态、边界、证据和可审计的收束事实。
 
+直接进入主模型执行，不再先调用独立模型裁决任务或生成计划；运行中插话保留原文和对话连续性。主模型可按需记录任务与计划，Runtime 不注入计划执行指令、不按计划分配工具，也不把这类声明当成产物已完成的证据。详见 [任务模型](docs/task-model.md)。
+
 ### 任务优先（Task First）
 
 YuntaoCode 把一次请求看作一个可管理的任务，而不是一次普通聊天：
@@ -161,7 +163,7 @@ Tauri 桌面端只是其中一种界面形式，Runtime 本身可以独立运行
 
 当前实现已经包含工具调用、模型决定的计划、确认、写入备份、执行记录、上下文快照、上下文审计和经验样本导出。Runtime 不再用预设角色阶段驱动任务，而是把任务目标、可见能力和运行事实交给模型持续判断；系统只负责安全、协议、状态、证据和审计边界。
 
-Agent Runtime 的策略层位于 `runtime/agent_strategy/`。它负责模型任务契约、内部 Profile 描述、计划策略、事实提示和执行计划生命周期，让 `conversation_runner.py` 尽量保持为编排层。
+Agent Runtime 的策略层位于 `runtime/agent_strategy/`。它负责模型任务契约、内部 Profile 描述、事实提示和模型自主声明的进度记录，让 `conversation_runner.py` 尽量保持为编排层。
 
 文档入口见 [docs/README.md](docs/README.md)。核心基座契约见 [docs/runtime-foundation.md](docs/runtime-foundation.md)，Task / Context / Capability 三条主线分别见 [docs/task-model.md](docs/task-model.md)、[docs/context-runtime.md](docs/context-runtime.md) 和 [docs/capability-runtime.md](docs/capability-runtime.md)，Experience Layer 见 [docs/experience-runtime.md](docs/experience-runtime.md)。
 
@@ -325,12 +327,14 @@ AI 可以帮助创建本机能力包。默认应先沉淀为方法型 Skill（�
 ### MCP 服务目录
 
 外部 MCP 服务源码副本、服务级参考资料和集成说明放在 `mcp-services/` 下。例如
-`mcp-services/blender-mcp/` 是 Blender MCP 服务的本地参考副本，不是内置
+`mcp-services/blender-mcp/` 是旧第三方 Blender MCP 服务的本地参考副本，不是内置
 `runtime.skills.*` 模块，也不会被 Runtime 自动导入。
 
 MCP 服务的启停、连接状态、权限、日志、工具发现和能力绑定仍由 MCP Service
-Manager 管理。默认 Blender 示例配置使用 `uvx blender-mcp` 包运行器，只有在用户
-显式启用并启动服务后才会连接。
+Manager 管理。默认 Blender 示例使用 [Blender Lab 官方 MCP](https://www.blender.org/lab/mcp-server/)，
+通过 `uvx --from` 显式指定官方源码和版本，要求 Blender 5.1+ 及官方 MCP 插件。
+只有在用户显式启用并启动服务后才会连接。已有连接不会自动切换供应方，迁移方式见
+[MCP 服务说明](docs/mcp-services.md)。
 
 ---
 
@@ -384,7 +388,7 @@ YuntaoCode 并不试图构建“最强大的 AI 助手”。
 * Run Lifecycle：running、waiting_confirmation、paused、resumed、completed、failed、stopped
 * Task Trace：RunEvent、canonical event_name、工具调用、确认、错误、验证、结果和最终摘要预览
 * Run Recovery：暂停、恢复、Runbook、Replay Request、Checkpoint、Context Snapshot
-* Task Audit：RunEvidence、RunWorkbench、完成自审证据包、执行审计摘要、运行调试审计、任务记录 UI 和状态迁移测试
+* Task Audit：RunEvidence、RunWorkbench、完成证据包、执行审计摘要、运行调试审计、任务记录 UI 和状态迁移测试
 * Context Runtime：Context Pack / Ledger / Audit、上下文卫生、任务血缘、记忆边界、视觉证据/验证摘要和恢复快照
 * Capability Runtime：ToolSpec 元数据、Capability Preflight、权限、确认、产物、Provider 和验证证据
 * Provider 边界：内置工具、MCP、CLI、Capability Pack 和插件声明都通过 Capability Runtime 接入

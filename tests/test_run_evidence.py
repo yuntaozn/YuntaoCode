@@ -1,5 +1,22 @@
 from runtime.run_evidence import build_run_evidence
 from runtime.run_store import RunStore
+
+
+def test_visual_receipt_updates_replace_preparation_without_inventing_delivery(tmp_path):
+    store = RunStore(tmp_path / "runs.json")
+    run = store.create(conversation_id="conv", workspace_id="workspace", mode="terminal", user_content="Inspect")
+    record = {"tool": "mcp_demo.capture", "source_type": "mcp_inline_image", "source_ref": "task:1", "image_ref": "hash1",
+              "path": "", "delivery_status": "attached", "injected_into_model_context": False}
+    store.record_event(run.id, {"event": "visual_context", "records": [record]})
+    before = build_run_evidence(store.get(run.id))
+    assert before["visual_verification"]["counts"]["model_context_injected"] == 0
+    record = {**record, "delivery_status": "omitted_transport_fallback"}
+    store.record_event(run.id, {"event": "visual_context", "records": [record]})
+    after = build_run_evidence(store.get(run.id))
+    assert len(after["visual_context"]) == 1
+    assert after["visual_context"][0]["delivery_status"] == "omitted_transport_fallback"
+    assert after["visual_verification"]["counts"]["model_context_injected"] == 0
+    store.close()
 from runtime.tool_call_protocol import build_tool_attempt_observation
 
 

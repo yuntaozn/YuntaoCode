@@ -249,8 +249,19 @@ class RunActionHandler(ApiHandler):
         self.finish_json({"success": True, "data": updated.to_public_dict()})
 
     def _prepare_new_run(self, source_run: object, *, recovery: bool) -> dict:
+        if str(getattr(source_run, "status", "")) in {"running", "waiting_confirmation", "paused"}:
+            raise tornado.web.HTTPError(409, reason="stop or resume the active run before preparing another attempt")
         task_id = str(getattr(source_run, "task_id", "") or "")
         task = self.runtime.product_tasks.get(task_id) if task_id else None
+        if task and task.state in {"completed", "cancelled"}:
+            # 终态任务保持不变；显式回放另建任务并保留来源关系。
+            original = task
+            task = self.runtime.product_tasks.create(
+                goal=original.goal, conversation_id=original.conversation_id,
+                workspace_id=original.workspace_id, kind=original.kind,
+                metadata={"source_task_id": original.id},
+            )
+            task_id = task.id
         if not task:
             task = self.runtime.product_tasks.create(
                 goal=str(getattr(source_run, "user_content", "") or ""),

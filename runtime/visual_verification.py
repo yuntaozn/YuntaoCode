@@ -32,12 +32,12 @@ def build_visual_verification_summary(
     visual_records = _visual_records(visual_evidence)
     model_context_records = _visual_context_records(visual_context)
     injected_paths = {
-        str(item.get("path") or "")
+        str(item.get("source_ref") or item.get("path") or "")
         for item in model_context_records
-        if str(item.get("path") or "").strip()
+        if item.get("injected_into_model_context") and str(item.get("source_ref") or item.get("path") or "").strip()
     }
     for record in visual_records:
-        path = str(record.get("path") or "")
+        path = str(record.get("source_ref") or record.get("path") or "")
         record["injected_into_model_context"] = bool(
             record.get("injected_into_model_context") or path and path in injected_paths
         )
@@ -59,7 +59,7 @@ def build_visual_verification_summary(
     source_types = _unique(record.get("source_type") for record in visual_records)
     tools = _unique(record.get("tool") for record in visual_records)
 
-    injected_count = len(model_context_records) or sum(
+    injected_count = sum(bool(item.get("injected_into_model_context")) for item in model_context_records) or sum(
         1 for record in visual_records if bool(record.get("injected_into_model_context"))
     )
 
@@ -91,7 +91,7 @@ def build_visual_verification_summary(
             "visual_missing": "visual" in missing,
             "has_runtime_errors": bool(runtime_error_records or debug_error_records),
             "model_context_available": any(bool(record.get("model_context_eligible")) for record in visual_records),
-            "model_context_injected": bool(model_context_records)
+            "model_context_injected": any(bool(item.get("injected_into_model_context")) for item in model_context_records)
             or any(bool(record.get("injected_into_model_context")) for record in visual_records),
         },
         "modalities": {
@@ -124,7 +124,7 @@ def _visual_records(value: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
         record["tool"] = str(item.get("tool") or record.get("tool") or "")
         record["status"] = str(item.get("status") or record.get("status") or "")
         record["injected_into_model_context"] = bool(item.get("injected_into_model_context"))
-        key = (str(record.get("tool") or ""), str(record.get("path") or ""))
+        key = (str(record.get("tool") or ""), str(record.get("source_ref") or record.get("path") or ""))
         if key in seen:
             continue
         seen.add(key)
@@ -142,9 +142,9 @@ def _visual_context_records(value: list[dict[str, Any]] | None) -> list[dict[str
         record = _compact_visual_record(summary)
         record["tool"] = str(item.get("tool") or record.get("tool") or "")
         record["status"] = str(item.get("status") or record.get("status") or "")
-        record["injected_into_model_context"] = bool(item.get("injected_into_model_context", True))
+        record["injected_into_model_context"] = bool(item.get("injected_into_model_context", "delivery_status" not in item))
         record["mime_type"] = str(item.get("mime_type") or "")
-        key = (str(record.get("tool") or ""), str(record.get("path") or ""))
+        key = (str(record.get("tool") or ""), str(record.get("source_ref") or record.get("path") or ""))
         if key in seen:
             continue
         seen.add(key)
@@ -154,6 +154,11 @@ def _visual_context_records(value: list[dict[str, Any]] | None) -> list[dict[str
 
 def _compact_visual_record(summary: dict[str, Any]) -> dict[str, Any]:
     return {
+        **{key: summary.get(key) for key in (
+            "source_ref", "task_id", "image_ref", "content_index", "delivery_status", "omission_reason",
+            "inspection_status", "uniform_pixels", "pixel_ranges", "pixel_channels",
+        ) if key in summary},
+        "visual_review_status": "unconfirmed",
         "schema_version": summary.get("schema_version"),
         "kind": summary.get("kind") or "visual_evidence",
         "tool": str(summary.get("tool") or ""),

@@ -46,24 +46,15 @@ from runtime.agent_strategy.classifiers import (
     is_recoverable_write_failure,
     repeated_failure_action,
     finish_reason_indicates_truncation,
-    plan_has_pending_write_step,
 )
 
 # ── 提示构建 ─────────────────────────────────────────────────────────────
 from runtime.agent_strategy.prompts import (
-    completion_review_prompt,
-    execute_plan_prompt,
-    format_execution_plan_for_context,
     max_rounds_message,
-    oversized_tool_arguments_prompt,
-    execution_convergence_prompt,
-    result_synthesis_prompt,
-    write_repair_prompt,
 )
 
 # ── Profile 与策略 ────────────────────────────────────────────────────────
 from runtime.agent_strategy.policy import (
-    resolve_plan_execution,
     resolve_profile,
 )
 from runtime.agent_strategy.profiles import (
@@ -139,42 +130,7 @@ class TestAgentProfiles:
         assert get_profile("missing").id == "analysis"
 
 class TestPlanningPolicy:
-    def test_auto_uses_model_task_contract_plan_decision(self):
-        decision = resolve_plan_execution(
-            {"source": "model", "requires_plan": True},
-            "auto",
-        )
-        assert decision.enabled is True
-        assert decision.source == "task_contract"
 
-    def test_always_plan_respects_user_setting(self):
-        decision = resolve_plan_execution(None, "always")
-        assert decision.enabled is True
-        assert decision.source == "user"
-
-    def test_off_plan_respects_user_setting(self):
-        decision = resolve_plan_execution(
-            {"source": "model", "requires_plan": True},
-            "off",
-        )
-        assert decision.enabled is False
-        assert decision.source == "user"
-
-    def test_auto_does_not_chain_another_judge_after_contract_failure(self):
-        decision = resolve_plan_execution(
-            {
-                "source": "policy_fallback",
-                "model_contract_error": "request timeout",
-            },
-            "auto",
-        )
-        assert decision.enabled is False
-        assert decision.source == "main_execution"
-
-    def test_auto_direct_input_starts_main_execution_without_auxiliary_judge(self):
-        decision = resolve_plan_execution({"source": "policy"}, "auto")
-        assert decision.enabled is False
-        assert decision.source == "main_execution"
 
     def test_resolve_profile_uses_policy_entrypoint(self):
         assert resolve_profile("document_export", "terminal").id == "document"
@@ -306,6 +262,15 @@ class TestVerificationToolIds:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestMergeToolCallChunks:
+    def test_invalid_batch_is_atomic(self):
+        calls = []
+        with pytest.raises(ValueError, match="invalid_tool_call_index"):
+            merge_tool_call_chunks(calls, [
+                {"index": 0, "function": {"name": "read", "arguments": "{}"}},
+                {"index": -1},
+            ])
+        assert calls == []
+
     def test_single_chunk(self):
         calls: list = []
         merge_tool_call_chunks(calls, [
@@ -977,110 +942,12 @@ class TestIsRecoverableWriteFailure:
         assert is_recoverable_write_failure("filesystem.append_text_chunk", event)
 
 
-class TestPlanHasPendingWriteStep:
-    def test_pending_write(self):
-        plan = {"steps": [{"title": "修改代码", "description": "", "tool_hint": "code.edit_file", "status": "pending"}]}
-        assert plan_has_pending_write_step(plan)
-
-    def test_completed_write(self):
-        plan = {"steps": [{"title": "修改代码", "description": "", "tool_hint": "code.edit_file", "status": "completed"}]}
-        assert not plan_has_pending_write_step(plan)
-
-    def test_no_write_step(self):
-        plan = {"steps": [{"title": "读取文件", "description": "", "tool_hint": "filesystem.read_file", "status": "pending"}]}
-        assert not plan_has_pending_write_step(plan)
-
-    def test_analysis_expansion_space_is_not_write(self):
-        plan = {
-            "steps": [
-                {
-                    "title": "\u5206\u6790\u6269\u5199\u7a7a\u95f4\u4e0e\u5efa\u8bae",
-                    "description": "\u57fa\u4e8e\u8bba\u6587\u7ed3\u6784\u5206\u6790\u5404\u7ae0\u8282\u7684\u6269\u5199\u6f5c\u529b\uff0c\u7ed9\u51fa\u5177\u4f53\u5efa\u8bae",
-                    "tool_hint": "\uff08\u5206\u6790\u5de5\u5177\uff0c\u65e0\u9700\u8c03\u7528\uff09",
-                    "status": "pending",
-                }
-            ]
-        }
-        assert not plan_has_pending_write_step(plan)
-
-    def test_document_read_plan_is_not_write(self):
-        plan = {
-            "steps": [
-                {
-                    "title": "\u8bfb\u53d6\u8bba\u6587\u5185\u5bb9\u5e76\u7edf\u8ba1\u5b57\u6570",
-                    "description": "\u8bfb\u53d6\u8bba\u6587\u6587\u4ef6\u5185\u5bb9\uff0c\u7edf\u8ba1\u603b\u5b57\u6570\u3001\u7ae0\u8282\u5206\u5e03\u7b49\u4fe1\u606f",
-                    "tool_hint": "document.extract_docx_outline, filesystem.read_text_preview",
-                    "status": "pending",
-                }
-            ]
-        }
-        assert not plan_has_pending_write_step(plan)
-
-    def test_not_a_dict(self):
-        assert not plan_has_pending_write_step(None)
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 # 提示构建（抽样检查）
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestPrompts:
-    def test_execution_convergence_prompt_exposes_repetition_facts(self):
-        events = [
-            {
-                "tool": "filesystem.write_file",
-                "status": "failure",
-                "input": {},
-                "error": "missing required: path, content",
-            },
-            {
-                "tool": "filesystem.write_file",
-                "status": "failure",
-                "input": {},
-                "error": "missing required: path, content",
-            },
-        ]
 
-        prompt = execution_convergence_prompt("/tmp", events)
-
-        assert "Repeated failure recovery advisory" in prompt
-        assert "runtime is not choosing the next strategy" in prompt
-        assert "filesystem.write_file" in prompt
-        assert "missing required" in prompt
-
-    def test_write_repair_prompt(self):
-        prompt = write_repair_prompt(
-            "code.edit_file",
-            {"path": "main.py"},
-            {"error": "old_text not found"},
-            "/tmp",
-        )
-        assert "old_text" in prompt
-
-    def test_oversized_tool_arguments_prompt_keeps_strategy_model_directed(self):
-        prompt = oversized_tool_arguments_prompt("/tmp/project", 25000, 24000)
-
-        assert "not a permission denial" in prompt
-        assert "Choose the next execution strategy yourself" in prompt
-        assert "Do not repeat one oversized tool call" in prompt
-
-    def test_format_execution_plan(self):
-        plan = {
-            "title": "Test Plan",
-            "steps": [
-                {"title": "Step 1", "description": "Do something", "tool_hint": "code.edit_file"},
-            ],
-        }
-        result = format_execution_plan_for_context(plan)
-        assert "Test Plan" in result
-        assert "code.edit_file" in result
-
-    def test_execute_plan_prompt_does_not_create_user_confirmation_gate(self):
-        prompt = execute_plan_prompt({"title": "Test Plan", "steps": []}, "terminal")
-
-        assert "权限和高风险确认由运行时呈现" in prompt
-        assert "可以直接调用" in prompt
-        assert "可以明确向用户提问" in prompt
 
     def test_max_rounds_message(self):
         events = [{"tool": "filesystem.read_file", "status": "success"}]
@@ -1089,134 +956,3 @@ class TestPrompts:
         assert "执行预算" in msg
         assert "系统已停止" not in msg
         assert "后续可" in msg
-
-    def test_completion_review_prompt_exposes_facts_without_forcing_strategy(self):
-        prompt = completion_review_prompt(
-            "/tmp",
-            {"goal": "create an interactive viewer"},
-            {
-                "status": "partial",
-                "target_written_paths": ["viewer/index.html"],
-                "verification_evidence": [
-                    {"tool": "filesystem.read_file", "modalities": ["content"]},
-                ],
-                "failures": [{"tool": "filesystem.create_text_draft", "error": "truncated"}],
-                "risks": ["test_not_observed", "recovered_tool_failure"],
-                "missing_verification_modalities": ["visual", "behavioral"],
-                "visual_verification": {
-                    "schema_version": "visual_verification.v1",
-                    "kind": "visual_verification",
-                    "boundary": "evidence_only",
-                    "counts": {"visual_evidence": 0},
-                    "flags": {"visual_required": True, "visual_missing": True},
-                },
-                "debug_audit": {
-                    "schema_version": "debug_audit.v1",
-                    "kind": "debug_audit",
-                    "boundary": "evidence_only",
-                    "counts": {"debug_sessions": 1, "failed_sessions": 1},
-                    "flags": {"has_failure": True, "has_runtime_errors": True},
-                },
-                "verification_closure": {
-                    "kind": "verification_closure",
-                    "result_status": "partial",
-                    "modalities": {"missing": ["visual", "behavioral"]},
-                    "flags": {"has_required_gap": True},
-                    "gap_facts": ["missing_modality:visual"],
-                },
-                "counts": {
-                    "deliverable_successes": 1,
-                    "verification_successes": 1,
-                    "failures": 1,
-                },
-            },
-            task_route_evidence={
-                "schema_version": "task_route_evidence.v1",
-                "kind": "task_route_evidence",
-                "boundary": "evidence_only",
-                "strategy_owner": "model",
-                "safety_owner": "runtime",
-                "proposal_count": 1,
-                "valid_proposal_count": 1,
-                "target_capability_ids": ["code.text_write"],
-                "flags": {"has_model_route": True, "all_routes_valid": True},
-                "model_facts": ["route_proposals=code.text_write/filesystem.write_file"],
-            },
-        )
-
-        assert "Completion self-review from runtime facts" in prompt
-        assert "Runtime fact package" in prompt
-        assert "viewer/index.html" in prompt
-        assert "test_not_observed" in prompt
-        assert "task route evidence" in prompt
-        assert "route_proposals=code.text_write/filesystem.write_file" in prompt
-        assert "- missing verification modalities:" in prompt
-        assert "  - visual" in prompt
-        assert "  - behavioral" in prompt
-        assert "visual verification" in prompt
-        assert "debug audit" in prompt
-        assert "missing_modality:visual" in prompt
-        assert "Decide whether the task is actually complete" in prompt
-        assert "Do not claim completion beyond the observed deliverables" in prompt
-        assert "completion_self_assessment.v1" in prompt
-        assert '"goal_closed":true' in prompt
-        assert '"remaining_work":[]' in prompt
-        assert "ordinary user-facing Markdown answer below it" in prompt
-        assert "does not force another model round" in prompt
-        assert "This header is optional" in prompt
-
-    def test_result_synthesis_prompt_uses_runtime_facts_instead_of_fixed_template(self):
-        prompt = result_synthesis_prompt(
-            "/tmp",
-            {"goal": "create an interactive viewer"},
-            {
-                "status": "partial",
-                "changed_paths": ["viewer/index.html"],
-                "risks": ["test_not_observed"],
-                "counts": {"tool_events": 2, "failures": 1},
-            },
-            previous_answer="Done.",
-        )
-
-        assert "Write the final user-facing answer for this run from runtime facts" in prompt
-        assert "Completion evidence pack" in prompt
-        assert "viewer/index.html" in prompt
-        assert "test_not_observed" in prompt
-        assert "Previous assistant draft" in prompt
-
-    def test_execution_convergence_prompt_stays_strategy_neutral_after_truncation(self):
-        prompt = execution_convergence_prompt(
-            "/tmp/project",
-            [
-                {
-                    "tool": "filesystem.write_file",
-                    "status": "failure",
-                    "error": "The model response stopped at its output limit.",
-                    "output": {"reason": "truncated_tool_call"},
-                }
-            ],
-        )
-
-        assert "Repeated failure recovery advisory" in prompt
-        assert "runtime is not choosing the next strategy" in prompt
-        assert "truncated_tool_call" in prompt
-        assert "draft route is available" not in prompt
-        assert "filesystem.create_text_draft" not in prompt
-
-    def test_write_repair_prompt_stays_strategy_neutral_after_truncation(self):
-        prompt = write_repair_prompt(
-            "filesystem.write_file",
-            {"path": "viewer/index.html"},
-            {
-                "status": "failure",
-                "error": "The runtime did not execute incomplete arguments.",
-                "output": {"reason": "truncated_tool_call"},
-            },
-            "/tmp/project",
-        )
-
-        assert "Write failure recovery advisory" in prompt
-        assert "runtime is not choosing the repair strategy" in prompt
-        assert "truncated_tool_call" in prompt
-        assert "draft route" not in prompt
-        assert "filesystem.create_text_draft" not in prompt

@@ -7,13 +7,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from time import monotonic
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from runtime.agent_strategy.classifiers import (
+    ToolCallProtocolError,
     merge_tool_call_chunks,
     tool_call_arguments_size,
+    extract_declared_text_tool_calls,
 )
-from runtime.model_harness import ModelHarness, default_model_harness
+from runtime.model_harness import ModelHarness, default_model_harness, image_context_refs
 from runtime.model_providers.client import stream_chat_completion
 
 
@@ -34,12 +37,17 @@ class ModelRoundResult:
     usage: dict[str, Any] | None = None
     request_budget: dict[str, Any] | None = None
     model_error: str = ""
+    protocol_error: str = ""
     idle_timeout: bool = False
     fatal: bool = False
     interrupted_by_guidance: bool = False
     consecutive_idle_timeouts: int = 0
     large_argument_observations: int = 0
     visual_context_fallback: bool = False
+    visual_context_delivery: dict[str, str] = field(default_factory=dict)
+    visual_context_error: str = ""
+    text_tool_call_recovered: bool = False
+    text_tool_protocol: str = "none"
 
     @property
     def finish_reason(self) -> str:
@@ -73,17 +81,20 @@ class ToolCallLoop:
         tools: list[dict[str, Any]] | None,
         enable_thinking: bool,
         reasoning_effort: str | None,
-        has_runtime_facts: bool,
         consecutive_idle_timeouts: int,
         argument_observation_threshold: int,
         large_argument_observations: int,
+        round_index: int = 0,
     ) -> ModelRoundResult:
+        started_at = monotonic()
         result = ModelRoundResult(
             consecutive_idle_timeouts=consecutive_idle_timeouts,
             large_argument_observations=large_argument_observations,
         )
         large_arguments_reported = False
         visual_fallback_attempted = False
+        wire_tool_call_items: int | None = None
+        tool_call_fragment_count = 0
         request = self._harness.prepare_round_request(
             settings=settings,
             model=model,
@@ -93,6 +104,8 @@ class ToolCallLoop:
             reasoning_effort=reasoning_effort,
             tool_choice=None,
         )
+        result.text_tool_protocol = request.harness.text_tool_protocol
+        requested_images = image_context_refs(request.messages)
 
         while True:
             retry_without_visual_context = False
@@ -130,15 +143,18 @@ class ToolCallLoop:
                         result.consecutive_idle_timeouts += 1
                         if result.consecutive_idle_timeouts >= 2:
                             result.fatal = True
+                            result.model_error = str(event.get("error") or "")
                             await self._publish({
                                 "event": "error",
-                                "error": "模型服务连续超时，请检查网络连接或稍后重试",
+                                "error": result.model_error,
+                                "terminal": False,
                             })
                         else:
                             await self._publish({
                                 "event": "status",
                                 "status": "idle_timeout",
                                 "message": "模型响应超时，正在重试...",
+                                "error": str(event.get("error") or ""),
                             })
                         break
 
@@ -149,28 +165,34 @@ class ToolCallLoop:
                     ):
                         visual_fallback_attempted = True
                         result.visual_context_fallback = True
+                        result.visual_context_error = str(event.get("error") or "")[:500]
                         request = self._harness.downgrade_visual_context(request)
+                        result.tool_call_chunks.clear()
+                        result.content_parts.clear()
+                        result.reasoning_parts.clear()
+                        result.protocol_error = ""
                         retry_without_visual_context = True
                         await self._publish({
                             "event": "status",
                             "status": "visual_context_text_fallback",
                             "message": (
-                                "模型服务不接受图片上下文，已保留视觉证据的文字事实并重新连接模型。"
+                                "携带图片的请求未成功，已保留视觉证据的文字事实并尝试文字请求。"
                             ),
                         })
                         break
 
                     result.model_error = str(event.get("error") or "")
-                    result.fatal = not has_runtime_facts
+                    result.fatal = True
                     await self._publish({
                         "event": "error",
                         "error": result.model_error,
-                        "terminal": result.fatal,
-                        "recoverable": not result.fatal,
+                        "terminal": False,
                     })
                     break
 
                 emitted_delta = False
+                if isinstance(event.get("wire_tool_call_items"), int):
+                    wire_tool_call_items = (wire_tool_call_items or 0) + event["wire_tool_call_items"]
                 if event.get("message"):
                     result.consecutive_idle_timeouts = 0
                     result.content_parts.append(str(event["message"]))
@@ -181,9 +203,17 @@ class ToolCallLoop:
                     result.reasoning_parts.append(str(event["reasoning"]))
                     self._emit({"event": "reasoning", "reasoning": event["reasoning"]})
                     emitted_delta = True
-                if event.get("tool_calls"):
+                if "tool_calls" in event:
+                    chunks = event["tool_calls"]
+                    tool_call_fragment_count += len(chunks) if isinstance(chunks, list) else 1
                     result.consecutive_idle_timeouts = 0
-                    merge_tool_call_chunks(result.tool_call_chunks, event["tool_calls"])
+                    if not result.protocol_error:
+                        try:
+                            merge_tool_call_chunks(result.tool_call_chunks, chunks)
+                        except ToolCallProtocolError as exc:
+                            # 一次无效片段使整轮调用失效，不能执行此前已累积的部分批次。
+                            result.protocol_error = str(exc)
+                            result.tool_call_chunks.clear()
                     argument_size = tool_call_arguments_size(result.tool_call_chunks)
                     if (
                         argument_size > argument_observation_threshold
@@ -221,6 +251,57 @@ class ToolCallLoop:
                 continue
             break
 
+        if not result.protocol_error and not result.model_error and not result.idle_timeout and not result.interrupted_by_guidance and not result.tool_call_chunks:
+            calls = extract_declared_text_tool_calls(
+                "".join(result.content_parts), request.harness.text_tool_protocol, round_index,
+            )
+            if calls:
+                result.tool_call_chunks = calls
+                result.text_tool_call_recovered = True
+        if (
+            not result.model_error
+            and not result.protocol_error
+            and not result.idle_timeout
+            and not result.interrupted_by_guidance
+            and result.finish_reason in {"tool_calls", "function_call"}
+            and not any(
+                str((chunk.get("function") or {}).get("name") or "").strip()
+                for chunk in result.tool_call_chunks
+            )
+        ):
+            result.protocol_error = "missing_tool_call_payload"
+        if not result.protocol_error and any(
+            not str((chunk.get("function") or {}).get("name") or "").strip()
+            for chunk in result.tool_call_chunks
+        ):
+            result.protocol_error = "incomplete_tool_call_batch"
+        if result.protocol_error:
+            result.tool_call_chunks.clear()
+        delivery_status = (
+            "omitted_transport_fallback" if result.visual_context_fallback else
+            "unconfirmed" if result.model_error or result.idle_timeout or result.interrupted_by_guidance
+            or not (result.finish_reasons or result.content_parts or result.reasoning_parts or tool_call_fragment_count or result.usage)
+            else "accepted"
+        )
+        result.visual_context_delivery = {ref: delivery_status for ref in requested_images}
+        await self._publish({
+            "event": "model_round", "schema_version": "model_round.v1",
+            "round": round_index, "model": model, "provider": request.harness.provider_id,
+            "finish_reason": result.finish_reason, "usage": result.usage,
+            "elapsed_seconds": round(monotonic() - started_at, 3),
+            "content_chars": sum(map(len, result.content_parts)),
+            "reasoning_chars": sum(map(len, result.reasoning_parts)),
+            "tool_call_chunk_count": len(result.tool_call_chunks),
+            "tool_call_fragment_count": tool_call_fragment_count,
+            "wire_tool_call_items": wire_tool_call_items,
+            "named_tool_call_count": sum(bool((c.get("function") or {}).get("name")) for c in result.tool_call_chunks),
+            "tool_call_source": "text_protocol" if result.text_tool_call_recovered else "structured" if result.tool_call_chunks else "none",
+            "protocol_error": result.protocol_error, "model_error": result.model_error[:500],
+            "idle_timeout": result.idle_timeout, "interrupted_by_guidance": result.interrupted_by_guidance,
+            "requested_tool_count": len(tools or []), "request_budget": result.request_budget,
+            "visual_context_delivery": result.visual_context_delivery,
+            "visual_context_error": result.visual_context_error,
+        })
         return result
 
     async def _publish(self, payload: dict[str, Any]) -> None:

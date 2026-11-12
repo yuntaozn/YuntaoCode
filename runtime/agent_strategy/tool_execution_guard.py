@@ -9,14 +9,6 @@ from typing import Any
 class ToolExecutionGuardDecision:
     reason: str
     message: str
-    blocking: bool = True
-
-    def to_public_dict(self) -> dict[str, Any]:
-        return {
-            "reason": self.reason,
-            "message": self.message,
-            "blocking": self.blocking,
-        }
 
 
 @dataclass(frozen=True)
@@ -24,10 +16,7 @@ class ToolExecutionGuardChecks:
     is_tool_enabled: Callable[[str], bool]
     is_tool_available: Callable[[str], bool]
     missing_required_input_fields: Callable[[str, dict[str, Any]], Sequence[str]]
-    capability_fallback_message: Callable[[str], str]
     ai_plugin_draft_workspace_message: Callable[[str, dict[str, Any], str | None], str]
-    document_contract_message: Callable[[str, dict[str, Any]], str]
-    verification_runtime_message: Callable[[str, dict[str, Any]], str]
 
 
 def evaluate_tool_execution_guard(
@@ -38,7 +27,7 @@ def evaluate_tool_execution_guard(
 ) -> ToolExecutionGuardDecision | None:
     """返回已解析工具的第一个执行前 Guard 决策。
 
-    检查顺序属于运行时契约：先检查可用性与能力边界，再检查 Schema 细节；
+    只检查可用性、必填参数和能力草稿写入边界，不评价模型选择的执行路线；
     无效调用绝不进入用户确认。"""
     if not checks.is_tool_enabled(tool_id):
         return ToolExecutionGuardDecision(
@@ -58,16 +47,8 @@ def evaluate_tool_execution_guard(
             reason="invalid_tool_input",
             message=(
                 f"工具调用缺少必填参数：{', '.join(missing_fields)}。"
-                "本次调用没有执行；请补全参数后重新发送结构化工具调用。"
+                "本次调用没有执行。"
             ),
-        )
-
-    guard_message = checks.capability_fallback_message(tool_id)
-    if guard_message:
-        return ToolExecutionGuardDecision(
-            reason="capability_fallback_advisory",
-            message=guard_message,
-            blocking=False,
         )
 
     guard_message = checks.ai_plugin_draft_workspace_message(tool_id, arguments, workspace_path)
@@ -75,22 +56,6 @@ def evaluate_tool_execution_guard(
         return ToolExecutionGuardDecision(
             reason="ai_plugin_draft_workspace_guard",
             message=guard_message,
-        )
-
-    guard_message = checks.document_contract_message(tool_id, arguments)
-    if guard_message:
-        return ToolExecutionGuardDecision(
-            reason="document_contract_advisory",
-            message=guard_message,
-            blocking=False,
-        )
-
-    guard_message = checks.verification_runtime_message(tool_id, arguments)
-    if guard_message:
-        return ToolExecutionGuardDecision(
-            reason="verification_runtime_advisory",
-            message=guard_message,
-            blocking=False,
         )
 
     return None

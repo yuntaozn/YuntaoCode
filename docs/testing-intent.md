@@ -109,8 +109,9 @@ Some tests are useful but can become too rigid if extended carelessly.
   has a home.
 - `test_task_contract.py` and `test_document_contract_guard.py` protect the
   important boundary between model-declared task intent and runtime-owned
-  safety. Avoid adding exact prompt wording assertions unless the wording is
-  itself a user-visible contract.
+  safety, confirmation presentation, and deliverable evidence. Document-route
+  advisory classifiers have been removed; keep tests focused on observable
+  results rather than restoring prompt advice or exact wording assertions.
 - `test_tool_aliases.py` is a compatibility boundary for common model tool-name
   variants. Add aliases only when the variant is broad and recurring, not when
   one model made a one-off mistake.

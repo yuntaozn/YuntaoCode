@@ -13,10 +13,9 @@
 - ``document_completion``：长文本与文档完成证据
 - ``document_contract_guard``：文档导出证据建议
 - ``profiles``：不控制路线或预算的内部 Profile 描述
-- ``policy``：用户计划策略门禁
+- ``policy``：模型声明到内部 Profile 的映射
 - ``prompts``：各执行阶段的提示构建
-- ``run_finalization``：根据可观察证据生成纯 Run 收尾门禁
 - ``task_contract``：模型任务契约与 Runtime 自有 Schema 边界
 - ``tool_execution_guard``：执行前安全与建议管道
 - ``tool_result_risks``：不阻塞、面向模型的风险证据
-- ``plan_tracker``：执行计划生命周期管理"""
+- ``plan_tracker``：模型自主声明的计划与步骤记录"""

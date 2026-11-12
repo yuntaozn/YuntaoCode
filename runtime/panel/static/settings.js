@@ -99,7 +99,6 @@ function renderSettings() {
     renderMemories();
 
     $("access-scope-input").value = settings?.access_scope || "project_only";
-    $("planning-policy-input").value = settings?.planning_policy || "auto";
     $("confirmation-policy-input").value = settings?.confirmation_policy || "auto";
     $("backup-enabled-input").checked = backupSettings.enabled !== false;
     $("backup-keep-input").value = backupSettings.keep_rounds || 50;
@@ -328,14 +327,11 @@ function linkedModelCount(providerId) {
 
 function renderSummary() {
     const accessText = $("access-scope-input").value === "full_local" ? t('settings_js.summary_full') : t('settings_js.summary_project');
-    const planMap = { off: t('settings_js.plan_off'), auto: t('settings_js.plan_auto'), always: t('settings_js.plan_always') };
     const confirmMap = { conservative: t('settings_js.confirm_conservative'), auto: t('settings_js.confirm_auto'), aggressive: t('settings_js.confirm_aggressive') };
-    const planning = planMap[$("planning-policy-input").value] || t('settings_js.plan_auto');
     const confirmation = confirmMap[$("confirmation-policy-input").value] || t('settings_js.confirm_auto');
     const memoryCount = memoryEntries().filter((item) => item.enabled !== false).length;
     setDynamicText("settings-summary", t('settings_js.summary_text', {
         access: accessText,
-        planning,
         confirmation,
         providers: providerEntries().length,
         models: modelEntries().length,
@@ -478,7 +474,6 @@ async function saveSettings(options = {}) {
         body: JSON.stringify({
             default_model: $("default-model-input").value,
             access_scope: $("access-scope-input").value,
-            planning_policy: $("planning-policy-input").value,
             confirmation_policy: $("confirmation-policy-input").value,
             backups: {
                 enabled: $("backup-enabled-input").checked,
@@ -498,7 +493,6 @@ async function saveSettings(options = {}) {
     deletedProviderIds.clear();
     deletedModelIds.clear();
     localStorage.setItem("lit_model", settings.default_model || $("default-model-input").value);
-    localStorage.setItem("lit_planning_policy", settings.planning_policy || $("planning-policy-input").value);
     localStorage.setItem("lit_confirmation_policy", settings.confirmation_policy || $("confirmation-policy-input").value);
     renderSettings();
     showToast(options.toastMessage || t('toast.settings_saved'));
@@ -745,7 +739,6 @@ function bindEvents() {
     $("restore-latest-backup-btn").addEventListener("click", () => restoreLatestBackup().catch((error) => showToast(error.message)));
     $("clear-backups-btn").addEventListener("click", () => clearBackups().catch((error) => showToast(error.message)));
     $("access-scope-input").addEventListener("change", renderSummary);
-    $("planning-policy-input").addEventListener("change", renderSummary);
     $("confirmation-policy-input").addEventListener("change", renderSummary);
     $("memory-filter-input").addEventListener("change", renderMemories);
     document.querySelectorAll("[data-settings-page-button]").forEach((button) => {

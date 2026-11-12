@@ -132,7 +132,6 @@ function renderForm() {
     $("automation-time-of-day").value = trigger.time_of_day || "";
     $("automation-interval-minutes").value = String(Math.max(1, Math.round((trigger.interval_seconds || 3600) / 60)));
     setSelectValue("automation-weekday", (trigger.days_of_week || [])[0] || "mon");
-    setSelectValue("automation-planning", template.planning_policy || state.settings?.planning_policy || "auto");
     setSelectValue("automation-confirmation", template.confirmation_policy || state.settings?.confirmation_policy || "auto");
     setSelectValue("automation-access", template.access_scope || state.settings?.access_scope || "project_only");
     setSelectValue("automation-concurrency", payload.concurrency_policy || "skip_if_running");
@@ -176,7 +175,6 @@ function defaultAutomation() {
             goal: "",
             workspace_id: firstWorkspaceId(),
             model: state.settings?.default_model || "",
-            planning_policy: state.settings?.planning_policy || "auto",
             confirmation_policy: state.settings?.confirmation_policy || "auto",
             access_scope: state.settings?.access_scope || "project_only",
         },
@@ -226,7 +224,6 @@ function formPayload() {
             goal: $("automation-goal").value.trim(),
             workspace_id: $("automation-workspace").value || "",
             model: $("automation-model").value || "",
-            planning_policy: $("automation-planning").value || "auto",
             confirmation_policy: $("automation-confirmation").value || "auto",
             access_scope: $("automation-access").value || "project_only",
         },

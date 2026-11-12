@@ -1,8 +1,8 @@
-"""完成循环的证据辅助函数。
+"""完成证据兼容辅助函数。
 
-完成循环让模型根据运行时事实决定如实结束或继续工作。本模块记录模型可观察的选择，
-供 RunEvidence、Workbench、Replay 和 Evaluation 检查。完成证据包的构建放在
-``completion_evidence_pack`` 中，使展示预算与格式和决策审计保持分离。"""
+主执行循环不再插入独立完成审查。本模块保留旧版完成声明的解析和决策记录结构，
+供已存 Run、RunEvidence、Replay 与 Evaluation 兼容读取。完成证据包的构建放在
+``completion_evidence_pack`` 中。"""
 
 from __future__ import annotations
 
@@ -22,14 +22,43 @@ COMPLETION_DECISION_SCHEMA_VERSION = "completion_decision.v1"
 COMPLETION_SELF_ASSESSMENT_SCHEMA_VERSION = "completion_self_assessment.v1"
 
 
+def build_outcome_facts(
+    *,
+    task_contract: dict[str, Any] | None,
+    assessment: dict[str, Any],
+    model_error: bool,
+    stopped: bool,
+    verification_required: bool,
+    verification_missing: bool,
+) -> dict[str, str]:
+    """分开记录执行结束、模型目标声明和验证证据，不从自然语言猜测完成。"""
+    contract = task_contract or {}
+    task_known = bool(contract) and contract.get("source") != "main_execution_pending" and (
+        contract.get("intent") != "undetermined" or contract.get("source") == "model_execution"
+    )
+    goal_status = "unknown"
+    if assessment and (not assessment.get("goal_closed") or assessment.get("remaining_work")):
+        goal_status = "incomplete"
+    elif assessment.get("goal_closed"):
+        # 这是模型的明确声明，不替代独立的执行状态与验证证据。
+        goal_status = "complete"
+    return {
+        "execution_status": "failed" if model_error else "stopped" if stopped else "completed",
+        "goal_status": goal_status,
+        "verification_status": (
+            "unknown" if not task_known else "not_required" if not verification_required
+            else "missing" if verification_missing else "satisfied"
+        ),
+    }
+
+
 def extract_completion_self_assessment(
     content: str,
 ) -> tuple[str, dict[str, Any] | None]:
     """提取由模型明确作出的完成自评。
 
-    当模型选择结束时，完成审查在首行使用紧凑 JSON 头；面向用户的答案仍以
-    普通 Markdown 放在头部下方，避免用大型 JSON 字符串包裹整段答案。
-    对于不遵循头部协议的模型，普通文本仍是受支持的回退形式。"""
+    旧版提示允许模型在首行使用紧凑 JSON 头。本函数仅供显式兼容读取；
+    主执行循环不调用它，也不从普通答案正文提取任务状态。"""
 
     original = str(content or "").strip()
     if not original:
@@ -75,7 +104,7 @@ def build_completion_decision(
     evidence_pack: dict[str, Any] | None = None,
     self_assessment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """描述模型在完成审查后的下一步选择。
+    """描述模型可观察到的完成选择。
 
     返回值是审计证据，有意避免 ``must_stop`` 或 ``must_continue`` 这类
     命令式建议。"""

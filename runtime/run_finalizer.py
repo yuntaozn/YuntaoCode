@@ -1,7 +1,7 @@
 """循环结束后的 Run 收尾控制器。
 
 Finalizer 将已观察到的模型与工具事实转换为 RunResult、恢复 Checkpoint、
-最终用户答案、摘要 Context Pack、持久化助手消息和 done 事件。
+主模型答案、摘要 Context Pack、持久化助手消息和 done 事件。
 它不决定模型是否应继续工具循环，也不选择执行策略。"""
 
 from __future__ import annotations
@@ -9,42 +9,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from runtime.agent_strategy.classifiers import (
-    has_successful_write,
-    strip_native_tool_call_blocks,
-)
-from runtime.agent_strategy.plan_tracker import complete_remaining_plan_steps
 from runtime.context_manager import count_messages_tokens, get_context_limit
 from runtime.context_pack import build_context_pack
 from runtime.run_recovery import build_result_context_snapshot
 from runtime.run_result import build_run_result
-from runtime.run_result_presenter import append_changed_files_footer
 from runtime.run_execution_state import RunExecutionState
 
 
 class RunFinalizationHost(Protocol):
     runtime: Any
 
-    def _task_contract_failures(
-        self,
-        task_contract: dict[str, Any],
-        tool_events: list[dict[str, Any]],
-        mode: str | None,
-        *,
-        answer_text: str | None = None,
-    ) -> list[str]: ...
-
-    def _max_rounds_after_write_message(
-        self,
-        max_rounds: int,
-        tool_events: list[dict[str, Any]],
-    ) -> str: ...
-
-    def _max_rounds_message(
-        self,
-        max_rounds: int,
-        tool_events: list[dict[str, Any]],
-    ) -> str: ...
+    async def _wait_if_paused(self) -> None: ...
 
     async def _build_change_summary(
         self,
@@ -54,57 +29,6 @@ class RunFinalizationHost(Protocol):
         tool_events: list[dict[str, Any]],
     ) -> dict[str, Any] | None: ...
 
-    def _answer_only_final_answer_error(
-        self,
-        content: str,
-        tool_events: list[dict[str, Any]],
-        task_contract: dict[str, Any] | None = None,
-    ) -> str: ...
-
-    def _needs_synthesized_final_answer(
-        self,
-        content: str,
-        tool_events: list[dict[str, Any]],
-        *,
-        task_contract: dict[str, Any] | None = None,
-    ) -> bool: ...
-
-    async def _generate_result_synthesis_answer(
-        self,
-        *,
-        model: str,
-        workspace_path: str,
-        user_content: str,
-        task_contract: dict[str, Any],
-        run_result: dict[str, Any],
-        previous_answer: str,
-        tool_events: list[dict[str, Any]] | None = None,
-        completion_decisions: list[dict[str, Any]] | None = None,
-        task_route_evidence: dict[str, Any] | None = None,
-    ) -> tuple[str, dict[str, Any]]: ...
-
-    def _synthesize_failure_answer(
-        self,
-        workspace_path: str,
-        tool_events: list[dict[str, Any]],
-        run_result: dict[str, Any],
-    ) -> str: ...
-
-    def _synthesize_partial_answer(
-        self,
-        workspace_path: str,
-        tool_events: list[dict[str, Any]],
-        run_result: dict[str, Any],
-    ) -> str: ...
-
-    def _synthesize_final_answer(
-        self,
-        workspace_path: str,
-        tool_events: list[dict[str, Any]],
-        change_summary: dict[str, Any] | None,
-        mode: str | None,
-        task_contract: dict[str, Any] | None = None,
-    ) -> str: ...
 
     def _build_execution_notice(
         self,
@@ -113,7 +37,6 @@ class RunFinalizationHost(Protocol):
         tool_events: list[dict[str, Any]],
         *,
         requires_code_write: bool,
-        contract_failed: bool,
         max_rounds_exceeded: bool,
         run_result: dict[str, Any],
     ) -> str: ...
@@ -192,9 +115,8 @@ class RunFinalizer:
         *,
         request: RunFinalizationRequest,
         change_summary: dict[str, Any] | None,
-        contract_failed: bool,
         final_answer_error: str,
-        answer_text: str,
+        answer_text: str | None,
         metadata: dict[str, Any],
     ) -> dict[str, Any]:
         task_contract = request.task_contract
@@ -204,20 +126,14 @@ class RunFinalizer:
             change_summary=change_summary,
             mode=request.effective_mode,
             requires_code_write=request.requires_code_write,
-            expected_document_coverage=bool(
-                task_contract.get("expected_document_coverage")
-            ),
-            expected_min_output_chars=int(
-                task_contract.get("expected_min_output_chars") or 0
-            ),
             task_contract=task_contract,
-            contract_failed=contract_failed,
             max_rounds_exceeded=request.execution_state.max_rounds_exceeded,
             preflight_advisories=_preflight_advisories(request.capability_preflight),
             model_error=request.execution_state.model_provider_error,
             final_answer_error=final_answer_error,
             answer_text=answer_text,
             completion_decision=_latest_completion_decision(metadata),
+            visual_context=metadata.get("visual_context_evidence"),
         )
 
     async def finalize(self, request: RunFinalizationRequest) -> RunFinalizationOutcome:
@@ -225,39 +141,14 @@ class RunFinalizer:
         tool_events = request.tool_events
         task_contract = request.task_contract
         state = request.execution_state
-        model_content = strip_native_tool_call_blocks(
-            "".join(request.content_parts)
-        ).strip()
-        contract_failures = self._host._task_contract_failures(
-            task_contract,
-            tool_events,
-            request.effective_mode,
-            answer_text=model_content,
-        )
-        tool_contract_failed = bool(contract_failures)
-        if contract_failures:
-            metadata["contract_failures"] = contract_failures
-
+        model_content = "".join(request.content_parts)
         assistant_content = initial_assistant_content(
             model_content=model_content,
             model_provider_error=state.model_provider_error,
-            has_successful_write=has_successful_write(tool_events),
             max_rounds_exceeded=state.max_rounds_exceeded,
-            max_rounds_after_write_message=self._host._max_rounds_after_write_message(
-                state.round_limit,
-                tool_events,
-            ),
-            max_rounds_message=self._host._max_rounds_message(
-                state.round_limit,
-                tool_events,
-            ),
-            tool_contract_failed=tool_contract_failed,
-            contract_failures=contract_failures,
+            round_limit=state.round_limit,
         )
-        assistant_content = strip_native_tool_call_blocks(assistant_content).strip()
-        if not assistant_content:
-            assistant_content = "模型没有返回可显示的最终内容。"
-        reasoning = strip_native_tool_call_blocks("".join(request.reasoning_parts)).strip()
+        reasoning = "".join(request.reasoning_parts).strip()
         if reasoning:
             metadata["reasoning"] = reasoning
         if tool_events:
@@ -271,27 +162,7 @@ class RunFinalizer:
         if state.guidance_count:
             metadata["guidance_count"] = state.guidance_count
             metadata["runtime_intervention_count"] = state.guidance_count
-        if state.malformed_tool_call_retries:
-            metadata["malformed_tool_call_retries"] = state.malformed_tool_call_retries
-        if state.completion_review.review_count:
-            metadata["completion_review_count"] = state.completion_review.review_count
-
         if request.execution_plan:
-            complete_remaining_plan_steps(
-                request.execution_plan,
-                failed=(
-                    state.max_rounds_exceeded
-                    or bool(state.model_provider_error)
-                    or (
-                        any(event.get("status") == "failure" for event in tool_events)
-                        and not any(
-                            event.get("status") in {"success", "partial"}
-                            for event in tool_events
-                        )
-                    )
-                ),
-                had_tool_events=bool(tool_events),
-            )
             metadata["execution_plan"] = request.execution_plan
 
         change_summary = await self._host._build_change_summary(
@@ -304,59 +175,19 @@ class RunFinalizer:
             metadata["change_summary"] = change_summary
             await self._publish({"event": "changes", "summary": change_summary})
 
-        final_answer_error = self._host._answer_only_final_answer_error(
-            assistant_content,
-            tool_events,
-            task_contract,
-        )
-        if final_answer_error:
-            metadata["final_answer_error"] = final_answer_error
+        # 用户可能在最后一次模型响应或变更摘要期间暂停；发布结果前尊重该状态。
+        await self._host._wait_if_paused()
+        final_answer_error = "" if model_content.strip() else "model did not return a final answer"
         run_result = self._build_result(
-            request=request,
-            change_summary=change_summary,
-            contract_failed=tool_contract_failed,
+            request=request, change_summary=change_summary,
             final_answer_error=final_answer_error,
-            answer_text=model_content,
+            answer_text=model_content if model_content.strip() else None,
             metadata=metadata,
-        )
-        metadata["run_result"] = run_result
-
-        assistant_content = await self._synthesize_answer(
-            request=request,
-            assistant_content=assistant_content,
-            run_result=run_result,
-            change_summary=change_summary,
-            tool_contract_failed=tool_contract_failed,
-            metadata=metadata,
-        )
-        final_contract_failures = self._host._task_contract_failures(
-            task_contract,
-            tool_events,
-            request.effective_mode,
-            answer_text=assistant_content,
-        )
-        tool_contract_failed = bool(final_contract_failures)
-        if final_contract_failures:
-            metadata["contract_failures"] = final_contract_failures
-        else:
-            metadata.pop("contract_failures", None)
-        final_answer_error = self._host._answer_only_final_answer_error(
-            assistant_content,
-            tool_events,
-            task_contract,
         )
         if final_answer_error:
             metadata["final_answer_error"] = final_answer_error
         else:
             metadata.pop("final_answer_error", None)
-        run_result = self._build_result(
-            request=request,
-            change_summary=change_summary,
-            contract_failed=tool_contract_failed,
-            final_answer_error=final_answer_error,
-            answer_text=assistant_content,
-            metadata=metadata,
-        )
         metadata["run_result"] = run_result
 
         verification_context_pack = build_context_pack(
@@ -383,21 +214,11 @@ class RunFinalizer:
             metadata=metadata,
         )
 
-        assistant_content_with_files = append_changed_files_footer(
-            assistant_content,
-            run_result,
-            change_summary,
-        )
-        if assistant_content_with_files != assistant_content:
-            assistant_content = assistant_content_with_files
-            metadata["changed_files_footer_appended"] = True
-
         execution_notice = self._host._build_execution_notice(
             request.effective_mode,
             assistant_content,
             tool_events,
             requires_code_write=request.requires_code_write,
-            contract_failed=tool_contract_failed,
             max_rounds_exceeded=state.max_rounds_exceeded,
             run_result=run_result,
         )
@@ -486,85 +307,6 @@ class RunFinalizer:
         metadata["checkpoint_id"] = checkpoint["id"]
         await self._publish({"event": "checkpoint", "checkpoint": checkpoint})
 
-    async def _synthesize_answer(
-        self,
-        *,
-        request: RunFinalizationRequest,
-        assistant_content: str,
-        run_result: dict[str, Any],
-        change_summary: dict[str, Any] | None,
-        tool_contract_failed: bool,
-        metadata: dict[str, Any],
-    ) -> str:
-        status = str(run_result.get("status") or "")
-        needs_answer_repair = self._host._needs_synthesized_final_answer(
-            assistant_content,
-            request.tool_events,
-            task_contract=request.task_contract,
-        )
-        model_synthesized = False
-        if needs_answer_repair and not request.execution_state.model_provider_error:
-            try:
-                synthesized, synthesis_metadata = (
-                    await self._host._generate_result_synthesis_answer(
-                        model=request.model,
-                        workspace_path=request.workspace.path,
-                        user_content=request.user_content,
-                        task_contract=request.task_contract,
-                        run_result=run_result,
-                        previous_answer=assistant_content,
-                        tool_events=request.tool_events,
-                        completion_decisions=metadata.get("completion_decisions"),
-                        task_route_evidence=metadata.get("task_route_evidence"),
-                    )
-                )
-                if synthesized:
-                    assistant_content = synthesized
-                    model_synthesized = True
-                    metadata["synthesized_final_answer"] = True
-                    metadata["synthesized_final_answer_source"] = (
-                        "model_from_runtime_facts"
-                    )
-                    if synthesis_metadata:
-                        metadata["result_synthesis"] = {
-                            key: value
-                            for key, value in synthesis_metadata.items()
-                            if key != "reasoning"
-                        }
-            except Exception as exc:
-                metadata["result_synthesis_error"] = str(exc)[:500]
-
-        if model_synthesized:
-            return assistant_content
-        if needs_answer_repair and status == "failure" and not (
-            request.execution_state.max_rounds_exceeded or tool_contract_failed
-        ):
-            metadata["synthesized_final_answer"] = True
-            metadata["synthesized_final_answer_source"] = "runtime_fallback"
-            return self._host._synthesize_failure_answer(
-                request.workspace.path,
-                request.tool_events,
-                run_result,
-            )
-        if needs_answer_repair and status == "partial":
-            metadata["synthesized_final_answer"] = True
-            metadata["synthesized_final_answer_source"] = "runtime_fallback"
-            return self._host._synthesize_partial_answer(
-                request.workspace.path,
-                request.tool_events,
-                run_result,
-            )
-        if needs_answer_repair:
-            metadata["synthesized_final_answer"] = True
-            metadata["synthesized_final_answer_source"] = "runtime_fallback"
-            return self._host._synthesize_final_answer(
-                request.workspace.path,
-                request.tool_events,
-                change_summary,
-                request.effective_mode,
-                request.task_contract,
-            )
-        return assistant_content
 
     def _final_context_tokens(self, request: RunFinalizationRequest) -> int:
         try:
@@ -583,61 +325,17 @@ class RunFinalizer:
 
 
 def initial_assistant_content(
-    *,
-    model_content: str,
-    model_provider_error: str,
-    has_successful_write: bool,
-    max_rounds_exceeded: bool,
-    max_rounds_after_write_message: str,
-    max_rounds_message: str,
-    tool_contract_failed: bool,
-    contract_failures: list[str],
+    *, model_content: str, model_provider_error: str,
+    max_rounds_exceeded: bool, round_limit: int,
 ) -> str:
-    """根据已观察到的收尾事实选择合成前答案。"""
+    """保留主模型原文；缺少正文时只显示实际中断或缺失事实。"""
+    if model_content.strip():
+        return model_content
     if model_provider_error:
-        return (
-            f"{model_content}\n\n" if model_content else ""
-        ) + (
-            "模型服务在工具执行后返回错误，本轮没有继续获得可用模型响应。"
-            "运行记录会按已观察到的工具结果保存事实；如果已经发生写入或外部状态变化，"
-            "本轮会标记为部分完成，便于继续恢复或人工检查。"
-        )
+        return f"模型服务错误：{model_provider_error}"
     if max_rounds_exceeded:
-        return (
-            max_rounds_after_write_message
-            if has_successful_write
-            else max_rounds_message
-        )
-    if tool_contract_failed and (
-        "document_output_too_short" in contract_failures
-        or "document_output_length_unknown" in contract_failures
-        or "answer_output_too_short" in contract_failures
-        or "answer_output_length_unknown" in contract_failures
-    ):
-        if model_content:
-            return model_content
-        return (
-            "运行事实提示：已观察到文本/文档产物，但输出长度证据不足或低于任务目标。"
-            "请基于工具记录决定是继续补全、重新导出，还是向用户说明当前证据边界。"
-        )
-    if tool_contract_failed and (
-        "missing_target_deliverable_verification" in contract_failures
-        or "missing_target_verification" in contract_failures
-    ):
-        if model_content:
-            return model_content
-        return (
-            "运行事实提示：本轮缺少足够的目标验证证据。"
-            "请基于已观察到的工具结果决定继续验证、换策略，或明确说明证据不足。"
-        )
-    if tool_contract_failed:
-        if model_content:
-            return model_content
-        return (
-            "运行事实提示：本轮观察到任务契约证据缺口。"
-            "请根据工具记录继续修正或说明当前证据边界。"
-        )
-    return model_content or "模型没有返回内容。"
+        return f"执行轮次预算已用完（{round_limit} 轮），模型未返回最终内容。"
+    return "模型未返回最终内容。"
 
 
 def _preflight_advisories(preflight: dict[str, Any] | None) -> list[dict[str, Any]]:

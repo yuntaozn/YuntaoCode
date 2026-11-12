@@ -1,6 +1,19 @@
 from runtime.run_events import canonical_run_event_name, compact_run_event
 
 
+def test_model_round_audit_preserves_protocol_counts_without_text():
+    event = compact_run_event({
+        "event": "model_round", "schema_version": "model_round.v1", "round": 2,
+        "finish_reason": "tool_calls", "wire_tool_call_items": 1, "named_tool_call_count": 0,
+        "protocol_error": "missing_tool_call_payload", "reasoning": "private reasoning", "message": "large response",
+    })
+    assert event["event_name"] == "model.round.completed"
+    assert event["wire_tool_call_items"] == 1
+    assert event["protocol_error"] == "missing_tool_call_payload"
+    assert "reasoning" not in event
+    assert "message" not in event
+
+
 def test_compact_tool_event_includes_schema_and_canonical_name() -> None:
     event = compact_run_event({
         "event": "tool",

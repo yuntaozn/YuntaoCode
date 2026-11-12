@@ -9,6 +9,9 @@ from typing import Any, Literal
 RUN_RESULT_SCHEMA_VERSION = "0.1"
 
 ResultStatus = Literal["success", "failure", "partial", "stopped", "no_tool_activity"]
+ExecutionStatus = Literal["completed", "failed", "stopped"]
+GoalStatus = Literal["unknown", "complete", "incomplete"]
+VerificationStatus = Literal["unknown", "not_required", "missing", "satisfied"]
 
 RESULT_STATUSES: frozenset[str] = frozenset(ResultStatus.__args__)  # type: ignore[attr-defined]
 
@@ -44,6 +47,9 @@ RISK_CODES: frozenset[str] = frozenset({
     "runtime_verification_not_observed",
     "artifact_integrity_invalid",
     "shell_stderr_warning",
+    "goal_completion_unconfirmed",
+    "visual_pixels_uniform",
+    "visual_image_unavailable",
 })
 
 
@@ -61,12 +67,18 @@ class RuntimeResult:
     failure_details: tuple[dict[str, Any], ...] = field(default_factory=tuple)
     risks: tuple[str, ...] = field(default_factory=tuple)
     flags: dict[str, bool] = field(default_factory=dict)
+    execution_status: ExecutionStatus = "completed"
+    goal_status: GoalStatus = "unknown"
+    verification_status: VerificationStatus = "unknown"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": RUN_RESULT_SCHEMA_VERSION,
             "kind": "run_result",
             "status": self.status,
+            "execution_status": self.execution_status,
+            "goal_status": self.goal_status,
+            "verification_status": self.verification_status,
             "counts": dict(self.counts),
             "changed_paths": list(self.changed_paths),
             "written_paths": list(self.written_paths),

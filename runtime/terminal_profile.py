@@ -9,7 +9,7 @@ TERMINAL_CONFIG: dict[str, object] = {
     "name": "YuntaoCode",
     "icon": "terminal",
     "description_key": "system_prompt.description",
-    "max_rounds": 40,
+    "max_rounds": 120,
     "system_prompt_key": "system_prompt.runtime",
     "placeholder_key": "system_prompt.placeholder",
 }

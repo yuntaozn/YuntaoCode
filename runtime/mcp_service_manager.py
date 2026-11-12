@@ -14,10 +14,15 @@ from typing import Any
 
 import httpx
 
-from .mcp_protocol import McpStdioSession, McpToolDefinition, normalize_mcp_tool_result
+from .mcp_protocol import (
+    MCP_STDIO_STREAM_LIMIT,
+    McpStdioSession,
+    McpToolDefinition,
+    normalize_mcp_tool_result,
+)
 from .tool_registry import ToolRegistry, ToolSpec
 
-MCP_SERVICE_SCHEMA_VERSION = "mcp_service.v8"
+MCP_SERVICE_SCHEMA_VERSION = "mcp_service.v10"
 SUPPORTED_TRANSPORTS = {"stdio", "streamable_http", "legacy_sse"}
 TRANSPORT_ALIASES = {
     "http": "streamable_http",
@@ -45,7 +50,7 @@ BLENDER_TIMEOUT_UPGRADES = {
     "execute_blender_code": {60.0: 120.0},
 }
 
-DEFAULT_MCP_SERVICES: tuple[dict[str, Any], ...] = ({
+LEGACY_BLENDER_MCP_SERVICE: dict[str, Any] = {
     "id": "blender",
     "name": "Blender MCP",
     "description": "Example MCP connection for controlling Blender through the BlenderMCP add-on.",
@@ -109,8 +114,6 @@ DEFAULT_MCP_SERVICES: tuple[dict[str, Any], ...] = ({
         },
         "execute_blender_code": {
             "risk": "state_change",
-            "effects": ["external_state_change"],
-            "roles": ["deliverable"],
             "call_timeout": 120.0,
         },
         "get_polyhaven_categories": {"risk": "read_only"},
@@ -142,6 +145,90 @@ DEFAULT_MCP_SERVICES: tuple[dict[str, Any], ...] = ({
         "import_generated_asset_hunyuan": {
             "risk": "state_change",
             "effects": ["external_state_change"],
+        },
+    },
+}
+
+# 包名与第三方 PyPI 项目相同，必须显式指定 Blender Lab 的官方源码和版本。
+BLENDER_OFFICIAL_PACKAGE = (
+    "git+https://projects.blender.org/lab/blender_mcp.git@v1.0.3#subdirectory=mcp"
+)
+DEFAULT_MCP_SERVICES: tuple[dict[str, Any], ...] = ({
+    "id": "blender",
+    "name": "Blender MCP (Blender Lab)",
+    "description": "Official Blender Lab MCP server; requires Blender 5.1+ and the official MCP add-on.",
+    "enabled": False,
+    "installation": {
+        "kind": "package_runner",
+        "package": BLENDER_OFFICIAL_PACKAGE,
+        "managed": False,
+    },
+    "transport": {
+        "type": "stdio",
+        "command": "uvx",
+        "args": ["--from", BLENDER_OFFICIAL_PACKAGE, "blender-mcp"],
+    },
+    "timeouts": {"call": 30.0},
+    "prerequisites": [
+        {
+            "id": "blender-addon",
+            "label": "Blender Lab MCP Add-on (Blender 5.1+)",
+            "kind": "tcp",
+            "host": "127.0.0.1",
+            "port": 9876,
+        },
+        {"id": "uvx", "label": "uvx package runner", "kind": "executable", "command": "uvx"},
+        {"id": "git", "label": "Git source acquisition", "kind": "executable", "command": "git"},
+    ],
+    "permissions": {
+        "filesystem": "workspace",
+        "network": "confirm_each",
+        "external_state": "confirm_each",
+        "arbitrary_code": "confirm_each",
+    },
+    "tool_policies": {
+        "get_objects_summary": {
+            "risk": "read_only", "roles": ["evidence", "verification"],
+            "verification_strength": "standard",
+        },
+        "get_object_detail_summary": {
+            "risk": "read_only", "roles": ["evidence", "verification"],
+            "verification_strength": "standard",
+        },
+        "get_blendfile_summary_datablocks": {
+            "risk": "read_only", "roles": ["evidence", "verification"],
+            "verification_strength": "weak",
+        },
+        "get_blendfile_summary_path_info": {
+            "risk": "read_only", "roles": ["evidence", "verification"],
+            "verification_strength": "standard",
+        },
+        "get_screenshot_of_window_as_json": {
+            "risk": "read_only", "roles": ["evidence", "verification"],
+            "verification_strength": "weak",
+        },
+        "get_screenshot_of_window_as_image": {
+            "risk": "read_only", "roles": ["verification"], "artifacts": ["screenshot"],
+            "verification_strength": "standard", "call_timeout": 60.0,
+        },
+        "get_screenshot_of_area_as_image": {
+            "risk": "read_only", "roles": ["verification"], "artifacts": ["screenshot"],
+            "verification_strength": "standard", "call_timeout": 60.0,
+        },
+        "execute_blender_code": {
+            "risk": "state_change", "call_timeout": 120.0,
+        },
+        "execute_blender_code_for_cli": {
+            "risk": "state_change", "call_timeout": 120.0,
+        },
+        # 官方工具虽声明只读，但指定路径的渲染仍会写文件，保留写入确认。
+        "render_viewport_to_path": {
+            "risk": "state_change", "effects": ["file_write"],
+            "roles": ["deliverable"], "artifacts": ["image"], "call_timeout": 120.0,
+        },
+        "render_thumbnail_to_path": {
+            "risk": "state_change", "effects": ["file_write"],
+            "roles": ["deliverable"], "artifacts": ["image"], "call_timeout": 120.0,
         },
     },
 },)
@@ -667,12 +754,24 @@ class McpServiceManager:
         self._configs = self._load()
         self._runtime: dict[str, McpServiceRuntime] = {}
         if stored_schema_version != MCP_SERVICE_SCHEMA_VERSION:
+            # 保留 v8 以前的兼容补全；更换供应方必须由用户显式更新连接配置。
+            legacy = self._configs.get("blender")
+            if legacy and stored_schema_version in {"", *(f"mcp_service.v{i}" for i in range(1, 8))}:
+                self._configs["blender"] = normalize_mcp_service(
+                    _merge_seeded_service(LEGACY_BLENDER_MCP_SERVICE, legacy)
+                )
             for value in DEFAULT_MCP_SERVICES:
                 service_id = str(value.get("id") or "")
-                existing = self._configs.get(service_id)
-                self._configs[service_id] = normalize_mcp_service(
-                    _merge_seeded_service(value, existing) if existing else value
-                )
+                if service_id not in self._configs:
+                    self._configs[service_id] = normalize_mcp_service(value)
+            # 任意代码调用也可能只读取数据；旧示例的成功预设不能作为状态变化证据。
+            blender = self._configs.get("blender") or {}
+            for name in ("execute_blender_code", "execute_blender_code_for_cli"):
+                policy = (blender.get("tool_policies") or {}).get(name, {})
+                if policy.get("effects") == ["external_state_change"]:
+                    policy.pop("effects")
+                if policy.get("roles") == ["deliverable"]:
+                    policy.pop("roles")
             self._save()
 
     def list_public(self) -> list[dict[str, Any]]:
@@ -951,6 +1050,7 @@ class McpServiceManager:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                limit=MCP_STDIO_STREAM_LIMIT,
                 creationflags=0x08000000 if os.name == "nt" else 0,
             )
         except Exception as exc:

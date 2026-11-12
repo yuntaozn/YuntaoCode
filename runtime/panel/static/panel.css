@@ -2124,7 +2124,6 @@ button {
 }
 
 .access-scope-btn,
-.plan-mode-btn,
 .confirmation-mode-btn {
     display: inline-flex;
     align-items: center;
@@ -2142,7 +2141,6 @@ button {
 }
 
 .access-scope-btn:hover,
-.plan-mode-btn:hover,
 .confirmation-mode-btn:hover {
     color: var(--text);
     background: var(--soft);
@@ -2153,15 +2151,7 @@ button {
     background: rgba(184, 111, 25, 0.1);
 }
 
-.plan-mode-btn[data-plan-mode="always"] {
-    color: var(--primary);
-    background: rgba(47, 111, 98, 0.08);
-}
 
-.plan-mode-btn[data-plan-mode="off"] {
-    color: var(--muted);
-    opacity: 0.7;
-}
 
 .confirmation-mode-btn[data-confirmation-mode="aggressive"] {
     color: #2f6f62;
