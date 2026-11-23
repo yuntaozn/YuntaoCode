@@ -7,11 +7,12 @@ let memories = [];  // 从 /memories API 加载
 let activeSettingsPage = localStorage.getItem("lit_settings_page") || "models";
 const deletedProviderIds = new Set();
 const deletedModelIds = new Set();
+const standardEndpoint = /\/(chat\/completions|responses)$/;
 
 function escapeHtml(text) {
     const div = document.createElement("div");
     div.textContent = text == null ? "" : String(text);
-    return div.innerHTML;
+    return div.innerHTML.replaceAll('"', "&quot;");
 }
 
 function showToast(message) {
@@ -106,17 +107,18 @@ function renderSettings() {
     $("memory-max-active-input").value = Number(memorySettings.max_active ?? 30);
     $("memory-auto-extract-input").checked = memorySettings.auto_extract !== false;
     setDynamicText("settings-path", settings?.settings_path || "");
+    if (activeSettingsPage === "providers") $("provider-card").open = true;
     showSettingsPage(activeSettingsPage, false);
     renderSummary();
 }
 
-function renderDefaultModelOptions() {
+function renderDefaultModelOptions(selected = settings.default_model) {
     const models = modelEntries();
     $("default-model-input").innerHTML = models.map((model) => `
-        <option value="${escapeHtml(model.id)}">${escapeHtml(model.name || model.id)} · ${escapeHtml(model.provider || "")}</option>
+        <option value="${escapeHtml(model.id)}">${escapeHtml(model.name || model.id)} · ${escapeHtml(providerDisplayName(model.provider))}</option>
     `).join("");
-    if (models.some((model) => model.id === settings.default_model)) {
-        $("default-model-input").value = settings.default_model;
+    if (models.some((model) => model.id === selected)) {
+        $("default-model-input").value = selected;
     } else if (models[0]) {
         $("default-model-input").value = models[0].id;
     }
@@ -125,53 +127,42 @@ function renderDefaultModelOptions() {
 function renderProviders() {
     const providers = providerEntries();
     $("provider-list").innerHTML = providers.length ? providers.map((provider) => `
-        <div class="settings-item provider-item" data-provider-id="${escapeHtml(provider.id)}">
-            <div class="settings-item-head">
-                <div class="settings-item-title">
-                    <strong>${escapeHtml(provider.name || provider.id)}</strong>
-                    <span>${escapeHtml(provider.id)} · ${provider.has_api_key ? `Key ${escapeHtml(provider.api_key_hint)}` : t('settings_js.no_key')} · ${t('settings_js.linked_models', {count: linkedModelCount(provider.id)})}</span>
-                </div>
-                <button class="secondary-button danger-button" type="button" data-delete-provider="${escapeHtml(provider.id)}">${t('settings_js.remove_provider')}</button>
-            </div>
-            <div class="settings-inline">
+        <details class="settings-item provider-item" data-provider-id="${escapeHtml(provider.id)}">
+            <summary>${escapeHtml(provider.name || provider.id)} · <span data-linked-count>${t('settings_js.linked_models', {count: linkedModelCount(provider.id)})}</span></summary>
+            <div class="settings-fields">
                 <div class="settings-form-row">
                     <label>${t('settings_js.provider_name')}</label>
                     <input data-provider-field="name" value="${escapeHtml(provider.name || "")}">
                 </div>
-                <div class="settings-form-row">
-                    <label>${t('settings_js.provider_type')}</label>
-                    <select data-provider-field="kind">
-                        <option value="openai" ${provider.kind === "openai" ? "selected" : ""}>OpenAI Compatible</option>
-                    </select>
+                <div class="settings-inline">
+                    <div class="settings-form-row">
+                        <label>Base URL</label>
+                        <input data-provider-field="base_url" value="${escapeHtml(provider.base_url || "")}" placeholder="http://127.0.0.1:11434/v1">
+                    </div>
+                    <div class="settings-form-row">
+                        <label>Chat Path</label>
+                        <input data-provider-field="chat_path" value="${escapeHtml(provider.chat_path || "/chat/completions")}">
+                    </div>
                 </div>
-            </div>
-            <div class="settings-inline">
-                <div class="settings-form-row">
-                    <label>Base URL</label>
-                    <input data-provider-field="base_url" value="${escapeHtml(provider.base_url || "")}" placeholder="http://127.0.0.1:11434/v1">
+                <div class="settings-inline">
+                    <div class="settings-form-row">
+                        <label>API Key</label>
+                        <input data-provider-field="api_key" type="password" placeholder="${t('settings_js.leave_empty')}">
+                        <span class="hint-line">${provider.has_api_key ? t('settings_js.key_configured', {hint: escapeHtml(provider.api_key_hint)}) : t('settings_js.no_key_hint')}</span>
+                    </div>
+                    <label class="checkbox-line compact">
+                        <input data-provider-field="api_key_required" type="checkbox" ${provider.api_key_required !== false ? "checked" : ""}>
+                        <span>${t('settings_js.require_key')}</span>
+                    </label>
                 </div>
                 <div class="settings-form-row">
-                    <label>Chat Path</label>
-                    <input data-provider-field="chat_path" value="${escapeHtml(provider.chat_path || "/chat/completions")}">
+                    <label>${t('settings_js.provider_params')}</label>
+                    <textarea data-provider-field="request_options" placeholder='{"temperature":0.2}'>${escapeHtml(JSON.stringify(provider.request_options || {}, null, 2))}</textarea>
+                    <span class="hint-line">${t('settings_js.advanced_request_params_hint')}</span>
                 </div>
+                <div><button class="secondary-button danger-button" type="button" data-delete-provider="${escapeHtml(provider.id)}">${t('settings_js.remove_provider')}</button></div>
             </div>
-            <div class="settings-inline">
-                <div class="settings-form-row">
-                    <label>API Key</label>
-                    <input data-provider-field="api_key" type="password" placeholder="${t('settings_js.leave_empty')}">
-                    <span class="hint-line">${provider.has_api_key ? t('settings_js.key_configured', {hint: escapeHtml(provider.api_key_hint)}) : t('settings_js.no_key_hint')}</span>
-                </div>
-                <label class="checkbox-line compact">
-                    <input data-provider-field="api_key_required" type="checkbox" ${provider.api_key_required !== false ? "checked" : ""}>
-                    <span>${t('settings_js.require_key')}</span>
-                </label>
-            </div>
-            <div class="settings-form-row">
-                <label>${t('settings_js.provider_params')}</label>
-                <textarea data-provider-field="request_options" placeholder='{"temperature":0.2}'>${escapeHtml(JSON.stringify(provider.request_options || {}, null, 2))}</textarea>
-                <span class="hint-line">${t('settings_js.advanced_request_params_hint')}</span>
-            </div>
-        </div>
+        </details>
     `).join("") : `<div class="hint-line">${t('settings_js.no_providers')}</div>`;
 }
 
@@ -182,81 +173,12 @@ function renderModels() {
             <div class="settings-item-head">
                 <div class="settings-item-title">
                     <strong>${escapeHtml(model.name || model.id)}</strong>
-                    <span>${escapeHtml(model.id)} · ${escapeHtml(providerDisplayName(model.provider))} · ${escapeHtml(model.api_model || model.id)}</span>
+                    <span>${escapeHtml(model.api_model || model.id)} · ${escapeHtml(providerDisplayName(model.provider))}</span>
                 </div>
-                <button class="secondary-button danger-button" type="button" data-delete-model="${escapeHtml(model.id)}">${t('settings_js.remove_model')}</button>
-            </div>
-            <div class="settings-inline">
-                <div class="settings-form-row">
-                    <label>${t('settings_js.display_alias')}</label>
-                    <input data-model-field="name" value="${escapeHtml(model.name || "")}">
+                <div class="dialog-actions">
+                    <button class="secondary-button" type="button" data-edit-model="${escapeHtml(model.id)}">${t('settings_js.edit_model')}</button>
+                    <button class="secondary-button danger-button" type="button" data-delete-model="${escapeHtml(model.id)}">${t('settings_js.remove_model')}</button>
                 </div>
-                <div class="settings-form-row">
-                    <label>${t('settings_js.provider_label')}</label>
-                    <select data-model-field="provider">${renderProviderOptions(model.provider)}</select>
-                </div>
-            </div>
-            <div class="settings-inline">
-                <div class="settings-form-row">
-                    <label>${t('settings_js.api_model_name')}</label>
-                    <input data-model-field="api_model" value="${escapeHtml(model.api_model || model.id)}">
-                </div>
-                <div class="settings-form-row">
-                    <label>${t('settings_js.context_window')}</label>
-                    <input data-model-field="context_limit" type="number" min="4096" step="1024" value="${Number(model.context_limit || 128000)}">
-                </div>
-            </div>
-            <div class="settings-inline">
-                <div class="settings-form-row">
-                    <label>${t('settings_js.max_output_tokens')}</label>
-                    <input data-model-field="max_output_tokens" type="number" min="0" step="1024" value="${Number(model.max_output_tokens || 0)}">
-                </div>
-                <div class="settings-form-row">
-                    <label>${t('settings_js.output_token_param')}</label>
-                    <select data-model-field="output_token_param">
-                        <option value="" ${!model.output_token_param ? "selected" : ""}>${t('settings_js.provider_default')}</option>
-                        <option value="max_tokens" ${model.output_token_param === "max_tokens" ? "selected" : ""}>max_tokens</option>
-                        <option value="max_completion_tokens" ${model.output_token_param === "max_completion_tokens" ? "selected" : ""}>max_completion_tokens</option>
-                        <option value="max_output_tokens" ${model.output_token_param === "max_output_tokens" ? "selected" : ""}>max_output_tokens</option>
-                    </select>
-                </div>
-            </div>
-            <div class="settings-inline">
-                <label class="checkbox-line compact">
-                    <input data-model-field="supports_tools" type="checkbox" ${model.supports_tools !== false ? "checked" : ""}>
-                    <span>${t('settings_js.support_tools')}</span>
-                </label>
-                <label class="checkbox-line compact">
-                    <input data-model-field="supports_stream" type="checkbox" ${model.supports_stream !== false ? "checked" : ""}>
-                    <span>${t('settings_js.support_stream')}</span>
-                </label>
-                <label class="checkbox-line compact">
-                    <input data-model-field="supports_vision" type="checkbox" ${model.supports_vision !== false ? "checked" : ""}>
-                    <span>${t('settings_js.support_vision')}</span>
-                </label>
-                <label class="checkbox-line compact">
-                    <input data-model-field="supports_reasoning_effort" type="checkbox" ${model.supports_reasoning_effort ? "checked" : ""}>
-                    <span>${t('settings_js.support_reasoning_effort')}</span>
-                </label>
-            </div>
-            <div class="settings-form-row">
-                <label>${t('settings_js.thinking_mode')}</label>
-                <select data-model-field="thinking_mode">
-                    <option value="" ${!model.thinking_mode ? "selected" : ""}>${t('settings_js.thinking_none')}</option>
-                    <option value="volcengine" ${model.thinking_mode === "volcengine" ? "selected" : ""}>${t('settings_js.thinking_volcengine')}</option>
-                    <option value="qwen" ${model.thinking_mode === "qwen" ? "selected" : ""}>${t('settings_js.thinking_qwen')}</option>
-                </select>
-                <span class="hint-line">${t('settings_js.thinking_mode_hint')}</span>
-            </div>
-            <label class="checkbox-line compact">
-                <input data-model-field="allow_disable_thinking" type="checkbox" ${model.allow_disable_thinking ? "checked" : ""}>
-                <span>${t('settings_js.allow_disable_thinking')}</span>
-            </label>
-            <span class="hint-line">${t('settings_js.allow_disable_thinking_hint')}</span>
-            <div class="settings-form-row">
-                <label>${t('settings_js.model_params')}</label>
-                <textarea data-model-field="request_options" placeholder='{"temperature":0.2,"top_p":0.9}'>${escapeHtml(JSON.stringify(model.request_options || {}, null, 2))}</textarea>
-                <span class="hint-line">${t('settings_js.advanced_request_params_hint')}</span>
             </div>
         </div>
     `).join("") : `<div class="hint-line">${t('settings_js.no_models')}</div>`;
@@ -402,100 +324,80 @@ function formatBackupTime(value) {
     return date.toLocaleString();
 }
 
-function readJson(text, fallback = {}) {
+function readJson(text) {
     const value = String(text || "").trim();
-    if (!value) return fallback;
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : fallback;
+    if (!value) return {};
+    let parsed;
+    try {
+        parsed = JSON.parse(value);
+    } catch (error) {
+        throw new Error(t("settings_js.json_error", {error: error.message}));
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error(t("settings_js.json_object"));
+    }
+    return parsed;
 }
 
 function collectProviders() {
-    const providers = {};
+    const providers = Object.create(null);
     document.querySelectorAll(".provider-item").forEach((item) => {
         const id = item.dataset.providerId;
         providers[id] = {
             name: item.querySelector('[data-provider-field="name"]').value.trim() || id,
-            kind: item.querySelector('[data-provider-field="kind"]').value,
             base_url: item.querySelector('[data-provider-field="base_url"]').value.trim(),
             chat_path: item.querySelector('[data-provider-field="chat_path"]').value.trim() || "/chat/completions",
             api_key_required: item.querySelector('[data-provider-field="api_key_required"]').checked,
-            request_options: readJson(item.querySelector('[data-provider-field="request_options"]').value, {}),
+            request_options: readJson(item.querySelector('[data-provider-field="request_options"]').value),
             enabled: true,
         };
+        const path = providers[id].chat_path;
+        if (path !== settings.providers[id].chat_path) {
+            const endpoint = ("/" + path.split("?")[0]).replace(/\/+$/, "").match(standardEndpoint);
+            if (endpoint) providers[id].wire_api = endpoint[1] === "responses" ? "responses" : "chat_completions";
+        }
         const apiKey = item.querySelector('[data-provider-field="api_key"]').value.trim();
         if (apiKey) providers[id].api_key = apiKey;
     });
     return providers;
 }
 
-function collectModels() {
-    const models = [];
-    document.querySelectorAll(".model-item").forEach((item) => {
-        const id = item.dataset.modelId;
-        models.push({
-            id,
-            name: item.querySelector('[data-model-field="name"]').value.trim() || id,
-            provider: item.querySelector('[data-model-field="provider"]').value,
-            api_model: item.querySelector('[data-model-field="api_model"]').value.trim() || id,
-            context_limit: Number(item.querySelector('[data-model-field="context_limit"]').value || 128000),
-            max_output_tokens: Number(item.querySelector('[data-model-field="max_output_tokens"]').value || 0),
-            output_token_param: item.querySelector('[data-model-field="output_token_param"]').value,
-            supports_tools: item.querySelector('[data-model-field="supports_tools"]').checked,
-            supports_stream: item.querySelector('[data-model-field="supports_stream"]')?.checked !== false,
-            supports_vision: item.querySelector('[data-model-field="supports_vision"]')?.checked !== false,
-            supports_reasoning_effort: item.querySelector('[data-model-field="supports_reasoning_effort"]').checked,
-            thinking_mode: item.querySelector('[data-model-field="thinking_mode"]').value,
-            allow_disable_thinking: item.querySelector('[data-model-field="allow_disable_thinking"]')?.checked || false,
-            request_options: readJson(item.querySelector('[data-model-field="request_options"]').value, {}),
-            enabled: true,
-        });
-    });
-    return models;
-}
-
-function collectMemories() {
-    // 记忆现由 /memories API 管理，不再从表单收集。
-    // 此函数仅为向后兼容保留，固定返回空结果。
-    return [];
-}
-
-async function saveSettings(options = {}) {
-    let providers;
-    let models;
-    try {
-        providers = collectProviders();
-        models = collectModels();
-    } catch (error) {
-        showToast(t('settings_js.json_error', {error: error.message}));
-        return;
-    }
+async function saveSettings(modelChanges) {
+    const payload = modelChanges || {
+        providers: collectProviders(),
+        models: modelEntries(),
+        default_model: $("default-model-input").value,
+        access_scope: $("access-scope-input").value,
+        confirmation_policy: $("confirmation-policy-input").value,
+        backups: {
+            enabled: $("backup-enabled-input").checked,
+            keep_rounds: Number($("backup-keep-input").value || 50),
+        },
+        memories: {
+            enabled: $("memory-enabled-input").checked,
+            max_active: Number($("memory-max-active-input").value || 30),
+            auto_extract: $("memory-auto-extract-input").checked,
+        },
+    };
+    payload.deleted_provider_ids = Array.from(deletedProviderIds);
+    payload.deleted_model_ids = Array.from(deletedModelIds);
     settings = await api("/settings", {
         method: "POST",
-        body: JSON.stringify({
-            default_model: $("default-model-input").value,
-            access_scope: $("access-scope-input").value,
-            confirmation_policy: $("confirmation-policy-input").value,
-            backups: {
-                enabled: $("backup-enabled-input").checked,
-                keep_rounds: Number($("backup-keep-input").value || 50),
-            },
-            memories: {
-                enabled: $("memory-enabled-input").checked,
-                max_active: Number($("memory-max-active-input").value || 30),
-                auto_extract: $("memory-auto-extract-input").checked,
-            },
-            providers,
-            models,
-            deleted_provider_ids: Array.from(deletedProviderIds),
-            deleted_model_ids: Array.from(deletedModelIds),
-        }),
+        body: JSON.stringify(payload),
     });
     deletedProviderIds.clear();
     deletedModelIds.clear();
     localStorage.setItem("lit_model", settings.default_model || $("default-model-input").value);
-    localStorage.setItem("lit_confirmation_policy", settings.confirmation_policy || $("confirmation-policy-input").value);
-    renderSettings();
-    showToast(options.toastMessage || t('toast.settings_saved'));
+    if (modelChanges) {
+        renderDefaultModelOptions();
+        renderModels();
+        renderProviders();
+        renderSummary();
+    } else {
+        localStorage.setItem("lit_confirmation_policy", settings.confirmation_policy);
+        renderSettings();
+    }
+    showToast(t('toast.settings_saved'));
 }
 
 async function refreshBackups() {
@@ -549,28 +451,6 @@ function showSettingsPage(page, persist = true) {
     }
 }
 
-function addProvider() {
-    const id = window.prompt(t('settings_js.provider_id_prompt'));
-    const providerId = String(id || "").trim();
-    if (!providerId) return;
-    if (settings.providers[providerId]) {
-        showToast(t('settings_js.provider_exists'));
-        return;
-    }
-    settings.providers[providerId] = {
-        id: providerId,
-        name: providerId,
-        kind: "openai",
-        base_url: "",
-        chat_path: "/chat/completions",
-        api_key_required: true,
-        request_options: {},
-    };
-    deletedProviderIds.delete(providerId);
-    activeSettingsPage = "providers";
-    renderSettings();
-}
-
 function defaultThinkingModeForProvider(providerId) {
     if (providerId === "volcengine") return "volcengine";
     if (providerId === "qwen") return "qwen";
@@ -581,11 +461,6 @@ function modelIdFromApiModel(provider, apiModel) {
     const base = String(apiModel || "").trim();
     const providerId = String(provider || "").trim();
     const models = modelEntries();
-    const sameProviderExists = models.some((model) =>
-        String(model.provider || "") === providerId
-        && String(model.api_model || model.id || "") === base
-    );
-    if (sameProviderExists) return "";
     if (!models.some((model) => String(model.id || "") === base)) {
         return base;
     }
@@ -600,67 +475,134 @@ function modelIdFromApiModel(provider, apiModel) {
     return `${providerScoped}:${index}`;
 }
 
-function openAddModelDialog() {
-    const providers = providerEntries();
-    if (!providers.length) {
-        showToast(t('settings_js.no_providers'));
-        activeSettingsPage = "providers";
-        renderSettings();
-        return;
+// 新连接接受服务根地址、带前缀的 Base URL 或完整的标准端点。
+function connectionFromAddress(address) {
+    let url;
+    try {
+        url = new URL(address.trim());
+    } catch {
+        throw new Error(t("settings_js.invalid_address"));
     }
-    const dialog = $("add-model-dialog");
-    const providerInput = $("add-model-provider-input");
-    providerInput.innerHTML = renderProviderOptions(providers[0]?.id);
-    providerInput.value = providers[0]?.id || "";
-    $("add-model-name-input").value = "";
-    $("add-model-api-model-input").value = "";
-    $("add-model-thinking-mode-input").value = defaultThinkingModeForProvider(providerInput.value);
-    $("add-model-allow-disable-thinking-input").checked = false;
-    $("add-model-supports-vision-input").checked = true;
-    dialog.showModal();
+    if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.hash) {
+        throw new Error(t("settings_js.invalid_address"));
+    }
+    const path = url.pathname.replace(/\/+$/, "");
+    const endpoint = path.match(standardEndpoint);
+    const basePath = endpoint ? path.slice(0, endpoint.index) : path || "/v1";
+    return {
+        name: url.host + basePath,
+        base_url: url.origin + basePath,
+        chat_path: (endpoint ? endpoint[0] : "/chat/completions") + url.search,
+        wire_api: endpoint?.[1] === "responses" ? "responses" : "chat_completions",
+    };
 }
 
-async function addModelFromDialog() {
-    const provider = $("add-model-provider-input").value;
-    const apiModel = $("add-model-api-model-input").value.trim();
-    if (!apiModel) return;
-    const modelId = modelIdFromApiModel(provider, apiModel);
-    if (!modelId) {
-        showToast(t('settings_js.model_exists'));
-        return;
+function syncConnectionFields() {
+    const fields = $("model-form").elements;
+    const providerId = fields.provider.value;
+    const row = Array.from(document.querySelectorAll(".provider-item")).find(item => item.dataset.providerId === providerId);
+    fields.address.readOnly = Boolean(row);
+    $("shared-address-hint").hidden = !row;
+    const base = row?.querySelector('[data-provider-field="base_url"]').value.trim() || "";
+    const path = row?.querySelector('[data-provider-field="chat_path"]').value.trim() || "/chat/completions";
+    fields.address.value = base ? base.replace(/\/+$/, "") + "/" + path.replace(/^\/+/, "") : "";
+    fields.api_key.value = "";
+    const provider = settings.providers[providerId];
+    $("model-key-hint").textContent = provider?.has_api_key
+        ? t("settings_js.shared_key", { hint: provider.api_key_hint })
+        : t("settings_js.optional_key");
+}
+
+function openModelDialog(model = null, connectionOnly = false) {
+    const form = $("model-form");
+    const fields = form.elements;
+    form.reset();
+    form.dataset.modelId = model?.id || "";
+    form.dataset.newConnectionId = "connection-" + Array.from(crypto.getRandomValues(new Uint32Array(2)), n => n.toString(16)).join("-");
+    form.classList.toggle("connection-only", connectionOnly);
+    fields.api_model.required = !connectionOnly;
+    fields.provider.innerHTML = renderProviderOptions(model?.provider);
+    fields.provider.prepend(new Option(t("settings_js.new_connection"), ""));
+    fields.provider.value = model?.provider || "";
+    syncConnectionFields();
+    const modelTitle = model ? "settings_js.edit_model" : "settings_page.add_model";
+    $("model-dialog-title").textContent = t(connectionOnly ? "settings_page.add_provider" : modelTitle);
+    $("advanced-model-settings").open = false;
+    $("model-form-error").textContent = "";
+    if (model) {
+        for (const [name, value] of Object.entries(model)) {
+            const input = fields.namedItem(name);
+            if (!input || name === "provider") continue;
+            if (input.type === "checkbox") input.checked = value;
+            else if (name === "request_options") input.value = JSON.stringify(value, null, 2);
+            else {
+                if (input.type === "select-one" && !Array.from(input.options).some(option => option.value === value)) {
+                    input.add(new Option(value, value));
+                }
+                input.value = value;
+            }
+        }
     }
-    const confirmButton = $("confirm-add-model-btn");
-    confirmButton.disabled = true;
-    const previousModels = settings.models.slice();
-    const displayName = $("add-model-name-input").value.trim() || modelId;
+    // 默认模型可在列表中切换。编辑当前默认模型时保留此选择。
+    fields.make_default.checked = Boolean(model && model.id === $("default-model-input").value);
+    fields.make_default.disabled = fields.make_default.checked;
+    $("model-dialog").showModal();
+}
+
+async function submitModelForm(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const fields = form.elements;
+    const submit = $("submit-model");
+    if (submit.disabled) return;
+    submit.disabled = true;
+    form.inert = true;
+    $("model-form-error").textContent = "";
     try {
-        settings.models.push({
-            id: modelId,
-            name: displayName,
-            provider,
-            api_model: apiModel,
-            context_limit: 128000,
-            max_output_tokens: 0,
-            output_token_param: "",
-            supports_tools: true,
-            supports_stream: true,
-            supports_vision: $("add-model-supports-vision-input").checked,
-            supports_reasoning_effort: false,
-            thinking_mode: $("add-model-thinking-mode-input").value,
-            allow_disable_thinking: $("add-model-allow-disable-thinking-input").checked,
-            request_options: {},
-        });
-        deletedModelIds.delete(modelId);
-        activeSettingsPage = "models";
-        $("add-model-dialog").close();
-        renderSettings();
-        await saveSettings({ toastMessage: t('settings_js.model_saved') });
+        const providers = collectProviders();
+        let providerId = fields.provider.value;
+        const key = fields.api_key.value.trim();
+        if (!providerId) {
+            const connection = connectionFromAddress(fields.address.value);
+            providerId = form.dataset.newConnectionId;
+            providers[providerId] = { ...connection, api_key_required: Boolean(key), enabled: true };
+        }
+        if (key) providers[providerId].api_key = key;
+
+        const models = modelEntries().slice();
+        let defaultModel = $("default-model-input").value;
+        if (!form.classList.contains("connection-only")) {
+            const editingId = form.dataset.modelId;
+            const apiModel = fields.api_model.value.trim();
+            if (!apiModel) throw new Error(t("settings_js.model_required"));
+            if (models.some(model => model.id !== editingId && model.provider === providerId && model.api_model === apiModel)) {
+                throw new Error(t("settings_js.model_exists"));
+            }
+            const index = models.findIndex(model => model.id === editingId);
+            const model = {
+                ...models[index],
+                id: editingId || modelIdFromApiModel(providerId, apiModel),
+                api_model: apiModel,
+                provider: providerId,
+            };
+            for (const input of $("advanced-model-settings").querySelectorAll("[name]")) {
+                if (input.type === "checkbox") model[input.name] = input.checked;
+                else if (input.name === "request_options") model.request_options = readJson(input.value);
+                else if (input.type === "number") model[input.name] = Number(input.value || input.defaultValue);
+                else model[input.name] = input.value.trim();
+            }
+            model.name ||= model.id === apiModel ? apiModel : `${apiModel} · ${providers[providerId].name}`;
+            if (index < 0) models.push(model);
+            else models[index] = model;
+            if (fields.make_default.checked || !defaultModel) defaultModel = model.id;
+        }
+        await saveSettings({ providers, models, default_model: defaultModel });
+        $("model-dialog").close();
     } catch (error) {
-        settings.models = previousModels;
-        renderSettings();
-        throw error;
+        $("model-form-error").textContent = error.message;
     } finally {
-        confirmButton.disabled = false;
+        form.inert = false;
+        submit.disabled = false;
     }
 }
 
@@ -726,13 +668,18 @@ function bindEvents() {
     $("cancel-btn").addEventListener("click", () => window.location.href = "/");
     $("refresh-settings-btn").addEventListener("click", () => loadAll().then(() => showToast(t('settings_page.refreshed'))).catch((error) => showToast(error.message)));
     $("save-settings-btn").addEventListener("click", () => saveSettings().catch((error) => showToast(error.message)));
-    $("add-provider-btn").addEventListener("click", addProvider);
-    $("add-model-btn").addEventListener("click", openAddModelDialog);
-    $("confirm-add-model-btn").addEventListener("click", () => addModelFromDialog().catch((error) => showToast(error.message)));
-    $("cancel-add-model-btn").addEventListener("click", () => $("add-model-dialog").close());
-    $("close-add-model-dialog-btn").addEventListener("click", () => $("add-model-dialog").close());
-    $("add-model-provider-input").addEventListener("change", (event) => {
-        $("add-model-thinking-mode-input").value = defaultThinkingModeForProvider(event.target.value);
+    $("add-provider-btn").addEventListener("click", () => openModelDialog(null, true));
+    $("add-model-btn").addEventListener("click", () => openModelDialog());
+    $("model-form").addEventListener("submit", submitModelForm);
+    $("cancel-model-dialog").addEventListener("click", () => $("model-dialog").close());
+    $("close-model-dialog").addEventListener("click", () => $("model-dialog").close());
+    $("model-dialog").addEventListener("close", () => { $("model-form").elements.api_key.value = ""; });
+    $("model-dialog").addEventListener("cancel", (event) => {
+        if ($("submit-model").disabled) event.preventDefault();
+    });
+    $("model-form").elements.provider.addEventListener("change", (event) => {
+        syncConnectionFields();
+        $("model-form").elements.thinking_mode.value = defaultThinkingModeForProvider(event.target.value);
     });
     $("add-memory-btn").addEventListener("click", addMemory);
     $("refresh-backups-btn").addEventListener("click", () => refreshBackups().catch((error) => showToast(error.message)));
@@ -757,17 +704,25 @@ function bindEvents() {
             saveMemory(saveMemoryBtn.dataset.saveMemory).catch((error) => showToast(error.message));
             return;
         }
+        const editModel = event.target.closest("[data-edit-model]");
+        if (editModel) {
+            openModelDialog(modelEntries().find(model => model.id === editModel.dataset.editModel));
+            return;
+        }
         const deleteProvider = event.target.closest("[data-delete-provider]");
         if (deleteProvider) {
             const id = deleteProvider.dataset.deleteProvider;
-            if (!await showConfirmDialog(t('settings_js.confirm_delete_provider', {id}), {danger: true})) return;
+            if (!await showConfirmDialog(t('settings_js.confirm_delete_provider', {name: providerDisplayName(id), count: linkedModelCount(id)}), {danger: true})) return;
             deletedProviderIds.add(id);
             delete settings.providers[id];
             modelEntries()
                 .filter((model) => model.provider === id)
                 .forEach((model) => deletedModelIds.add(model.id));
             settings.models = modelEntries().filter((model) => model.provider !== id);
-            renderSettings();
+            deleteProvider.closest(".provider-item").remove();
+            renderDefaultModelOptions($("default-model-input").value);
+            renderModels();
+            renderSummary();
             return;
         }
         const deleteModel = event.target.closest("[data-delete-model]");
@@ -775,7 +730,12 @@ function bindEvents() {
             const id = deleteModel.dataset.deleteModel;
             deletedModelIds.add(id);
             settings.models = modelEntries().filter((model) => model.id !== id);
-            renderSettings();
+            renderDefaultModelOptions($("default-model-input").value);
+            renderModels();
+            for (const row of document.querySelectorAll(".provider-item")) {
+                row.querySelector("[data-linked-count]").textContent = t("settings_js.linked_models", {count: linkedModelCount(row.dataset.providerId)});
+            }
+            renderSummary();
             return;
         }
         const deleteMemory = event.target.closest("[data-delete-memory]");

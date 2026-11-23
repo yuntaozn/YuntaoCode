@@ -220,6 +220,21 @@
             padding: 18px;
         }
 
+        .settings-fields {
+            display: grid;
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .settings-page summary, .settings-dialog summary {
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .settings-dialog-panel.connection-only .model-only, #model-form-error:empty {
+            display: none;
+        }
+
         .settings-dialog-head {
             display: flex;
             align-items: flex-start;
@@ -266,7 +281,6 @@
                 <div class="section-title" data-i18n="settings_page.groups">设置分组</div>
                 <div class="plugin-group-list">
                     <button class="plugin-group-item active" data-settings-page-button="models" data-i18n="settings_page.group_models">模型</button>
-                    <button class="plugin-group-item" data-settings-page-button="providers" data-i18n="settings_page.group_providers">接口</button>
                     <button class="plugin-group-item" data-settings-page-button="runtime" data-i18n="settings_page.group_runtime">执行与权限</button>
                     <button class="plugin-group-item" data-settings-page-button="memories" data-i18n="settings_page.group_memories">记忆管理</button>
                     <button class="plugin-group-item" data-settings-page-button="backups" data-i18n="settings_page.group_backups">备份与回退</button>
@@ -296,7 +310,7 @@
                 <div class="settings-page" data-settings-page="models">
                     <div class="settings-page-title">
                         <h2 data-i18n="settings_page.models_title">模型</h2>
-                        <p data-i18n="settings_page.models_desc">管理默认模型、API 模型名、上下文窗口、输出预算、工具调用和思考参数。模型只描述能力和请求参数，连接地址与 Key 请到“接口”里配置。</p>
+                        <p data-i18n="settings_page.models_desc">添加模型时可以填写 OpenAI 兼容服务的地址，也可以复用已保存的连接。</p>
                     </div>
                     <section class="settings-card" id="model-card">
                         <div class="settings-form-row">
@@ -309,20 +323,14 @@
                         </div>
                         <div class="settings-list" id="model-list"></div>
                     </section>
-                </div>
-
-                <div class="settings-page" data-settings-page="providers" hidden>
-                    <div class="settings-page-title">
-                        <h2 data-i18n="settings_page.providers_title">接口</h2>
-                        <p data-i18n="settings_page.providers_desc">管理 OpenAI-compatible 接口、Base URL、Chat Path、API Key 和接口默认参数。Ollama、vLLM、火山方舟、通义千问等服务都可以作为接口接入。</p>
-                    </div>
-                    <section class="settings-card" id="provider-card">
+                    <details class="settings-card" id="provider-card">
+                        <summary data-i18n="settings_page.shared_connections">共享连接</summary>
                         <div class="settings-subhead">
-                            <h4 data-i18n="settings_page.provider">接口 Provider</h4>
-                            <button class="secondary-button" id="add-provider-btn" type="button" data-i18n="settings_page.add_provider">新增接口</button>
+                            <p data-i18n="settings_page.shared_desc">使用同一连接的模型共用服务地址和 API Key。</p>
+                            <button class="secondary-button" id="add-provider-btn" type="button" data-i18n="settings_page.add_provider">新增连接</button>
                         </div>
                         <div class="settings-list" id="provider-list"></div>
-                    </section>
+                    </details>
                 </div>
 
                 <div class="settings-page" data-settings-page="runtime" hidden>
@@ -426,52 +434,102 @@
         </main>
     </div>
 
-    <dialog class="settings-dialog" id="add-model-dialog">
-        <div class="settings-dialog-panel">
+    <dialog class="settings-dialog" id="model-dialog" aria-labelledby="model-dialog-title">
+        <form class="settings-dialog-panel" id="model-form">
             <div class="settings-dialog-head">
-                <div>
-                    <h3 data-i18n="settings_js.save_model_dialog_title">保存模型</h3>
-                    <p data-i18n="settings_js.save_model_dialog_desc">选择接口并填写 API 模型名即可；显示别名只用于界面展示，本地模型 ID 会自动生成。</p>
+                <h3 id="model-dialog-title"></h3>
+                <button class="icon-close" id="close-model-dialog" type="button" data-i18n-aria-label="common.cancel">×</button>
+            </div>
+            <label class="settings-form-row model-only">
+                <span data-i18n="settings_js.api_model_name">API 模型名</span>
+                <input name="api_model" required placeholder="qwen3.7-max">
+            </label>
+            <label class="settings-form-row model-only">
+                <span data-i18n="settings_js.connection">连接</span>
+                <select name="provider"></select>
+            </label>
+            <label class="settings-form-row">
+                <span data-i18n="settings_js.api_address">API 地址</span>
+                <input name="address" type="url" required placeholder="http://127.0.0.1:8000/v1">
+                <span class="hint-line" id="shared-address-hint" data-i18n="settings_js.shared_address" hidden>可在「共享连接」修改此地址。</span>
+            </label>
+            <label class="settings-form-row">
+                <span>API Key</span>
+                <input name="api_key" type="password" autocomplete="new-password">
+                <span class="hint-line" id="model-key-hint"></span>
+            </label>
+            <label class="checkbox-line compact model-only">
+                <input name="make_default" type="checkbox">
+                <span data-i18n="settings_js.make_default">设为默认模型</span>
+            </label>
+            <details class="model-only" id="advanced-model-settings">
+                <summary data-i18n="settings_js.advanced_model">高级模型设置</summary>
+                <div class="settings-fields">
+                    <label class="settings-form-row">
+                        <span data-i18n="settings_js.display_alias">显示别名（可选）</span>
+                        <input name="name">
+                    </label>
+                    <div class="settings-inline">
+                        <label class="settings-form-row">
+                            <span data-i18n="settings_js.context_window">上下文窗口 tokens</span>
+                            <input name="context_limit" type="number" min="4096" max="2000000" value="128000">
+                        </label>
+                        <label class="settings-form-row">
+                            <span data-i18n="settings_js.max_output_tokens">单轮输出预算 tokens（0 为默认）</span>
+                            <input name="max_output_tokens" type="number" min="0" max="1000000" value="0">
+                        </label>
+                    </div>
+                    <label class="settings-form-row">
+                        <span data-i18n="settings_js.output_token_param">输出预算参数名</span>
+                        <select name="output_token_param">
+                            <option value="" data-i18n="settings_js.provider_default">由接口决定</option>
+                            <option>max_tokens</option>
+                            <option>max_completion_tokens</option>
+                            <option>max_output_tokens</option>
+                        </select>
+                    </label>
+                    <label class="settings-form-row">
+                        <span data-i18n="settings_js.thinking_mode">思考参数适配</span>
+                        <select name="thinking_mode">
+                            <option value="" data-i18n="settings_js.thinking_none">标准 OpenAI</option>
+                            <option value="volcengine" data-i18n="settings_js.thinking_volcengine">火山方舟</option>
+                            <option value="qwen" data-i18n="settings_js.thinking_qwen">通义千问</option>
+                        </select>
+                    </label>
+                    <label class="checkbox-line compact">
+                        <input type="checkbox" name="supports_tools" checked>
+                        <span data-i18n="settings_js.support_tools">支持工具调用</span>
+                    </label>
+                    <label class="checkbox-line compact">
+                        <input type="checkbox" name="supports_stream" checked>
+                        <span data-i18n="settings_js.support_stream">支持流式输出</span>
+                    </label>
+                    <label class="checkbox-line compact">
+                        <input type="checkbox" name="supports_vision" checked>
+                        <span data-i18n="settings_js.support_vision">支持视觉输入</span>
+                    </label>
+                    <label class="checkbox-line compact">
+                        <input type="checkbox" name="supports_reasoning_effort">
+                        <span data-i18n="settings_js.support_reasoning_effort">支持 reasoning_effort 参数</span>
+                    </label>
+                    <label class="checkbox-line compact">
+                        <input type="checkbox" name="allow_disable_thinking">
+                        <span data-i18n="settings_js.allow_disable_thinking">允许关闭 thinking 参数</span>
+                    </label>
+                    <span class="hint-line" data-i18n="settings_js.allow_disable_thinking_hint"></span>
+                    <label class="settings-form-row">
+                        <span data-i18n="settings_js.model_params">模型高级请求参数 JSON</span>
+                        <textarea name="request_options" placeholder='{"temperature":0.2}'></textarea>
+                        <span class="hint-line" data-i18n="settings_js.advanced_request_params_hint"></span>
+                    </label>
                 </div>
-                <button class="icon-close" id="close-add-model-dialog-btn" type="button">×</button>
-            </div>
-            <div class="settings-form-row">
-                <label for="add-model-provider-input" data-i18n="settings_js.provider_label">接口</label>
-                <select id="add-model-provider-input"></select>
-            </div>
-            <div class="settings-form-row">
-                <label for="add-model-api-model-input" data-i18n="settings_js.api_model_name">API 模型名</label>
-                <input id="add-model-api-model-input" placeholder="qwen3.7-max">
-                <span class="hint-line" data-i18n="settings_js.api_model_name_hint">用于实际请求接口；本地模型 ID 会自动生成。</span>
-            </div>
-            <div class="settings-form-row">
-                <label for="add-model-name-input" data-i18n="settings_js.display_alias">显示别名（可选）</label>
-                <input id="add-model-name-input" placeholder="留空则使用模型 ID" data-i18n-placeholder="settings_js.model_alias_placeholder">
-            </div>
-            <div class="settings-form-row">
-                <label for="add-model-thinking-mode-input" data-i18n="settings_js.thinking_mode">思考参数适配</label>
-                <select id="add-model-thinking-mode-input">
-                    <option value="" data-i18n="settings_js.thinking_none">无</option>
-                    <option value="volcengine" data-i18n="settings_js.thinking_volcengine">火山方舟：thinking.type</option>
-                    <option value="qwen" data-i18n="settings_js.thinking_qwen">通义千问：enable_thinking</option>
-                </select>
-                <span class="hint-line" data-i18n="settings_js.thinking_mode_hint">这是接口请求字段适配，不是模型能力强弱分档；选错可能导致接口报错或思考开关无效。</span>
-            </div>
-            <label class="checkbox-line compact">
-                <input id="add-model-allow-disable-thinking-input" type="checkbox">
-                <span data-i18n="settings_js.allow_disable_thinking">允许关闭 thinking 参数</span>
-            </label>
-            <span class="hint-line" data-i18n="settings_js.allow_disable_thinking_hint">部分 Qwen / DashScope 模型要求 enable_thinking=true；不确定时请保持关闭。</span>
-            <label class="checkbox-line compact">
-                <input id="add-model-supports-vision-input" type="checkbox" checked>
-                <span data-i18n="settings_js.support_vision">支持视觉输入</span>
-            </label>
-            <span class="hint-line" data-i18n="settings_js.support_vision_hint">允许把截图、图片附件和文件预览作为模型图片输入；如果接口不支持多模态可关闭。</span>
+            </details>
+            <span class="hint-line" id="model-form-error" role="alert"></span>
             <div class="dialog-actions">
-                <button class="secondary-button" id="cancel-add-model-btn" type="button" data-i18n="common.cancel">取消</button>
-                <button class="primary-button" id="confirm-add-model-btn" type="button" data-i18n="settings_js.save_model">保存模型</button>
+                <button class="secondary-button" id="cancel-model-dialog" type="button" data-i18n="common.cancel">取消</button>
+                <button class="primary-button" id="submit-model" type="submit" data-i18n="settings.save">保存</button>
             </div>
-        </div>
+        </form>
     </dialog>
 
     <script src="{{ static_url("i18n.js") }}"></script>

@@ -1664,7 +1664,9 @@ async function api(path, options = {}) {
         payload = { success: false, error: raw || response.statusText };
     }
     if (!response.ok || !payload.success) {
-        throw new Error(formatErrorMessage(payload.error || payload.message, response.statusText));
+        const error = new Error(formatErrorMessage(payload.error || payload.message, response.statusText));
+        error.status = response.status;
+        throw error;
     }
     return payload.data;
 }
@@ -1835,7 +1837,11 @@ async function loadAll() {
     ]);
     const [settings, plugins, backups] = await Promise.all([
         api("/settings"),
-        api("/plugins"),
+        api("/plugins").catch(error => {
+            // lite 未装配插件目录，模型选择器仍使用核心设置。
+            if (error.status === 404) return [];
+            throw error;
+        }),
         api("/backups").catch(() => ({ items: [] })),
     ]);
     state.workspaces = workspaces;
@@ -2011,16 +2017,7 @@ function renderPlugins() {
 }
 
 function renderSettings() {
-    const providers = state.settings?.providers || {};
-    const volcengine = providers.volcengine || {};
-    const qwen = providers.qwen || {};
     const backups = state.settings?.backups || {};
-    if ($("volcengine-key-hint")) $("volcengine-key-hint").textContent = volcengine.has_api_key
-        ? t('settings_js.key_configured', {hint: volcengine.api_key_hint})
-        : t('settings_js.no_key');
-    if ($("qwen-key-hint")) $("qwen-key-hint").textContent = qwen.has_api_key
-        ? t('settings_js.key_configured', {hint: qwen.api_key_hint})
-        : t('settings_js.no_key');
     if ($("backup-enabled-input")) $("backup-enabled-input").checked = backups.enabled !== false;
     if ($("backup-keep-input")) $("backup-keep-input").value = backups.keep_rounds || 50;
     if ($("access-scope-input")) $("access-scope-input").value = state.accessScope;
@@ -4551,15 +4548,6 @@ function formatFileSize(bytes) {
 }
 
 async function saveSettings() {
-    const providers = {};
-    const volcengineKey = $("volcengine-key-input").value.trim();
-    const qwenKey = $("qwen-key-input").value.trim();
-    if (volcengineKey) {
-        providers.volcengine = { api_key: volcengineKey };
-    }
-    if (qwenKey) {
-        providers.qwen = { api_key: qwenKey };
-    }
     state.settings = await api("/settings", {
         method: "POST",
         body: JSON.stringify({
@@ -4570,11 +4558,8 @@ async function saveSettings() {
                 enabled: $("backup-enabled-input") ? $("backup-enabled-input").checked : true,
                 keep_rounds: $("backup-keep-input") ? Number($("backup-keep-input").value || 50) : 50,
             },
-            providers,
         }),
     });
-    $("volcengine-key-input").value = "";
-    $("qwen-key-input").value = "";
     state.accessScope = normalizeAccessScope(state.settings.access_scope || state.accessScope);
     state.confirmationPolicy = normalizeConfirmationPolicy(state.settings.confirmation_policy || state.confirmationPolicy);
     localStorage.setItem("lit_access_scope", state.accessScope);

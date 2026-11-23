@@ -112,6 +112,8 @@ Compatible with OpenAI-style APIs:
 * Volcano Agent Plan (OpenAI Compatible)
 * Other OpenAI-compatible providers
 
+Under **Settings → Models → Add Model**, enter the API model name, the service address and an API key if required. A bare host defaults to `/v1/chat/completions`. You can also paste a full `/chat/completions` or `/responses` endpoint. Select a saved connection to share its address and key with another model. Expand **Advanced model settings** to adjust context size, output budget and thinking parameters.
+
 ### Recoverable Execution
 
 * Task plans, model decisions, and execution progress

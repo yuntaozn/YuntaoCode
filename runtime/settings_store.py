@@ -18,6 +18,23 @@ from .memory_store import MemoryStore
 from .model_request_options import sanitize_request_options
 
 
+def default_provider_config(
+    name: str, base_url: str = "", *, api_key_required: bool = True,
+) -> dict[str, Any]:
+    """内置预设与用户连接共用 OpenAI 兼容协议的默认值。"""
+    return {
+        "name": name,
+        "base_url": base_url,
+        "api_key": "",
+        "api_key_required": api_key_required,
+        "chat_path": "/chat/completions",
+        "kind": "openai",
+        "wire_api": "chat_completions",
+        "request_options": {},
+        "enabled": True,
+    }
+
+
 DEFAULT_SETTINGS: dict[str, Any] = {
     "settings_version": 13,
     "backend_url": "http://127.0.0.1:8088",
@@ -31,51 +48,19 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "memories": deepcopy(DEFAULT_MEMORY_SETTINGS),
     "providers": {
-        "volcengine": {
-            "name": "火山方舟",
-            "base_url": "https://ark.cn-beijing.volces.com/api/v3",
-            "api_key": "",
-            "api_key_required": True,
-            "chat_path": "/chat/completions",
-            "kind": "openai",
-        },
-        "volcengine_agent_plan": {
-            "name": "火山 Agent Plan / OpenAI Compatible",
-            "base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
-            "api_key": "",
-            "api_key_required": True,
-            "chat_path": "/chat/completions",
-            "kind": "openai",
-            "wire_api": "chat_completions",
-        },
+        "volcengine": default_provider_config("火山方舟", "https://ark.cn-beijing.volces.com/api/v3"),
+        "volcengine_agent_plan": default_provider_config(
+            "火山 Agent Plan / OpenAI Compatible", "https://ark.cn-beijing.volces.com/api/plan/v3",
+        ),
         "qwen": {
-            "name": "通义千问 / OpenAI Compatible",
-            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "api_key": "",
-            "api_key_required": True,
-            "chat_path": "/chat/completions",
-            "kind": "openai",
+            **default_provider_config("通义千问 / OpenAI Compatible", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
             "request_options": {
                 "enable_search": True,
                 "search_options": {"search_strategy": "max"},
             },
         },
-        "ollama": {
-            "name": "Ollama / OpenAI Compatible",
-            "base_url": "http://127.0.0.1:11434/v1",
-            "api_key": "",
-            "api_key_required": False,
-            "chat_path": "/chat/completions",
-            "kind": "openai",
-        },
-        "vllm": {
-            "name": "vLLM / OpenAI Compatible",
-            "base_url": "http://127.0.0.1:8000/v1",
-            "api_key": "",
-            "api_key_required": False,
-            "chat_path": "/chat/completions",
-            "kind": "openai",
-        },
+        "ollama": default_provider_config("Ollama / OpenAI Compatible", "http://127.0.0.1:11434/v1", api_key_required=False),
+        "vllm": default_provider_config("vLLM / OpenAI Compatible", "http://127.0.0.1:8000/v1", api_key_required=False),
     },
     "models": [
         {
@@ -623,20 +608,6 @@ def normalize_chat_path(value: Any) -> str:
 def normalize_wire_api(value: Any) -> str:
     normalized = str(value or "chat_completions").strip().lower().replace("-", "_")
     return normalized if normalized in {"chat_completions", "responses"} else "chat_completions"
-
-
-def default_provider_config(provider_id: str) -> dict[str, Any]:
-    return {
-        "name": provider_id,
-        "base_url": "",
-        "api_key": "",
-        "api_key_required": True,
-        "chat_path": "/chat/completions",
-        "kind": "openai",
-        "wire_api": "chat_completions",
-        "request_options": {},
-        "enabled": True,
-    }
 
 
 def normalize_model_config(value: dict[str, Any]) -> dict[str, Any]:

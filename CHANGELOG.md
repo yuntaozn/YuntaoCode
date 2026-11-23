@@ -221,6 +221,7 @@ The format follows Keep a Changelog style, and this project uses pre-1.0 semanti
 
 ### Changed
 
+- Model settings now accept an OpenAI-compatible address and optional key in the add-model form. Models can reuse a saved connection, and advanced model options are available in the editor.
 - The main execution loop no longer inserts automatic completion self-review
   rounds. Completion remains with the execution model, while missing evidence
   stays visible in RunResult and recovery records. Write-task round budgets now

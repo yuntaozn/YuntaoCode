@@ -112,6 +112,8 @@ YuntaoCode 把一次请求看作一个可管理的任务，而不是一次普通
 * 火山 Agent Plan（OpenAI Compatible）
 * 其它兼容 OpenAI API 的模型服务
 
+在 **设置 → 模型 → 新增模型** 中填写 API 模型名、服务地址和服务要求的 API Key。仅填写主机和端口时，默认使用 `/v1/chat/completions`。也可以粘贴完整的 `/chat/completions` 或 `/responses` 端点。添加同一服务的其他模型时，选择已保存的连接即可复用地址和 Key。上下文窗口、输出预算和思考参数可在「高级模型设置」中调整。
+
 ### 可恢复执行（Recoverable Execution）
 
 * 记录任务计划、模型判断和执行进展
